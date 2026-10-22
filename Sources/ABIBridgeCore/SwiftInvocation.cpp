@@ -13,6 +13,7 @@
 #include <optional>
 #include <new>
 #include <limits>
+#include <string>
 
 // Swift's stable runtime uses preserve_most for reference counting on AArch64.
 // These operations also handle capture contexts, whose metadata need not be
@@ -534,6 +535,94 @@ static bool isAddressOnly(const TypeStorage &type) {
                        [](const auto &field) { return isAddressOnly(*field); });
 }
 bool ABISwiftValueIsAddressOnly(const ABIValueType *type) { return isAddressOnly(*type->storage); }
+
+namespace {
+// What a register or stack slot of a value holds. A result's formal indirect
+// outputs pass before the inputs as ordinary pointers, while storage for a
+// direct result too large for registers uses the dedicated indirect-result
+// register, so each address keeps its role.
+enum class SlotRole { component, address, output, indirectResult };
+
+struct LoweredPart {
+    SlotRole role;
+    // A component of the value's bytes, for SlotRole::component.
+    Component component;
+    // The storage that an address refers to.
+    size_t extent;
+    size_t alignment;
+};
+
+// The slots in call order. A parameter expands its tuples into separate
+// values, so only the sequence of slots, not the grouping of components into
+// values, decides where the call puts each byte. A result lowers as one value,
+// unless its tuple elements need indirect or separate storage.
+std::vector<LoweredPart> loweredParts(const std::shared_ptr<TypeStorage> &type, bool result) {
+    std::vector<LoweredPart> parts;
+    auto appendAddress = [&](SlotRole role, TypeStorage &value) {
+        parts.push_back({role, {}, value.size(), value.native()->alignment});
+    };
+    auto appendComponents = [&](const Layout &layout, size_t offset) {
+        for (auto component : layout.components) {
+            component.offset += offset;
+            parts.push_back({SlotRole::component, component, 0, 0});
+        }
+    };
+    if (result) {
+        ABISwiftCallInterface interface;
+        interface.result = type;
+        prepareSwiftResult(interface);
+        for (const auto &field : interface.indirectResults) appendAddress(SlotRole::output, *field.type);
+        if (interface.resultLayout.indirect) appendAddress(SlotRole::indirectResult, *interface.directResult);
+        else appendComponents(interface.resultLayout, 0);
+        return parts;
+    }
+    std::vector<SwiftField> fields;
+    expandTuple(type, 0, fields);
+    for (const auto &field : fields) {
+        const auto layout = lower(*field.type);
+        if (layout.indirect) appendAddress(SlotRole::address, *field.type);
+        else appendComponents(layout, field.offset);
+    }
+    return parts;
+}
+
+bool passesAs(const LoweredPart &value, const LoweredPart &declared) {
+    if (value.role != declared.role) return false;
+    if (value.role != SlotRole::component)
+        return value.extent >= declared.extent && value.alignment >= declared.alignment;
+    const auto &lhs = value.component, &rhs = declared.component;
+    return lhs.offset == rhs.offset && lhs.size == rhs.size && lhs.floating == rhs.floating
+        && lhs.optionalSingleton == rhs.optionalSingleton;
+}
+}
+
+bool ABISwiftValuePassesAs(const ABIValueType *value, const ABIValueType *declared, bool result) {
+    if (!value || !declared) return false;
+    const auto parts = loweredParts(value->storage, result);
+    const auto declaredParts = loweredParts(declared->storage, result);
+    return std::equal(parts.begin(), parts.end(), declaredParts.begin(), declaredParts.end(), passesAs);
+}
+
+char *ABICopySwiftValueLoweringDescription(const ABIValueType *type, bool result) {
+    if (!type) return nullptr;
+    std::string text;
+    for (const auto &part : loweredParts(type->storage, result)) {
+        text += text.empty() ? "in registers (" : ", ";
+        switch (part.role) {
+        case SlotRole::component:
+            text += std::to_string(part.component.size) + "-byte "
+                + (part.component.floating ? "float" : "integer") + " at "
+                + std::to_string(part.component.offset);
+            continue;
+        case SlotRole::address: text += "address"; break;
+        case SlotRole::output: text += "output address"; break;
+        case SlotRole::indirectResult: text += "indirect-result address"; break;
+        }
+        text += " of " + std::to_string(part.extent) + " bytes aligned to "
+            + std::to_string(part.alignment);
+    }
+    return strdup(text.empty() ? "in no registers" : (text + ")").c_str());
+}
 
 static void marshalSwiftArguments(
     ABISwiftCallInterface *interface, void *const *arguments, void *result, void *errorResult,

@@ -375,6 +375,9 @@ public actor NativeSwiftType: Hashable {
         }
         let codec: SwiftReceiverCodec
         let cachedCodec: SwiftReceiverCodec?
+        // The declaration's formal self, when its convention applies to a
+        // representation's value.
+        var formalSelf: CValueType?
         if let receiverABI {
             let formalType = try SwiftValueSchema.explicitLayout(of: metadata, abi: receiverABI)
             codec = SwiftReceiverCodec(runtimeType: metadata, formalType: formalType)
@@ -384,6 +387,7 @@ public actor NativeSwiftType: Hashable {
         {
             if let representation, representation != metadata {
                 codec = try SwiftReceiverCodec.make(for: representation, formalType: formalType)
+                formalSelf = formalType
             } else {
                 codec = SwiftReceiverCodec(runtimeType: metadata, formalType: formalType)
             }
@@ -391,6 +395,11 @@ public actor NativeSwiftType: Hashable {
         } else {
             codec = try cachedReceiver ?? SwiftReceiverCodec.make(for: representation ?? metadata)
             cachedCodec = codec
+        }
+        if receiverABI == nil, let representation, representation != metadata,
+            !(metadata is AnyClass)
+        {
+            try checkReceiverRepresentation(representation, formalSelf: formalSelf)
         }
         return (
             try SwiftReceiverPlan(
@@ -403,6 +412,49 @@ public actor NativeSwiftType: Hashable {
             ),
             cachedCodec
         )
+    }
+
+    /// Checks that a representation passes as self does.
+    ///
+    /// A representation is this type's adapter for self. Where the
+    /// declaration's formal self applies, such as a protocol's indirect Self,
+    /// the representation's storage passes by that convention. Otherwise it
+    /// must pass as this type's value, and the adapter states that convention
+    /// where this type's metadata does not establish it, because receiverABI
+    /// describes native self values rather than a representation. A class
+    /// receiver is a reference, which SwiftReceiverPlan checks.
+    private nonisolated func checkReceiverRepresentation(
+        _ representation: Any.Type,
+        formalSelf: CValueType?
+    ) throws {
+        func layout<Value>(_: Value.Type) throws -> CValueType {
+            try SwiftValueCodec<Value>(position: .receiver).type
+        }
+        let own = try _openExistential(representation, do: layout)
+        let host: CValueType
+        let declared: CValueType
+        if let formalSelf {
+            declared = formalSelf
+            host =
+                withExtendedLifetime(formalSelf, { ABISwiftValueIsIndirect(formalSelf.handle) })
+                ? try CValueType(indirectSwiftSize: own.size, alignment: own.alignment) : own
+        } else if let type = try? _openExistential(metadata, do: layout) {
+            declared = type
+            host = own
+        } else {
+            return
+        }
+        do {
+            try SwiftDeclaredLowering.check(
+                representation,
+                layout: host,
+                as: name,
+                declared: declared,
+                position: .receiver
+            )
+        } catch let ABIResolutionError.signatureMismatch(mismatch) {
+            throw ABIResolutionError.signatureMismatch(mismatch.at(.receiver))
+        }
     }
 
     // A library-evolution class can export only the dispatch thunk and method
@@ -555,7 +607,11 @@ public actor NativeSwiftType: Hashable {
                         declaredSignature: declaredSignature,
                         valueABIs: valueABIs
                     )
-                    if !isComplete { try plan.check(description, representations: representations) }
+                    if isComplete {
+                        try plan.checkLowerings(description)
+                    } else {
+                        try plan.check(description, representations: representations)
+                    }
                     return plan
                 }
             }

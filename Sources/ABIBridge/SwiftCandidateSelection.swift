@@ -39,7 +39,8 @@ struct SwiftCandidateSelection<Value> {
                 // bind, such as an extension constrained to other types, does
                 // not apply and stays absent unless the request named it.
                 switch mismatch.position {
-                case .argument, .result: mismatches.append((candidate.declaration, mismatch))
+                case .argument, .result, .receiver:
+                    mismatches.append((candidate.declaration, mismatch))
                 case .signature, .argumentCount:
                     if namesDeclaration { mismatches.append((candidate.declaration, mismatch)) }
                 }

@@ -14,11 +14,26 @@ let decorate = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
 let message = try unsafe decorate.unsafeInvoke("Hello")
 ```
 
-A label-only name selects the declaration with those labels whose native parameter and result types accept the function metatype. For example, `Example.combine(_:suffix:)` has one unlabeled argument and one labeled `suffix`; its label count must match the signature. When several overloads at the same lookup level accept the signature, lookup reports them as ambiguous; an exported overload takes precedence over one that only the shared cache's local symbols describe (see <doc:SymbolLookup>). Use a complete demangled declaration to select one overload, or when a custom wrapper has a different name from the native type.
+A label-only name selects the declaration with those labels whose native parameter and result types accept the function metatype. For example, `Example.combine(_:suffix:)` has one unlabeled argument and one labeled `suffix`; its label count must match the signature. When several overloads at the same lookup level accept the signature, lookup reports them as ambiguous; an exported overload takes precedence over one that only the shared cache's local symbols describe (see <doc:SymbolLookup>). Use a complete demangled declaration to select one overload, or when a custom wrapper has a different name from the native type; see <doc:SwiftFunctionInvocation#Use-a-wrapper-with-a-complete-declaration>.
 
 For a label-only name, a class argument can be a subclass of the native parameter's class, including when that parameter is `Optional`, and a class result can be requested as a superclass or `AnyObject`, also wrapped in `Optional`. These conversions apply only to the call's own arguments and result, not to `inout` values, tuple fields, or closure signatures. A handle selected through such a conversion cannot install hooks, because a hook would have to pass values back as the native types.
 
 The framework/path and retained-image overloads use the same symbol indexes as other runtime lookups. Explicit targets are acquired by default; `loading: .loadedOnly` opts out. See <doc:ImageLoading>.
+
+### Use a wrapper with a complete declaration
+
+A complete declaration, such as `Example.decorate(Swift.String) -> Swift.String`, selects the declaration by its spelling, so a requested type need not have the declared type's name. Lookup instead checks that each requested argument and result passes as the declared type does: in the same sequence of integer and floating-point register components at the same offsets, with an address wherever the declared value passes by address, pointing to storage at least as large and aligned as the declared value. Each address keeps its role: a parameter's address, an output of a tuple result element that passes by address, or the indirect result that holds a direct result too large for registers. For example, `UInt32` can stand for a declared `Swift.Int32`, `AnyObject` for a class, and an ``ABIBridgeValue`` wrapper for a struct with the same register layout. A tuple parameter expands into its elements, so `CGPoint` can also stand for a declared `(Swift.Double, Swift.Double)`. `Double` or `String` cannot stand for `Swift.Int32`; lookup throws ``ABIResolutionError/signatureMismatch(_:)`` with the argument or the result as its position. The check covers values that the requested type lowers by itself, including the value inside an `inout` or ownership wrapper. Runtime values, closures, and generic or opaque positions take their convention from the declaration, and a typed error must be the declared type. Passing in the same registers does not establish ownership: a wrapper for a value with nontrivial copies must manage them as the native type does.
+
+The check needs the declared type's convention: a built-in representation, an ``ABIBridgeSwiftValue`` conformance, a `valueABIs:` entry for the declared type, or a convention inferred from its metadata (see <doc:SwiftFunctionInvocation#Infer-struct-and-enum-conventions>). A C function pointer or block passes as one pointer, so `UnsafeRawPointer` or `AnyObject` can stand for one. When the declared convention is not established, lookup throws the error that names the missing evidence, such as an undecided inference or metadata that lookup cannot find. Describe the declared type with `valueABIs:` to have the requested type compared with it. When the declared type cannot be named, as for a C type that an image imports without exporting its type descriptor, a `valueABIs:` entry for the requested type states the convention instead, and lookup passes the value without the comparison:
+
+```swift
+let uint32 = try runtime.resolveSwiftTypeAndWait(named: "Swift.UInt32")
+let target = try screenType.resolveGetterAndWait(
+    named: "target.getter : __C.HIDTarget",
+    as: (() -> UInt32).self,
+    valueABIs: [uint32: .uint32]
+)
+```
 
 ## Await lookup and preparation
 

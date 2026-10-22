@@ -1021,6 +1021,151 @@ struct SwiftGenericCallPlan: Sendable {
         }
     }
 
+    /// Checks that a call naming its declaration completely passes each
+    /// argument and the result the way the declaration does.
+    ///
+    /// The complete name selects the declaration, so a host type need not
+    /// have the declared type's Swift name: it stands for the declared type
+    /// when both pass alike. Only values that the host type lowers by itself
+    /// are compared. Runtime values, closures, and generic or opaque positions
+    /// already take their lowering from the declaration, and a typed error
+    /// keeps its exact check.
+    func checkLowerings(_ signature: SwiftFunctionSignature) throws {
+        for (formal, group) in zip(binding.declaration.arguments, parameters.groups) {
+            // A pack is generic, so the declaration lowers its elements.
+            guard case .value(let index) = group else { continue }
+            var formal = formal
+            var actual = signature.parameters[index]
+            var argument = parameters.arguments[index]
+            if case .convention(let codec) = argument,
+                let convention = try binding.conventionArgument(
+                    actual,
+                    for: formal,
+                    defaultConsuming: binding.declaration.consumesArguments
+                )
+            {
+                formal = convention.value
+                actual = convention.wrapper.wrappedType
+                argument = codec.argument
+            }
+            do {
+                try checkLowering(
+                    of: actual,
+                    for: formal,
+                    position: .parameter,
+                    label: "argument \(index)"
+                ) {
+                    func prepare<Value>(_: Value.Type) throws -> CValueType {
+                        try SwiftArgumentCodec<Value>(
+                            defaultConsuming: false,
+                            generic: argument
+                        ).type
+                    }
+                    return try _openExistential(actual, do: prepare)
+                }
+            } catch let ABIResolutionError.signatureMismatch(mismatch) {
+                throw ABIResolutionError.signatureMismatch(mismatch.at(.argument(index)))
+            }
+        }
+        do {
+            try checkLowering(
+                of: signature.result,
+                for: binding.declaration.result,
+                position: .result,
+                label: "the result"
+            ) {
+                func prepare<Value>(_: Value.Type) throws -> CValueType {
+                    try SwiftResultCodec<Value>(generic: result).type
+                }
+                return try _openExistential(signature.result, do: prepare)
+            }
+        } catch let ABIResolutionError.signatureMismatch(mismatch) {
+            throw ABIResolutionError.signatureMismatch(mismatch.at(.result))
+        }
+    }
+
+    /// Compares one position, unless its declared convention is not
+    /// established and a `valueABIs` entry for the host type states it.
+    ///
+    /// - Parameter host: The storage the call gives the host value.
+    private func checkLowering(
+        of actual: Any.Type,
+        for formal: SwiftFormalType,
+        position: SwiftValuePosition,
+        label: String,
+        host: () throws -> CValueType
+    ) throws {
+        guard Self.representsClosedValue(formal, actual: actual, binding: binding) else { return }
+        let declared: CValueType
+        do {
+            let lowered = try substitutingPointersForForeignFunctions(formal) ?? formal
+            let metadata: Any.Type
+            do {
+                metadata = try binding.types(lowered)[0]
+            } catch ABIResolutionError.declarationNotFound(let declaration) {
+                // An image can use an imported C type without exporting its
+                // descriptor, which a valueABIs entry would also need.
+                throw ABIResolutionError.metadataUnavailable(
+                    "lookup cannot find the metadata of \(formal.spelling): \(declaration.name) is not exported."
+                )
+            }
+            guard metadata != actual else { return }
+            declared = try SwiftValueSchema.layout(
+                lowered,
+                actual: metadata,
+                binding: binding,
+                position: position
+            )
+        } catch let error as ABIResolutionError {
+            guard
+                let failure = SwiftDeclaredLowering.unestablished(
+                    error,
+                    host: actual,
+                    declared: formal.spelling,
+                    at: label
+                )
+            else { throw error }
+            // The caller states the convention with the host type's entry.
+            if try binding.explicitHostLayout(actual) != nil
+                || binding.hasExplicitHostField(actual)
+            {
+                return
+            }
+            throw failure
+        }
+        try SwiftDeclaredLowering.check(
+            actual,
+            layout: host(),
+            as: formal.spelling,
+            declared: declared,
+            position: position
+        )
+    }
+
+    /// The formal type with `UnsafeRawPointer` for each C function pointer or
+    /// block inside it, through tuples and Optionals, or nil when it has none.
+    ///
+    /// Such a function passes and is stored as one pointer, as
+    /// `UnsafeRawPointer` is, but the runtime cannot build its metadata.
+    private func substitutingPointersForForeignFunctions(
+        _ formal: SwiftFormalType
+    ) throws -> SwiftFormalType? {
+        let type = try binding.canonicalType(of: formal)
+        switch type {
+        case .foreignFunction:
+            return .nominal("Swift.UnsafeRawPointer", [])
+        case .tuple(let fields, let labels):
+            let substituted = try fields.map(substitutingPointersForForeignFunctions)
+            guard substituted.contains(where: { $0 != nil }) else { return nil }
+            return .tuple(zip(fields, substituted).map { $1 ?? $0 }, labels: labels)
+        default:
+            guard let wrapped = type.optionalWrapped,
+                let substituted = try substitutingPointersForForeignFunctions(wrapped)
+            else { return nil }
+            return .nominal("Swift.Optional", [substituted])
+        }
+    }
+
     /// Whether a call converts a class reference at some position, which a
     /// hook cannot do in the opposite direction.
     func convertsReferences(_ signature: SwiftFunctionSignature) -> Bool {

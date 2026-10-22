@@ -216,6 +216,8 @@ public enum ABIResolutionError: Error, Sendable, Hashable {
             case argument(Int)
             case result
             case argumentCount
+            /// The implicit receiver, `self`.
+            case receiver
         }
 
         /// The original request, when the failure occurred during declaration lookup.

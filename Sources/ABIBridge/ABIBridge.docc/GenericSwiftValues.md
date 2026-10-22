@@ -127,7 +127,7 @@ Include native errors and async isolation in `as:`; see <doc:SwiftAsyncABI> and 
 
 ``NativeSwiftClosure`` adapts callback arguments, results, packs, effects, and ownership to the original generic declaration. Escaping copies retain their context and images. Initializers and setters transfer an independent owned context that survives the original wrapper. See <doc:SwiftClosureValues> for callback lifetimes, nonescaping bodies, and Swift 6.3 compiler guidance.
 
-Concrete positions use the ordinary adapter contract when `named:` supplies the complete declaration. A direct `T` uses the bound type's actual Swift storage and compiler-owned operations. If `T` is a bridge wrapper or a tuple of wrappers, the wrappers themselves are native data; their foreign conversions are not applied. A tuple declared with native runtime-value or function fields instead converts those fields through their handles.
+Concrete positions follow the wrapper rule of <doc:SwiftFunctionInvocation#Use-a-wrapper-with-a-complete-declaration> when `named:` supplies the complete declaration. A direct `T` uses the bound type's actual Swift storage and compiler-owned operations. If `T` is a bridge wrapper or a tuple of wrappers, the wrappers themselves are native data; their foreign conversions are not applied. A tuple declared with native runtime-value or function fields instead converts those fields through their handles.
 
 Use ownership wrappers to match the parameter convention. Inout writeback and cleanup also run on native error paths; see <doc:SwiftArgumentConventions>.
 

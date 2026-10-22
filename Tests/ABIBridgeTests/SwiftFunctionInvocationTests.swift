@@ -1,4 +1,5 @@
 import ABIBridge
+import ABIBridgeTestSupport
 import CoreGraphics
 import Foundation
 import Testing
@@ -32,6 +33,17 @@ import Testing
 @inline(never) public func swiftABIAnswer() -> Int32 { 42 }
 @inline(never) public func swiftABINegative(_ value: Int8) -> Int8 { value - 1 }
 @inline(never) public func swiftABINegate(_ value: Bool) -> Bool { !value }
+@inline(never) public func swiftABIPointSum(_ point: (Double, Double)) -> Double {
+    point.0 + point.1
+}
+@inline(never) public func swiftABIPairSum(_ pair: (Int32, Int32)) -> Int32 { pair.0 &+ pair.1 }
+@inline(never) public func swiftABIApplyForeignPair(
+    _ pair: (@convention(c) (Int64) -> Int64, Int64)
+) -> Int64 { pair.0(pair.1) }
+public typealias SwiftABIForeignBody = @convention(c) (Int64) -> Int64
+@inline(never) public func swiftABIMakeForeignPair() -> (SwiftABIForeignBody?, Int64) {
+    ({ $0 * 2 }, 21)
+}
 @inline(never) public func swiftABIString(_ value: String) -> String { value + "!" }
 @inline(never) public func swiftABIImportedObject(_ value: NSString) -> NSString { value }
 @inline(never) public func swiftABIOptionalImportedObject(_ value: NSString?) -> NSString? { value }
@@ -157,7 +169,68 @@ private final class ForeignSwiftFour: ABIBridgeValue {
     static func nativeValue(from value: ForeignSwiftFour) -> NativeValue { value.storage }
 }
 
+/// Formally indirect stand-ins for a resilient one-word value and a
+/// five-word value.
+private struct IndirectWord: ABIBridgeSwiftValue {
+    var value: Int64
+    static var swiftABIType: NativeType { try! .opaque(named: "IndirectWord") }
+}
+private struct IndirectBlock: ABIBridgeSwiftValue {
+    var a, b, c, d, e: Int64
+    static var swiftABIType: NativeType { try! .opaque(named: "IndirectBlock") }
+}
+
 struct SwiftFunctionInvocationTests {
+    #if os(macOS)
+    @Test func completeNamesKeepTheRoleOfEachResultAddress() async throws {
+        let module = "ResultRoles_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
+        let library = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                public struct Token {
+                    public var value: Int64
+                }
+                @inline(never) public func tokenAndWords() -> (Token, Int64, Int64, Int64, Int64, Int64) {
+                    (Token(value: 7), 1, 2, 3, 4, 5)
+                }
+                """,
+            linkArguments: ["-enable-library-evolution"]
+        )
+        defer { library.cleanup() }
+        let runtime = ABIRuntime()
+        let token = try await runtime.resolveSwiftType(
+            named: module + ".Token",
+            in: .path(library.libraryURL)
+        )
+        let valueABIs: [NativeSwiftType: NativeType] = [token: try .opaque(named: token.name)]
+        let name =
+            "\(module).tokenAndWords() -> (\(module).Token, Swift.Int64, Swift.Int64, Swift.Int64, Swift.Int64, Swift.Int64)"
+        // The token's output passes as an ordinary pointer, and the five words
+        // as the indirect result.
+        let call = try await runtime.resolveSwiftFunction(
+            named: name,
+            as: (() -> (IndirectWord, Int64, Int64, Int64, Int64, Int64)).self,
+            valueABIs: valueABIs,
+            in: .path(library.libraryURL)
+        )
+        let (word, a, b, c, d, e) = try unsafe call.unsafeInvoke()
+        #expect([word.value, a, b, c, d, e] == [7, 1, 2, 3, 4, 5])
+        // Two outputs pass as two ordinary pointers, which leaves the indirect
+        // result unset.
+        do {
+            _ = try await runtime.resolveSwiftFunction(
+                named: name,
+                as: (() -> (IndirectWord, IndirectBlock)).self,
+                valueABIs: valueABIs,
+                in: .path(library.libraryURL)
+            )
+            Issue.record("Two output addresses stood for an output and the indirect result")
+        } catch let ABIResolutionError.signatureMismatch(mismatch) {
+            #expect(mismatch.position == .result)
+        }
+    }
+    #endif
+
     @Test func labelOnlyLookupHandlesMixedNamedAndUnnamedArguments() async throws {
         for name in [
             "swiftABIMixedLabels(_:increment:)", "swiftABIAllNamed(value:increment:)",
@@ -239,6 +312,79 @@ struct SwiftFunctionInvocationTests {
         let output = try unsafe function.unsafeInvoke(input)
         let value = try unsafe output.storage.read(as: SwiftABIFour.self)
         #expect([value.a, value.b, value.c, value.d] == [2, 4, 6, 8])
+    }
+
+    @Test func completeNamesRejectHostTypesWithAnotherLowering() async throws {
+        let answer = "ABIBridgeTests.swiftABIAnswer() -> Swift.Int32"
+        func expectMismatch<Signature>(
+            _ name: String,
+            as signature: Signature.Type,
+            at position: ABIResolutionError.SignatureMismatch.Position
+        ) {
+            do {
+                _ = try ABIRuntime.shared.resolveSwiftFunctionAndWait(named: name, as: signature)
+                Issue.record("\(signature) resolved \(name)")
+            } catch let ABIResolutionError.signatureMismatch(mismatch) {
+                #expect(mismatch.position == position)
+            } catch {
+                Issue.record("Unexpected error: \(error)")
+            }
+        }
+        expectMismatch(answer, as: (() -> Double).self, at: .result)
+        expectMismatch(answer, as: (() -> Float).self, at: .result)
+        expectMismatch(answer, as: (() -> String).self, at: .result)
+        expectMismatch(
+            "ABIBridgeTests.swiftABINegative(Swift.Int8) -> Swift.Int8",
+            as: ((Double) -> Int8).self,
+            at: .argument(0)
+        )
+        // An adapter that the declaration lowers the same way still resolves.
+        let unsigned = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
+            named: answer,
+            as: (() -> UInt32).self
+        )
+        #expect(try unsafe unsigned.unsafeInvoke() == 42)
+    }
+
+    @Test func completeNamesCompareTheSlotsOfTupleParameters() throws {
+        // A tuple parameter expands into its elements, which a struct with the
+        // same fields puts in the same registers.
+        let sum = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
+            named: "ABIBridgeTests.swiftABIPointSum((Swift.Double, Swift.Double)) -> Swift.Double",
+            as: ((CGPoint) -> Double).self
+        )
+        #expect(try unsafe sum.unsafeInvoke(CGPoint(x: 1.5, y: 2.5)) == 4)
+        // Each Int32 element takes its own register, which one Int64 does not.
+        do {
+            _ = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
+                named: "ABIBridgeTests.swiftABIPairSum((Swift.Int32, Swift.Int32)) -> Swift.Int32",
+                as: ((Int64) -> Int32).self
+            )
+            Issue.record("An Int64 was accepted for two Int32 elements")
+        } catch let ABIResolutionError.signatureMismatch(mismatch) {
+            #expect(mismatch.position == .argument(0))
+        }
+    }
+
+    @Test func completeNamesLowerCFunctionPointersInsideTuples() throws {
+        typealias Body = @convention(c) (Int64) -> Int64
+        // A C function pointer passes as one pointer wherever a tuple holds it.
+        let apply = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
+            named:
+                "ABIBridgeTests.swiftABIApplyForeignPair((@convention(c) (Swift.Int64) -> Swift.Int64, Swift.Int64)) -> Swift.Int64",
+            as: (((UnsafeRawPointer, Int64)) -> Int64).self
+        )
+        let body: Body = { $0 + 21 }
+        let address = unsafeBitCast(body, to: UnsafeRawPointer.self)
+        #expect(try unsafe apply.unsafeInvoke((address, 21)) == 42)
+        let make = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
+            named:
+                "ABIBridgeTests.swiftABIMakeForeignPair() -> ((@convention(c) (Swift.Int64) -> Swift.Int64)?, Swift.Int64)",
+            as: (() -> (UnsafeRawPointer?, Int64)).self
+        )
+        let (pointer, value) = try unsafe make.unsafeInvoke()
+        let made = try #require(pointer)
+        #expect(unsafeBitCast(made, to: Body.self)(value) == 42)
     }
 
     @Test func immutableInterfaceCanBeUsedConcurrently() async throws {

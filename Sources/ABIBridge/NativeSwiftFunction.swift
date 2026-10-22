@@ -414,7 +414,11 @@ extension ABIRuntime {
                     declaredSignature: declaredSignature,
                     valueABIs: valueABIs
                 )
-                if !complete { try plan.check(description) }
+                if complete {
+                    try plan.checkLowerings(description)
+                } else {
+                    try plan.check(description)
+                }
                 return plan
             }
         }

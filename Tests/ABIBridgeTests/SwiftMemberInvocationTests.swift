@@ -35,6 +35,7 @@ public class SwiftMemberRenderer {
     @inline(never) public func render(_ value: Int) -> Int { value + text.count }
     public static var standard: String { "standard" }
     @inline(never) public static func decorate(_ text: String) -> String { text + "!" }
+    @inline(never) public static func answer() -> Int32 { 42 }
 }
 
 public final class SwiftMemberDerived: SwiftMemberRenderer {}
@@ -182,6 +183,49 @@ extension NativeValue {
 
 struct SwiftMemberInvocationTests {
     #if os(macOS)
+    @Test func protocolExtensionReceiversPassRepresentationsAsIndirectSelf() async throws {
+        let module = "IndirectSelf_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
+        let library = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                public protocol Valued {
+                    var value: Int64 { get }
+                }
+                extension Valued {
+                    @inline(never) public func doubled() -> Int64 { value * 2 }
+                }
+                public struct Counter: Valued {
+                    public var value: Int64
+                }
+                """,
+            linkArguments: ["-enable-library-evolution"]
+        )
+        defer { library.cleanup() }
+        let runtime = ABIRuntime()
+        let member = "(extension in \(module)):\(module).Valued.doubled() -> Swift.Int64"
+        // The extension takes Self by address, so the representation's storage
+        // stands for the resilient value.
+        let counter = try await runtime.resolveSwiftType(
+            named: module + ".Counter",
+            as: Int64.self,
+            in: .path(library.libraryURL)
+        )
+        let doubled = try await counter.resolveMethod(named: member, as: (() -> Int64).self)
+        #expect(try unsafe doubled.unsafeInvoke(on: Int64(21)) == 42)
+        // Storage smaller than the value cannot stand for it.
+        let narrow = try await runtime.resolveSwiftType(
+            named: module + ".Counter",
+            as: Int32.self,
+            in: .path(library.libraryURL)
+        )
+        do {
+            _ = try await narrow.resolveMethod(named: member, as: (() -> Int64).self)
+            Issue.record("Four bytes stood for an eight-byte Self")
+        } catch let ABIResolutionError.signatureMismatch(mismatch) {
+            #expect(mismatch.position == .receiver)
+        }
+    }
+
     @Test func protocolRequirementGettersUseTheReceiversConformance() async throws {
         let module = "ProtocolGetter_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
         let library = try FixtureLibrary(
@@ -1322,6 +1366,48 @@ struct SwiftMemberInvocationTests {
             as: ((Int64) -> SwiftMemberPoint).self
         )
         #expect(try unsafe pointInitializer.unsafeInvoke(42).value == 42)
+    }
+
+    @Test func completeMemberNamesRejectHostTypesWithAnotherLowering() throws {
+        let type = try ABIRuntime.shared.resolveSwiftTypeAndWait(
+            named: "ABIBridgeTests.SwiftMemberRenderer"
+        )
+        do {
+            _ = try type.resolveStaticMethodAndWait(
+                named: "answer() -> Swift.Int32",
+                as: (() -> Double).self
+            )
+            Issue.record("A Double result was accepted for Swift.Int32")
+        } catch let ABIResolutionError.signatureMismatch(mismatch) {
+            #expect(mismatch.position == .result)
+        }
+        do {
+            _ = try type.resolveMethodAndWait(
+                named: "render(Swift.Int) -> Swift.Int",
+                as: ((Double) -> Int).self
+            )
+            Issue.record("A Double argument was accepted for Swift.Int")
+        } catch let ABIResolutionError.signatureMismatch(mismatch) {
+            #expect(mismatch.position == .argument(0))
+        }
+        let answer = try type.resolveStaticMethodAndWait(
+            named: "answer() -> Swift.Int32",
+            as: (() -> UInt32).self
+        )
+        #expect(try unsafe answer.unsafeInvoke() == 42)
+    }
+
+    @Test func receiverRepresentationsMustPassAsSelf() throws {
+        let type = try ABIRuntime.shared.resolveSwiftTypeAndWait(
+            named: "ABIBridgeTests.SwiftMemberPoint",
+            as: Double.self
+        )
+        do {
+            _ = try type.resolveMethodAndWait(named: "read(_:)", as: ((Int64) -> Int64).self)
+            Issue.record("A Double representation was accepted for an Int64 receiver")
+        } catch let ABIResolutionError.signatureMismatch(mismatch) {
+            #expect(mismatch.position == .receiver)
+        }
     }
 
     @MainActor @Test func boundSwiftMethodsRetainTheirReceiver() throws {
