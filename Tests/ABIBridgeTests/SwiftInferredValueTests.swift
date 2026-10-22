@@ -385,6 +385,107 @@ struct SwiftInferredValueTests {
         )
     }
 
+    /// `Data` sets the addressable bit for itself, whatever it stores, so
+    /// the bit does not show whether it is resilient, and neither it nor a
+    /// value that stores it is inferred.
+    @Test func selfAddressableTypesStayUndecided() async throws {
+        let (library, module) = try provider(
+            """
+            import Foundation
+            @frozen public struct DataBox {
+                public var data: Data
+                public var n: Int64
+                public init(data: Data, n: Int64) { self.data = data; self.n = n }
+            }
+            @inline(never) public func dataCount(_ d: Data) -> Int { d.count }
+            @inline(never) public func makeData(_ n: Int) -> Data { Data(repeating: 1, count: n) }
+            @inline(never) public func makeDataBox() -> DataBox { DataBox(data: Data([1, 2, 3]), n: 4) }
+            """
+        )
+        defer { library.cleanup() }
+        let evidence = "its own @_addressableForDependencies attribute explains"
+        await expectFailure(
+            module + ".dataCount(_:)",
+            in: library,
+            as: ((Data) -> Int).self,
+            naming: evidence
+        )
+        await expectFailure(
+            module + ".makeData(_:)",
+            in: library,
+            as: ((Int) -> Data).self,
+            naming: evidence
+        )
+        await expectFailure(
+            module + ".makeDataBox()",
+            in: library,
+            as: (() -> NativeSwiftValue).self,
+            naming: evidence
+        )
+    }
+
+    /// An Optional or tuple field explains the addressable bit through the
+    /// values it holds, which leaves these frozen structs undecided rather
+    /// than resilient.
+    @Test func optionalAndTupleFieldsExplainTheAddressableBit() async throws {
+        let (library, module) = try provider(
+            """
+            @frozen public struct OptionalText {
+                public var text: String?
+                public var n: Int64
+                public init() { text = "o"; n = 1 }
+            }
+            @frozen public struct TupleText {
+                public var pair: (String, Int64)
+                public init() { pair = ("t", 2) }
+            }
+            @inline(never) public func makeOptionalText() -> OptionalText { OptionalText() }
+            @inline(never) public func makeTupleText() -> TupleText { TupleText() }
+            """,
+            arguments: ["-enable-library-evolution"]
+        )
+        defer { library.cleanup() }
+        for (make, field) in [
+            ("makeOptionalText()", "text: Swift.Optional<Swift.String>"),
+            ("makeTupleText()", "pair: (Swift.String, Swift.Int64)"),
+        ] {
+            await expectFailure(
+                "\(module).\(make)",
+                in: library,
+                as: (() -> NativeSwiftValue).self,
+                naming: "its field `\(field)` explains"
+            )
+        }
+    }
+
+    /// A library that exports its public types' descriptors but not a type's
+    /// shows that the type is not public, so it is not resilient.
+    @Test func unexportedTypesOfLibrariesAreNotResilient() async throws {
+        let (library, module) = try provider(
+            """
+            public struct Visible {
+                public var x: Int64
+                public init() { x = 1 }
+            }
+            struct Hidden {
+                var text: String
+                var n: Int64
+            }
+            @inline(never) func makeHidden() -> Hidden { Hidden(text: "h", n: 9) }
+            @inline(never) func describeHidden(_ h: Hidden) -> String { "\\(h.text),\\(h.n)" }
+            """,
+            arguments: ["-enable-library-evolution"]
+        )
+        defer { library.cleanup() }
+        #expect(
+            try await describeMade(
+                module + ".makeHidden()",
+                module + ".describeHidden(_:)",
+                in: library
+            ) == "h,9"
+        )
+    }
+
     /// Another module's extension of a library-evolution module's types
     /// exports symbols in that module's context, and a link can hide the
     /// module's own symbols. Neither shows how the module was built or which

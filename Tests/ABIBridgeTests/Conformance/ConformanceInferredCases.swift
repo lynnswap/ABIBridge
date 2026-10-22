@@ -327,15 +327,41 @@ extension ConformanceCase {
                     CMDated(date: d.date.addingTimeInterval(Double(n)), n: d.n + n)
                 }
                 @inline(never) public func cmDescribeDated(_ d: CMDated) -> String { "\\(d.date.timeIntervalSince1970),\\(d.n)" }
+                @frozen public struct CMMeasured {
+                    public var length: Measurement<UnitLength>
+                    public var n: Int64
+                    public init(length: Measurement<UnitLength>, n: Int64) { self.length = length; self.n = n }
+                }
+                @inline(never) public func cmMakeMeasured() -> CMMeasured {
+                    CMMeasured(length: Measurement(value: 2, unit: .meters), n: 4)
+                }
+                @inline(never) public func cmBumpMeasured(_ m: CMMeasured, _ n: Int64) -> CMMeasured {
+                    CMMeasured(length: Measurement(value: m.length.value + Double(n), unit: m.length.unit), n: m.n + n)
+                }
+                @inline(never) public func cmDescribeMeasured(_ m: CMMeasured) -> String {
+                    "\\(m.length.value)\\(m.length.unit.symbol),\\(m.n)"
+                }
                 """,
-            oracle: "return cmDescribeDated(cmBumpDated(cmMakeDated(), 3))"
+            oracle: """
+                return cmDescribeDated(cmBumpDated(cmMakeDated(), 3)) + "|"
+                    + cmDescribeMeasured(cmBumpMeasured(cmMakeMeasured(), 3))
+                """
         ) { f in
+            // Date is resilient by its own value witnesses. A generic
+            // Measurement does not show whether it is resilient, so only the
+            // runtime initialization of CMMeasured's layout decides it.
             try await describeTransformed(
                 f,
                 "cmMakeDated()",
                 "cmBumpDated(_:_:)",
                 "cmDescribeDated(_:)"
-            )
+            ) + "|"
+                + describeTransformed(
+                    f,
+                    "cmMakeMeasured()",
+                    "cmBumpMeasured(_:_:)",
+                    "cmDescribeMeasured(_:)"
+                )
         },
         ConformanceCase(
             id: "value.largeFrozen.inferred",
@@ -360,6 +386,7 @@ extension ConformanceCase {
         ConformanceCase(
             id: "value.addressOnlyField.inferred",
             provider: """
+                import Foundation
                 public let cmSharedBox = CMBox(11)
                 @frozen public struct CMWeakHolder {
                     public weak var box: CMBox?
@@ -383,12 +410,28 @@ extension ConformanceCase {
                     CMAnyHolder(item: h.item.value() + n, n: h.n)
                 }
                 @inline(never) public func cmDescribeAnyHolder(_ h: CMAnyHolder) -> String { "\\(h.item.value()),\\(h.n)" }
+                nonisolated(unsafe) public let cmSharedOwner = NSObject()
+                @frozen public struct CMUnownedHolder {
+                    public unowned let owner: NSObject
+                    public var n: Int64
+                    public init(owner: NSObject, n: Int64) { self.owner = owner; self.n = n }
+                }
+                @inline(never) public func cmMakeUnownedHolder() -> CMUnownedHolder { CMUnownedHolder(owner: cmSharedOwner, n: 5) }
+                @inline(never) public func cmBumpUnownedHolder(_ h: CMUnownedHolder, _ n: Int64) -> CMUnownedHolder {
+                    CMUnownedHolder(owner: h.owner, n: h.n + n)
+                }
+                @inline(never) public func cmDescribeUnownedHolder(_ h: CMUnownedHolder) -> String {
+                    "\\(h.owner === cmSharedOwner),\\(h.n)"
+                }
                 """,
             oracle: """
                 return cmDescribeWeakHolder(cmBumpWeakHolder(cmMakeWeakHolder(), 3)) + "|"
-                    + cmDescribeAnyHolder(cmBumpAnyHolder(cmMakeAnyHolder(), 3))
+                    + cmDescribeAnyHolder(cmBumpAnyHolder(cmMakeAnyHolder(), 3)) + "|"
+                    + cmDescribeUnownedHolder(cmBumpUnownedHolder(cmMakeUnownedHolder(), 3))
                 """
         ) { f in
+            // An unowned reference to an Objective-C object is not bitwise
+            // takable, which makes its holder address-only.
             try await describeTransformed(
                 f,
                 "cmMakeWeakHolder()",
@@ -400,6 +443,12 @@ extension ConformanceCase {
                     "cmMakeAnyHolder()",
                     "cmBumpAnyHolder(_:_:)",
                     "cmDescribeAnyHolder(_:)"
+                ) + "|"
+                + describeTransformed(
+                    f,
+                    "cmMakeUnownedHolder()",
+                    "cmBumpUnownedHolder(_:_:)",
+                    "cmDescribeUnownedHolder(_:)"
                 )
         },
         ConformanceCase(
@@ -448,11 +497,14 @@ extension ConformanceCase {
                 extension CMWide5 {
                     @inline(never) public func cmSum() -> Int64 { a + b + c + d + e }
                 }
+                extension CMWide {
+                    @inline(never) public func cmTotal() -> Int64 { a + b + c }
+                }
                 """,
             oracle: """
                 var point = cmMakePoint()
                 point.cmScale(3)
-                return "\\(point.cmSum())|\\(cmDescribePoint(point))|\\(cmMakeOpenPoint().cmSum())|\\(cmMakeWide5().cmSum())"
+                return "\\(point.cmSum())|\\(cmDescribePoint(point))|\\(cmMakeOpenPoint().cmSum())|\\(cmMakeWide5().cmSum())|\\(cmMakeWide().cmTotal())"
                 """
         ) { f in
             let point = try await f.type("CMPoint")
@@ -480,6 +532,13 @@ extension ConformanceCase {
                 as: (() -> NativeSwiftValue).self
             )
             let wide = try await f.function("cmMakeWide5()", as: (() -> NativeSwiftValue).self)
+            // Evolution variants do not record whether CMWide is frozen, but
+            // its frozen lowering already passes self by address.
+            let total = try await f.type("CMWide").resolveMethod(
+                named: "cmTotal()",
+                as: (() -> Int64).self
+            )
+            let undecided = try await f.function("cmMakeWide()", as: (() -> NativeSwiftValue).self)
             let value = try unsafe make.unsafeInvoke()
             try unsafe scale.unsafeInvoke(on: value, 3)
             return try unsafe [
@@ -487,6 +546,7 @@ extension ConformanceCase {
                 text.unsafeInvoke(value),
                 describe(openSum.unsafeInvoke(on: openPoint.unsafeInvoke())),
                 describe(wideSum.unsafeInvoke(on: wide.unsafeInvoke())),
+                describe(total.unsafeInvoke(on: undecided.unsafeInvoke())),
             ].joined(separator: "|")
         },
         ConformanceCase(
