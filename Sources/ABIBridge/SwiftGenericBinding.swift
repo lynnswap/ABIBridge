@@ -1525,12 +1525,17 @@ struct SwiftGenericBinding: Sendable {
         }
         let canonical = try canonicalType(of: formal)
         if case .tuple = canonical {
-            let plan = try SwiftGenericCallPlan.tuple(canonical, actual: actual, binding: self)
+            let plan = try SwiftGenericCallPlan.tuple(
+                canonical,
+                actual: actual,
+                binding: self,
+                position: .result
+            )
             try plan.validateOwnedResult()
             return plan.nativeMetadata
         }
         if try closureFunction(canonical, for: actual) != nil {
-            try validateArgument(actual, for: canonical)
+            try validateArgument(actual, for: canonical, position: .result)
             return try types(canonical)[0]
         }
         let optional = actual as? any NativeOptionalValue.Type
@@ -1624,7 +1629,7 @@ struct SwiftGenericBinding: Sendable {
                     "Tuple elements require their native Swift storage representation."
                 )
             }
-            return try SwiftValueCodec<Element>().type
+            return try SwiftValueSchema.host(Element.self, position: .nested).type
         }
         let fields = try tuple.elements.map { try _openExistential($0.type, do: field) }
         func layout<Value>(_ value: Value.Type) throws -> CValueType {
@@ -1750,7 +1755,7 @@ struct SwiftGenericBinding: Sendable {
     func validateArgument(
         _ actual: Any.Type,
         for formal: SwiftFormalType,
-        position: SwiftValuePosition = .parameter
+        position: SwiftValuePosition
     ) throws {
         if let (function, closure) = try closureFunction(formal, for: actual) {
             _ = try SwiftGenericCallPlan.closure(

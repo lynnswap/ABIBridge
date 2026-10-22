@@ -316,7 +316,7 @@ struct SwiftCallbackTests {
             as: ((AnyObject, String) -> String).self,
             in: fixture.callerScope
         )
-        let string = try SwiftValueCodec<String>().type
+        let string = try SwiftValueSchema.host(String.self, position: .parameter).type
         let destructions = Mutex(0)
         let box = SwiftCallbackTestBox(destroyResult: { pointer in
             pointer.assumingMemoryBound(to: String.self).deinitialize(count: 1)
@@ -731,7 +731,7 @@ struct SwiftCallbackTests {
             as: ((AnyObject, String) -> String).self,
             in: fixture.callerScope
         )
-        let string = try SwiftValueCodec<String>().type, state = CallbackReentryState()
+        let string = try SwiftValueSchema.host(String.self, position: .parameter).type, state = CallbackReentryState()
         let reentrant = String(repeating: "reentrant", count: 100)
         let box = SwiftCallbackTestBox(destroyResult: { pointer in
             if let call = state.call, !state.destroying {

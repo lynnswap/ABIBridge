@@ -30,7 +30,9 @@ func swiftClosureAuthType(_ type: Any.Type, position: SwiftValuePosition) throws
     var payload = type
     while let optional = payload as? any NativeOptionalValue.Type { payload = optional.wrappedType }
     if type is any NativeOptionalValue.Type, !RuntimeFunctionMetadata.isSwiftFunction(payload) {
-        func layout<Value>(_: Value.Type) throws -> CValueType { try SwiftValueCodec<Value>().type }
+        func layout<Value>(_: Value.Type) throws -> CValueType {
+            try SwiftValueCodec<Value>(position: .nested).type
+        }
         if swiftClosureHashesIndirectly(try _openExistential(type, do: layout), at: position) {
             return "-indirect"
         }

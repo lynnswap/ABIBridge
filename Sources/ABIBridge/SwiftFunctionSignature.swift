@@ -218,7 +218,8 @@ struct SwiftCallValues: Sendable {
                 let codec = try SwiftArgumentCodec<Value>(
                     defaultConsuming: consuming,
                     generic: argument,
-                    asynchronous: signature.isAsync
+                    asynchronous: signature.isAsync,
+                    position: .parameter
                 )
                 return Argument(
                     type: codec.type,
@@ -649,7 +650,7 @@ struct SwiftCallbackValues: Sendable {
         if !usesSwiftStorage, base is any ABIBridgeValue.Type,
             !(base is any ABIBridgeSwiftValue.Type)
         {
-            let codec = try SwiftValueCodec<Value>()
+            let codec = try SwiftValueCodec<Value>(position: .parameter)
             return { address, scope in
                 let storage = NativeValueStorage(borrowing: address, owner: scope)
                 return try codec.copy(from: storage, retaining: storage)

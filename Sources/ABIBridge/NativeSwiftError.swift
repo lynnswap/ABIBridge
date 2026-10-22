@@ -102,7 +102,7 @@ struct SwiftErrorPlan: Sendable {
                     "Typed native errors need their actual Swift representation; foreign conversion adapters are not supported."
                 )
             }
-            let codec = try SwiftValueCodec<Failure>()
+            let codec = try SwiftValueCodec<Failure>(position: .nested)
             type = codec.type
             makeStorage = { codec.makeStorage() }
             decode = { try codec.decode($0, retaining: nil) }

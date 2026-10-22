@@ -101,7 +101,7 @@ struct SwiftTupleValuePlan: Sendable {
             result: SwiftGenericResult,
             tuple: SwiftTupleValuePlan? = nil,
             nativeClosure: SwiftGenericClosurePlan? = nil,
-            position: SwiftValuePosition = .nested
+            position: SwiftValuePosition
         ) throws {
             self.hostType = hostType; self.nativeType = nativeType
             self.hostOffset = hostOffset; self.nativeOffset = nativeOffset
