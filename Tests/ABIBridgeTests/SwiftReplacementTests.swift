@@ -17,11 +17,13 @@ final class CompiledSwiftReplacementFixture {
     init(
         interposable: Bool = false,
         writable: Bool = true,
+        libraryEvolution: Bool = false,
         providerExtra: String = "",
         callerExtra: String = ""
     ) throws {
         // Writable linking is confined to this disposable validation library.
         let writableFlags = writable ? ["-Xlinker", "-no_data_const"] : []
+        let evolutionFlags = libraryEvolution ? ["-enable-library-evolution"] : []
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
             .deletingLastPathComponent()
             .appendingPathComponent("ArchitectureValidation/Sources")
@@ -33,7 +35,8 @@ final class CompiledSwiftReplacementFixture {
             load: false,
             swiftModule: module,
             swiftSource: source + "\n" + providerExtra,
-            linkArguments: ["-O", "-swift-version", "6", "-emit-module"] + writableFlags
+            linkArguments: ["-O", "-swift-version", "6", "-emit-module"] + evolutionFlags
+                + writableFlags
         )
         if interposable {
             let declaration = module + ".scalar(Swift.Int64) -> Swift.Int64"

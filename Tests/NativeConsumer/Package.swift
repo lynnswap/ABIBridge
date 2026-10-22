@@ -63,6 +63,10 @@ let package = Package(
             dependencies: [.product(name: "ABIBridge", package: "ABIBridge")]
         ),
         .executableTarget(
+            name: "SwiftResultLayoutConsumer",
+            dependencies: [.product(name: "ABIBridge", package: "ABIBridge")]
+        ),
+        .executableTarget(
             name: "ObjCInspectionConsumer",
             dependencies: [.product(name: "ABIBridge", package: "ABIBridge")],
             cxxSettings: [.unsafeFlags(["-fobjc-arc"])],

@@ -49,3 +49,53 @@ public enum BoxNamespace {
 @inline(never) public func applyUnicodeBox(
     _ callback: (箱<Int64>) -> 箱<Int64>, _ value: 箱<Int64>
 ) -> 箱<Int64> { callback(value) }
+
+// Two elements return indirectly, and the five Int64 elements form a direct
+// part too large for registers, so the compiler passes no result in the
+// indirect-result register.
+@inline(never) public func indirectRecordsAndWords(
+    _ first: IndirectRecord,
+    _ second: IndirectRecord
+) -> (IndirectRecord, Int64, IndirectRecord, Int64, Int64, Int64, Int64) {
+    (first.advanced(1), 10, second.advanced(2), 20, 30, 40, 50)
+}
+@inline(never) public func applyIndirectRecordsAndWords(
+    _ body: (IndirectRecord, IndirectRecord) -> (
+        IndirectRecord, Int64, IndirectRecord, Int64, Int64, Int64, Int64
+    ),
+    _ first: IndirectRecord,
+    _ second: IndirectRecord
+) -> (IndirectRecord, Int64, IndirectRecord, Int64, Int64, Int64, Int64) {
+    let (a, b, c, d, e, f, g) = body(first, second)
+    return (a.advanced(100), b + 1, c.advanced(100), d + 1, e + 1, f + 1, g + 1)
+}
+@inline(never) public func makeIndirectRecordsAndWordsClosure(
+    _ amount: Int64
+) -> (IndirectRecord, IndirectRecord) -> (
+    IndirectRecord, Int64, IndirectRecord, Int64, Int64, Int64, Int64
+) {
+    {
+        (
+            $0.advanced(amount), amount, $1.advanced(amount * 2), amount + 1, amount + 2,
+            amount + 3, amount + 4
+        )
+    }
+}
+@inline(never) public func asyncIndirectRecordsAndWords(
+    _ first: IndirectRecord,
+    _ second: IndirectRecord
+) async -> (IndirectRecord, Int64, IndirectRecord, Int64, Int64, Int64, Int64) {
+    await Task.yield()
+    return (first.advanced(1), 10, second.advanced(2), 20, 30, 40, 50)
+}
+@inline(never) public func applyAsyncIndirectRecordsAndWords(
+    _ body:
+        @Sendable (IndirectRecord, IndirectRecord) async -> (
+            IndirectRecord, Int64, IndirectRecord, Int64, Int64, Int64, Int64
+        ),
+    _ first: IndirectRecord,
+    _ second: IndirectRecord
+) async -> (IndirectRecord, Int64, IndirectRecord, Int64, Int64, Int64, Int64) {
+    let (a, b, c, d, e, f, g) = await body(first, second)
+    return (a.advanced(100), b + 1, c.advanced(100), d + 1, e + 1, f + 1, g + 1)
+}
