@@ -160,6 +160,8 @@ For a native `increment:` taking `Int64`, this example reports `.argument(0)`, `
 
 Match `signatureMismatch(let details)` to access this payload. Errors from standalone value-layout checks can have a nil `declaration`.
 
+To report a failure without matching its case, show the error's `localizedDescription`. It names the declaration or image and the details the case carries. For the mismatch above on a `Counter` receiver, it reads `-[Counter increment:] does not match the requested signature at argument 0: expected Swift.Double, found q.`
+
 ## Read an object ivar
 
 Use the literal runtime ivar name, including any underscore; this is not a property getter or a key-value coding lookup:

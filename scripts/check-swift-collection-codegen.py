@@ -14,6 +14,7 @@ def run(*arguments):
 def main():
     root = Path(__file__).resolve().parent.parent
     output = root / ".build/swift-collection-codegen"
+    fixtures = sorted(str(path) for path in (root / "Tests/ManagedSwiftFixtures").glob("*.swift"))
     reports = []
     for target, sdk_name, bits in [
         ("arm64-apple-macos15.4", "macosx", 64),
@@ -24,11 +25,10 @@ def main():
         directory.mkdir(parents=True, exist_ok=True)
         sdk = run("xcrun", "--sdk", sdk_name, "--show-sdk-path").strip()
         ir_path = directory / "collections.ll"
-        run("xcrun", "swiftc", "-swift-version", "6", "-parse-as-library", "-Onone",
-            "-whole-module-optimization", "-enable-library-evolution",
+        run("xcrun", "swiftc", "-swift-version", "6", "-enable-experimental-feature", "Lifetimes",
+            "-parse-as-library", "-Onone", "-whole-module-optimization", "-enable-library-evolution",
             "-module-name", "ManagedSwiftFixtures", "-target", target, "-sdk", sdk,
-            "-emit-ir", str(root / "Tests/ManagedSwiftFixtures/Values.swift"),
-            str(root / "Tests/ManagedSwiftFixtures/Collections.swift"), "-o", str(ir_path))
+            "-emit-ir", *fixtures, "-o", str(ir_path))
         ir = ir_path.read_text()
         word = f"i{bits}"
         string_words = 2 if bits == 64 else 3

@@ -160,6 +160,7 @@ extension ABIResolutionError.SignatureMismatch {
             case .argument(let index): .argument(index)
             case .result: .result
             case .argumentCount: .argumentCount
+            case .receiver: .receiver
             }
         self.init(
             declaration: value.declaration.map(NativeDeclaration.init),
@@ -167,5 +168,44 @@ extension ABIResolutionError.SignatureMismatch {
             expected: value.expected,
             found: value.found
         )
+    }
+    var runtimeValue: RuntimeResolutionError.SignatureMismatch {
+        let position: RuntimeResolutionError.SignatureMismatch.Position =
+            switch self.position {
+            case .signature: .signature
+            case .argument(let index): .argument(index)
+            case .result: .result
+            case .argumentCount: .argumentCount
+            case .receiver: .receiver
+            }
+        return .init(
+            declaration: declaration?.runtimeValue,
+            position: position,
+            expected: expected,
+            found: found
+        )
+    }
+}
+extension ABIResolutionError {
+    var runtimeValue: RuntimeResolutionError {
+        switch self {
+        case .imageUnavailable: .imageUnavailable
+        case .imageNotLoaded: .imageNotLoaded
+        case .imageLoadFailed(let target, let message):
+            .imageLoadFailed(target: target, message: message)
+        case .ambiguousImage(let candidates): .ambiguousImage(candidates: candidates)
+        case .invalidImageTarget(let target): .invalidImageTarget(target)
+        case .declarationNotFound(let declaration):
+            .declarationNotFound(declaration.runtimeValue)
+        case .ivarNotFound(let name, let className):
+            .ivarNotFound(name: name, className: className)
+        case .ambiguousDeclaration(let declaration, let candidates):
+            .ambiguousDeclaration(declaration.runtimeValue, candidates: candidates)
+        case .signatureMismatch(let mismatch): .signatureMismatch(mismatch.runtimeValue)
+        case .unsupportedDeclaration(let message): .unsupportedDeclaration(message)
+        case .metadataUnavailable(let message): .metadataUnavailable(message)
+        case .imageChanged: .imageChanged
+        case .invalidAddress: .invalidAddress
+        }
     }
 }
