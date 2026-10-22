@@ -7,15 +7,13 @@ import subprocess
 
 
 def run(*args):
-    result = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if result.returncode:
-        raise RuntimeError(result.stdout)
-    return result.stdout
+    return subprocess.check_output(args, text=True)
 
 
 def main():
     root = Path(__file__).resolve().parent.parent
     output = root / '.build/swiftui-codegen'
+    fixtures = sorted(str(path) for path in (root / 'Tests/ArchitectureValidation/Sources/SwiftUIFixtures').glob('*.swift'))
     reports = []
     for target, sdk_name, word in [('arm64-apple-macos15.4', 'macosx', 'i64'),
                                    ('arm64e-apple-ios18.4', 'iphoneos', 'i64'), ('arm64_32-apple-watchos11.4', 'watchos', 'i32')]:
@@ -23,8 +21,7 @@ def main():
         directory.mkdir(parents=True, exist_ok=True)
         sdk = run('xcrun', '--sdk', sdk_name, '--show-sdk-path').strip()
         common = ['xcrun', 'swiftc', '-swift-version', '6', '-parse-as-library', '-Onone', '-target', target, '-sdk', sdk]
-        run(*common, '-enable-library-evolution', '-module-name', 'SwiftUIFixtures', '-emit-module',
-            str(root / 'Tests/ArchitectureValidation/Sources/SwiftUIFixtures/Provider.swift'),
+        run(*common, '-enable-library-evolution', '-module-name', 'SwiftUIFixtures', '-emit-module', *fixtures,
             '-emit-module-path', str(directory / 'SwiftUIFixtures.swiftmodule'))
         run(*common, '-I', str(directory), '-emit-ir',
             str(root / 'Tests/ArchitectureValidation/CompilerProbes/SwiftUI.swift'), '-o', str(directory / 'caller.ll'))

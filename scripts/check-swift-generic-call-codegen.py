@@ -31,6 +31,7 @@ def main():
         digest = hashlib.sha256((vendor / "Upstream" / source["path"]).read_bytes()).hexdigest()
         require(digest == source["sha256"], f"The upstream demangler snapshot changed: {source['path']}")
     output = root / ".build/swift-generic-call-codegen"
+    fixtures = sorted(str(path) for path in (root / "Tests/ManagedSwiftFixtures").glob("*.swift"))
     targets = []
     for target, sdk_name in [
         ("arm64-apple-macos15.4", "macosx"),
@@ -74,11 +75,9 @@ def main():
         require("ptr %Value.Score" in declared_entries["False"] and "ptr %Value.Score" not in declared_entries["True"]
                 and all("ptr %Failure.Error" in entry for entry in declared_entries.values()),
                 f"{target}: superclass conformance visibility changes the witnesses before typed-error output")
-        provider = root / "Tests/ManagedSwiftFixtures"
-        run(*common, "-enable-library-evolution", "-module-name", "ManagedSwiftFixtures", "-emit-module",
-            str(provider / "RuntimeValues.swift"), str(provider / "GenericCalls.swift"),
-            str(provider / "Values.swift"), str(provider / "ExplicitValues.swift"),
-            "-emit-module-path", str(directory / "ManagedSwiftFixtures.swiftmodule"))
+        provider = [*common, "-enable-library-evolution", "-enable-experimental-feature", "Lifetimes",
+                    "-whole-module-optimization", "-module-name", "ManagedSwiftFixtures", *fixtures]
+        run(*provider, "-emit-module", "-emit-module-path", str(directory / "ManagedSwiftFixtures.swiftmodule"))
         source = root / "Tests/ManagedSwiftAdapters/GenericCallAdapters.swift"
         ir_path = directory / "calls.ll"
         sil_path = directory / "calls.sil"
@@ -168,10 +167,7 @@ def main():
         require("@out Value" in sil and "@in_guaranteed RuntimeRecord" in sil,
                 f"{target}: missing formal generic/resilient SIL conventions")
         value_ir_path = directory / "values.ll"
-        run(*common, "-enable-library-evolution", "-whole-module-optimization", "-module-name", "ManagedSwiftFixtures",
-            "-emit-ir", str(provider / "Generics.swift"), str(provider / "Values.swift"),
-            str(provider / "GenericCalls.swift"), str(provider / "RuntimeValues.swift"),
-            str(provider / "ExplicitValues.swift"), "-o", str(value_ir_path))
+        run(*provider, "-emit-ir", "-o", str(value_ir_path))
         value_ir = value_ir_path.read_text()
         witness_entries = {name: body(value_ir, name).splitlines()[0] for name in [
             "refinedWitness", "orderedWitnesses", "concreteWitness", "associatedWitness", "aliasedWitness"]}

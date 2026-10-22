@@ -29,6 +29,7 @@ def require(condition, message):
 def main():
     root = Path(__file__).resolve().parent.parent
     output = root / ".build/swift-closure-codegen"
+    fixtures = sorted(str(path) for path in (root / "Tests/ManagedSwiftFixtures").glob("*.swift"))
     reports = []
     for target, sdk_name in [
         ("arm64-apple-macos15.4", "macosx"),
@@ -40,9 +41,8 @@ def main():
         sdk = run("xcrun", "--sdk", sdk_name, "--show-sdk-path").strip()
         common = ["xcrun", "swiftc", "-swift-version", "6", "-parse-as-library",
                   "-Onone", "-target", target, "-sdk", sdk]
-        fixture = root / "Tests/ManagedSwiftFixtures"
-        run(*common, "-enable-library-evolution", "-module-name", "ManagedSwiftFixtures",
-            "-emit-module", str(fixture / "Values.swift"), str(fixture / "Closures.swift"),
+        run(*common, "-enable-library-evolution", "-enable-experimental-feature", "Lifetimes",
+            "-module-name", "ManagedSwiftFixtures", "-emit-module", *fixtures,
             "-emit-module-path", str(directory / "ManagedSwiftFixtures.swiftmodule"))
         source = root / "Tests/ManagedSwiftAdapters/ClosureAdapters.swift"
         adapter = [*common, "-module-name", "ManagedSwiftAdapters", "-I", str(directory), str(source)]

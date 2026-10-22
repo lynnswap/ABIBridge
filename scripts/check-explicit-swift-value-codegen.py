@@ -14,6 +14,7 @@ def run(*arguments):
 def main():
     root = Path(__file__).resolve().parent.parent
     output = root / ".build/explicit-swift-value-codegen"
+    fixtures = sorted(str(path) for path in (root / "Tests/ManagedSwiftFixtures").glob("*.swift"))
     reports = []
     for target, sdk_name in [
         ("arm64-apple-macos15.4", "macosx"),
@@ -25,9 +26,8 @@ def main():
         sdk = run("xcrun", "--sdk", sdk_name, "--show-sdk-path").strip()
         common = ["xcrun", "swiftc", "-swift-version", "6", "-parse-as-library", "-Onone",
                   "-target", target, "-sdk", sdk]
-        run(*common, "-enable-library-evolution", "-module-name", "ManagedSwiftFixtures",
-            "-emit-module", str(root / "Tests/ManagedSwiftFixtures/Values.swift"),
-            str(root / "Tests/ManagedSwiftFixtures/ExplicitValues.swift"),
+        run(*common, "-enable-library-evolution", "-enable-experimental-feature", "Lifetimes",
+            "-module-name", "ManagedSwiftFixtures", "-emit-module", *fixtures,
             "-emit-module-path", str(directory / "ManagedSwiftFixtures.swiftmodule"))
         ir_path = directory / "values.ll"
         run(*common, "-module-name", "ExplicitValueProbe", "-I", str(directory),

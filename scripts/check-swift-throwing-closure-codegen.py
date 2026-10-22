@@ -13,6 +13,7 @@ def run(*args):
 def main():
     root = Path(__file__).resolve().parent.parent
     output = root / '.build/swift-throwing-closure-codegen'
+    fixtures = sorted(str(path) for path in (root / 'Tests/ManagedSwiftFixtures').glob('*.swift'))
     source = '''import ManagedSwiftFixtures
 public func plain(_ body: (Bool) -> String, _ flag: Bool) -> String { body(flag) }
 public func untyped(_ body: (Bool) throws -> String, _ flag: Bool) throws -> String { try body(flag) }
@@ -27,8 +28,8 @@ public func foreign(_ body: (UnsafeRawPointer) throws -> Void, _ value: UnsafeRa
         directory.mkdir(parents=True, exist_ok=True)
         sdk = run('xcrun','--sdk',sdk_name,'--show-sdk-path').strip()
         common = ['xcrun','swiftc','-swift-version','6','-parse-as-library','-Onone','-target',target,'-sdk',sdk]
-        run(*common,'-enable-library-evolution','-module-name','ManagedSwiftFixtures','-emit-module',
-            str(root/'Tests/ManagedSwiftFixtures/Errors.swift'),'-emit-module-path',str(directory/'ManagedSwiftFixtures.swiftmodule'))
+        run(*common,'-enable-library-evolution','-enable-experimental-feature','Lifetimes',
+            '-module-name','ManagedSwiftFixtures','-emit-module',*fixtures,'-emit-module-path',str(directory/'ManagedSwiftFixtures.swiftmodule'))
         probe = directory/'Probe.swift'
         probe.write_text(source)
         ir_path = directory/'probe.ll'

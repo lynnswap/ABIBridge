@@ -7,7 +7,7 @@ import subprocess
 
 
 def run(*args):
-    return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT)
+    return subprocess.check_output(args, text=True)
 
 
 def function(ir, name):
@@ -21,17 +21,18 @@ def function(ir, name):
 def main():
     root = Path(__file__).resolve().parent.parent
     output = root / '.build/swift-existential-codegen'
+    fixtures = sorted(str(path) for path in (root / 'Tests/ManagedSwiftFixtures').glob('*.swift'))
     reports = []
     for target, sdk_name in [('arm64-apple-macos15.4', 'macosx'),
                              ('arm64e-apple-ios18.4', 'iphoneos'), ('arm64_32-apple-watchos11.4', 'watchos')]:
         directory = output / target
         directory.mkdir(parents=True, exist_ok=True)
         sdk = run('xcrun', '--sdk', sdk_name, '--show-sdk-path').strip()
-        provider = [str(root / 'Tests/ManagedSwiftFixtures' / name) for name in ['Errors.swift', 'Async.swift', 'RuntimeValues.swift', 'Existentials.swift']]
         ir_path = directory / 'provider.ll'
-        run('xcrun', 'swiftc', '-swift-version', '6', '-parse-as-library', '-enable-library-evolution',
-            '-whole-module-optimization', '-Onone', '-module-name', 'ManagedSwiftFixtures',
-            '-target', target, '-sdk', sdk, '-emit-ir', *provider, '-o', str(ir_path))
+        run('xcrun', 'swiftc', '-swift-version', '6', '-enable-experimental-feature', 'Lifetimes',
+            '-parse-as-library', '-enable-library-evolution', '-whole-module-optimization', '-Onone',
+            '-module-name', 'ManagedSwiftFixtures', '-target', target, '-sdk', sdk, '-emit-ir', *fixtures,
+            '-o', str(ir_path))
         ir = ir_path.read_text()
         signatures = {}
         superclass_components = {'makeGenericSuperclass': 2, 'makeFreshHashSuperclass': 2,
