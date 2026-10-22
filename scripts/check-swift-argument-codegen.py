@@ -6,7 +6,7 @@ import subprocess
 
 
 def run(*args):
-    return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT)
+    return subprocess.check_output(args, text=True)
 
 
 def main():
@@ -18,12 +18,14 @@ def main():
         directory = output / target
         directory.mkdir(parents=True, exist_ok=True)
         sdk = run('xcrun','--sdk',sdk_name,'--show-sdk-path').strip()
-        sil = run('xcrun','swiftc','-swift-version','6','-parse-as-library','-enable-library-evolution',
-                  '-module-name','ManagedSwiftFixtures','-target',target,'-sdk',sdk,'-emit-silgen',
-                  *[str(root/'Tests/ManagedSwiftFixtures'/name) for name in [
-                      'Errors.swift','Async.swift','ParameterConventions.swift','GenericCalls.swift',
-                      'RuntimeValues.swift','Values.swift','ExplicitValues.swift']])
-        (directory/'provider.sil').write_text(sil)
+        # Emit the SIL from one whole-module job; with a job per file, the driver relays each job's SIL through stderr.
+        run('xcrun','swiftc','-swift-version','6','-parse-as-library','-enable-library-evolution','-whole-module-optimization',
+            '-module-name','ManagedSwiftFixtures','-target',target,'-sdk',sdk,'-emit-silgen',
+            *[str(root/'Tests/ManagedSwiftFixtures'/name) for name in [
+                'Errors.swift','Async.swift','ParameterConventions.swift','GenericCalls.swift',
+                'RuntimeValues.swift','Values.swift','ExplicitValues.swift']],
+            '-o',str(directory/'provider.sil'))
+        sil = (directory/'provider.sil').read_text()
         signatures = {}
         for name, expected in {
             'mutateArguments': '(@inout String, @inout Array<String>, @inout Int64, Bool)',

@@ -7,10 +7,7 @@ import subprocess
 
 
 def run(*args):
-    result = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    if result.returncode:
-        raise RuntimeError(result.stdout)
-    return result.stdout
+    return subprocess.check_output(args, text=True)
 
 
 def main():

@@ -7,7 +7,7 @@ import subprocess
 
 
 def run(*args):
-    return subprocess.check_output(args, text=True, stderr=subprocess.STDOUT)
+    return subprocess.check_output(args, text=True)
 
 
 def main():
