@@ -79,17 +79,19 @@ struct SwiftFunctionSignature: Sendable {
         self.metadata = metadata
     }
 
-    func makeErrorPlan(genericType: CValueType? = nil) throws -> SwiftErrorPlan? {
-        if failure == Never.self && genericType == nil { return nil }
+    /// - Parameter schema: The declaration's schema of the error where it
+    ///   differs from the thrown type's own.
+    func makeErrorPlan(schema: SwiftValueSchema? = nil) throws -> SwiftErrorPlan? {
+        if failure == Never.self && schema == nil { return nil }
         if failure == (any Error).self {
-            return try SwiftErrorPlan.make((any Error).self, genericType: genericType)
+            return try SwiftErrorPlan.make((any Error).self, schema: schema)
         }
         guard let error = failure as? any Error.Type else {
             throw ABIResolutionError.unsupportedDeclaration(
                 "The function's thrown type does not conform to Error."
             )
         }
-        return try SwiftErrorPlan.make(error, genericType: genericType)
+        return try SwiftErrorPlan.make(error, schema: schema)
     }
 
     func closureDiscriminator() throws -> UInt16 {
@@ -124,7 +126,7 @@ enum SwiftCallablePlan: Sendable {
         generic: SwiftGenericCallPlan? = nil
     ) throws {
         let description = try SwiftFunctionSignature(signature)
-        let errorPlan = try description.makeErrorPlan(genericType: generic?.errorType)
+        let errorPlan = try description.makeErrorPlan(schema: generic?.errorSchema)
         let opaque =
             try generic?.resultType != nil
             ? nil

@@ -50,14 +50,18 @@ struct SwiftErrorPlan: Sendable {
         }
     }
 
-    static func make<Failure: Error>(_ failure: Failure.Type, genericType: CValueType? = nil) throws -> Self? {
-        if Failure.self == Never.self && genericType == nil { return nil }
-        return try Self(failure, genericType: genericType)
+    /// - Parameter schema: The declaration's schema of the error where it
+    ///   differs from `Failure`'s own, such as an error whose formal type
+    ///   depends on generic parameters, which passes even when `Failure` is
+    ///   `any Error` or `Never`.
+    static func make<Failure: Error>(_ failure: Failure.Type, schema: SwiftValueSchema? = nil) throws -> Self? {
+        if Failure.self == Never.self && schema == nil { return nil }
+        return try Self(failure, schema: schema)
     }
 
-    private init<Failure: Error>(_ failure: Failure.Type, genericType: CValueType?) throws {
+    private init<Failure: Error>(_ failure: Failure.Type, schema: SwiftValueSchema?) throws {
         identity = ObjectIdentifier(Failure.self)
-        isTyped = genericType != nil || Failure.self != (any Error).self
+        isTyped = schema != nil || Failure.self != (any Error).self
         initialize = swiftResultInitializer(nativeMetadata: Failure.self)
         @Sendable func storage(owner: AnyObject? = nil) -> NativeValueStorage {
             NativeValueStorage(size: MemoryLayout<Failure>.stride, alignment: MemoryLayout<Failure>.alignment, owner: owner)
@@ -81,8 +85,8 @@ struct SwiftErrorPlan: Sendable {
             return output
         }
         destroy = { $0.assumingMemoryBound(to: Failure.self).deinitialize(count: 1) }
-        if let genericType {
-            type = genericType
+        if let schema {
+            type = schema.type
             makeStorage = { NativeValueStorage(size: MemoryLayout<Failure>.stride, alignment: MemoryLayout<Failure>.alignment) }
             decode = { storage in
                 guard Failure.self != Never.self else {
@@ -102,8 +106,9 @@ struct SwiftErrorPlan: Sendable {
                     "Typed native errors need their actual Swift representation; foreign conversion adapters are not supported."
                 )
             }
-            let codec = try SwiftValueCodec<Failure>(position: .nested)
-            type = codec.type
+            // A typed error passes as a whole result does.
+            let codec = try SwiftValueCodec<Failure>(position: .result)
+            type = codec.schema.type
             makeStorage = { codec.makeStorage() }
             decode = { try codec.decode($0, retaining: nil) }
         }

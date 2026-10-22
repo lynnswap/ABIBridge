@@ -302,10 +302,10 @@ final class SwiftGenericClosurePlan: Sendable {
         }
         let resultType = try SwiftValueSchema.storage(of: signature.result)
         let resultClosure = closureInStoredValue(signature.result)
-        let errorType =
+        let errorSchema =
             try signature.failure == Never.self || signature.failure == (any Error).self
-            ? nil : SwiftValueSchema.storage(of: signature.failure)
-        let errorPlan = try signature.makeErrorPlan(genericType: errorType)
+            ? nil : SwiftValueSchema.indirect(signature.failure)
+        let errorPlan = try signature.makeErrorPlan(schema: errorSchema)
         let transport: Transport =
             signature.isAsync
             ? .asynchronous(
@@ -641,7 +641,9 @@ struct SwiftGenericCallPlan: Sendable {
     var arguments: [SwiftGenericArgument] { parameters.arguments }
     let result: SwiftGenericResult
     var resultType: CValueType? { result.type }
-    let errorType: CValueType?
+    /// The schema of a typed error whose formal type depends on generic
+    /// parameters.
+    let errorSchema: SwiftValueSchema?
 
     init(
         entry: SwiftEntry,
@@ -762,14 +764,14 @@ struct SwiftGenericCallPlan: Sendable {
             )
         }
         if let failure = declaration.failure, binding.dependsOnParameters(failure) {
-            errorType = try SwiftValueSchema(
+            errorSchema = try SwiftValueSchema(
                 failure,
                 actual: signature.failure,
                 binding: binding,
-                position: .nested
-            ).type
+                position: .result
+            )
         } else {
-            errorType = nil
+            errorSchema = nil
         }
         if let receiver { metadata = try includingReceiver(receiver).metadata }
     }
@@ -925,14 +927,18 @@ struct SwiftGenericCallPlan: Sendable {
         return sources
     }
 
-    func receiverType() throws -> CValueType? {
+    /// The schema of `self` where the declaration decides it: a protocol
+    /// member's formal `Self`, or the indirect `self` of a member of a
+    /// generic type whose stored fields depend on its parameters. Nil where
+    /// the receiver's own type decides it.
+    func receiverSchema() throws -> SwiftValueSchema? {
         if let formalSelf = binding.declaration.protocolSelf {
             return try SwiftValueSchema(
                 formalSelf,
                 actual: binding.types(formalSelf)[0],
                 binding: binding,
-                position: .parameter
-            ).type
+                position: .receiver
+            )
         }
         guard let context, let enclosingMetadata, !(enclosingMetadata is AnyClass) else {
             return nil
@@ -943,7 +949,7 @@ struct SwiftGenericCallPlan: Sendable {
             arguments: arguments,
             binding: binding
         )
-            ? SwiftValueSchema.storage(of: enclosingMetadata) : nil
+            ? .indirect(enclosingMetadata) : nil
     }
 
     /// Checks that a call with the requested signature can use this
@@ -2063,19 +2069,19 @@ struct SwiftGenericCallPlan: Sendable {
             )
         }
         #endif
-        let errorType = try failure.flatMap {
+        let errorSchema = try failure.flatMap {
             if usesStorageConvention && signature.failure != (any Error).self {
-                return try SwiftValueSchema.storage(of: signature.failure)
+                return try SwiftValueSchema.indirect(signature.failure)
             }
             return binding.dependsOnParameters($0)
                 ? try SwiftValueSchema(
                     $0,
                     actual: signature.failure,
                     binding: binding,
-                    position: .nested
-                ).type : nil
+                    position: .result
+                ) : nil
         }
-        let errorPlan = try signature.makeErrorPlan(genericType: errorType)
+        let errorPlan = try signature.makeErrorPlan(schema: errorSchema)
         let transport: SwiftGenericClosurePlan.Transport =
             attributes.isAsync
             ? .asynchronous(
@@ -2197,27 +2203,10 @@ struct SwiftGenericCallPlan: Sendable {
             )
             return ["(" + swiftClosureAuthDescription(parameters: inputs, results: outputs) + ")"]
         }
-        // An Optional's payload can have a declared ABI, and an inferred
-        // value's passing convention depends on its inferred layout.
-        if !binding.dependsOnParameters(formal), formal.opaqueIndices.isEmpty,
-            formal.optionalWrapped == nil, !SwiftInferredValue.lowersByInference(actual)
-        {
-            let explicit =
-                formal.nominalDeclaration == nil ? nil : try binding.explicitValueType(actual)
-            if explicit == nil {
-                // Concrete class existentials and metatypes keep their formal
-                // identity even when their physical storage is indirect.
-                return [try swiftClosureAuthType(actual, position: position)]
-            }
-        }
-        let layout = try SwiftValueSchema(
-            formal,
-            actual: actual,
-            binding: binding,
-            position: position
-        ).type
-        if swiftClosureHashesIndirectly(layout, at: position) { return ["-indirect"] }
-        return [try swiftClosureTypeHash(actual)]
+        return [
+            try SwiftValueSchema(formal, actual: actual, binding: binding, position: position)
+                .closureAuthType(at: position)
+        ]
     }
 
     static func tupleElements(

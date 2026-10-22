@@ -13,31 +13,41 @@ func swiftClosureAuthType(_ type: Any.Type, position: SwiftValuePosition) throws
             "Inout and ownership-qualified callback parameters require a scoped native adapter."
         )
     }
-    // An indirect parameter or result is hashed opaquely.
-    if let value = type as? any ABIBridgeSwiftValue.Type {
-        guard let components = value.swiftABIType.cType else { return "-indirect" }
-        if swiftClosureHashesIndirectly(components, at: position) { return "-indirect" }
-    }
-    if SwiftInferredValue.lowersByInference(type), !(type is any NativeOptionalValue.Type) {
-        func layout<Value>(_: Value.Type) throws -> CValueType {
-            try SwiftValueCodec<Value>(position: position).type
-        }
-        if swiftClosureHashesIndirectly(try _openExistential(type, do: layout), at: position) {
-            return "-indirect"
-        }
-    }
-    // A native Optional function keeps the function pair's storage.
+    // A function, or an Optional of one, hashes as its signature.
     var payload = type
     while let optional = payload as? any NativeOptionalValue.Type { payload = optional.wrappedType }
-    if type is any NativeOptionalValue.Type, !RuntimeFunctionMetadata.isSwiftFunction(payload) {
-        func layout<Value>(_: Value.Type) throws -> CValueType {
-            try SwiftValueCodec<Value>(position: .nested).type
-        }
-        if swiftClosureHashesIndirectly(try _openExistential(type, do: layout), at: position) {
-            return "-indirect"
-        }
+    if payload is any SwiftClosureValue.Type || RuntimeFunctionMetadata.isSwiftFunction(payload) {
+        return try swiftClosureTypeHash(type)
     }
-    return try swiftClosureTypeHash(type)
+    let schema = try SwiftValueSchema(host: type, position: position)
+    // An adapter's representation says nothing about a native value.
+    guard schema.metadata != nil else { return try swiftClosureTypeHash(type) }
+    return try schema.closureAuthType(at: position)
+}
+
+extension SwiftValueSchema {
+    /// The type that pointer authentication hashes for a value of this
+    /// schema at `position` in a closure's signature.
+    ///
+    /// A value that passes by address hashes as `-indirect`, except a class
+    /// reference, an existential, or a metatype, which keeps its formal type
+    /// as Swift's type lowering does. Other values hash their native type.
+    func closureAuthType(at position: SwiftValuePosition) throws -> String {
+        guard let metadata,
+            !(metadata is any ABIBridgeValue.Type) || metadata is any ABIBridgeSwiftValue.Type
+        else {
+            throw ABIResolutionError.unsupportedDeclaration(
+                "Closure signatures require built-in or explicitly described Swift values; foreign conversions are not supported."
+            )
+        }
+        switch kind {
+        case .reference, .existential, .metatype:
+            break
+        default:
+            if swiftClosureHashesIndirectly(type, at: position) { return "-indirect" }
+        }
+        return try swiftClosureTypeHash(metadata)
+    }
 }
 
 /// Whether a value with `layout` is hashed as `-indirect` at `position`.

@@ -30,6 +30,16 @@ public struct ResilientFailure: Error {
     public var token: ErrorLifetimeToken { payload.token }
     public var code: Int64 { payload.code }
 }
+/// Its String fields leave its convention undecided, but a value this large
+/// passes by address either way.
+public struct UndecidedFailure: Error {
+    public let token: ErrorLifetimeToken
+    public let name: String
+    public let detail: String
+    public init(_ token: ErrorLifetimeToken, _ name: String, _ detail: String) {
+        self.token = token; self.name = name; self.detail = detail
+    }
+}
 public final class ReferenceFailure: Error {
     public let token: ErrorLifetimeToken
     public let code: Int64
@@ -68,6 +78,11 @@ public final class ReferenceFailure: Error {
     if fail { throw ResilientFailure(token, 42) }
     return String(repeating: "success", count: 100)
 }
+@inline(never) public func undecidedErrorResult(_ token: ErrorLifetimeToken, _ fail: Bool) throws(UndecidedFailure) -> String {
+    if fail { throw UndecidedFailure(token, "undecided", String(repeating: "detail", count: 10)) }
+    return String(repeating: "success", count: 100)
+}
+
 @inline(never) public func referenceErrorResult(_ token: ErrorLifetimeToken, _ fail: Bool) throws(ReferenceFailure) -> String {
     if fail { throw ReferenceFailure(token, 42) }
     return String(repeating: "success", count: 100)

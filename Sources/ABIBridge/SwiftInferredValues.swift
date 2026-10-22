@@ -5,12 +5,16 @@ import Synchronization
 
 /// Where a value occurs in a Swift signature.
 ///
-/// Swift passes a whole parameter, result, or `self` indirectly once its
-/// loadable lowering exceeds four registers. A value whose convention is
-/// undecided but whose frozen lowering is already that large therefore has one
-/// convention either way. Elsewhere, loadable and address-only values differ.
+/// Swift passes a whole parameter, result, typed error, or `self` indirectly
+/// once its loadable lowering exceeds four registers. A value whose convention
+/// is undecided but whose frozen lowering is already that large therefore has
+/// one convention either way. Elsewhere, loadable and address-only values
+/// differ.
 enum SwiftValuePosition: Sendable, Equatable {
-    case parameter, result
+    case parameter
+    /// A whole result, or a typed error, which Swift returns as it does a
+    /// result.
+    case result
     /// `self`, which `receiverABI` describes instead of `valueABIs`.
     case receiver
     /// An Optional or enum payload, a stored field, or a tuple result element.

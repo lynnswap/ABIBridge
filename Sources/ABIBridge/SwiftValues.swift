@@ -12,7 +12,9 @@ extension Dictionary: SwiftCollectionValue { static var mangledDeclaration: Stri
 extension Set: SwiftCollectionValue { static var mangledDeclaration: String { "Sh" } }
 
 struct SwiftValueCodec<Value>: Sendable {
-    let type: CValueType
+    /// The native value that the codec converts a `Value` to and from.
+    let schema: SwiftValueSchema
+    var type: CValueType { schema.type }
     private let cValue: CValueCodec<Value>?
     private let objectResult: Bool
     private let closure: SwiftClosureCodec?
@@ -20,14 +22,15 @@ struct SwiftValueCodec<Value>: Sendable {
     private let constants = SwiftValueConstants(Value.self)
 
     init(nativeStorage type: CValueType) {
-        self.type = type
+        schema = SwiftValueSchema(storage: type, metadata: Value.self)
         cValue = nil; closure = nil; tuple = nil
         let base = (Value.self as? any NativeOptionalValue.Type)?.wrappedType ?? Value.self
         objectResult = base is AnyClass || base == AnyObject.self
     }
 
     init(closure: SwiftClosureCodec) {
-        self.closure = closure; type = closure.type
+        self.closure = closure
+        schema = SwiftValueSchema(type: closure.type, kind: .function, metadata: nil)
         cValue = nil; tuple = nil; objectResult = false
     }
 
@@ -45,17 +48,18 @@ struct SwiftValueCodec<Value>: Sendable {
         let preparedTuple = try SwiftGenericCallPlan.concreteTuple(Value.self, position: position)
         tuple = preparedTuple?.needsConversion == true ? preparedTuple : nil
         if let tuple {
-            type = tuple.type; closure = nil; cValue = nil; objectResult = false
+            schema = SwiftValueSchema(type: tuple.type, kind: .tuple, metadata: tuple.nativeMetadata)
+            closure = nil; cValue = nil; objectResult = false
             return
         }
         if let closureType = Value.self as? any SwiftClosureValue.Type {
             let codec = try closureType.makeClosureCodec()
-            closure = codec; type = codec.type; cValue = nil; objectResult = false
+            schema = SwiftValueSchema(type: codec.type, kind: .function, metadata: nil)
+            closure = codec; cValue = nil; objectResult = false
             return
         }
         closure = nil
-        let schema = try SwiftValueSchema.host(Value.self, position: position)
-        type = schema.type
+        schema = try SwiftValueSchema.host(Value.self, position: position)
         cValue = schema.kind == .scalar ? try CValueCodec<Value>() : nil
         let base = (Value.self as? any NativeOptionalValue.Type)?.wrappedType ?? Value.self
         let isObject = base is AnyClass || base == AnyObject.self
