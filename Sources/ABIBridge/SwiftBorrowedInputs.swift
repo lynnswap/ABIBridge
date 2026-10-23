@@ -15,7 +15,8 @@ import ABIBridgeCore
 /// - Swift rejects a borrow dependency on a consuming input, and passes an
 ///   inout input by address either way.
 /// - A value that already passes as one address, because it is address-only
-///   or too large for registers, passes so either way.
+///   or too large for registers, passes so either way, and so does an element
+///   of a parameter pack, which passes through a buffer of addresses.
 /// - A value whose type leaves the bit clear passes alike either way.
 ///
 /// Any other input is undecided, and preparation names its type and why its

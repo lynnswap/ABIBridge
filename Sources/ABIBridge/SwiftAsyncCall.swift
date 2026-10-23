@@ -111,7 +111,7 @@ final class SwiftAsyncCall: Sendable {
             arguments: parameters.arguments,
             result: generic?.result ?? closure?.result
         )
-        try values.requireBorrowableArguments(declaration: generic)
+        try values.requireBorrowableArguments(parameters: parameters, declaration: generic)
         #if DEBUG
         generic?.checkClosedSchemas(signature, values: values)
         #endif

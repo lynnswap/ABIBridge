@@ -332,23 +332,29 @@ struct SwiftCallValues: Sendable {
     /// Checks that each argument passes as Swift passes it where the call's
     /// result borrows from it; see ``SwiftBorrowedInputs``.
     ///
-    /// - Parameter declaration: The selected declaration's plan, whose
-    ///   formal parameter types name the native types behind adapters.
-    func requireBorrowableArguments(declaration: SwiftGenericCallPlan?) throws {
+    /// - Parameters:
+    ///   - parameters: How the call groups its arguments into parameters.
+    ///   - declaration: The selected declaration's plan, whose formal
+    ///     parameter types name the native types behind adapters.
+    func requireBorrowableArguments(
+        parameters: SwiftGenericParameters,
+        declaration: SwiftGenericCallPlan?
+    ) throws {
         guard result.scoped != nil else { return }
-        // Packs pass their elements through one buffer, by address.
-        var formals: [Int: SwiftFormalType] = [:]
-        if let declaration {
-            for (formal, group) in zip(
-                declaration.binding.declaration.arguments,
-                declaration.parameters.groups
-            ) {
-                if case .value(let index) = group { formals[index] = formal }
-            }
+        // The arguments of each parameter, with its formal type where a
+        // declaration names one. A pack passes its elements through one
+        // buffer of their addresses either way, so only whole values count.
+        var formals: [Int: SwiftFormalType?] = [:]
+        let declared: [SwiftFormalType?] =
+            declaration.map { $0.binding.declaration.arguments.map { $0 } }
+            ?? Array(repeating: nil, count: parameters.groups.count)
+        for (formal, group) in zip(declared, parameters.groups) {
+            if case .value(let index) = group { formals[index] = formal }
         }
         // Swift rejects a borrow dependency on a consuming argument and
         // passes an inout argument by address.
         for (index, argument) in arguments.enumerated() where argument.convention == .borrowing {
+            guard let formal = formals[index] else { continue }
             let indirect = withExtendedLifetime(argument.type) {
                 ABISwiftValueIsIndirect(argument.type.handle)
             }
@@ -357,7 +363,7 @@ struct SwiftCallValues: Sendable {
             try SwiftBorrowedInputs.requireArgument(
                 index,
                 conversion: argument.conversion,
-                formal: formals[index],
+                formal: formal,
                 binding: declaration?.binding
             )
         }

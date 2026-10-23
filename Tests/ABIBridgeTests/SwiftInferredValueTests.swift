@@ -5,6 +5,7 @@ import ABIBridgeCore
 import ABIBridge
 #endif
 import ABIBridgeTestSupport
+import CoreFoundation
 import Foundation
 import Testing
 
@@ -20,6 +21,15 @@ public struct InferredAdapterPoint {
 public struct InferredAdapterRecord {
     public var name: String
     public var count: Int64
+}
+
+/// Imported C types whose passing a test states: an enum and an option set,
+/// which the importer makes a struct.
+extension CFComparisonResult: ABIBridgeSwiftValue {
+    public static var swiftABIType: NativeType { .int }
+}
+extension CFStringCompareFlags: ABIBridgeSwiftValue {
+    public static var swiftABIType: NativeType { .uint }
 }
 
 /// Values whose conventions inference cannot establish fail during
@@ -1511,6 +1521,7 @@ struct SwiftInferredValueTests {
     @Test func resultsThatBorrowFromInputsLeaveAddressableInputsUndecided() async throws {
         let (library, module) = try provider(
             """
+            import CoreFoundation
             public struct View: ~Escapable {
                 let n: Int64
                 @_lifetime(immortal) public init(_ n: Int64) { self.n = n }
@@ -1539,6 +1550,17 @@ struct SwiftInferredValueTests {
             @_lifetime(borrow s) @inline(never) public func borrowString(_ s: String) -> View { View(Int64(s.utf8.count)) }
             @_lifetime(borrow v) @inline(never) public func borrowPlainConsuming(_ v: Plain, _ s: consuming String) -> View {
                 View(v.x * 100 + Int64(s.utf8.count))
+            }
+            @_lifetime(borrow v) @inline(never) public func borrowComparison(_ v: CFComparisonResult) -> View {
+                View(Int64(v.rawValue))
+            }
+            @_lifetime(borrow v) @inline(never) public func borrowCompareFlags(_ v: CFStringCompareFlags) -> View {
+                View(Int64(v.rawValue))
+            }
+            @_lifetime(borrow v) @inline(never) public func borrowPack<each T>(_ v: repeat (each T, Int64)) -> View {
+                var sum: Int64 = 0
+                for element in repeat each v { sum += element.1 }
+                return View(sum)
             }
             @_lifetime(&s) @inline(never) public func mutateString(_ s: inout String) -> View {
                 s += "!"
@@ -1745,6 +1767,42 @@ struct SwiftInferredValueTests {
         )
         #expect(mutated == 5)
         #expect(text.value == "text!")
+        // An imported C enum never sets the bit, whatever describes its
+        // passing. The importer makes an option set a struct, which a C
+        // struct or union also is, so its clear bit shows nothing.
+        let comparison = try await runtime.resolveSwiftFunction(
+            named: module + ".borrowComparison(_:)",
+            as: ((CFComparisonResult) -> NativeSwiftBorrowedValue).self,
+            in: scope
+        )
+        let compared = try unsafe comparison.unsafeInvoke(
+            CFComparisonResult.compareGreaterThan,
+            withResult: { try unsafe read.unsafeInvoke($0) }
+        )
+        #expect(compared == 1)
+        await expectUndecided(
+            "argument 0 of type __C.CFStringCompareFlags",
+            naming: "do not show whether it imports a C struct or union"
+        ) {
+            _ = try await runtime.resolveSwiftFunction(
+                named: module + ".borrowCompareFlags(_:)",
+                as: ((CFStringCompareFlags) -> NativeSwiftBorrowedValue).self,
+                in: scope
+            )
+        }
+        // A pack passes its elements' addresses through one buffer, whether
+        // or not the result borrows from them.
+        let pack = try await runtime.resolveSwiftFunction(
+            named: module + ".borrowPack(_:)",
+            as: (((String, Int64)) -> NativeSwiftBorrowedValue).self,
+            genericArguments: [.pack([.type(String.self)])],
+            in: scope
+        )
+        let summed = try unsafe pack.unsafeInvoke(
+            ("seven", 7),
+            withResult: { try unsafe read.unsafeInvoke($0) }
+        )
+        #expect(summed == 7)
     }
 }
 #endif

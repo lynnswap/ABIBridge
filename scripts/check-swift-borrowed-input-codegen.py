@@ -19,12 +19,15 @@ facts changes:
   mangled function types of closure parameters and of stored closures' field
   records;
 - a borrowed input whose type sets AFD is passed by address (`@in_guaranteed`
-  in SIL, one pointer in IR), a tuple as one address;
+  in SIL, one pointer in IR), a tuple as one address, and so is a tuple with
+  a pack expansion, which is otherwise passed as its elements and a pack;
+- a pack passes its elements through a buffer of addresses either way;
 - a result cannot borrow from a consuming input, and an inout or a `copy`
   dependency leaves the convention alone.
 
 It then decides each borrowed input as ABIBridge does, from the records
-ABIBridge reads (static value-witness flags, and the kinds of values with
+ABIBridge reads (static value-witness flags, the descriptor kind and
+value-witness flags of imported C types, and the kinds of values with
 built-in representations), and fails when a decision differs from the
 expected table, or when an input that ABIBridge passes as it would without
 the dependency has another compiled convention. Each weakened variant of the
@@ -61,7 +64,8 @@ LEAVES = {"String": True, "Int64": False}
 # input's type as ABIBridge reads it, and the expected decision. A type is a
 # tuple of a kind and its arguments:
 #   ("leaf", name), ("nominal", name), ("instance", name), ("optional", type),
-#   ("tuple", [types]), ("c", name), ("generic-tuple", substituted tuple),
+#   ("tuple", [types]), ("c", imported name), ("generic-tuple", substituted
+#   tuple), ("pack",) for each element of a pack,
 #   and the kinds that never set AFD: reference, function, metatype,
 #   collection, pointer, and class-bound (a type parameter bound to a class).
 PARAMETERS = {
@@ -79,6 +83,8 @@ PARAMETERS = {
     "Metatype": (("metatype",), KEEPS),
     "Pointer": (("pointer",), KEEPS),
     "CStruct": (("c", "timespec"), UNDECIDED),
+    "CEnum": (("c", "CFComparisonResult"), KEEPS),
+    "COptions": (("c", "CFStringCompareFlags"), UNDECIDED),
     "StringTuple": (("tuple", [("leaf", "String"), ("leaf", "Int64")]), UNDECIDED),
     "IntTuple": (("tuple", [("leaf", "Int64"), ("leaf", "Int64")]), KEEPS),
     "WideTuple": (("tuple", [("leaf", "String")] + [("leaf", "Int64")] * 3), UNDECIDED),
@@ -86,6 +92,7 @@ PARAMETERS = {
     "PairString": (("instance", "Pair"), UNDECIDED),
     "GenericTuple": (("generic-tuple", ("tuple", [("leaf", "Int64"), ("leaf", "Int64")])), UNDECIDED),
     "ClassBound": (("class-bound",), KEEPS),
+    "Pack": (("pack",), BY_ADDRESS),
     "CopiedView": (("nominal", "View"), KEEPS),
     "InoutString": (("leaf", "String"), INOUT),
 }
@@ -190,6 +197,13 @@ class Compiled:
         self.flags = {}
         for name, table in re.findall(r'^@"\$s\d+' + MODULE + r'\d+(\w+?)VMf" = .*?@"?(\$s\w+WV)\b', ir, re.M):
             self.flags[name] = 0 if table.startswith("$sB") else tables[table]
+        # Imported types, by name: whether their descriptors' kind is enum
+        # (ContextDescriptorKind 18), and their value-witness flags.
+        kinds = {name: int(flags) & 0x1F == 18 for name, flags
+                 in re.findall(r'^@"\$sSo\d+(\w+?)VMn" = [^<]*<\{[^}]*\}> <\{ i32 (\d+),', ir, re.M)}
+        self.imported = {}
+        for name, table in re.findall(r'^@"\$sSo\d+(\w+?)VMf" = .*?@"?(\$s\w+WV)\b', ir, re.M):
+            self.imported[name] = (kinds[name], 0 if table.startswith("$sB") else tables[table])
 
     def symbol(self, name):
         """The symbol whose demangling starts with `name` and its generic
@@ -249,7 +263,12 @@ class Rules:
             found = [self.addressability(element) for element in model[1]]
             return SETS if SETS in found else UNKNOWN if UNKNOWN in found else CLEAR
         if kind == "c":
-            return CLEAR if self.weak("c-types") else SETS
+            # An imported C enum never sets AFD, whatever its value witnesses;
+            # an imported struct's clear bit can come from an older compiler.
+            is_enum, flags = self.compiled.imported[model[1]]
+            if self.weak("c-types") or is_enum:
+                return CLEAR
+            return SETS if flags & ADDRESSABLE else UNKNOWN
         if kind == "instance":
             return UNKNOWN
         if kind == "generic-tuple":
@@ -263,7 +282,7 @@ class Rules:
     def decide(self, name, model, receiver=False, position=0, closure=False):
         if name in INOUTS:
             return INOUT
-        if name in ADDRESS_ONLY or (self.weak("tuples") and name in LARGE_TUPLES):
+        if name in ADDRESS_ONLY or model[0] == "pack" or (self.weak("tuples") and name in LARGE_TUPLES):
             return BY_ADDRESS
         if (self.weak("explicit") and name in EXPLICIT) or (self.weak("receivers") and receiver) \
                 or (self.weak("first-input") and position > 0) or (self.weak("closures") and closure):
@@ -369,6 +388,19 @@ def check_facts(compiled, label, require):
         require(len(parameters) == 1 and "@in_guaranteed" in parameters[0][0].split()
                 and compiled.ir[symbol][0] == "ptr noalias",
                 f"{label}: borrow{name} must take its input as one address: {compiled.sil[symbol]}")
+    # A tuple with a pack expansion is one address where a result borrows
+    # from it, and its elements and a pack otherwise, which IR types alone
+    # do not tell apart.
+    borrowed, plain = (sil_parameters(compiled.sil[compiled.symbol(f"{MODULE}.{prefix}TuplePack")])
+                       for prefix in ("borrow", "take"))
+    require([convention for convention, _ in borrowed] == ["@in_guaranteed"]
+            and [convention for convention, _ in plain] == ["", "@pack_guaranteed"],
+            f"{label}: borrowTuplePack must take one address, and takeTuplePack its elements and a pack")
+    for name in ["Pack"]:
+        borrowed, plain = (sil_parameters(compiled.sil[compiled.symbol(f"{MODULE}.{prefix}{name}")])
+                           for prefix in ("borrow", "take"))
+        require(borrowed == plain and borrowed[0][0] == "@pack_guaranteed",
+                f"{label}: borrow{name} must pass its pack as take{name} does")
     for name in ["CopiedView", "InoutString"]:
         symbol = compiled.symbol(f"{MODULE}.borrow{name}")
         require(compiled.ir[symbol] == compiled.ir[compiled.symbol(f"{MODULE}.take{name}")],

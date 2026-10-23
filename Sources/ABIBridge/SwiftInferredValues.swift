@@ -789,9 +789,9 @@ enum SwiftInferredValue {
     /// Only static value witnesses from a module that sets the bit for some
     /// type show it; the runtime builds a generic instance's. Swift sets it
     /// for `String`, for `@_addressableForDependencies` declarations, and for
-    /// imported C structs and unions, and never for references, closures,
-    /// existentials, metatypes, pointers, or collections, which store their
-    /// values out of line.
+    /// imported C structs and unions, and never for imported C enums,
+    /// references, closures, existentials, metatypes, pointers, or
+    /// collections, which store their values out of line.
     /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/SIL/IR/TypeLowering.cpp
     static func addressability(of type: Any.Type) -> Addressability {
         switch runtimeMetadataKind(type) {
@@ -824,8 +824,19 @@ enum SwiftInferredValue {
             return .unknown("ABIBridge cannot read the nominal type descriptor of \(name)")
         }
         if info.metadataInitialization == 2 {
-            return .sets(
-                "\(name) is an imported C type, which sets it when it imports a C struct or union"
+            // Swift sets the bit for an imported C struct or union, and never
+            // for an imported C enum, which its descriptor's kind shows unless
+            // the importer made the enum a struct, as for an option set. Each
+            // client emits an imported type's metadata, so its clear bit can
+            // come from a compiler that never sets the bit.
+            if info.isEnum { return .clear }
+            if ABISwiftGetValueWitnessFlags(pointer) & addressableForDependencies != 0 {
+                return .sets(
+                    "the value witnesses of \(name), an imported C struct or union, set it"
+                )
+            }
+            return .unknown(
+                "the value witnesses of \(name), an imported C type, leave it clear, but its records do not show whether it imports a C struct or union, whose metadata a compiler that never sets the bit can emit, or another C type, such as an enum imported as a struct"
             )
         }
         if info.isGeneric {

@@ -3,6 +3,7 @@
 // compiled signatures below. Each `borrow<Case>` takes one input that its
 // result borrows from, and `take<Case>` the same input without a lifetime
 // dependency.
+import CoreFoundation
 import Darwin
 
 public protocol P {}
@@ -73,8 +74,16 @@ extension String {
 @inline(never) public func takeMetatype(_ v: NC.Type) -> Int64 { 1 }
 @_lifetime(borrow v) @inline(never) public func borrowPointer(_ v: UnsafeRawPointer) -> View { View(1) }
 @inline(never) public func takePointer(_ v: UnsafeRawPointer) -> Int64 { 1 }
+// Imported C types: a C struct sets the bit, while neither a C enum nor an
+// option set, which the importer makes a struct, does.
 @_lifetime(borrow v) @inline(never) public func borrowCStruct(_ v: timespec) -> View { View(1) }
 @inline(never) public func takeCStruct(_ v: timespec) -> Int64 { 1 }
+@_lifetime(borrow v) @inline(never) public func borrowCEnum(_ v: CFComparisonResult) -> View { View(1) }
+@inline(never) public func takeCEnum(_ v: CFComparisonResult) -> Int64 { 1 }
+@_lifetime(borrow v) @inline(never) public func borrowCOptions(_ v: CFStringCompareFlags) -> View { View(1) }
+@inline(never) public func takeCOptions(_ v: CFStringCompareFlags) -> Int64 { 1 }
+// Keeps the imported types' metadata, which ABIBridge reads, in the IR.
+public let importedTypes: [Any.Type] = [timespec.self, CFComparisonResult.self, CFStringCompareFlags.self]
 @_lifetime(borrow v) @inline(never) public func borrowStringTuple(_ v: (String, Int64)) -> View { View(v.1) }
 @inline(never) public func takeStringTuple(_ v: (String, Int64)) -> Int64 { v.1 }
 @_lifetime(borrow v) @inline(never) public func borrowIntTuple(_ v: (Int64, Int64)) -> View { View(v.1) }
@@ -92,6 +101,13 @@ extension String {
 @inline(never) public func takeGenericTuple<T>(_ v: (T, Int64)) -> Int64 { v.1 }
 @_lifetime(borrow v) @inline(never) public func borrowClassBound<T: AnyObject>(_ v: T) -> View { View(1) }
 @inline(never) public func takeClassBound<T: AnyObject>(_ v: T) -> Int64 { 1 }
+// A pack passes its elements' addresses through one buffer either way. A
+// tuple with a pack expansion passes as one address where a result borrows
+// from it, and otherwise as its elements and a pack.
+@_lifetime(borrow v) @inline(never) public func borrowPack<each T>(_ v: repeat (each T, Int64)) -> View { View(1) }
+@inline(never) public func takePack<each T>(_ v: repeat (each T, Int64)) -> Int64 { 1 }
+@_lifetime(borrow v) @inline(never) public func borrowTuplePack<each T>(_ v: (Int64, repeat each T)) -> View { View(1) }
+@inline(never) public func takeTuplePack<each T>(_ v: (Int64, repeat each T)) -> Int64 { 1 }
 // A copy dependency, and an inout one, leave the convention alone.
 @_lifetime(copy v) @inline(never) public func borrowCopiedView(_ v: View) -> View { v }
 @inline(never) public func takeCopiedView(_ v: View) -> Int64 { v.n }
