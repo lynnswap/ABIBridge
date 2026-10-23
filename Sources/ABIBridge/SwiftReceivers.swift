@@ -61,6 +61,39 @@ struct SwiftReceiverPlan: Sendable {
 
     var trailingType: CValueType? { mode == .value ? type : nil }
 
+    /// Requires that `replacement`, the receiver of another declaration,
+    /// receives `self` as this one does: in the same mode and ownership, and
+    /// a value passing alike.
+    func requireReplacement(
+        _ replacement: SwiftReceiverPlan,
+        declaration: NativeDeclaration
+    ) throws {
+        guard mode == replacement.mode, isMutating == replacement.isMutating,
+            isConsuming == replacement.isConsuming,
+            mode == .object
+                || SwiftDeclaredLowering.passAlike(type, replacement.type, isResult: false)
+        else {
+            throw ABIResolutionError.signatureMismatch(
+                .init(
+                    declaration: declaration,
+                    position: .receiver,
+                    expected: passingDescription,
+                    found: [replacement.passingDescription]
+                )
+            )
+        }
+    }
+
+    private var passingDescription: String {
+        let passing =
+            switch mode {
+            case .object: "a class instance"
+            case .address: "self passed by address"
+            case .value: "self " + SwiftDeclaredLowering.lowering(of: type)
+            }
+        return passing + (isMutating ? ", mutating" : "") + (isConsuming ? ", consuming" : "")
+    }
+
     /// Storage that passes the host value `receiver` as `self`.
     func encodeValue(_ receiver: Any) throws -> NativeValueStorage {
         guard let host = conversion.hostStorage(receiver) else {

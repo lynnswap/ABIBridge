@@ -24,5 +24,23 @@ final class ImportedFunctionSelection: Sendable {
         }
     }
 
+    /// The references to any of `symbols`, which name one Swift declaration.
+    init(
+        resolver: SymbolResolver,
+        symbols: [NativeDeclaration],
+        importer: ImageSelector,
+        provider: ImageSelector?
+    ) throws {
+        value = try withRuntimeErrors {
+            try RuntimeImportedFunctionSelection(
+                resolver: resolver.runtime,
+                symbols: symbols.map(\.runtimeValue),
+                importer: importer.runtimeValue,
+                provider: provider?.runtimeValue,
+                language: .swift
+            )
+        }
+    }
+
     func retainedHandle() -> OpaquePointer { value.retainedHandle() }
 }

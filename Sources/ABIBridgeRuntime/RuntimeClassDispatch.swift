@@ -5,127 +5,170 @@ import Foundation
 package struct RuntimeClassDispatch {
     package let address: UInt
     package let authentication: RuntimePointerAuthentication
-    package let isSetter: Bool
     /// Whether the slot holds an async function pointer instead of code.
     package let isAsync: Bool
+    /// The image of the class whose descriptor introduces the slot.
+    package let image: RuntimeImage
 
-    package let descriptor: RuntimeSymbol
-
+    /// The virtual-table entry that calls of `declaration` read in the
+    /// metadata of `metadata`, which can inherit or override it.
+    ///
+    /// The class that introduces an entry describes it with a method
+    /// descriptor, which a symbol names after the declaration; an override
+    /// reuses the entry it overrides, which its class's override table
+    /// records. Both descriptors are named from the declaration's record by
+    /// the remangler: the declaration's own, then the same member of each
+    /// ancestor class, never from a spelling of the declaration.
+    ///
+    /// - Parameters:
+    ///   - declaration: The record of the declaration, or of the dispatch
+    ///     thunk that dispatches it.
+    ///   - asynchronous: The requested effect, when known. An entry with
+    ///     another effect does not apply, and the method descriptor decides
+    ///     that before the class layout is decoded.
     package init(
         metadata: Any.Type,
-        declaration: RuntimeDeclaration,
+        declaration: RuntimeSwiftDeclaration,
         resolver: RuntimeSymbolResolver,
         asynchronous: Bool? = false
     ) throws {
         guard let selected = metadata as? AnyClass else {
-            throw Self.unsupported("Virtual replacement requires a Swift class instance method.")
+            throw Self.unsupported("Virtual dispatch requires a Swift class member.")
+        }
+        guard let entity = SwiftEntitySyntax(declaration.identity) else {
+            throw Self.unsupported("Cannot decode the declaration " + declaration.identity + ".")
         }
         // A class member's slot holds its implementation for the metatype.
-        let isClassMember = declaration.name.hasPrefix("static ")
-        let qualifiedName = isClassMember ? String(declaration.name.dropFirst(7)) : declaration.name
+        let isClassMember = declaration.isStatic
         let selectedAddress = UInt(bitPattern: unsafeBitCast(selected, to: UnsafeRawPointer.self))
         let selectedHeader = try Header(address: selectedAddress)
         var current: AnyClass? = selected
-        var member: String?
-        var declaringLayout: Descriptor?
+        var declaring: UInt?
         while let type = current {
-            let runtimeName = runtimeClassTypeName(type)
-            let image = try runtimeClassImage(type, named: runtimeName, resolver: resolver)
-            let name = try runtimeTypeDeclarationName(
-                type,
-                in: image,
-                suggestedName: runtimeName,
-                resolver: resolver
+            let header = try Header(
+                address: UInt(bitPattern: unsafeBitCast(type, to: UnsafeRawPointer.self))
             )
-            let isDeclarationOwner = member == nil && qualifiedName.hasPrefix(name + ".")
-            if isDeclarationOwner {
-                member = String(qualifiedName.dropFirst(name.count + 1))
-            }
-            if let member {
-                let header = try Header(
-                    address: UInt(bitPattern: unsafeBitCast(type, to: UnsafeRawPointer.self))
+            if let classDescriptor = header.descriptor {
+                let image = try runtimeClassImage(
+                    type,
+                    named: runtimeClassTypeName(type),
+                    resolver: resolver
                 )
-                if let classDescriptor = header.descriptor {
-                    if isDeclarationOwner {
-                        declaringLayout = try Descriptor(address: classDescriptor)
+                let context = Self.context(of: type, descriptor: classDescriptor, in: image, resolver)
+                if declaring == nil, let context, entity.isDeclared(in: context) {
+                    declaring = classDescriptor
+                }
+                if let declaringDescriptor = declaring, let context,
+                    let name = entity.methodDescriptor(in: context),
+                    let found = try Self.symbol(named: name, in: image, resolver)
+                {
+                    let method = UInt(found.address)
+                    // The descriptor decides the effect before any layout is
+                    // decoded, so a member with another effect yields to other
+                    // candidates even when its class's layout is unsupported.
+                    let flags: UInt32 = try Self.read(method)
+                    let isAsync = flags & 0x40 != 0
+                    if let asynchronous, asynchronous != isAsync {
+                        throw RuntimeResolutionError.signatureMismatch(
+                            .init(
+                                expected: asynchronous ? "async" : "synchronous",
+                                found: [isAsync ? "async" : "synchronous"]
+                            )
+                        )
                     }
-                    let request = RuntimeDeclaration(
-                        name: "method descriptor for " + (isClassMember ? "static " : "") + name
-                            + "." + member,
-                        language: .swift,
-                        kind: .data
-                    )
-                    let resolved: RuntimeSymbol?
-                    do {
-                        resolved = try resolver.resolve(request, in: image, loading: .loadedOnly)
-                    } catch RuntimeResolutionError.declarationNotFound { resolved = nil }
-                    if let resolved {
-                        let layout = try Descriptor(address: classDescriptor)
-                        let method = UInt(resolved.address)
-                        guard method >= layout.methods,
-                            method - layout.methods < UInt(layout.count * 8),
-                            (method - layout.methods) % 8 == 0
-                        else {
-                            throw Self.unsupported(
-                                "The method descriptor is outside its declaring class's virtual table description."
-                            )
-                        }
-                        guard let declaringLayout else {
-                            throw Self.unsupported(
-                                "The selected declaration has no established class metadata layout."
-                            )
-                        }
-                        // A same-named ancestor can be inaccessible to this
-                        // declaration. Only an override record establishes that
-                        // it introduces this declaration's inherited slot.
-                        guard
-                            try declaringLayout.address == layout.address
-                                || declaringLayout.overrides(method)
-                        else {
-                            throw Self.unsupported(
-                                "The selected declaration does not override this superclass method descriptor."
-                            )
-                        }
-                        let offset =
-                            try layout.offset() + Int(method - layout.methods) / 8 * Self.word
-                        let flags: UInt32 = try Self.read(method)
-                        let kind = flags & 0xf
-                        let isAsync = flags & 0x40 != 0
-                        let isInstance = flags & 0x10 != 0
-                        guard isInstance != isClassMember, asynchronous.map({ $0 == isAsync }) ?? true,
-                            [0, 2, 3].contains(kind)
-                        else {
-                            throw Self.unsupported(
-                                "This virtual descriptor is not a matching method, getter or setter."
-                            )
-                        }
-                        guard offset >= -selectedHeader.addressPoint,
-                            offset <= selectedHeader.size - selectedHeader.addressPoint - Self.word
-                        else {
-                            throw Self.unsupported(
-                                "The virtual entry lies outside the selected class metadata allocation."
-                            )
-                        }
-                        address = try Self.add(selectedAddress, offset)
-                        authentication =
-                            RuntimePointerAuthentication.isEnabled
-                            ? .signed(
-                                key: isAsync ? .dataA : .instructionA,
-                                discriminator: UInt(flags >> 16),
-                                addressDiversity: true
-                            ) : .unsigned
-                        descriptor = resolved
-                        isSetter = kind == 3
-                        self.isAsync = isAsync
-                        return
+                    let layout = try Descriptor(address: classDescriptor)
+                    guard method >= layout.methods,
+                        method - layout.methods < UInt(layout.count * 8),
+                        (method - layout.methods) % 8 == 0
+                    else {
+                        throw Self.unsupported(
+                            "The method descriptor is outside its declaring class's virtual table description."
+                        )
                     }
+                    // A same-named ancestor can be inaccessible to this
+                    // declaration. Only an override record establishes that
+                    // it introduces this declaration's inherited slot.
+                    let declaringLayout = try Descriptor(address: declaringDescriptor)
+                    guard
+                        try declaringLayout.address == layout.address
+                            || declaringLayout.overrides(method)
+                    else {
+                        throw Self.unsupported(
+                            "The selected declaration does not override this superclass method descriptor."
+                        )
+                    }
+                    let offset = try layout.offset() + Int(method - layout.methods) / 8 * Self.word
+                    let kind = flags & 0xf
+                    let isInstance = flags & 0x10 != 0
+                    guard isInstance != isClassMember, [0, 2, 3].contains(kind) else {
+                        throw Self.unsupported(
+                            "This virtual descriptor is not a matching method, getter or setter."
+                        )
+                    }
+                    guard offset >= -selectedHeader.addressPoint,
+                        offset <= selectedHeader.size - selectedHeader.addressPoint - Self.word
+                    else {
+                        throw Self.unsupported(
+                            "The virtual entry lies outside the selected class metadata allocation."
+                        )
+                    }
+                    address = try Self.add(selectedAddress, offset)
+                    authentication =
+                        RuntimePointerAuthentication.isEnabled
+                        ? .signed(
+                            key: isAsync ? .dataA : .instructionA,
+                            discriminator: UInt(flags >> 16),
+                            addressDiversity: true
+                        ) : .unsigned
+                    self.image = image
+                    self.isAsync = isAsync
+                    return
                 }
             }
             current = class_getSuperclass(type)
         }
+        guard declaring != nil else {
+            throw Self.unsupported(
+                "No class of the lookup type's hierarchy declares this member, so it has no class slot; members of extensions have none."
+            )
+        }
         throw Self.unsupported(
             "No introducing virtual method descriptor matches this declaration. Direct and final methods have no class slot; stripped or differently lowered descriptors require an adapter."
         )
+    }
+
+    /// The symbol named `name` in `image`, nil when the image has none.
+    private static func symbol(
+        named name: String,
+        in image: RuntimeImage,
+        _ resolver: RuntimeSymbolResolver
+    ) throws -> RuntimeSymbol? {
+        do {
+            return try resolver.resolve(
+                RuntimeDeclaration(machOName: "_" + name, language: .swift, kind: .data),
+                in: image,
+                loading: .loadedOnly
+            )
+        } catch RuntimeResolutionError.declarationNotFound {
+            return nil
+        }
+    }
+
+    /// The tree that names `type` as the context of its members: its nominal
+    /// type descriptor's symbol, or else its runtime name, which spells the
+    /// same declaration unless the class is private or local. Such a class's
+    /// runtime name spells an anonymous context by its address instead, which
+    /// names no declaration.
+    private static func context(
+        of type: AnyClass,
+        descriptor: UInt,
+        in image: RuntimeImage,
+        _ resolver: RuntimeSymbolResolver
+    ) -> SwiftTypeSyntax? {
+        let mangled =
+            resolver.swiftTypeDeclaration(at: UInt64(descriptor), in: image)
+            ?? _mangledTypeName(type)
+        return mangled.flatMap(SwiftTypeSyntax.init)
     }
 
     package static func nominalDescriptor(of type: AnyClass) throws -> UInt? {
@@ -303,4 +346,72 @@ package func runtimeClassTypeName(_ type: AnyClass) -> String {
         return String(reflecting: type)
     }
     return name
+}
+
+/// A parsed Swift declaration, whose member can be named in the context of
+/// another class.
+private final class SwiftEntitySyntax {
+    private let syntax: OpaquePointer
+    private let entity: OpaquePointer
+    private let context: OpaquePointer
+
+    init?(_ mangled: String) {
+        guard
+            let syntax = mangled.utf8CString.withUnsafeBufferPointer({
+                ABICopySwiftSymbolSyntax($0.baseAddress, $0.count - 1)
+            })
+        else { return nil }
+        self.syntax = syntax
+        guard let root = ABISwiftSyntaxRoot(syntax),
+            String(cString: ABISwiftSyntaxNodeKind(root)) == "Global",
+            ABISwiftSyntaxNodeChildCount(root) == 1, let entity = ABISwiftSyntaxNodeChild(root, 0),
+            let context = ABISwiftSyntaxEntityContext(entity)
+        else {
+            ABIReleaseSwiftSyntax(syntax)
+            return nil
+        }
+        self.entity = entity
+        self.context = context
+    }
+
+    deinit { ABIReleaseSwiftSyntax(syntax) }
+
+    /// Whether `type` is the context that declares this member.
+    func isDeclared(in type: SwiftTypeSyntax) -> Bool {
+        withExtendedLifetime(type) { ABISwiftSyntaxNodesEqual(context, type.root) }
+    }
+
+    /// The mangled name of the method descriptor of the same member
+    /// declared in `type`, as the remangler spells it.
+    func methodDescriptor(in type: SwiftTypeSyntax) -> String? {
+        withExtendedLifetime(type) {
+            guard let name = ABICopySwiftMethodDescriptorSymbolName(entity, type.root) else {
+                return nil
+            }
+            defer { ABIFreeString(name) }
+            return String(cString: name)
+        }
+    }
+}
+
+/// A parsed Swift type mangling.
+private final class SwiftTypeSyntax {
+    private let syntax: OpaquePointer
+    let root: OpaquePointer
+
+    init?(_ mangled: String) {
+        guard
+            let syntax = mangled.utf8CString.withUnsafeBufferPointer({
+                ABICopySwiftTypeSyntax($0.baseAddress, $0.count - 1)
+            })
+        else { return nil }
+        guard let root = ABISwiftSyntaxRoot(syntax) else {
+            ABIReleaseSwiftSyntax(syntax)
+            return nil
+        }
+        self.syntax = syntax
+        self.root = root
+    }
+
+    deinit { ABIReleaseSwiftSyntax(syntax) }
 }

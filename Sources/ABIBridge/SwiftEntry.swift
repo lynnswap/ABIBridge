@@ -23,6 +23,9 @@ struct SwiftEntry: Sendable {
     /// The async function pointer selected with `implementation` for an
     /// async declaration.
     var asyncEntry: SwiftAsyncEntry?
+    /// The class slot whose code lookup selected as `implementation`, for a
+    /// member that its image exports only through its dispatch thunk.
+    var dispatch: SwiftClassDispatch?
 
     init(symbol: ResolvedSymbol) {
         self.init(
@@ -46,6 +49,35 @@ struct SwiftEntry: Sendable {
         self.declaration = declaration
         self.linkageName = linkageName
         provenance = symbol.image
+    }
+
+    /// The symbols that importing references to this entry's code name: the
+    /// symbol a call runs, such as the declaration's own code or a protocol
+    /// requirement's dispatch thunk, and the dispatch thunk of a class
+    /// member's own code, which other images call.
+    var importedSymbols: [NativeDeclaration] {
+        var names = [symbol.linkageName]
+        if let thunk = record?.dispatchThunk { names.append("_" + thunk) }
+        return names.map { NativeDeclaration(machOName: $0, language: .swift) }
+    }
+
+    /// The class slot that calls of this entry's declaration read in the
+    /// metadata of `metadata`: the slot lookup selected, or else the slot
+    /// the declaration's method descriptors name.
+    ///
+    /// - Parameter asynchronous: Whether the declaration is async.
+    func classDispatch(
+        in metadata: Any.Type,
+        resolver: SymbolResolver,
+        asynchronous: Bool
+    ) throws -> SwiftClassDispatch {
+        if let dispatch { return dispatch }
+        return try SwiftClassDispatch(
+            metadata: metadata,
+            entry: self,
+            resolver: resolver,
+            asynchronous: asynchronous
+        )
     }
 
     /// The images that keep the code a call runs loaded.

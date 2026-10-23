@@ -190,6 +190,90 @@ char *ABICopySwiftConformanceDescriptorSymbolName(const ABISwiftSyntaxNode *conf
 }
 
 namespace {
+bool isDeclaration(Node::Kind kind) {
+    switch (kind) {
+    case Node::Kind::Function:
+    case Node::Kind::Allocator:
+    case Node::Kind::Constructor:
+    case Node::Kind::Destructor:
+    case Node::Kind::Deallocator:
+    case Node::Kind::Variable:
+    case Node::Kind::Subscript:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Copies an entity's tree into `factory`, with `context` in place of the
+// context of the declaration under its static and accessor wrappers.
+NodePointer copyEntity(NodeFactory &factory, NodePointer source, NodePointer context) {
+    auto copy = [&](auto &&copy, NodePointer node) -> NodePointer {
+        auto result = node->hasText() ? factory.createNode(node->getKind(), node->getText())
+            : node->hasIndex() ? factory.createNode(node->getKind(), node->getIndex())
+            : factory.createNode(node->getKind());
+        for (auto child : *node) result->addChild(copy(copy, child), factory);
+        return result;
+    };
+    auto result = factory.createNode(source->getKind());
+    if (isDeclaration(source->getKind())) {
+        bool first = true;
+        for (auto child : *source) {
+            result->addChild(copy(copy, first ? context : child), factory);
+            first = false;
+        }
+        return result;
+    }
+    if (source->getNumChildren() != 1 || source->hasText() || source->hasIndex()) return nullptr;
+    auto child = copyEntity(factory, source->getFirstChild(), context);
+    if (!child) return nullptr;
+    result->addChild(child, factory);
+    return result;
+}
+}
+
+char *ABICopySwiftMethodDescriptorSymbolName(const ABISwiftSyntaxNode *entity,
+    const ABISwiftSyntaxNode *context) {
+    auto source = nativeNode(entity);
+    auto replacement = nativeNode(context);
+    if (!source || !replacement) return nullptr;
+    while (replacement->getKind() == Node::Kind::Type && replacement->getNumChildren() == 1)
+        replacement = replacement->getFirstChild();
+    NodeFactory factory;
+    auto copy = copyEntity(factory, source, replacement);
+    if (!copy) return nullptr;
+    auto descriptor = factory.createNode(Node::Kind::MethodDescriptor);
+    descriptor->addChild(copy, factory);
+    auto global = factory.createNode(Node::Kind::Global);
+    global->addChild(descriptor, factory);
+    auto result = swift::Demangle::mangleNode(global);
+    return result.isSuccess() ? strdup(result.result().c_str()) : nullptr;
+}
+
+char *ABICopySwiftDispatchThunkSymbolName(const ABISwiftSyntaxNode *entity) {
+    return copyGlobalSymbolName(nativeNode(entity), Node::Kind::DispatchThunk);
+}
+
+const ABISwiftSyntaxNode *ABISwiftSyntaxEntityContext(const ABISwiftSyntaxNode *entity) {
+    auto node = nativeNode(entity);
+    while (node && !isDeclaration(node->getKind())) {
+        if (node->getNumChildren() != 1) return nullptr;
+        node = node->getFirstChild();
+    }
+    if (!node || node->getNumChildren() == 0) return nullptr;
+    return reinterpret_cast<const ABISwiftSyntaxNode *>(node->getFirstChild());
+}
+
+bool ABISwiftSyntaxNodesEqual(const ABISwiftSyntaxNode *lhs, const ABISwiftSyntaxNode *rhs) {
+    auto first = nativeNode(lhs), second = nativeNode(rhs);
+    while (first && first->getKind() == Node::Kind::Type && first->getNumChildren() == 1)
+        first = first->getFirstChild();
+    while (second && second->getKind() == Node::Kind::Type && second->getNumChildren() == 1)
+        second = second->getFirstChild();
+    return first && second && first->isDeepEqualTo(second);
+}
+
+namespace {
 NodePointer copyTypeNode(NodeFactory &factory, NodePointer source) {
     auto result = source->hasText() ? factory.createNode(source->getKind(), source->getText())
         : source->hasIndex() ? factory.createNode(source->getKind(), source->getIndex())

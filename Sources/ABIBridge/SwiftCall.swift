@@ -2,6 +2,9 @@ import ABIBridgeCore
 
 final class SwiftCall: Sendable {
     let interface: SwiftCallInterface
+    /// The values the interface passes: the arguments, a trailing `self`,
+    /// and generic metadata and witness tables.
+    let parameterTypes: [CValueType]
     let errorPlan: SwiftErrorPlan?
     let values: SwiftCallValues
     private let hasTrailingValue: Bool
@@ -29,6 +32,7 @@ final class SwiftCall: Sendable {
         if let generic {
             parameters += Array(repeating: try CValueType(scalar: ABIValuePointer), count: generic.metadata.count)
         }
+        parameterTypes = parameters
         if let closure {
             guard case .synchronous(let original) = closure.transport else {
                 preconditionFailure("A synchronous closure has a synchronous transport.")
@@ -168,6 +172,93 @@ final class SwiftCall: Sendable {
                 return try processingResult(output, owner, codeOwners)
             }
             return try transfer.finish(outcome)
+        }
+    }
+}
+
+extension SwiftCall {
+    /// Requires that `replacement`, the plan of another declaration, receives
+    /// the calls that native code makes with this plan, so that its code can
+    /// stand for this declaration's: each argument and the result pass in
+    /// the same registers or by address with the same storage, arguments
+    /// keep their ownership, and the other values, such as a trailing `self`,
+    /// generic metadata, and witness tables, pass alike. A nonthrowing
+    /// replacement can stand for a throwing declaration; a throwing one needs
+    /// the same error type.
+    ///
+    /// - Parameter declaration: The replacement's declaration, which a
+    ///   mismatch names.
+    func requireReplacement(_ replacement: SwiftCall, declaration: NativeDeclaration) throws {
+        func mismatch(
+            _ position: ABIResolutionError.SignatureMismatch.Position,
+            _ expected: String,
+            _ found: String
+        ) -> ABIResolutionError {
+            .signatureMismatch(
+                .init(
+                    declaration: declaration,
+                    position: position,
+                    expected: expected,
+                    found: [found]
+                )
+            )
+        }
+        try SwiftErrorPlan.validateReplacement(replacement.errorPlan, for: errorPlan)
+        for (index, (original, other)) in zip(values.arguments, replacement.values.arguments)
+            .enumerated()
+        {
+            guard SwiftDeclaredLowering.passAlike(original.type, other.type, isResult: false) else {
+                throw mismatch(
+                    .argument(index),
+                    SwiftDeclaredLowering.lowering(of: original.type),
+                    SwiftDeclaredLowering.lowering(of: other.type)
+                )
+            }
+            // Ownership is transferred only for values that have it, and an
+            // inout argument is another argument than a value.
+            guard
+                original.convention == other.convention
+                    || (original.convention != .inoutValue && other.convention != .inoutValue
+                        && !original.hasOwnership && !other.hasOwnership)
+            else {
+                throw mismatch(
+                    .argument(index),
+                    original.convention.argumentDescription,
+                    other.convention.argumentDescription
+                )
+            }
+        }
+        let result = values.result.type, otherResult = replacement.values.result.type
+        guard SwiftDeclaredLowering.passAlike(result, otherResult, isResult: true) else {
+            throw mismatch(
+                .result,
+                SwiftDeclaredLowering.lowering(ofResult: result),
+                SwiftDeclaredLowering.lowering(ofResult: otherResult)
+            )
+        }
+        guard parameterTypes.count == replacement.parameterTypes.count,
+            zip(parameterTypes, replacement.parameterTypes).allSatisfy({
+                SwiftDeclaredLowering.passAlike($0, $1, isResult: false)
+            })
+        else {
+            func describe(_ types: [CValueType]) -> String {
+                types.map { SwiftDeclaredLowering.lowering(of: $0) }.joined(separator: "; ")
+            }
+            throw mismatch(
+                .signature,
+                describe(parameterTypes),
+                describe(replacement.parameterTypes)
+            )
+        }
+    }
+}
+
+extension SwiftArgumentConvention {
+    fileprivate var argumentDescription: String {
+        switch self {
+        case .borrowing: "a borrowed argument"
+        case .consuming: "a consumed argument"
+        case .inoutValue: "an inout argument"
         }
     }
 }

@@ -79,11 +79,15 @@ private func withSwiftVirtualCallback(
         named: fixture.module + "." + typeName,
         in: fixture.providerScope
     )
-    let declaration = NativeDeclaration(name: type.name + "." + method, language: .swift)
+    let symbol = try await fixture.runtime.resolve(
+        NativeDeclaration(name: type.name + "." + method, language: .swift),
+        in: fixture.providerScope
+    )
     let entry = try await SwiftClassDispatch(
         metadata: type.metadata,
-        declaration: declaration,
-        resolver: type.resolver
+        entry: SwiftEntry(symbol: symbol),
+        resolver: type.resolver,
+        asynchronous: false
     )
     try withSwiftCallbackSlot(
         address: entry.address,

@@ -31,18 +31,18 @@ private func prepareSwiftImportedHandler<Signature, Result, each Argument>(
 }
 
 extension ABIRuntime {
+    /// The importing references to the code that calls of `entry` run.
     nonisolated func swiftHookSelection(
-        declaration: NativeDeclaration,
+        entry: SwiftEntry,
         importer: ImageSelector,
         provider: ImageSelector?
     ) async throws -> ImportedFunctionSelection {
         try await NativePreparation.run {
             try ImportedFunctionSelection(
                 resolver: self.resolver,
-                declaration: declaration,
+                symbols: entry.importedSymbols,
                 importer: importer,
-                provider: provider,
-                language: .swift
+                provider: provider
             )
         }
     }
@@ -204,7 +204,7 @@ extension NativeSwiftFunction {
         prepared: (signature: SwiftHookSignature, handler: SwiftHookHandler)
     ) async throws -> NativeSwiftImportedFunctionHook {
         let selection = try await runtime.swiftHookSelection(
-            declaration: self.declaration,
+            entry: entry,
             importer: importer,
             provider: provider
         )

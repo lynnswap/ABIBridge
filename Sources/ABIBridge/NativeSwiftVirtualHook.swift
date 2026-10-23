@@ -108,34 +108,20 @@ extension NativeSwiftMethod {
         retaining owner: (any Sendable)?,
         prepared: (signature: SwiftHookSignature, handler: SwiftHookHandler)
     ) async throws -> NativeSwiftVirtualHook {
-        let entry = try await NativePreparation.run { [self] in
-            let dispatch = try SwiftClassDispatch(
-                metadata: type.metadata,
-                declaration: self.declaration,
-                resolver: type.resolver,
-                asynchronous: prepared.signature.asyncInterface != nil
-            )
-            return (
-                address: dispatch.address, authentication: dispatch.authentication,
-                isSetter: dispatch.isSetter, descriptor: dispatch.descriptor
-            )
-        }
-        guard !entry.isSetter || consumesArguments else {
-            throw ABIResolutionError.unsupportedDeclaration(
-                "Resolve a Swift setter through setter(named:as:) to establish its consumed argument ownership."
-            )
+        let dispatch = try await NativePreparation.run { [self] in
+            try virtualDispatch()
         }
         // A file-backed inherited entry can also be an importing reference. Use
         // the storage type's generation so both operations share one dispatcher.
         let reference = SwiftHookReference(
-            key: .init(address: entry.address, generation: type.image.identity.loadGeneration),
-            authentication: entry.authentication,
-            asyncDescriptor: prepared.signature.asyncInterface != nil
+            key: .init(address: dispatch.address, generation: type.image.identity.loadGeneration),
+            authentication: dispatch.authentication,
+            asyncDescriptor: dispatch.isAsync
         )
         do {
             let registration = try await SwiftHookRegistry.shared.register(
                 references: [reference],
-                retaining: (self, entry.descriptor),
+                retaining: (self, dispatch.image),
                 signature: prepared.signature,
                 handler: prepared.handler,
                 codeOwner: owner
