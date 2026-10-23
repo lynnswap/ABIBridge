@@ -180,7 +180,7 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
         return String(cString: name)
     }
 
-    private struct Node {
+    fileprivate struct Node {
         let pointer: OpaquePointer
         init(_ pointer: OpaquePointer) { self.pointer = pointer }
         var kind: String { String(cString: ABISwiftSyntaxNodeKind(pointer)) }
@@ -200,6 +200,100 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
             )
         }
     }
+}
+
+/// What a symbol of a property states about it: a property descriptor, an
+/// accessor, or a variable initializer, each of which spells the property's
+/// declared type. A field record instead holds an opaque property's
+/// underlying type.
+package struct RuntimeSwiftPropertySymbol: Hashable, Sendable {
+    /// The symbol of the nominal type descriptor of the struct, enum, or
+    /// class that declares the property, as the remangler spells it from the
+    /// property's context.
+    package let typeDescriptor: String
+    /// The module that declares the property's type: the module of its
+    /// innermost extension context, otherwise its root module.
+    package let module: String
+    /// The property's name, without a private discriminator.
+    package let name: String
+    package let isStatic: Bool
+    /// Whether the symbol is the property's descriptor.
+    package let isDescriptor: Bool
+    /// Whether the declared type the symbol spells contains an opaque type.
+    package let declaresOpaqueType: Bool
+
+    // The kinds of symbols whose tree spells a property's declared type.
+    private static let kinds: Set<String> = [
+        "PropertyDescriptor", "Getter", "Setter", "ModifyAccessor", "Modify2Accessor",
+        "ReadAccessor", "Read2Accessor", "Initializer", "InitAccessor",
+    ]
+
+    /// Returns nil for other symbols.
+    package init?(linkageName: String) {
+        let name = linkageName.hasPrefix("_") ? String(linkageName.dropFirst()) : linkageName
+        guard
+            let syntax = name.utf8CString.withUnsafeBufferPointer({
+                ABICopySwiftSymbolSyntax($0.baseAddress, $0.count - 1)
+            })
+        else { return nil }
+        defer { ABIReleaseSwiftSyntax(syntax) }
+        guard var symbol = ABISwiftSyntaxRoot(syntax).map(Node.init) else { return nil }
+        if symbol.kind == "Global" {
+            // A suffix such as a dispatch thunk's wraps the accessor in another node.
+            guard symbol.children.count == 1, let child = symbol.child(0) else { return nil }
+            symbol = child
+        }
+        guard Self.kinds.contains(symbol.kind), var variable = symbol.child(0) else { return nil }
+        isStatic = variable.kind == "Static"
+        if isStatic, let child = variable.child(0) { variable = child }
+        guard variable.kind == "Variable", let context = variable.child(0),
+            let identifier = variable.child(1),
+            let declared = variable.children.first(where: { $0.kind == "Type" }),
+            let module = Self.declaringModule(of: context),
+            let descriptor = Self.copy(ABICopySwiftNominalTypeDescriptorSymbolName(context.pointer))
+        else { return nil }
+        switch identifier.kind {
+        case "Identifier":
+            guard let text = identifier.text else { return nil }
+            self.name = text
+        case "PrivateDeclName":
+            guard let text = identifier.children.last?.text else { return nil }
+            self.name = text
+        default:
+            return nil
+        }
+        typeDescriptor = descriptor
+        self.module = module
+        isDescriptor = symbol.kind == "PropertyDescriptor"
+        declaresOpaqueType = Self.containsOpaqueType(declared)
+    }
+
+    private static func declaringModule(of context: Node) -> String? {
+        var node = context
+        while true {
+            switch node.kind {
+            case "Module": return node.text
+            case "Extension": return node.child(0).flatMap { $0.kind == "Module" ? $0.text : nil }
+            default:
+                guard let parent = node.child(0) else { return nil }
+                node = parent
+            }
+        }
+    }
+
+    // `some P` spells as an opaque return type (`Qr`), another declaration's
+    // opaque type (`Qo`), or one of their parts.
+    private static func containsOpaqueType(_ node: Node) -> Bool {
+        node.kind.hasPrefix("Opaque") || node.children.contains(where: containsOpaqueType)
+    }
+
+    private static func copy(_ name: UnsafeMutablePointer<CChar>?) -> String? {
+        guard let name else { return nil }
+        defer { ABIFreeString(name) }
+        return String(cString: name)
+    }
+
+    private typealias Node = RuntimeSwiftDeclaration.Node
 }
 
 /// A Swift symbol found for a member lookup, with what it declares.

@@ -32,7 +32,8 @@ struct SwiftInferredValueTests {
     private func provider(
         _ source: String,
         arguments: [String] = [],
-        modulePrefix: String = "Inferred_"
+        modulePrefix: String = "Inferred_",
+        stripped: Bool = false
     ) throws -> (
         library: FixtureLibrary, module: String
     ) {
@@ -40,6 +41,7 @@ struct SwiftInferredValueTests {
         let library = try FixtureLibrary(
             swiftModule: module,
             swiftSource: source,
+            stripped: stripped,
             linkArguments: ["-parse-as-library", "-swift-version", "6"] + arguments
         )
         return (library, module)
@@ -241,7 +243,8 @@ struct SwiftInferredValueTests {
     }
 
     /// Without evidence of how a module is built, the failure does not call
-    /// it a library-evolution module.
+    /// it a library-evolution module. Open has no property descriptors, and
+    /// neither has any other type of the module.
     @Test func undecidedModulesAreNotCalledLibraryEvolutionModules() async throws {
         let (library, module) = try provider(
             """
@@ -259,7 +262,7 @@ struct SwiftInferredValueTests {
             in: library,
             as: (() -> NativeSwiftValue).self,
             naming:
-                "Cannot infer the Swift calling convention of \(module).Open in module \(module): its field `text: Swift.String` explains its addressable-for-dependencies value-witness bit, so the bit does not show whether struct `\(module).Open` is resilient."
+                "Cannot infer the Swift calling convention of \(module).Open in module \(module): its field `text: Swift.String` explains its addressable-for-dependencies value-witness bit, so the bit does not show whether struct `\(module).Open` is resilient; no trivial property descriptor of a stored `var` in its image shows that module `\(module)` is built without library evolution."
         )
     }
 
@@ -356,10 +359,13 @@ struct SwiftInferredValueTests {
         )
     }
 
-    /// `Data` sets the addressable bit for itself, whatever it stores, so
-    /// the bit does not show whether it or a value that stores it is
-    /// resilient, and neither is inferred.
-    @Test func selfAddressableTypesStayUndecided() async throws {
+    /// `Data` sets the addressable bit for itself, whatever it stores, so the
+    /// bit does not show whether it is resilient, and nothing in Foundation
+    /// shows how it was built. A value of another module whose static
+    /// metadata stores it shows that it is not resilient, and Foundation's
+    /// symbols spell its stored property, whose enum type's static value
+    /// witnesses leave the bit clear.
+    @Test func selfAddressableTypesAreDecidedWhereStaticValuesStoreThem() async throws {
         let (library, module) = try provider(
             """
             import Foundation
@@ -371,6 +377,7 @@ struct SwiftInferredValueTests {
             @inline(never) public func dataCount(_ d: Data) -> Int { d.count }
             @inline(never) public func makeData(_ n: Int) -> Data { Data(repeating: 1, count: n) }
             @inline(never) public func makeDataBox() -> DataBox { DataBox(data: Data([1, 2, 3]), n: 4) }
+            @inline(never) public func describeDataBox(_ b: DataBox) -> String { "\\(Array(b.data)),\\(b.n)" }
             """
         )
         defer { library.cleanup() }
@@ -387,12 +394,23 @@ struct SwiftInferredValueTests {
             as: ((Int) -> Data).self,
             naming: evidence
         )
-        await expectFailure(
-            module + ".makeDataBox()",
-            in: library,
-            as: (() -> NativeSwiftValue).self,
-            naming: "its field `data: Foundation.Data` explains"
+        #expect(
+            try await describeMade(
+                module + ".makeDataBox()",
+                module + ".describeDataBox(_:)",
+                in: library
+            ) == "[1, 2, 3],4"
         )
+        #if DEBUG
+        // Its enum type's static value witnesses decide Data's field alone.
+        let field = try #require(
+            ABISwiftTypeFieldMetadata(unsafeBitCast(Data.self, to: UnsafeRawPointer.self), 0)
+        )
+        _ = try SwiftInferredValue.layout(
+            of: unsafeBitCast(field, to: Any.Type.self),
+            position: .nested
+        )
+        #endif
     }
 
     /// An Optional or tuple field explains the addressable bit through the
@@ -977,7 +995,8 @@ struct SwiftInferredValueTests {
 
     /// A complete declaration compares a host type with the declared type
     /// once a convention for the declared type is established. Without one,
-    /// the lookup states the host type's convention itself.
+    /// the lookup states the host type's convention itself. Nothing shows
+    /// that this library-evolution module's Point is frozen.
     @Test func adaptersNeedAnEstablishedDeclaredConvention() async throws {
         let (library, module) = try provider(
             """
@@ -986,7 +1005,8 @@ struct SwiftInferredValueTests {
                 public var y: Double
             }
             @inline(never) public func sum(_ p: Point) -> Double { p.x + p.y }
-            """
+            """,
+            arguments: ["-enable-library-evolution"]
         )
         defer { library.cleanup() }
         let name = "\(module).sum(\(module).Point) -> Swift.Double"
@@ -1057,6 +1077,413 @@ struct SwiftInferredValueTests {
                     "Describe self with receiverABI or an ABIBridgeSwiftValue conformance."
                 )
         }
+    }
+    // MARK: Modules built without library evolution
+
+    /// Without library evolution, every stored property with a descriptor
+    /// has a trivial one, which shows how the module is built, and the
+    /// symbols of a struct's stored properties spell their declared types.
+    /// A field record holds an opaque property's underlying type, so only
+    /// those symbols show that a property is opaque. Stripping removes the
+    /// local accessors that spell an internal property without an initial
+    /// value, and a link can hide a property's exported symbols.
+    @Test(arguments: ["unstripped", "stripped", "hiddenDescriptor"])
+    func modulesWithoutLibraryEvolutionDecideTheirValuesFromRecords(link: String) async throws {
+        // Lookup of a type in an extension of Int searches every image, and
+        // the fixtures of the other arguments stay loaded.
+        let nestedName = "Nested_" + link
+        let (library, module) = try provider(
+            """
+            public protocol P {}
+            extension Int: P {}
+            public struct Label {
+                public var text: String
+                public var n: Int64
+                public init(text: String, n: Int64) { self.text = text; self.n = n }
+            }
+            public struct Mixed {
+                public var text: String = "m"
+                var count: Int64 = 2
+                public init() {}
+                public var total: Int64 { count }
+            }
+            public struct Unspelled {
+                public var text: String
+                var count: Int64
+                public init() { text = "u"; count = 3 }
+                public var total: Int64 { count }
+            }
+            public struct PrivateField {
+                public var text: String = "p"
+                private var count: Int64 = 5
+                public init() {}
+                public var total: Int64 { count }
+            }
+            public enum Tagged { case text(String), none }
+            extension Int {
+                public struct \(nestedName) {
+                    public var text: String
+                    public var n: Int64
+                    public init(text: String, n: Int64) { self.text = text; self.n = n }
+                }
+            }
+            @_addressableForDependencies public struct SelfAddressable {
+                public var a: Int64
+                public var b: Int64
+                public init(a: Int64, b: Int64) { self.a = a; self.b = b }
+            }
+            public struct OpaqueLabel { public var text: String = "o"; public var x: some P = 7; public init() {} }
+            public struct StructuralOpaque { public var text: String = "s"; public var x: (some P)? = 7; public init() {} }
+            public struct HiddenOpaque { public var text: String = "h"; var x: some P = 7; public init() {} }
+            @inline(never) public func makeLabel() -> Label { Label(text: "label", n: 4) }
+            @inline(never) public func describeLabel(_ v: Label) -> String { "\\(v.text),\\(v.n)" }
+            @inline(never) public func makeMixed() -> Mixed { Mixed() }
+            @inline(never) public func describeMixed(_ v: Mixed) -> String { "\\(v.text),\\(v.total)" }
+            @inline(never) public func makeUnspelled() -> Unspelled { Unspelled() }
+            @inline(never) public func describeUnspelled(_ v: Unspelled) -> String { "\\(v.text),\\(v.total)" }
+            @inline(never) public func makePrivateField() -> PrivateField { PrivateField() }
+            @inline(never) public func describePrivateField(_ v: PrivateField) -> String { "\\(v.text),\\(v.total)" }
+            @inline(never) public func makeTagged() -> Tagged { .text("tagged") }
+            @inline(never) public func describeTagged(_ v: Tagged) -> String { "\\(v)" }
+            @inline(never) public func makeNested() -> Int.\(nestedName) { .init(text: "nested", n: 5) }
+            @inline(never) public func describeNested(_ v: Int.\(nestedName)) -> String { "\\(v.text),\\(v.n)" }
+            @inline(never) public func makeSelfAddressable() -> SelfAddressable { .init(a: 6, b: 7) }
+            @inline(never) public func describeSelfAddressable(_ v: SelfAddressable) -> String { "\\(v.a),\\(v.b)" }
+            @inline(never) public func makeOpaqueLabel() -> OpaqueLabel { OpaqueLabel() }
+            @inline(never) public func makeStructuralOpaque() -> StructuralOpaque { StructuralOpaque() }
+            @inline(never) public func makeHiddenOpaque() -> HiddenOpaque { HiddenOpaque() }
+            """,
+            arguments: ["-enable-experimental-feature", "AddressableTypes"]
+                + (link == "hiddenDescriptor"
+                    ? ["-Xlinker", "-unexported_symbol", "-Xlinker", "_$s*5LabelV1ns5Int64V*"] : []),
+            stripped: link != "unstripped"
+        )
+        defer { library.cleanup() }
+        var decided = [
+            ("makeMixed()", "describeMixed(_:)", "m,2"),
+            ("makePrivateField()", "describePrivateField(_:)", "p,5"),
+            ("makeTagged()", "describeTagged(_:)", "text(\"tagged\")"),
+            ("makeSelfAddressable()", "describeSelfAddressable(_:)", "6,7"),
+        ]
+        if link != "hiddenDescriptor" { decided.append(("makeLabel()", "describeLabel(_:)", "label,4")) }
+        if link == "unstripped" { decided.append(("makeUnspelled()", "describeUnspelled(_:)", "u,3")) }
+        for (make, describe, expected) in decided {
+            #expect(
+                try await describeMade("\(module).\(make)", "\(module).\(describe)", in: library) == expected,
+                "\(make)"
+            )
+        }
+        // Relative names do not find these declarations.
+        let nested = "(extension in \(module)):Swift.Int.\(nestedName)"
+        #expect(
+            try await describeMade(
+                "\(module).makeNested() -> \(nested)",
+                "\(module).describeNested(\(nested)) -> Swift.String",
+                in: library
+            ) == "nested,5"
+        )
+        var undecided = [
+            ("makeOpaqueLabel()", "its stored property `x` has an opaque (`some`) type"),
+            ("makeStructuralOpaque()", "its stored property `x` has an opaque (`some`) type"),
+            ("makeHiddenOpaque()", "stored property `x`"),
+        ]
+        if link == "hiddenDescriptor" {
+            undecided.append(
+                ("makeLabel()", "no symbol in its image spells the declared type of its stored property `n`")
+            )
+        }
+        if link != "unstripped" {
+            undecided.append(
+                ("makeUnspelled()", "no symbol in its image spells the declared type of its stored property `count`")
+            )
+        }
+        for (make, evidence) in undecided {
+            await expectFailure(
+                "\(module).\(make)",
+                in: library,
+                as: (() -> NativeSwiftValue).self,
+                naming: evidence
+            )
+        }
+    }
+
+    /// Library evolution gives trivial descriptors to stored `let`s of
+    /// function, metatype, and unowned types, to static properties, and to
+    /// computed properties, but never to a stored `var`. Even a frozen value
+    /// of such a module stays undecided.
+    @Test func libraryEvolutionModulesShowNoTrivialStoredVariables() async throws {
+        let (library, module) = try provider(
+            """
+            import Foundation
+            public struct Kinds {
+                public let f: () -> Void
+                public let m: Int.Type
+                public unowned let u: NSObject
+                nonisolated(unsafe) public static var shared: Int64 = 0
+                public var computed: Int64 { 1 }
+                public init(u: NSObject) { f = {}; m = Int.self; self.u = u }
+            }
+            public final class Klass { public let l: Int64 = 0; public init() {} }
+            @frozen public struct FrozenLabel {
+                public var text: String
+                public var n: Int64
+                public init() { text = "f"; n = 1 }
+            }
+            @inline(never) public func makeFrozenLabel() -> FrozenLabel { FrozenLabel() }
+            """,
+            arguments: ["-enable-library-evolution"]
+        )
+        defer { library.cleanup() }
+        await expectFailure(
+            module + ".makeFrozenLabel()",
+            in: library,
+            as: (() -> NativeSwiftValue).self,
+            naming:
+                "no trivial property descriptor of a stored `var` in its image shows that module `\(module)` is built without library evolution"
+        )
+    }
+
+    /// A value whose static metadata stores a frozen type of a library-
+    /// evolution module shows that the type is not resilient: its compiler
+    /// laid the type out. Every struct it stores at any depth still needs
+    /// symbols that spell its stored properties, which show an opaque one.
+    /// A type of an extension in the client belongs to the client, whose
+    /// trivial descriptors therefore say nothing about the base. A subclass
+    /// of the base's resilient class exports a class metadata base offset,
+    /// which a module built without library evolution also exports, so it
+    /// does not make the client's self-addressable type resilient.
+    @Test(arguments: ["linked", "hidden", "hiddenStripped"])
+    func staticParentsDecideFrozenTypesOfOtherModules(link: String) async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString
+        )
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let base =
+            "inferredfrozen_"
+            + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        let baseSource = directory.appendingPathComponent("Base.swift")
+        try """
+        public protocol P {}
+        extension Int: P {}
+        @frozen public struct FrozenLabel {
+            public var text: String
+            public init(text: String) { self.text = text }
+        }
+        public struct OpenLabel {
+            public var text: String
+            public var n: Int64
+            public init() { text = "o"; n = 2 }
+        }
+        @frozen public struct FrozenOpaque {
+            public var text: String = "o"
+            public var x: some P = 7
+            public init() {}
+        }
+        @frozen public struct Outer {
+            public var inner: FrozenOpaque
+            public var m: Int64
+            public init() { inner = FrozenOpaque(); m = 1 }
+        }
+        open class Base { public init() {} }
+        @inline(never) public func makeFrozenLabel() -> FrozenLabel { FrozenLabel(text: "alone") }
+        """.write(to: baseSource, atomically: true, encoding: .utf8)
+        try FixtureLibrary.run([
+            "--sdk", "macosx", "swiftc", "-module-name", base,
+            "-target", "arm64-apple-macosx15.4", "-parse-as-library", "-swift-version",
+            "6", "-enable-library-evolution", "-emit-library", "-static", "-emit-module",
+            "-emit-module-path", directory.appendingPathComponent(base + ".swiftmodule").path,
+            baseSource.path, "-o", directory.appendingPathComponent("lib\(base).a").path,
+        ])
+        let (library, module) = try provider(
+            """
+            import \(base)
+            public struct HoldsFrozen {
+                public var f: FrozenLabel = .init(text: "held")
+                public var n: Int64 = 3
+                public init() {}
+            }
+            public enum HoldsFrozenCase { case f(FrozenLabel), none }
+            public struct HoldsFrozenOpaque { public var f = FrozenOpaque(); public init() {} }
+            public struct HoldsOuter { public var o = Outer(); public init() {} }
+            public struct HoldsOpen { public var o = OpenLabel(); public init() {} }
+            extension OpenLabel {
+                public struct Builder {
+                    public var scale: Int = 4
+                    public var text: String = "builder"
+                    public init() {}
+                }
+            }
+            public final class Sub: Base {}
+            @_addressableForDependencies public struct SelfAddressable {
+                public var a: Int64
+                public var b: Int64
+                public init(a: Int64, b: Int64) { self.a = a; self.b = b }
+            }
+            @inline(never) public func makeHoldsFrozen() -> HoldsFrozen { HoldsFrozen() }
+            @inline(never) public func describeHoldsFrozen(_ v: HoldsFrozen) -> String { "\\(v.f.text),\\(v.n)" }
+            @inline(never) public func makeHoldsFrozenCase() -> HoldsFrozenCase { .f(FrozenLabel(text: "case")) }
+            @inline(never) public func describeHoldsFrozenCase(_ v: HoldsFrozenCase) -> String {
+                if case .f(let label) = v { label.text } else { "none" }
+            }
+            @inline(never) public func makeHoldsOpen() -> HoldsOpen { HoldsOpen() }
+            @inline(never) public func describeHoldsOpen(_ v: HoldsOpen) -> String { "\\(v.o.text),\\(v.o.n)" }
+            @inline(never) public func makeBuilder() -> OpenLabel.Builder { OpenLabel.Builder() }
+            @inline(never) public func describeBuilder(_ v: OpenLabel.Builder) -> String { "\\(v.text),\\(v.scale)" }
+            @inline(never) public func makeSelfAddressable() -> SelfAddressable { .init(a: 8, b: 9) }
+            @inline(never) public func describeSelfAddressable(_ v: SelfAddressable) -> String { "\\(v.a),\\(v.b)" }
+            @inline(never) public func makeHoldsFrozenOpaque() -> HoldsFrozenOpaque { HoldsFrozenOpaque() }
+            @inline(never) public func makeHoldsOuter() -> HoldsOuter { HoldsOuter() }
+            """,
+            arguments: [
+                "-I", directory.path, "-L", directory.path,
+                "-enable-experimental-feature", "AddressableTypes",
+            ] + (link == "linked" ? ["-l" + base] : ["-Xlinker", "-hidden-l" + base]),
+            stripped: link == "hiddenStripped"
+        )
+        defer { library.cleanup() }
+        // The client's own types and the base's frozen type in a static
+        // parent; HoldsOpen's metadata is initialized at run time.
+        var decided = [
+            ("makeHoldsOpen()", "describeHoldsOpen(_:)", "o,2"),
+            ("makeSelfAddressable()", "describeSelfAddressable(_:)", "8,9"),
+        ]
+        if link != "hiddenStripped" {
+            decided += [
+                ("makeHoldsFrozen()", "describeHoldsFrozen(_:)", "held,3"),
+                ("makeHoldsFrozenCase()", "describeHoldsFrozenCase(_:)", "case"),
+            ]
+        }
+        for (make, describe, expected) in decided {
+            #expect(
+                try await describeMade("\(module).\(make)", "\(module).\(describe)", in: library) == expected,
+                "\(make)"
+            )
+        }
+        // Relative names do not find a type of an extension of another
+        // module's type.
+        let builder = "(extension in \(module)):\(base).OpenLabel.Builder"
+        #expect(
+            try await describeMade(
+                "\(module).makeBuilder() -> \(builder)",
+                "\(module).describeBuilder(\(builder)) -> Swift.String",
+                in: library
+            ) == "builder,4"
+        )
+        let opaque = "its stored property `x` has an opaque (`some`) type"
+        let unspelled = "no symbol in its image spells the declared type of its stored property"
+        var undecided = [
+            ("makeHoldsFrozenOpaque()", link == "hiddenStripped" ? unspelled : opaque),
+            ("makeHoldsOuter()", link == "hiddenStripped" ? unspelled : opaque),
+        ]
+        if link == "hiddenStripped" {
+            undecided += [
+                ("makeHoldsFrozen()", unspelled + " `text`"),
+                ("makeHoldsFrozenCase()", unspelled + " `text`"),
+            ]
+        }
+        for (make, evidence) in undecided {
+            await expectFailure(
+                "\(module).\(make)",
+                in: library,
+                as: (() -> NativeSwiftValue).self,
+                naming: evidence
+            )
+        }
+        // Alone, the base's frozen type is undecided, although the image
+        // holds the client's trivial descriptors in the base's context.
+        if link == "linked" {
+            await expectFailure(
+                "\(base).makeFrozenLabel()",
+                in: library,
+                as: (() -> NativeSwiftValue).self,
+                naming:
+                    "no trivial property descriptor of a stored `var` in its image shows that module `\(base)` is built without library evolution"
+            )
+        }
+    }
+
+    /// Swift passes an input that a result borrows from by address when its
+    /// type sets the addressable-for-dependencies bit, and no symbol records
+    /// which input a result borrows from. A value that only a module's
+    /// records decide, and that sets the bit, is therefore undecided in a
+    /// call with a scoped result, while a value whose static summary decides
+    /// it leaves the bit clear.
+    @Test func resultsThatBorrowFromValuesLeaveAddressableValuesUndecided() async throws {
+        let (library, module) = try provider(
+            """
+            public struct View: ~Escapable {
+                let n: Int64
+                @_lifetime(immortal) public init(_ n: Int64) { self.n = n }
+            }
+            public struct Label {
+                public var text: String
+                public var n: Int64
+                public init(text: String, n: Int64) { self.text = text; self.n = n }
+            }
+            public struct Plain {
+                public var x: Int64
+                public var y: Int64
+                public init(x: Int64, y: Int64) { self.x = x; self.y = y }
+            }
+            extension Label {
+                @_lifetime(borrow self) @inline(never) public func scoped() -> View { View(n) }
+            }
+            extension Plain {
+                @_lifetime(borrow self) @inline(never) public func scoped() -> View { View(x * 10 + y) }
+            }
+            @_lifetime(borrow v) @inline(never) public func borrowLabel(_ v: Label) -> View { View(v.n) }
+            @_lifetime(borrow v) @inline(never) public func borrowPlain(_ v: Plain) -> View { View(v.x * 10 + v.y) }
+            @inline(never) public func makeLabel() -> Label { Label(text: "label", n: 4) }
+            @inline(never) public func describeLabel(_ v: Label) -> String { "\\(v.text),\\(v.n)" }
+            @inline(never) public func makePlain() -> Plain { Plain(x: 2, y: 3) }
+            @inline(never) public func read(_ v: borrowing View) -> Int64 { v.n }
+            """,
+            arguments: ["-enable-experimental-feature", "Lifetimes"]
+        )
+        defer { library.cleanup() }
+        let scope = ImageSelector.path(library.libraryURL)
+        // Label is loadable where nothing borrows from it.
+        #expect(
+            try await describeMade(module + ".makeLabel()", module + ".describeLabel(_:)", in: library)
+                == "label,4"
+        )
+        let borrowed = "so Swift passes it by address where the call's result borrows from it"
+        await expectFailure(
+            module + ".borrowLabel(_:)",
+            in: library,
+            as: ((NativeSwiftValue) -> NativeSwiftBorrowedValue).self,
+            naming: borrowed
+        )
+        let label = try await runtime.resolveSwiftType(named: module + ".Label", in: scope)
+        await #expect {
+            _ = try await label.resolveMethod(named: "scoped()", as: (() -> NativeSwiftBorrowedValue).self)
+        } throws: { error in
+            guard case ABIResolutionError.metadataUnavailable(let message) = error else { return false }
+            return message.contains(borrowed)
+                && message.hasSuffix("Describe self with receiverABI or an ABIBridgeSwiftValue conformance.")
+        }
+        // Plain's static value witnesses decide it and leave the bit clear.
+        let make = try await runtime.resolveSwiftFunction(
+            named: module + ".makePlain()",
+            as: (() -> NativeSwiftValue).self,
+            in: scope
+        )
+        let read = try await runtime.resolveSwiftFunction(
+            named: module + ".read(_:)",
+            as: ((NativeSwiftBorrowedValue) -> Int64).self,
+            in: scope
+        )
+        let borrow = try await runtime.resolveSwiftFunction(
+            named: module + ".borrowPlain(_:)",
+            as: ((NativeSwiftValue) -> NativeSwiftBorrowedValue).self,
+            in: scope
+        )
+        let plain = try unsafe make.unsafeInvoke()
+        #expect(try unsafe borrow.unsafeInvoke(plain, withResult: { try unsafe read.unsafeInvoke($0) }) == 23)
+        let scoped = try await runtime.resolveSwiftType(named: module + ".Plain", in: scope)
+            .resolveMethod(named: "scoped()", as: (() -> NativeSwiftBorrowedValue).self)
+        #expect(try unsafe scoped.unsafeInvoke(on: plain, withResult: { try unsafe read.unsafeInvoke($0) }) == 23)
     }
 }
 #endif

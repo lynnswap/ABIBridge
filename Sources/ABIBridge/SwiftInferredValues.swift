@@ -33,9 +33,8 @@ enum SwiftValuePosition: Sendable, Equatable {
 /// clients, or when a stored field or direct payload is address-only.
 /// Otherwise it is loadable and uses the same swiftcc expansion as an explicit
 /// layout. Nothing in a descriptor or its field records records `@frozen`, so
-/// inference decides only from summaries the compiler wrote into the type's
-/// own static metadata and from positive evidence of resilience. Everything
-/// else stays undecided and fails:
+/// inference decides only from records the compiler wrote and that are
+/// present. Everything else stays undecided and fails:
 ///
 /// - Singleton metadata initialization stores a resilient type from another
 ///   module, and static value witnesses that are not bitwise-takable store a
@@ -47,18 +46,21 @@ enum SwiftValuePosition: Sendable, Equatable {
 ///   type, for a stored property of an opaque type (`some P`) that is not
 ///   class-bound, and for any value that stores either. A set bit that no
 ///   field explains marks the type resilient where its module exports
-///   symbols that only library evolution emits. `String`, `Data`, and
-///   imported C structs always set it, so such fields leave a type undecided.
+///   symbols that only library evolution emits.
 /// - A nongeneric type whose static value witnesses leave the bit clear is
 ///   loadable once a type of its module sets the bit, which Swift 6.1 and
 ///   earlier compilers never do, and when its fields explain whether its value
 ///   witnesses are POD: a `@sensitive` type is address-only, and only its
 ///   non-POD value witnesses show it. Its fields, including generic
 ///   instances, are decided with it.
+/// - Otherwise, a nongeneric type whose fields explain whether its value
+///   witnesses are POD is loadable when it is not resilient, no stored
+///   property has an opaque type, and every field is loadable on its own
+///   (``nonEvolutionGap(of:storedBy:)``).
 ///
-/// Missing symbols, the form of property descriptors, the runtime-built value
-/// witnesses of a generic instance, and class reference counting are not
-/// evidence: each made a resilient or address-only value look loadable.
+/// Missing symbols, the runtime-built value witnesses of a generic instance,
+/// and class reference counting are not evidence: each made a resilient or
+/// address-only value look loadable.
 ///
 /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/SIL/IR/TypeLowering.cpp
 /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/IRGen/GenValueWitness.cpp
@@ -145,6 +147,13 @@ enum SwiftInferredValue {
         /// records show. A `@sensitive` type's own value witnesses are not
         /// POD even when its fields are.
         let storesNonPOD: Bool
+        /// Whether the rules for modules built without library evolution
+        /// decide the value: it is nongeneric, and its fields explain whether
+        /// its value witnesses are POD.
+        var followsNonEvolutionRules = false
+        /// Whether its static value witnesses set the addressable-for-
+        /// dependencies bit.
+        var setsAddressableForDependencies = false
     }
 
     private static let classifications = Mutex<
@@ -219,6 +228,7 @@ enum SwiftInferredValue {
             )
         }
         let addressOnly = Classification(convention: .addressOnly, storesNonPOD: true)
+        let nonEvolution = !info.isGeneric
         // Runtime initialization lays out a resilient type from another module.
         if info.metadataInitialization == 1 { return addressOnly }
         // Only static value witnesses summarize the concrete fields; a generic
@@ -254,6 +264,9 @@ enum SwiftInferredValue {
             storesNonPOD: storesNonPOD,
             module: module
         )
+        // A @sensitive type is address-only, and only its non-POD value
+        // witnesses show it.
+        let followsNonEvolutionRules = nonEvolution && (flags & nonPOD == 0 || storesNonPOD)
         let convention: Convention
         switch decision {
         case .addressOnly: return addressOnly
@@ -261,9 +274,19 @@ enum SwiftInferredValue {
             convention = try .loadable(layout(of: metadata, info: info, fields: fields, parts: parts))
         case .undecided(let missing):
             let frozen = try layout(of: metadata, info: info, fields: fields, parts: parts)
-            convention = .undecided(frozen: frozen, missing: missing)
+            if !followsNonEvolutionRules {
+                convention = .undecided(frozen: frozen, missing: missing)
+            } else if let gap = nonEvolutionGap(of: metadata, storedBy: []) {
+                convention = .undecided(frozen: frozen, missing: missing + "; " + gap)
+            } else {
+                convention = .loadable(frozen)
+            }
         }
-        return Classification(convention: convention, storesNonPOD: storesNonPOD)
+        var classification = Classification(convention: convention, storesNonPOD: storesNonPOD)
+        classification.followsNonEvolutionRules = followsNonEvolutionRules
+        classification.setsAddressableForDependencies =
+            nonEvolution && flags & addressableForDependencies != 0
+        return classification
     }
 
     private static func readFields(
@@ -697,6 +720,204 @@ enum SwiftInferredValue {
         }
         return swiftSelfAddressableDeclarations.contains(name)
     }
+
+    // MARK: Modules built without library evolution
+
+    private struct StoredKey: Hashable {
+        let metadata: ObjectIdentifier
+        let parents: Set<String>
+    }
+
+    private static let nonEvolutionGaps = Mutex<[StoredKey: String?]>([:])
+
+    /// Why the records of a nongeneric struct or enum of a module built
+    /// without library evolution leave it undecided where values of the
+    /// modules `parents` store it, or nil when they make it loadable. Its
+    /// fields must explain whether its value witnesses are POD, which
+    /// ``classify(_:)`` checks.
+    ///
+    /// The value is not resilient when one of these holds:
+    ///
+    /// - Its image holds a trivial property descriptor for a stored `var` of
+    ///   a struct or class of its module. Library evolution never gives a
+    ///   stored `var` one; without it, Swift 6.0 and later give one to every
+    ///   stored property with a descriptor.
+    /// - A value of another module stores it, at any depth, through values
+    ///   whose metadata needs no runtime initialization. That value's
+    ///   compiler laid out every type it stores from another module, which a
+    ///   resilient type would prevent.
+    ///
+    /// A field record holds the underlying type of a stored property of an
+    /// opaque type (`some P`), which can make the value address-only. Such a
+    /// property cannot take another declaration's opaque type, so a symbol
+    /// that spells a property's declared type shows whether it is opaque: a
+    /// property descriptor, an accessor, or a variable initializer. Every
+    /// stored property of a struct needs one, at every depth. Enum payloads
+    /// cannot be opaque.
+    ///
+    /// Each field must then be loadable on its own, where `parents` and the
+    /// value's module store it. A static value proves only that the types it
+    /// stores from other modules are not resilient, not that their stored
+    /// properties are not opaque, nor anything about its own module's types.
+    ///
+    /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/SILGen/SILGen.cpp
+    /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/IRGen/GenReflection.cpp
+    private static func nonEvolutionGap(
+        of metadata: Any.Type,
+        storedBy parents: Set<String>
+    ) -> String? {
+        let key = StoredKey(metadata: ObjectIdentifier(metadata), parents: parents)
+        if let cached = nonEvolutionGaps.withLock({ $0[key] }) { return cached }
+        let gap = findNonEvolutionGap(of: metadata, storedBy: parents)
+        nonEvolutionGaps.withLock { $0[key] = gap }
+        return gap
+    }
+
+    private static func findNonEvolutionGap(
+        of metadata: Any.Type,
+        storedBy parents: Set<String>
+    ) -> String? {
+        let pointer = unsafeBitCast(metadata, to: UnsafeRawPointer.self)
+        var info = ABISwiftValueDescriptorInfo()
+        guard ABISwiftGetValueDescriptorInfo(pointer, &info),
+            let fields = try? readFields(of: metadata, info: info)
+        else { return "its field records cannot be read" }
+        let module = ModuleContext(metadata)
+        guard let name = module.name else { return "its module is unknown" }
+        guard let image = module.image else {
+            return "ABIBridge cannot read the symbols of the image that declares it"
+        }
+        if !parents.contains(where: { $0 != name }),
+            !RuntimeSymbolResolver.shared.hasTrivialStoredVariableDescriptor(
+                declaredBy: name,
+                in: image
+            )
+        {
+            return "no trivial property descriptor of a stored `var` in its image shows that module `\(name)` is built without library evolution"
+        }
+        if !info.isEnum {
+            let declared =
+                module.descriptor.map {
+                    RuntimeSymbolResolver.shared.swiftPropertyDeclarations(
+                        ofTypeAt: UInt64(UInt(bitPattern: $0)),
+                        in: image
+                    )
+                } ?? [:]
+            for field in fields {
+                guard let opaque = declared[field.name] else {
+                    return "no symbol in its image spells the declared type of its stored property `\(field.name)`, which could be opaque"
+                }
+                if opaque {
+                    return "its stored property `\(field.name)` has an opaque (`some`) type, which its field record describes by its underlying type"
+                }
+            }
+        }
+        // Its own metadata is static: it is nongeneric, and runtime
+        // initialization makes it address-only.
+        let inner = parents.union([name])
+        for field in fields {
+            if let gap = field.type.flatMap({ nonEvolutionGap(ofField: $0, storedBy: inner) }) {
+                return "its field \(field.description) is not decided: \(gap)"
+            }
+        }
+        return nil
+    }
+
+    /// Why a field of `type` is not loadable on its own where values of the
+    /// modules `parents` store it, or nil when it is. Values with built-in
+    /// representations, references, closures, existentials, and metatypes
+    /// are; an address-only field already makes its parent address-only.
+    private static func nonEvolutionGap(
+        ofField type: Any.Type,
+        storedBy parents: Set<String>
+    ) -> String? {
+        switch runtimeMetadataKind(type) {
+        case .optional:
+            return nonEvolutionGap(
+                ofField: (type as! any NativeOptionalValue.Type).wrappedType,
+                storedBy: parents
+            )
+        case .tuple:
+            return SwiftTupleMetadata(type)!.elements.lazy.compactMap {
+                nonEvolutionGap(ofField: $0.type, storedBy: parents)
+            }.first
+        case .structure, .enumeration:
+            guard lowersByInference(type) else { return nil }
+            let classification: Classification
+            do throws(InferenceFailure) {
+                classification = try self.classification(of: type)
+            } catch {
+                return error.detail
+            }
+            switch classification.convention {
+            case .loadable:
+                return nil
+            case .addressOnly:
+                return "it is address-only"
+            case .undecided(_, let missing):
+                guard classification.followsNonEvolutionRules else { return missing }
+                return nonEvolutionGap(of: type, storedBy: parents)
+            }
+        default:
+            return nil
+        }
+    }
+
+    // MARK: Results that borrow from values
+
+    /// Checks that a value of `type`, passed as `layout` at `position` of a
+    /// call whose result can borrow from it, passes as the compiler passes
+    /// it there.
+    ///
+    /// Swift passes an input that a result has a scoped dependency on by
+    /// address when its type sets the addressable-for-dependencies bit, and
+    /// no symbol records which input a result borrows from. A value that
+    /// only the records of a module built without library evolution make
+    /// loadable can set the bit, so it is undecided there, unless its
+    /// layout passes by address anyway. Values that a static summary makes
+    /// loadable leave the bit clear.
+    /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/SIL/IR/SILFunctionType.cpp
+    ///
+    /// - Parameter explicit: Whether a lookup's `valueABIs` entry describes
+    ///   a type, which then does not lower by inference.
+    static func requireBorrowable(
+        _ type: Any.Type,
+        layout: CValueType,
+        position: SwiftValuePosition,
+        explicit: @escaping (Any.Type) -> Bool = { _ in false }
+    ) throws {
+        guard !withExtendedLifetime(layout, { ABISwiftValueIsIndirect(layout.handle) }) else {
+            return
+        }
+        func addressable(_ type: Any.Type) -> Any.Type? {
+            if explicit(type) { return nil }
+            switch runtimeMetadataKind(type) {
+            case .optional:
+                return addressable((type as! any NativeOptionalValue.Type).wrappedType)
+            case .tuple:
+                return SwiftTupleMetadata(type)!.elements.lazy.compactMap {
+                    addressable($0.type)
+                }.first
+            case .structure, .enumeration:
+                guard lowersByInference(type),
+                    let classification = try? classification(of: type),
+                    case .loadable = classification.convention,
+                    classification.setsAddressableForDependencies
+                else { return nil }
+                return type
+            default:
+                return nil
+            }
+        }
+        guard let value = addressable(type) else { return }
+        throw ABIResolutionError.metadataUnavailable(
+            message(
+                for: value,
+                "its value witnesses set the addressable-for-dependencies bit, so Swift passes it by address where the call's result borrows from it, and no symbol records which input a result borrows from",
+                at: position
+            )
+        )
+    }
 }
 
 // MARK: Module evidence
@@ -716,6 +937,8 @@ func swiftTypeDeclarationFromSymbols(_ metadata: Any.Type) -> String? {
 private struct ModuleContext {
     let name: String?
     let image: RuntimeImage?
+    /// The type's nominal type descriptor.
+    let descriptor: UnsafeRawPointer?
     /// The type's mangled declaration as its image exports the type's
     /// descriptor, or nil when the export trie does not show the descriptor.
     let declaration: String?
@@ -737,7 +960,8 @@ private struct ModuleContext {
     init(_ metadata: Any.Type) {
         let pointer = unsafeBitCast(metadata, to: UnsafeRawPointer.self)
         name = ABISwiftTypeModuleName(pointer).map { String(cString: $0) }
-        guard let name, let descriptor = ABISwiftTypeDescriptor(pointer),
+        descriptor = ABISwiftTypeDescriptor(pointer)
+        guard let name, let descriptor,
             let (header, image) = Self.image(defining: descriptor)
         else {
             image = nil; declaration = nil; showsLibraryEvolution = false

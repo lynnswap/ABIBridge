@@ -117,6 +117,13 @@ enum SwiftCallablePlan: Sendable {
     case synchronous(SwiftCall)
     case asynchronous(SwiftAsyncCall, SwiftAsyncImplementation)
 
+    var values: SwiftCallValues {
+        switch self {
+        case .synchronous(let call): call.values
+        case .asynchronous(let call, _): call.values
+        }
+    }
+
     init(
         signature: Any.Type,
         entry: SwiftEntry,
@@ -286,6 +293,24 @@ struct SwiftCallValues: Sendable {
             scoped = nil
         }
         result = Result(conversion: conversion, scoped: scoped)
+    }
+
+    /// Checks that each argument passes as the compiler passes it when the
+    /// call's result can borrow from it; see
+    /// ``SwiftInferredValue/requireBorrowable(_:layout:position:explicit:)``.
+    ///
+    /// - Parameter binding: The lookup whose `valueABIs` describe values
+    ///   that then do not lower by inference.
+    func requireBorrowableArguments(binding: SwiftGenericBinding?) throws {
+        guard result.scoped != nil else { return }
+        for argument in arguments where argument.convention != .inoutValue {
+            guard let native = try? argument.conversion.nativeType() else { continue }
+            try SwiftInferredValue.requireBorrowable(
+                native,
+                layout: argument.type,
+                position: .parameter
+            ) { binding?.hasValueABI($0) ?? false }
+        }
     }
 
     func requireIndependentResult() throws {

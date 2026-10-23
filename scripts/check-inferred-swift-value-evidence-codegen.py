@@ -433,8 +433,10 @@ class Rules:
             if symbol.endswith("WC") and tree.children[0].kind == "EnumCase":
                 self.cases.add(unwrap(tree.children[0].children[0].children[0]).key)
             # #430: symbols of the module's own declarations that only
-            # library evolution exports.
-            if context is not None and (symbol.endswith(("WC", "Tj", "Mo", "Mu")) or (
+            # library evolution exports. A module built without it exports a
+            # class metadata base offset (Mo) for a subclass of a resilient
+            # class, so Mo does not count.
+            if context is not None and (symbol.endswith(("WC", "Tj", "Mu")) or (
                     symbol.endswith("vpMV") and image.word(symbol) >> 24 & 0x7F in (1, 3))):
                 self.evolution.add(declaring_module(context))
 

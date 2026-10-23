@@ -16,6 +16,8 @@ struct SwiftReceiverPlan: Sendable {
     let isConsuming: Bool
     let expectedClass: AnyClass?
     let metadata: Any.Type
+    /// Whether `receiverABI` states the convention of `self`.
+    var isExplicit = false
 
     /// - Parameter schema: The declaration's schema of `self`, where it
     ///   decides how the host value passes instead of `conversion`.
@@ -60,6 +62,16 @@ struct SwiftReceiverPlan: Sendable {
     }
 
     var trailingType: CValueType? { mode == .value ? type : nil }
+
+    /// Checks that `self` passes as the compiler passes it when the call's
+    /// result can borrow from it; see
+    /// ``SwiftInferredValue/requireBorrowable(_:layout:position:explicit:)``.
+    func requireBorrowable() throws {
+        // A representation other than the type itself states its own
+        // convention.
+        guard mode == .value, !isExplicit, conversion.host == metadata else { return }
+        try SwiftInferredValue.requireBorrowable(metadata, layout: type, position: .receiver)
+    }
 
     /// Storage that passes the host value `receiver` as `self`.
     func encodeValue(_ receiver: Any) throws -> NativeValueStorage {

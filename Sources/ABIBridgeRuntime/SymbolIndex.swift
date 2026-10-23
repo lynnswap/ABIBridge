@@ -742,7 +742,7 @@ package final class SymbolIndex {
     /// exports the Swift nominal type descriptor at `address`. Nil when the
     /// image exports no such descriptor, or exports it under two names.
     package func exportedSwiftTypeDeclaration(at address: UInt64) -> String? {
-        exportedTypeDeclarations[address]
+        exportedTypeDescriptors.names[address].map(Self.declaration(ofDescriptor:))
     }
 
     /// The declaration under which this image names the Swift nominal type
@@ -751,35 +751,129 @@ package final class SymbolIndex {
     /// and local types, until the image is stripped. Nil when neither names
     /// the descriptor, or one names it twice.
     package func swiftTypeDeclaration(at address: UInt64) -> String? {
-        exportedTypeDeclarations[address] ?? tableTypeDeclarations[address]
+        swiftTypeDescriptorSymbol(at: address).map(Self.declaration(ofDescriptor:))
     }
 
-    private lazy var exportedTypeDeclarations = Self.typeDeclarations(
+    /// The symbol, such as `$s8ProbeLib5PointVMn`, under which this image
+    /// names the Swift nominal type descriptor at `address`, in its exports
+    /// or its symbol table.
+    private func swiftTypeDescriptorSymbol(at address: UInt64) -> String? {
+        exportedTypeDescriptors.names[address] ?? tableTypeDescriptors.names[address]
+    }
+
+    /// The address of the Swift nominal type descriptor that this image names
+    /// `name`, such as `$s8ProbeLib5PointVMn`, in its exports or its symbol
+    /// table.
+    private func swiftTypeDescriptor(named name: String) -> UInt64? {
+        exportedTypeDescriptors.addresses[name] ?? tableTypeDescriptors.addresses[name]
+    }
+
+    private static func declaration(ofDescriptor name: String) -> String {
+        String(name.dropFirst(2).dropLast(2))
+    }
+
+    /// Nominal type descriptor symbols, without their leading underscores.
+    /// A name or address that two symbols spell differently is left out.
+    private struct TypeDescriptorSymbols {
+        var names: [UInt64: String] = [:]
+        var addresses: [String: UInt64] = [:]
+
+        init(_ symbols: [IndexedSymbol]) {
+            var ambiguousNames: Set<String> = [], ambiguousAddresses: Set<UInt64> = []
+            for symbol in symbols where symbol.name.hasPrefix("_$s") && symbol.name.hasSuffix("Mn") {
+                let name = String(symbol.name.dropFirst())
+                if let other = names.updateValue(name, forKey: symbol.address), other != name {
+                    ambiguousAddresses.insert(symbol.address)
+                }
+                if let other = addresses.updateValue(symbol.address, forKey: name),
+                    other != symbol.address
+                {
+                    ambiguousNames.insert(name)
+                }
+            }
+            for address in ambiguousAddresses { names[address] = nil }
+            for name in ambiguousNames { addresses[name] = nil }
+        }
+    }
+
+    private lazy var exportedTypeDescriptors = TypeDescriptorSymbols(
         exportedSymbols(withPrefix: "_$s")
     )
 
     // Only the names that end in `Mn` become strings.
-    private lazy var tableTypeDeclarations = Self.typeDeclarations(
+    private lazy var tableTypeDescriptors = TypeDescriptorSymbols(
         swiftSymbols { name in
             let count = strlen(name)
             return count > 2 && name[count - 2] == 77 && name[count - 1] == 110
         }
     )
 
-    private static func typeDeclarations(_ symbols: [IndexedSymbol]) -> [UInt64: String] {
-        var declarations: [UInt64: String] = [:]
-        var ambiguous: Set<UInt64> = []
-        for symbol in symbols where symbol.name.hasPrefix("_$s") && symbol.name.hasSuffix("Mn") {
-            let declaration = String(symbol.name.dropFirst(3).dropLast(2))
-            if let other = declarations.updateValue(declaration, forKey: symbol.address),
-                other != declaration
-            {
-                ambiguous.insert(symbol.address)
+    // MARK: Stored properties
+
+    /// Whether this image holds a trivial property descriptor for a stored
+    /// `var` of a struct or class that `module` declares: a `…vpMV` symbol,
+    /// in the exports or the symbol table, whose first word is 0 and whose
+    /// type's field records mark the property as a `var`. A type declared in
+    /// an extension belongs to the extension's module.
+    package func hasTrivialStoredVariableDescriptor(declaredBy module: String) -> Bool {
+        if let cached = trivialStoredVariableModules[module] { return cached }
+        let found = trivialPropertyDescriptors.contains { property in
+            guard property.module == module, !property.isStatic,
+                let address = swiftTypeDescriptor(named: property.typeDescriptor),
+                let descriptor = UnsafeRawPointer(bitPattern: UInt(address))
+            else { return false }
+            return ABISwiftDescriptorStoredProperty(descriptor, property.name)
+                == ABISwiftStoredPropertyVar
+        }
+        trivialStoredVariableModules[module] = found
+        return found
+    }
+
+    private var trivialStoredVariableModules: [String: Bool] = [:]
+
+    // Swift mangles a property descriptor with the suffix `MV`. A trivial
+    // descriptor's first word, its key-path component header, is 0.
+    private lazy var trivialPropertyDescriptors: [RuntimeSwiftPropertySymbol] =
+        swiftSymbols(endingWith: (77, 86)).compactMap { symbol in
+            guard symbol.name.hasSuffix("vpMV"),
+                let descriptor = UnsafeRawPointer(bitPattern: UInt(symbol.address)),
+                descriptor.loadUnaligned(as: UInt32.self) == 0,
+                let property = RuntimeSwiftPropertySymbol(linkageName: symbol.name),
+                property.isDescriptor
+            else { return nil }
+            return property
+        }
+
+    /// The instance properties of the struct, enum, or class whose nominal
+    /// type descriptor is at `address` that a symbol in this image's exports
+    /// or symbol table spells: a property descriptor, an accessor, or a
+    /// variable initializer. Each is mapped to whether a spelled declared type
+    /// contains an opaque type. Empty when the image does not name the
+    /// descriptor.
+    package func swiftPropertyDeclarations(ofTypeAt address: UInt64) -> [String: Bool] {
+        if let cached = propertyDeclarations[address] { return cached }
+        var result: [String: Bool] = [:]
+        if let descriptor = swiftTypeDescriptorSymbol(at: address) {
+            // A member's symbols start with its type's context, which the
+            // descriptor's symbol spells before its suffix; their trees
+            // decide which ones belong to the type.
+            let prefix = "_" + descriptor.dropLast(2)
+            let bytes = Array(prefix.utf8CString)
+            let table = swiftSymbols { name in strncmp(name, bytes, bytes.count - 1) == 0 }
+            let exports = exportedSymbols(withPrefix: prefix)
+            for symbol in Set(table + exports) {
+                guard let property = RuntimeSwiftPropertySymbol(linkageName: symbol.name),
+                    !property.isStatic, property.typeDescriptor == descriptor
+                else { continue }
+                result[property.name, default: false] =
+                    result[property.name, default: false] || property.declaresOpaqueType
             }
         }
-        for address in ambiguous { declarations[address] = nil }
-        return declarations
+        propertyDeclarations[address] = result
+        return result
     }
+
+    private var propertyDeclarations: [UInt64: [String: Bool]] = [:]
 
     private func symbols(
         for query: SymbolQuery,

@@ -658,6 +658,40 @@ package final class RuntimeSymbolResolver: Sendable {
         }
     }
 
+    /// Whether `image` holds a trivial property descriptor for a stored `var`
+    /// of a struct or class that `module` declares. A module built without
+    /// library evolution by Swift 6.0 or later gives every stored property
+    /// with a descriptor a trivial one, and a library-evolution module never
+    /// gives one to a stored `var`.
+    /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/SILGen/SILGen.cpp
+    ///
+    /// - Parameter module: The module's name, such as `ProbeLib`. A type
+    ///   declared in an extension belongs to the extension's module.
+    package func hasTrivialStoredVariableDescriptor(
+        declaredBy module: String,
+        in image: RuntimeImage
+    ) -> Bool {
+        let index = state.withLock { $0.index(for: image) }
+        return withExtendedLifetime(index) {
+            state.withLock { _ in index.hasTrivialStoredVariableDescriptor(declaredBy: module) }
+        }
+    }
+
+    /// The instance properties of the struct, enum, or class whose nominal
+    /// type descriptor is at `address` that a symbol in `image`'s exports or
+    /// symbol table spells, each mapped to whether a spelled declared type
+    /// contains an opaque type. A field record holds an opaque property's
+    /// underlying type instead.
+    package func swiftPropertyDeclarations(
+        ofTypeAt address: UInt64,
+        in image: RuntimeImage
+    ) -> [String: Bool] {
+        let index = state.withLock { $0.index(for: image) }
+        return withExtendedLifetime(index) {
+            state.withLock { _ in index.swiftPropertyDeclarations(ofTypeAt: address) }
+        }
+    }
+
     /// The symbols `image` exports with names starting with `prefix`.
     package func exportedSymbols(
         withPrefix prefix: String,

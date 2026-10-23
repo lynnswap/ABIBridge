@@ -91,7 +91,7 @@ extension ConformanceCase {
                 )
                 return try unsafe text.unsafeInvoke(bump.unsafeInvoke(make.unsafeInvoke()))
             },
-            expectedError: { _ in "its field `name: Swift.String` explains" }
+            expectedError: { $0.libraryEvolution ? "its field `name: Swift.String` explains" : nil }
         ),
         ConformanceCase(
             id: "value.frozenStringStruct.inferred",
@@ -116,7 +116,7 @@ extension ConformanceCase {
                     "cmDescribeLabel(_:)"
                 )
             },
-            expectedError: { _ in "its field `text: Swift.String` explains" }
+            expectedError: { $0.libraryEvolution ? "its field `text: Swift.String` explains" : nil }
         ),
         ConformanceCase(
             id: "value.payloadEnum.inferred",
@@ -165,9 +165,10 @@ extension ConformanceCase {
             }
             return parts.joined(separator: ";")
         },
-        // A String payload explains the addressable bit, so only enum case
-        // symbols decide: with library evolution, they show that CMTagged is
-        // resilient. Nothing decides the other enums.
+        // A String payload explains the addressable bit. With library
+        // evolution, enum case symbols show that CMTagged is resilient, and
+        // nothing decides CMFrozenTagged. Without it, the module's trivial
+        // property descriptors decide both.
         ConformanceCase(
             id: "value.stringPayloadEnum.inferred",
             provider: """
@@ -203,9 +204,7 @@ extension ConformanceCase {
                     ),
                 ].joined(separator: ";")
             },
-            expectedError: {
-                $0.libraryEvolution ? ".CMFrozenTagged` is resilient" : ".CMTagged` is resilient"
-            }
+            expectedError: { $0.libraryEvolution ? ".CMFrozenTagged` is resilient" : nil }
         ),
         ConformanceCase(
             id: "value.nestedFrozen.inferred",
@@ -750,7 +749,7 @@ extension ConformanceCase {
                 let pair = try unsafe make.unsafeInvoke()
                 return try unsafe text.unsafeInvoke(pair.0) + "#\(pair.1)"
             },
-            expectedError: { _ in "its field `name: Swift.String` explains" }
+            expectedError: { $0.libraryEvolution ? "its field `name: Swift.String` explains" : nil }
         ),
         ConformanceCase(
             id: "value.functionFields.inferred",
@@ -862,6 +861,94 @@ extension ConformanceCase {
                 "cmDescribeTupled(_:)"
             )
         },
+        // An internal stored property with an initial value has an exported
+        // variable initializer, which spells its declared type.
+        ConformanceCase(
+            id: "value.internalStoredProperty.inferred",
+            provider: """
+                public struct CMPartlyInternal {
+                    public var text: String
+                    var count: Int64 = 2
+                    public init(text: String) { self.text = text }
+                    @inline(never) public func total() -> Int64 { count + Int64(text.count) }
+                }
+                @inline(never) public func cmMakePartlyInternal(_ k: Int64) -> CMPartlyInternal { CMPartlyInternal(text: "m\\(k)") }
+                @inline(never) public func cmDescribePartlyInternal(_ m: CMPartlyInternal) -> String { "\\(m.text),\\(m.total())" }
+                """,
+            oracle: "return cmDescribePartlyInternal(cmMakePartlyInternal(42))",
+            invoke: { f in
+                try await describeKinds(f, "cmMakePartlyInternal(_:)", "cmDescribePartlyInternal(_:)", kinds: [42])
+            },
+            expectedError: { $0.libraryEvolution ? "its field `text: Swift.String` explains" : nil }
+        ),
+        // A field record holds the underlying type of a stored property of an
+        // opaque type, while its descriptor spells the opaque type. Without
+        // library evolution, a String field explains the addressable bit, so
+        // only the descriptor shows that the struct can be address-only, and
+        // it stays undecided. With it, the field record's underlying type,
+        // CMQuad, is resilient, which makes the struct address-only.
+        ConformanceCase(
+            id: "value.opaqueOptionalField.inferred",
+            provider: """
+                public struct CMMaybeSided {
+                    public var text: String = "maybe"
+                    public var shape: (some CMSided)? = CMQuad()
+                    public init() {}
+                }
+                @inline(never) public func cmMakeMaybeSided() -> CMMaybeSided { CMMaybeSided() }
+                @inline(never) public func cmDescribeMaybeSided(_ v: CMMaybeSided) -> String {
+                    "\\(v.text),\\(v.shape?.sides ?? 0)"
+                }
+                """,
+            oracle: "return cmDescribeMaybeSided(cmMakeMaybeSided())",
+            invoke: { f in
+                try await describeMade(f, "cmMakeMaybeSided()", "cmDescribeMaybeSided(_:)")
+            },
+            expectedError: {
+                $0.libraryEvolution ? nil : "its stored property `shape` has an opaque (`some`) type"
+            }
+        ),
+        // A value that stores a frozen type of another module, here the
+        // standard library's Character, is laid out by its own compiler: its
+        // static metadata shows that Character is not resilient, and
+        // Character's symbols spell its stored property.
+        ConformanceCase(
+            id: "value.foreignFrozenField.inferred",
+            provider: """
+                public struct CMGlyph {
+                    public var glyph: Character
+                    public var n: Int64
+                    public init(glyph: Character, n: Int64) { self.glyph = glyph; self.n = n }
+                }
+                @inline(never) public func cmMakeGlyph(_ k: Int64) -> CMGlyph { CMGlyph(glyph: "g", n: k) }
+                @inline(never) public func cmDescribeGlyph(_ g: CMGlyph) -> String { "\\(g.glyph)\\(g.n)" }
+                """,
+            oracle: "return cmDescribeGlyph(cmMakeGlyph(7))",
+            invoke: { f in
+                try await describeKinds(f, "cmMakeGlyph(_:)", "cmDescribeGlyph(_:)", kinds: [7])
+            },
+            expectedError: { $0.libraryEvolution ? "its field `glyph: Swift.Character` explains" : nil }
+        ),
+        ConformanceCase(
+            id: "value.dataField.inferred",
+            provider: """
+                import Foundation
+                public struct CMDataBox {
+                    public var data: Data
+                    public var n: Int64
+                    public init(data: Data, n: Int64) { self.data = data; self.n = n }
+                }
+                @inline(never) public func cmMakeDataBox(_ k: Int64) -> CMDataBox {
+                    CMDataBox(data: Data(repeating: 7, count: Int(k)), n: k)
+                }
+                @inline(never) public func cmDescribeDataBox(_ b: CMDataBox) -> String { "\\(Array(b.data)),\\(b.n)" }
+                """,
+            oracle: "return [3, 40].map { cmDescribeDataBox(cmMakeDataBox($0)) }.joined(separator: \"|\")",
+            invoke: { f in
+                try await describeKinds(f, "cmMakeDataBox(_:)", "cmDescribeDataBox(_:)", kinds: [3, 40])
+            },
+            expectedError: { $0.libraryEvolution ? "its field `data: Foundation.Data` explains" : nil }
+        ),
     ]
 }
 #endif
