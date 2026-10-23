@@ -745,10 +745,31 @@ package final class SymbolIndex {
         exportedTypeDeclarations[address]
     }
 
-    private lazy var exportedTypeDeclarations: [UInt64: String] = {
+    /// The declaration under which this image names the Swift nominal type
+    /// descriptor at `address`, in its exports or its symbol table. The
+    /// symbol table keeps local symbols, such as the descriptors of private
+    /// and local types, until the image is stripped. Nil when neither names
+    /// the descriptor, or one names it twice.
+    package func swiftTypeDeclaration(at address: UInt64) -> String? {
+        exportedTypeDeclarations[address] ?? tableTypeDeclarations[address]
+    }
+
+    private lazy var exportedTypeDeclarations = Self.typeDeclarations(
+        exportedSymbols(withPrefix: "_$s")
+    )
+
+    // Only the names that end in `Mn` become strings.
+    private lazy var tableTypeDeclarations = Self.typeDeclarations(
+        swiftSymbols { name in
+            let count = strlen(name)
+            return count > 2 && name[count - 2] == 77 && name[count - 1] == 110
+        }
+    )
+
+    private static func typeDeclarations(_ symbols: [IndexedSymbol]) -> [UInt64: String] {
         var declarations: [UInt64: String] = [:]
         var ambiguous: Set<UInt64> = []
-        for symbol in exportedSymbols(withPrefix: "_$s") where symbol.name.hasSuffix("Mn") {
+        for symbol in symbols where symbol.name.hasPrefix("_$s") && symbol.name.hasSuffix("Mn") {
             let declaration = String(symbol.name.dropFirst(3).dropLast(2))
             if let other = declarations.updateValue(declaration, forKey: symbol.address),
                 other != declaration
@@ -758,7 +779,7 @@ package final class SymbolIndex {
         }
         for address in ambiguous { declarations[address] = nil }
         return declarations
-    }()
+    }
 
     private func symbols(
         for query: SymbolQuery,

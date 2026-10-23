@@ -126,6 +126,12 @@ func swiftClosureTypeHash(_ type: Any.Type) throws -> String {
 /// A struct or enum's declaration as the compiler mangles it in a
 /// discriminator.
 ///
+/// A private or fileprivate type, or a local one, is mangled with a private
+/// or local discriminator. Its runtime name instead spells the anonymous
+/// context that wraps it, or one of its enclosing types, by address. The
+/// type's descriptor symbol establishes its declaration, and so does the
+/// name that its anonymous context records in a -g -Onone build.
+///
 /// A type in an extension of a generic type is mangled with the extension's
 /// generic signature, which its runtime name omits and its context
 /// descriptors record without conformances to marker protocols. Only the
@@ -134,8 +140,27 @@ func swiftClosureTypeHash(_ type: Any.Type) throws -> String {
 /// unconstrained extension in its type's module has no context of its own,
 /// so the runtime name spells the declaration of a type in either.
 func swiftNominalClosureDeclaration(_ type: Any.Type, runtimeName: String) throws -> String {
-    guard ABISwiftTypeIsDeclaredInGenericExtension(unsafeBitCast(type, to: UnsafeRawPointer.self))
-    else {
+    let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
+    if ABISwiftTypeIsDeclaredInAnonymousContext(metadata) {
+        if let recorded = ABISwiftTypeAnonymousContextDeclaration(metadata) {
+            return String(cString: recorded)
+        }
+        guard let declaration = swiftTypeDeclarationFromSymbols(type) else {
+            throw ABIResolutionError.metadataUnavailable(
+                "No Swift closure type identity for \(String(reflecting: type)): it is declared "
+                    + "in an anonymous context, as a private, fileprivate, or local declaration or "
+                    + "within one. The closure's pointer-authentication discriminator hashes the "
+                    + "declaration with its private or local discriminator, which its runtime name "
+                    + "replaces with the context's address. Its image has no symbol of its nominal "
+                    + "type descriptor, which spells the declaration, as when the image is stripped "
+                    + "of local symbols, and no anonymous context records the declaration, which "
+                    + "Swift records only in -g -Onone builds. Call through a compiled adapter "
+                    + "instead, or keep the image's local symbols."
+            )
+        }
+        return declaration
+    }
+    guard ABISwiftTypeIsDeclaredInGenericExtension(metadata) else {
         return runtimeName.hasSuffix("G") ? try swiftNominalClosureName(runtimeName) : runtimeName
     }
     guard let declaration = swiftExportedTypeDeclaration(type) else {

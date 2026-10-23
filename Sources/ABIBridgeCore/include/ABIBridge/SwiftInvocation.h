@@ -166,6 +166,10 @@ bool ABISwiftTypeFieldIsGenericDependent(const void *metadata, size_t index);
 const char *ABISwiftTypeModuleName(const void *metadata);
 /// Whether the nominal type is declared in an extension of a generic type, directly or within another type declared in one: an extension that adds requirements, or one in another module than the type it extends. Such an extension has a generic signature, which its requirement records spell without conformances to marker protocols. An unconstrained extension in the extended type's module has no descriptor of its own.
 bool ABISwiftTypeIsDeclaredInGenericExtension(const void *metadata);
+/// Whether the nominal type is declared in an anonymous context, directly or within another type declared in one: a private or fileprivate declaration at its outermost private scope, or a declaration local to a function, closure, or initializer. A runtime type name spells an anonymous context by its address, where the compiler mangles the declaration's private or local discriminator.
+bool ABISwiftTypeIsDeclaredInAnonymousContext(const void *metadata);
+/// The mangled declaration, such as `4Main1P33_…LLV`, that the type's parent anonymous context records, which is the type's own, or null when its parent is not an anonymous context or records no name. Swift records it with -enable-anonymous-context-mangled-names, which the driver passes for -g -Onone builds.
+const char *ABISwiftTypeAnonymousContextDeclaration(const void *metadata);
 /// Whether the image declaring the type has a nongeneric, statically initialized struct or enum of the same module whose value witnesses set the addressable-for-dependencies bit. Swift 6.1 and earlier never set it.
 bool ABISwiftModuleSetsAddressableForDependencies(const void *metadata);
 /// The shape's generalized type expression, preserving symbolic references.

@@ -626,6 +626,17 @@ package final class RuntimeSymbolResolver: Sendable {
         }
     }
 
+    /// The declaration, such as `8ProbeLib1P33_…LLV`, under which `image`
+    /// names the Swift nominal type descriptor at `address`, in its exports
+    /// or its symbol table. Only local symbols name the descriptor of a
+    /// private or local type, and stripping the image removes them.
+    package func swiftTypeDeclaration(at address: UInt64, in image: RuntimeImage) -> String? {
+        let index = state.withLock { $0.index(for: image) }
+        return withExtendedLifetime(index) {
+            state.withLock { _ in index.swiftTypeDeclaration(at: address) }
+        }
+    }
+
     /// The symbols `image` exports with names starting with `prefix`.
     package func exportedSymbols(
         withPrefix prefix: String,
