@@ -177,13 +177,23 @@ public final class NativeSwiftInout<Value> {
             owner: self
         )
         result.store(UnsafeRawPointer(storage.address))
+        // Native code can store another byte where the buffer holds a Bool.
+        let booleans = SwiftHostConversion.booleanOffsets(in: Value.self)
+        if !booleans.isEmpty {
+            let address = storage.address
+            result.prepareWriteback = {
+                { SwiftHostConversion.normalizeBooleans(at: address, offsets: booleans) }
+            }
+        }
         return result
     }
 
     private static func callbackDecoder() -> SwiftCallbackDecoder {
+        let booleans = SwiftHostConversion.booleanOffsets(in: Value.self)
         return { argument, scope in
             let address = argument.load(as: UnsafeMutableRawPointer.self)
             let buffer = Self(address.load(as: Value.self))
+            SwiftHostConversion.normalizeBooleans(at: buffer.storage.address, offsets: booleans)
             scope.prepareWriteback {
                 let updated = buffer.value
                 return { address.assumingMemoryBound(to: Value.self).pointee = updated }

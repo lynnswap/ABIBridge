@@ -478,7 +478,15 @@ struct SwiftCallbackValues: Sendable {
         switch argument {
         case .value: SwiftValueConstants(Void.self)
         case .host(let conversion):
-            if case .identity = conversion.kind { SwiftValueConstants(type) } else { nil }
+            // A closed declaration can pass another byte where the host
+            // reads a Bool, which its decoder normalizes.
+            if case .identity = conversion.kind,
+                SwiftHostConversion.booleanOffsets(in: type).isEmpty
+            {
+                SwiftValueConstants(type)
+            } else {
+                nil
+            }
         default: nil
         }
     }

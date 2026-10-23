@@ -477,6 +477,7 @@ extension SwiftHostConversion {
             && (base is AnyClass || base == AnyObject.self || base is any NativePointerValue.Type)
         let constants = SwiftValueConstants(Value.self)
         let inputConstants = SwiftValueConstants(restoresConstants ? Value.self : Void.self)
+        let booleans = booleanOffsets(in: Value.self)
         let size = max(MemoryLayout<Value>.stride, schema.type.size)
         let alignment = max(MemoryLayout<Value>.alignment, schema.type.alignment)
         @Sendable func encode(_ value: UnsafeRawPointer) -> NativeValueStorage {
@@ -503,6 +504,7 @@ extension SwiftHostConversion {
                     // A Swift result is +1. Taking it avoids adding another
                     // retain or destroying bytes whose ownership has moved.
                     constants.initialize(at: storage.address)
+                    normalizeBooleans(at: storage.address, offsets: booleans)
                     output.initializeMemory(
                         as: Value.self,
                         repeating: storage.take(as: Value.self),
@@ -513,10 +515,24 @@ extension SwiftHostConversion {
                     if convention == .consuming {
                         return { address, _ in
                             inputConstants.initialize(at: address)
+                            normalizeBooleans(at: address, offsets: booleans)
                             return address.assumingMemoryBound(to: Value.self).move()
                         }
                     }
-                    return { address, _ in inputConstants.load(from: address, as: Value.self) }
+                    guard !booleans.isEmpty else {
+                        return { address, _ in inputConstants.load(from: address, as: Value.self) }
+                    }
+                    // A borrowed input keeps its bytes; its copy reads them.
+                    return { address, _ in
+                        let copy = NativeValueStorage(
+                            size: MemoryLayout<Value>.size,
+                            alignment: MemoryLayout<Value>.alignment
+                        )
+                        copy.address.copyMemory(from: address, byteCount: MemoryLayout<Value>.size)
+                        inputConstants.initialize(at: copy.address)
+                        normalizeBooleans(at: copy.address, offsets: booleans)
+                        return copy.address.load(as: Value.self)
+                    }
                 },
                 validateOwnedResult: {},
                 copyNative: { source in
@@ -535,6 +551,27 @@ extension SwiftHostConversion {
                     ? copyNativeBytes : swiftResultInitializer(nativeMetadata: Value.self)
             )
         )
+    }
+
+    /// The offsets of the `Bool` values in a value of `type`: the value
+    /// itself, or the elements of a tuple.
+    static func booleanOffsets(in type: Any.Type) -> [Int] {
+        if type == Bool.self { return [0] }
+        guard let tuple = SwiftTupleMetadata(type) else { return [] }
+        return tuple.elements.flatMap { element in
+            booleanOffsets(in: element.type).map { element.offset + $0 }
+        }
+    }
+
+    /// Stores each `Bool` at `offsets` from `address` as 0 or 1, as Swift
+    /// does. A declaration that passes another one-byte integer where the
+    /// host reads a `Bool`, such as a `UInt8`, can pass any nonzero byte for
+    /// true.
+    static func normalizeBooleans(at address: UnsafeMutableRawPointer, offsets: [Int]) {
+        for offset in offsets {
+            let byte = address.load(fromByteOffset: offset, as: UInt8.self)
+            address.storeBytes(of: byte == 0 ? 0 : 1, toByteOffset: offset, as: UInt8.self)
+        }
     }
 
     /// An `ABIBridgeValue` adapter, which passes its C representation.

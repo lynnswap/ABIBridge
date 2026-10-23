@@ -1595,6 +1595,44 @@ struct SwiftImportedFunctionHookTests {
         fallback.withUnderlyingError { #expect(($0 as NSError).code == -9) }
     }
 
+    /// A hook's `Bool` argument for a declared `UInt8` reads any nonzero
+    /// byte that the native caller passes as `true`.
+    @Test func hookArgumentsReadNonzeroBytesAsTrue() async throws {
+        let fixture = try CompiledSwiftReplacementFixture(
+            providerExtra: """
+                @inline(never) public func byteValue(_ byte: UInt8) -> Int64 { Int64(byte) }
+                """,
+            callerExtra: """
+                @inline(never) public func importedByteValue(_ byte: UInt8) -> Int64 {
+                    byteValue(byte)
+                }
+                """
+        )
+        defer { fixture.cleanup() }
+        let function = try await fixture.runtime.resolveSwiftFunction(
+            named: fixture.module + ".byteValue(Swift.UInt8) -> Swift.Int64",
+            as: ((Bool) -> Int64).self,
+            in: fixture.providerScope
+        )
+        let caller = try await fixture.runtime.resolveSwiftFunction(
+            named: fixture.callerModule + ".importedByteValue(_:)",
+            as: ((UInt8) -> Int64).self,
+            in: fixture.callerScope
+        )
+        let observed = Mutex<[Bool]>([])
+        let hook = try await unsafe function.hookImportedCalls(
+            in: fixture.callerScope,
+            using: fixture.runtime,
+            onFailure: { Issue.record($0) }
+        ) { call, value in
+            observed.withLock { $0.append(value == true) }
+            return try call.proceed(value)
+        }
+        defer { hook.invalidate() }
+        #expect(try unsafe caller.unsafeInvoke(2) == 1)
+        #expect(observed.withLock { $0 } == [true])
+    }
+
     @Test func opaqueResultsKeepTheirDeclaredReturnConvention() async throws {
         let fixture = try CompiledSwiftReplacementFixture()
         defer { fixture.cleanup() }
