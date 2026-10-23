@@ -3,9 +3,11 @@ import Synchronization
 /// What an image's export trie shows about how one of its Swift modules was
 /// built. Nothing in a type's own metadata records `@frozen`; library
 /// evolution instead exports symbols that only a resilient interface needs:
-/// enum case symbols (`WC`), dispatch thunks (`Tj`), class metadata base
-/// offsets (`Mo`), method lookup functions (`Mu`), and property descriptors
-/// whose key-path component is a stored field (discriminator 1 or 3).
+/// enum case symbols (`WC`), dispatch thunks (`Tj`), method lookup functions
+/// (`Mu`), and property descriptors whose key-path component is a stored
+/// field (discriminator 1 or 3). Class metadata base offsets (`Mo`) are not
+/// among them: a module built without library evolution exports one for a
+/// subclass of another module's resilient class.
 /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/SILGen/SILGen.cpp
 ///
 /// Only symbols that are present count. A module built without library
@@ -38,7 +40,7 @@ extension RuntimeSymbolResolver {
         let exports = exportedSymbols(withPrefix: "_$s" + module, in: image).contains { symbol in
             let symbolName = symbol.name
             if symbolName.hasSuffix("WC") || symbolName.hasSuffix("Tj")
-                || symbolName.hasSuffix("Mo") || symbolName.hasSuffix("Mu")
+                || symbolName.hasSuffix("Mu")
             {
                 return Self.isDeclared(symbolName, byModule: name)
             }
@@ -59,7 +61,7 @@ extension RuntimeSymbolResolver {
     /// by the declaration the symbol belongs to.
     private static let symbolKinds = [
         "property descriptor for ", "enum case for ", "dispatch thunk of ",
-        "class metadata base offset for ", "method lookup function for ",
+        "method lookup function for ",
     ]
 
     /// Whether a symbol demangles as one of these kinds for a declaration of

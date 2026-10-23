@@ -30,6 +30,12 @@ public struct OwnedOpaque { public var text: String = "c"; public var x: some CP
 
 // Attributes that only value witnesses show.
 @sensitive public struct Secret { public var a: Int64 = 1; public var b: Int64 = 2; public init() {} }
+// Its value witnesses leave the addressable bit clear although its String
+// field sets it, which the value witnesses of a value that stores it repeat.
+@sensitive public struct SecretText { public var text: String = "s"; public var n: Int64 = 1; public init() {} }
+public struct HoldsSecretText { public var secret = SecretText(); public var n: Int64 = 2; public init() {} }
+// A known limit: nothing records that this struct is @sensitive.
+@sensitive public struct RefSecret { public var object: NC = NC(); public var n: Int64 = 1; public init() {} }
 @_addressableForDependencies public struct SelfAddressable { public var a: Int64 = 1; public var b: Int64 = 2; public init() {} }
 
 // Property descriptor kinds. Library evolution gives some `let`s and
@@ -85,6 +91,9 @@ public enum Either<L, R> { case left(L), right(R) }
 @inline(never) public func takePrivateOpaque(_ v: PrivateOpaque) -> Int64 { 1 }
 @inline(never) public func takeOwnedOpaque(_ v: OwnedOpaque) -> Int64 { 1 }
 @inline(never) public func takeSecret(_ v: Secret) -> Int64 { v.a }
+@inline(never) public func takeSecretText(_ v: SecretText) -> Int64 { v.n }
+@inline(never) public func takeHoldsSecretText(_ v: HoldsSecretText) -> Int64 { v.n }
+@inline(never) public func takeRefSecret(_ v: RefSecret) -> Int64 { v.n }
 @inline(never) public func takeSelfAddressable(_ v: SelfAddressable) -> Int64 { v.a }
 @inline(never) public func takeTagged(_ v: Tagged) -> Int64 { 1 }
 @inline(never) public func takeFrozenTagged(_ v: FrozenTagged) -> Int64 { 1 }
@@ -112,6 +121,9 @@ public enum Either<L, R> { case left(L), right(R) }
 @inline(never) public func makePrivateOpaque() -> PrivateOpaque { PrivateOpaque() }
 @inline(never) public func makeOwnedOpaque() -> OwnedOpaque { OwnedOpaque() }
 @inline(never) public func makeSecret() -> Secret { Secret() }
+@inline(never) public func makeSecretText() -> SecretText { SecretText() }
+@inline(never) public func makeHoldsSecretText() -> HoldsSecretText { HoldsSecretText() }
+@inline(never) public func makeRefSecret() -> RefSecret { RefSecret() }
 @inline(never) public func makeSelfAddressable() -> SelfAddressable { SelfAddressable() }
 @inline(never) public func makeTagged() -> Tagged { .none }
 @inline(never) public func makeFrozenTagged() -> FrozenTagged { .none }
@@ -139,3 +151,8 @@ extension Plain {
 }
 @_lifetime(borrow v) @inline(never) public func borrowLabel(_ v: Label) -> View { View(v.n) }
 @_lifetime(borrow v) @inline(never) public func borrowPlain(_ v: Plain) -> View { View(Int64(v.x)) }
+// A tuple that a result borrows from passes as one address when its type sets
+// the addressable bit, and as separate elements otherwise.
+@_lifetime(borrow t) @inline(never) public func borrowLabelTriple(_ t: (Label, Int64, Int64)) -> View { View(t.1) }
+@_lifetime(borrow t) @inline(never) public func borrowIntTriple(_ t: (Int64, Int64, Int64)) -> View { View(t.1) }
+@inline(never) public func takeLabelTriple(_ t: (Label, Int64, Int64)) -> Int64 { t.1 }

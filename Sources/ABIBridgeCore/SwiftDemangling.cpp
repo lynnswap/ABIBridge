@@ -189,6 +189,19 @@ char *ABICopySwiftConformanceDescriptorSymbolName(const ABISwiftSyntaxNode *conf
     return copyGlobalSymbolName(node, Node::Kind::ProtocolConformanceDescriptor);
 }
 
+char *ABICopySwiftNominalTypeDescriptorSymbolName(const ABISwiftSyntaxNode *nominal) {
+    auto node = nativeNode(nominal);
+    if (!node) return nullptr;
+    switch (node->getKind()) {
+    case Node::Kind::Structure: case Node::Kind::Enum: case Node::Kind::Class: break;
+    default: return nullptr;
+    }
+    NodeFactory factory;
+    auto type = factory.createNode(Node::Kind::Type);
+    type->addChild(node, factory);
+    return copyGlobalSymbolName(type, Node::Kind::NominalTypeDescriptor);
+}
+
 namespace {
 NodePointer copyTypeNode(NodeFactory &factory, NodePointer source) {
     auto result = source->hasText() ? factory.createNode(source->getKind(), source->getText())

@@ -32,6 +32,10 @@ char *ABICopySwiftEntitySymbolName(const ABISwiftSyntaxNode *entity);
 /// The symbol of a protocol conformance's descriptor, from a
 /// ProtocolConformance node. Release with ABIFreeString.
 char *ABICopySwiftConformanceDescriptorSymbolName(const ABISwiftSyntaxNode *conformance);
+/// The symbol of the nominal type descriptor of a struct, enum, or class
+/// declaration node, such as the context of a property symbol's Variable.
+/// Release with ABIFreeString.
+char *ABICopySwiftNominalTypeDescriptorSymbolName(const ABISwiftSyntaxNode *nominal);
 /// Copies a type tree, substituting its depth-zero generalization parameters.
 ABISwiftSyntax *ABICopySwiftSubstitutedTypeSyntax(const ABISwiftSyntaxNode *node,
     const ABISwiftSyntaxNode *const *arguments, size_t count);

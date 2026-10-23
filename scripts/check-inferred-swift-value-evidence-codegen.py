@@ -27,7 +27,11 @@ It fails when one of these facts changes:
 - `UsesSwiftRefcounting` is set for a native class and clear for an
   `NSObject` subclass, while both set the Swift class bit;
 - a parameter or `self` that a scoped result borrows from is passed by
-  address when its type sets AFD.
+  address when its type sets AFD, and a tuple parameter as one address
+  rather than as its elements;
+- a `@sensitive` struct's value witnesses, and those of a value that
+  stores it, leave AFD clear although a `String` it stores sets it, and both
+  are passed by address.
 
 It then decides the value of each `take`, `make`, `borrow`, and `scoped`
 function and fails when a decision differs from the expected table, or when
@@ -35,7 +39,10 @@ a loadable decision meets an indirect signature or an address-only decision
 a direct one. Where a link hides enum case symbols and variable
 initializers, decisions may only become undecided. Each weakened variant of
 the rules, including the rules #430 removed, must disagree with some
-compiled signature, so that the fixtures keep exercising every guard.
+compiled signature, so that the fixtures keep exercising every guard. A
+known limit, a `@sensitive` struct that stores only a class reference and an
+integer, must keep contradicting its compiled signature until a record shows
+the attribute.
 """
 
 from concurrent.futures import ThreadPoolExecutor
@@ -69,6 +76,7 @@ PROVIDER_VALUES = {
     "StructuralOpaque": (UNDECIDED, UNDECIDED), "HiddenOpaque": (UNDECIDED, UNDECIDED),
     "PrivateOpaque": (UNDECIDED, UNDECIDED), "OwnedOpaque": (UNDECIDED, UNDECIDED),
     "Secret": (UNDECIDED, ADDRESS_ONLY), "SelfAddressable": (LOADABLE, ADDRESS_ONLY),
+    "SecretText": (UNDECIDED, UNDECIDED), "HoldsSecretText": (UNDECIDED, UNDECIDED),
     "Tagged": (LOADABLE, ADDRESS_ONLY), "FrozenTagged": (LOADABLE, UNDECIDED),
     "Shape": (LOADABLE, ADDRESS_ONLY),
     "PairDouble": (LOADABLE, UNDECIDED), "OpenPairDouble": (LOADABLE, UNDECIDED),
@@ -77,9 +85,22 @@ PROVIDER_VALUES = {
     "HolderAnyObject": (ADDRESS_ONLY, ADDRESS_ONLY),
     "EitherIntString": (LOADABLE, ADDRESS_ONLY), "EitherIntDouble": (LOADABLE, ADDRESS_ONLY),
 }
+# Known limits: decisions that contradict the compiled signature because no
+# record shows why, without library evolution. With it, the module's symbols
+# decide the value. The check fails once a decision stops contradicting, so
+# that the documentation can drop the limit.
+PROVIDER_LIMITS = {
+    # A @sensitive struct is address-only, but nothing records the attribute
+    # when its stored values leave AFD clear, as a class reference does.
+    "RefSecret": LOADABLE,
+}
 # Decisions where `borrow<Name>(_:)` and `<Name>.scoped()` return a result
 # that borrows from the value.
 PROVIDER_SCOPED = {"Label": (UNDECIDED, UNDECIDED), "Plain": (LOADABLE, ADDRESS_ONLY)}
+# Decisions where `borrow<Name>(_:)` returns a result that borrows from a
+# tuple. A borrowed tuple of a library-evolution module's struct crashes the
+# Swift 6.4 compiler, so the tuple without AFD holds only integers.
+PROVIDER_SCOPED_TUPLES = {"LabelTriple": (UNDECIDED, UNDECIDED), "IntTriple": (LOADABLE, LOADABLE)}
 BASE_VALUES = {"FrozenLabel": UNDECIDED, "OpenLabel": UNDECIDED, "FrozenHoldsOpen": UNDECIDED,
                "FrozenOpaque": UNDECIDED, "Outer": UNDECIDED}
 CLIENT_VALUES = {"HoldsFrozen": LOADABLE, "HoldsFPair": LOADABLE, "HoldsFrozenCase": LOADABLE,
@@ -99,6 +120,7 @@ WEAKENED = {
     "scoped-results": "a result that borrows from a value does not change its convention",
     "static-self": "static metadata shows that the type itself is not resilient",
     "sensitive": "non-POD value witnesses that no field explains do not matter",
+    "masked": "value witnesses that leave AFD clear although a stored value sets it do not matter",
     "parent-only": "a static parent decides a type of another module without evidence 2",
     "one-level": "a static parent needs evidence 2 only for the type it stores directly",
 }
@@ -433,8 +455,10 @@ class Rules:
             if symbol.endswith("WC") and tree.children[0].kind == "EnumCase":
                 self.cases.add(unwrap(tree.children[0].children[0].children[0]).key)
             # #430: symbols of the module's own declarations that only
-            # library evolution exports.
-            if context is not None and (symbol.endswith(("WC", "Tj", "Mo", "Mu")) or (
+            # library evolution exports. A module built without it exports a
+            # class metadata base offset (Mo) for a subclass of a resilient
+            # class, so Mo does not count.
+            if context is not None and (symbol.endswith(("WC", "Tj", "Mu")) or (
                     symbol.endswith("vpMV") and image.word(symbol) >> 24 & 0x7F in (1, 3))):
                 self.evolution.add(declaring_module(context))
 
@@ -453,11 +477,21 @@ class Rules:
 
     def decide(self, node, scoped=False):
         """The decision for a value of type `node`, and why."""
-        decision, reason, nominal = self.value(unwrap(node), frozenset(), frozenset())
-        if decision == LOADABLE and scoped and nominal is not None and not self.weak("scoped-results") \
-                and (nominal.generic or nominal.witnesses & ADDRESSABLE):
+        decision, reason, _ = self.value(unwrap(node), frozenset(), frozenset())
+        if decision == LOADABLE and scoped and not self.weak("scoped-results") and self.borrows_addressably(node):
             return UNDECIDED, "a result borrows from it, and it sets AFD or is a generic instance"
         return decision, reason
+
+    def borrows_addressably(self, node):
+        """Whether a value that these rules decide sets AFD or is a generic
+        instance, or a tuple holds one, so a borrowed tuple passes as one
+        address."""
+        node = unwrap(node)
+        if node.kind == "Tuple":
+            return any(self.borrows_addressably(element.child("Type")) for element in node.children)
+        nominal = self.image.nominal(node) if node.kind in (
+            "Structure", "Enum", "BoundGenericStructure", "BoundGenericEnum") else None
+        return nominal is not None and (nominal.generic or bool(nominal.witnesses & ADDRESSABLE))
 
     def value(self, node, parents, direct):
         """`parents` holds the modules of the static ancestors that store the
@@ -470,6 +504,14 @@ class Rules:
             return self.value(optional_payload(node), parents, direct)
         if node.kind in ("Structure", "Enum", "BoundGenericStructure", "BoundGenericEnum"):
             return self.nominal_value(node, parents, direct)
+        if node.kind == "Tuple":
+            decisions = [self.value(unwrap(element.child("Type")), parents, direct)[:2]
+                         for element in node.children]
+            for kind in (ADDRESS_ONLY, UNDECIDED):
+                found = next((reason for decision, reason in decisions if decision == kind), None)
+                if found:
+                    return kind, f"an element: {found}", None
+            return LOADABLE, "every element is loadable", None
         return UNDECIDED, f"no rule for {node.kind}", None
 
     def nominal_value(self, node, parents, direct):
@@ -508,6 +550,11 @@ class Rules:
         if witnesses is not None and witnesses & ADDRESSABLE and module in self.evolution \
                 and not any(self.explains(field_type) for _, field_type in fields):
             return ADDRESS_ONLY, f"no field of {name} explains its AFD", nominal
+        # A @sensitive struct is address-only, and its value witnesses leave
+        # AFD clear although a value it stores sets it.
+        if witnesses is not None and not witnesses & ADDRESSABLE and not self.weak("masked") \
+                and any(self.sets_addressable(field_type) for _, field_type in fields):
+            return UNDECIDED, f"{name} leaves AFD clear although a field sets it", nominal
         # Resilience: evidence 1 for the module, or evidence 3 from a static
         # ancestor of another module.
         covered = any(parent != module for parent in parents)
@@ -565,6 +612,23 @@ class Rules:
         nominal = self.image.nominal(node)
         return nominal is None or not nominal.static or bool(nominal.witnesses & ADDRESSABLE)
 
+    def sets_addressable(self, node):
+        """Whether a field's value sets AFD; unknown does not count."""
+        if leaf(node):
+            return LEAVES[leaf(node)]
+        if optional_payload(node):
+            return self.sets_addressable(optional_payload(node))
+        if node.kind == "Tuple":
+            return any(self.sets_addressable(unwrap(element.child("Type"))) for element in node.children)
+        nominal = self.image.nominal(node) if node.kind.startswith(("Structure", "Enum", "BoundGeneric")) else None
+        if nominal is None:
+            return False
+        if not nominal.generic:
+            return bool(nominal.witnesses & ADDRESSABLE)
+        arguments = [unwrap(child) for child in node.children[1].children]
+        return any(self.sets_addressable(substitute(field["type"], arguments))
+                   for field in nominal.fields if field["type"])
+
     def non_pod(self, node):
         """Whether a field needs nontrivial copies; unknown does not count."""
         if node.kind in ("Weak", "Unowned", "Class", "BoundGenericClass"):
@@ -584,12 +648,24 @@ class Rules:
 
 # MARK: Compiled signatures
 
-def positions(image, module, name, scoped):
+def function_symbol(image, module, function):
+    """The symbol of a module's free function, found by its tree."""
+    prefix = f"$s{len(module)}{module}{len(function)}{function}"
+    candidates = image.demangle([symbol for symbol in image.functions if symbol.startswith(prefix)])
+    symbol = next((symbol for symbol, tree in candidates.items()
+                   if tree is not None and [child.kind for child in tree.children] == ["Function"]), None)
+    if symbol is None:
+        raise RuntimeError(f"missing the fixture function {prefix}")
+    return symbol
+
+
+def positions(image, module, name, scoped, receiver=True):
     """(function, value type, compiled indirectly) where a value of the case
     is a `take` parameter and a `make` result, or the parameter of `borrow`
-    and `self` of `scoped`."""
+    and, with `receiver`, `self` of `scoped`."""
     found = []
-    for function, owner, position in ([(f"borrow{name}", "", "parameter"), ("scoped", name, "self")] if scoped
+    borrowed = [(f"borrow{name}", "", "parameter")] + ([("scoped", name, "self")] if receiver else [])
+    for function, owner, position in (borrowed if scoped
                                       else [(f"take{name}", "", "parameter"), (f"make{name}", "", "result")]):
         prefix = f"$s{len(module)}{module}" + (f"{len(owner)}{owner}V" if owner else "") + f"{len(function)}{function}"
         candidates = image.demangle([symbol for symbol in image.functions if symbol.startswith(prefix)])
@@ -686,6 +762,26 @@ def check_provider(image, rules, evolution, label, require):
         compiled = [indirect for *_, indirect in positions(image, PROVIDER, "Label", True)]
         require(all(compiled), f"{label}: a value that sets AFD and that a result borrows from must be "
                                "passed by address")
+        # A tuple parameter passes as its elements, unless a result borrows
+        # from it and its type sets AFD.
+        for function, expanded in [("borrowLabelTriple", False), ("borrowIntTriple", True),
+                                   ("takeLabelTriple", True)]:
+            parameters = image.functions[function_symbol(image, PROVIDER, function)]
+            values = [parameter for parameter in parameters if "sret(" not in parameter]
+            require((len(values) > 1) == expanded,
+                    f"{label}: {function} must pass its tuple {'as its elements' if expanded else 'as one address'}")
+        # Ordinary lowering sets AFD whenever a stored value does; a
+        # @sensitive struct's does not, nor does a value's that stores one,
+        # and both are passed by address.
+        for name, field in [("SecretText", "text"), ("HoldsSecretText", "secret")]:
+            nominal = next(n for n in image.nominals.values() if nominal_name(n.node) == f"{PROVIDER}.{name}")
+            stored = nominal.field(field)["type"]
+            require(not nominal.witnesses & ADDRESSABLE
+                    and (rules.sets_addressable(stored) if name == "SecretText"
+                         else rules.decide(stored)[0] == UNDECIDED)
+                    and all(indirect for *_, indirect in positions(image, PROVIDER, name, False)),
+                    f"{label}: {name} must leave AFD clear although the String it stores sets it, "
+                    "and be passed by address")
 
 
 def check_client(image, rules, label, require):
@@ -774,8 +870,18 @@ def main():
                 check_provider(image, rules, evolution, label, require)
                 cases = [(PROVIDER, name, False, expected[evolution]) for name, expected in PROVIDER_VALUES.items()]
                 cases += [(PROVIDER, name, True, expected[evolution]) for name, expected in PROVIDER_SCOPED.items()]
-            values = [(module, scoped, expected, *position) for module, name, scoped, expected in cases
-                      for position in positions(image, module, name, scoped)]
+                cases += [(PROVIDER, name, True, expected[evolution], False)
+                          for name, expected in PROVIDER_SCOPED_TUPLES.items()]
+                if not evolution:
+                    for name, expected in PROVIDER_LIMITS.items():
+                        for function, value, compiled in positions(image, PROVIDER, name, False):
+                            decision, reason, wrong = judge(rules, value, False, compiled)
+                            require(decision == expected and wrong,
+                                    f"{label}: the known limit {function} is {decision} ({reason}), "
+                                    f"passed {'indirectly' if compiled else 'directly'}; update the table "
+                                    "and the documented limit")
+            values = [(module, scoped, expected, *position) for module, name, scoped, expected, *receiver in cases
+                      for position in positions(image, module, name, scoped, *receiver)]
             for module, scoped, expected, function, value, compiled in values:
                 decision, reason, wrong = judge(rules, value, scoped, compiled)
                 passed = "indirectly" if compiled else "directly"

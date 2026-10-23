@@ -406,7 +406,7 @@ public actor NativeSwiftType: Hashable {
         {
             try checkReceiverRepresentation(representation, formalSelf: formalSelf)
         }
-        let plan = try SwiftReceiverPlan(
+        var plan = try SwiftReceiverPlan(
             conversion: conversion,
             schema: formalSelf,
             metadata: metadata,
@@ -415,6 +415,7 @@ public actor NativeSwiftType: Hashable {
             protocolSelf: protocolSelf,
             validateClass: representation != nil && representation != metadata
         )
+        plan.isExplicit = receiverABI != nil
         if receiverABI != nil, metadata is any NativeOptionalValue.Type {
             try checkOptionalReceiverABI(
                 plan,
