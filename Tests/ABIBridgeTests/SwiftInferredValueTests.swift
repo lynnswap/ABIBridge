@@ -361,23 +361,15 @@ struct SwiftInferredValueTests {
 
     /// `Data` sets the addressable bit for itself, whatever it stores, so the
     /// bit does not show whether it is resilient, and nothing in Foundation
-    /// shows how it was built. A value of another module whose static
-    /// metadata stores it shows that it is not resilient, and Foundation's
-    /// symbols spell its stored property, whose enum type's static value
-    /// witnesses leave the bit clear.
-    @Test func selfAddressableTypesAreDecidedWhereStaticValuesStoreThem() async throws {
+    /// shows how it was built. Whether a static value that stores it is
+    /// decided depends on the OS's Foundation, so the test does not check it;
+    /// ``staticParentsDecideFrozenTypesOfOtherModules(link:)`` covers the rule.
+    @Test func selfAddressableTypesStayUndecided() async throws {
         let (library, module) = try provider(
             """
             import Foundation
-            @frozen public struct DataBox {
-                public var data: Data
-                public var n: Int64
-                public init(data: Data, n: Int64) { self.data = data; self.n = n }
-            }
             @inline(never) public func dataCount(_ d: Data) -> Int { d.count }
             @inline(never) public func makeData(_ n: Int) -> Data { Data(repeating: 1, count: n) }
-            @inline(never) public func makeDataBox() -> DataBox { DataBox(data: Data([1, 2, 3]), n: 4) }
-            @inline(never) public func describeDataBox(_ b: DataBox) -> String { "\\(Array(b.data)),\\(b.n)" }
             """
         )
         defer { library.cleanup() }
@@ -394,23 +386,6 @@ struct SwiftInferredValueTests {
             as: ((Int) -> Data).self,
             naming: evidence
         )
-        #expect(
-            try await describeMade(
-                module + ".makeDataBox()",
-                module + ".describeDataBox(_:)",
-                in: library
-            ) == "[1, 2, 3],4"
-        )
-        #if DEBUG
-        // Its enum type's static value witnesses decide Data's field alone.
-        let field = try #require(
-            ABISwiftTypeFieldMetadata(unsafeBitCast(Data.self, to: UnsafeRawPointer.self), 0)
-        )
-        _ = try SwiftInferredValue.layout(
-            of: unsafeBitCast(field, to: Any.Type.self),
-            position: .nested
-        )
-        #endif
     }
 
     /// An Optional or tuple field explains the addressable bit through the
@@ -1313,7 +1288,8 @@ struct SwiftInferredValueTests {
     /// A value whose static metadata stores a frozen type of a library-
     /// evolution module shows that the type is not resilient: its compiler
     /// laid the type out. Every struct it stores at any depth still needs
-    /// symbols that spell its stored properties, which show an opaque one.
+    /// symbols that spell its stored properties, which show an opaque one,
+    /// unless its own static value witnesses decide it, as Code's do.
     /// A type of an extension in the client belongs to the client, whose
     /// trivial descriptors therefore say nothing about the base. A subclass
     /// of the base's resilient class exports a class metadata base offset,
@@ -1353,6 +1329,15 @@ struct SwiftInferredValueTests {
             public init() { inner = FrozenOpaque(); m = 1 }
         }
         open class Base { public init() {} }
+        @frozen public struct Code {
+            public var raw: Int32
+            public init(raw: Int32) { self.raw = raw }
+        }
+        @frozen public struct Coded {
+            public var text: String
+            public var code: Code
+            public init(text: String, code: Code) { self.text = text; self.code = code }
+        }
         @inline(never) public func makeFrozenLabel() -> FrozenLabel { FrozenLabel(text: "alone") }
         """.write(to: baseSource, atomically: true, encoding: .utf8)
         try FixtureLibrary.run([
@@ -1374,6 +1359,10 @@ struct SwiftInferredValueTests {
             public struct HoldsFrozenOpaque { public var f = FrozenOpaque(); public init() {} }
             public struct HoldsOuter { public var o = Outer(); public init() {} }
             public struct HoldsOpen { public var o = OpenLabel(); public init() {} }
+            public struct HoldsCoded {
+                public var coded = Coded(text: "coded", code: Code(raw: 7))
+                public init() {}
+            }
             extension OpenLabel {
                 public struct Builder {
                     public var scale: Int = 4
@@ -1394,6 +1383,10 @@ struct SwiftInferredValueTests {
                 if case .f(let label) = v { label.text } else { "none" }
             }
             @inline(never) public func makeHoldsOpen() -> HoldsOpen { HoldsOpen() }
+            @inline(never) public func makeHoldsCoded() -> HoldsCoded { HoldsCoded() }
+            @inline(never) public func describeHoldsCoded(_ v: HoldsCoded) -> String {
+                "\\(v.coded.text),\\(v.coded.code.raw)"
+            }
             @inline(never) public func describeHoldsOpen(_ v: HoldsOpen) -> String { "\\(v.o.text),\\(v.o.n)" }
             @inline(never) public func makeBuilder() -> OpenLabel.Builder { OpenLabel.Builder() }
             @inline(never) public func describeBuilder(_ v: OpenLabel.Builder) -> String { "\\(v.text),\\(v.scale)" }
@@ -1419,6 +1412,7 @@ struct SwiftInferredValueTests {
             decided += [
                 ("makeHoldsFrozen()", "describeHoldsFrozen(_:)", "held,3"),
                 ("makeHoldsFrozenCase()", "describeHoldsFrozenCase(_:)", "case"),
+                ("makeHoldsCoded()", "describeHoldsCoded(_:)", "coded,7"),
             ]
         }
         for (make, describe, expected) in decided {
@@ -1447,6 +1441,7 @@ struct SwiftInferredValueTests {
             undecided += [
                 ("makeHoldsFrozen()", unspelled + " `text`"),
                 ("makeHoldsFrozenCase()", unspelled + " `text`"),
+                ("makeHoldsCoded()", unspelled + " `text`"),
             ]
         }
         for (make, evidence) in undecided {
@@ -1467,6 +1462,17 @@ struct SwiftInferredValueTests {
                 naming:
                     "no trivial property descriptor of a stored `var` in its image shows that module `\(base)` is built without library evolution"
             )
+            #if DEBUG
+            // Code's static value witnesses leave the addressable bit clear,
+            // which decides it alone, while Coded needs HoldsCoded.
+            let scope = ImageSelector.path(library.libraryURL)
+            let code = try await runtime.resolveSwiftType(named: base + ".Code", in: scope).metadata
+            _ = try SwiftInferredValue.layout(of: code, position: .nested)
+            let coded = try await runtime.resolveSwiftType(named: base + ".Coded", in: scope).metadata
+            #expect(throws: ABIResolutionError.self) {
+                _ = try SwiftInferredValue.layout(of: coded, position: .nested)
+            }
+            #endif
         }
     }
 

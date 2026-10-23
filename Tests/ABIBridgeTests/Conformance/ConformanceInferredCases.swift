@@ -929,26 +929,6 @@ extension ConformanceCase {
             },
             expectedError: { $0.libraryEvolution ? "its field `glyph: Swift.Character` explains" : nil }
         ),
-        ConformanceCase(
-            id: "value.dataField.inferred",
-            provider: """
-                import Foundation
-                public struct CMDataBox {
-                    public var data: Data
-                    public var n: Int64
-                    public init(data: Data, n: Int64) { self.data = data; self.n = n }
-                }
-                @inline(never) public func cmMakeDataBox(_ k: Int64) -> CMDataBox {
-                    CMDataBox(data: Data(repeating: 7, count: Int(k)), n: k)
-                }
-                @inline(never) public func cmDescribeDataBox(_ b: CMDataBox) -> String { "\\(Array(b.data)),\\(b.n)" }
-                """,
-            oracle: "return [3, 40].map { cmDescribeDataBox(cmMakeDataBox($0)) }.joined(separator: \"|\")",
-            invoke: { f in
-                try await describeKinds(f, "cmMakeDataBox(_:)", "cmDescribeDataBox(_:)", kinds: [3, 40])
-            },
-            expectedError: { $0.libraryEvolution ? "its field `data: Foundation.Data` explains" : nil }
-        ),
     ]
 }
 #endif
