@@ -431,6 +431,19 @@ struct SwiftExistentialValueTests {
         }
     }
 
+    // The fixture module and this bundle each define the non-unique shape of
+    // `any Collection<T>`, and only the shape's own symbols describe the
+    // nested element.
+    @Test func shapesThatSeveralModulesDefineResolve() async throws {
+        let count = try await ABIRuntime.shared.resolveSwiftFunction(
+            named:
+                "ManagedSwiftFixtures.countCollectionPairs<A>([(A, any Swift.Collection<Self.Element == A>)]) -> Swift.Int",
+            as: (([(Int, any Collection<Int>)]) -> Int).self,
+            genericArguments: [.type(Int.self)]
+        )
+        #expect(try unsafe count.unsafeInvoke([(1, [1, 2]), (2, [3])]) == 3)
+    }
+
     @Test func genericSuperclassBindsTypedExistentialMetadata() async throws {
         typealias Value = any ExistentialSuperclass<Int> & ExistentialSource<Int>
         let native =

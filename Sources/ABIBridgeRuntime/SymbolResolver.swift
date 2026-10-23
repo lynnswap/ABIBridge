@@ -829,13 +829,14 @@ package final class RuntimeSymbolResolver: Sendable {
         guard let result = matches.first else {
             throw RuntimeResolutionError.declarationNotFound(declaration)
         }
-        guard matches.count == 1 else {
-            throw RuntimeResolutionError.ambiguousDeclaration(
-                declaration,
-                candidates: matches.map { $0.image.path }
-            )
+        guard matches.count > 1 else { return result }
+        if let definition = try RuntimeUniquedRecord.representative(of: matches) {
+            return definition
         }
-        return result
+        throw RuntimeResolutionError.ambiguousDeclaration(
+            declaration,
+            candidates: matches.map { $0.image.path }
+        )
     }
 
     private struct ResolutionState {
