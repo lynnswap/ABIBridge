@@ -360,5 +360,70 @@ struct SwiftHookDeclarationTests {
             _ = try unsafe classScaled.prepareImportedReplacementAndWait(with: identity, in: scope)
         }
     }
+
+    /// A mutating method receives `self` as one address, whatever registers
+    /// its value would take, so a mutating method of another struct of the
+    /// same size can replace it.
+    @Test func mutatingReplacementsReceiveSelfAsOneAddress() async throws {
+        let module =
+            "MutatingReplacement_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let provider = try FixtureLibrary(
+            load: false,
+            swiftModule: module,
+            swiftSource: """
+                public struct IntegerFirst {
+                    public var count: Int64
+                    public var scale: Double
+                    public init() { count = 1; scale = 2 }
+                    @inline(never) public mutating func advance() -> Int64 { count += 10; return count }
+                }
+                public struct FloatingFirst {
+                    public var scale: Double
+                    public var count: Int64
+                    @inline(never) public mutating func advance() -> Int64 { 99 }
+                }
+                """,
+            linkArguments: ["-O", "-swift-version", "6", "-emit-module", "-parse-as-library"]
+        )
+        let caller = try FixtureLibrary(
+            load: false,
+            swiftModule: module + "Caller",
+            swiftSource: """
+                import \(module)
+                @inline(never) public func advanceIntegerFirst() -> Int64 {
+                    var value = IntegerFirst()
+                    return value.advance()
+                }
+                """,
+            linkArguments: [
+                "-O", "-swift-version", "6", "-parse-as-library", "-I", provider.directory.path,
+                provider.libraryURL.path,
+            ]
+        )
+        try provider.load(); try caller.load()
+        defer { caller.cleanup(); provider.cleanup() }
+        let runtime = ABIRuntime()
+        let scope = ImageSelector.path(provider.libraryURL)
+        let callerScope = ImageSelector.path(caller.libraryURL)
+        func advance(_ type: String) async throws -> NativeSwiftMethod<() -> Int64> {
+            try await runtime.resolveSwiftType(named: module + "." + type, in: scope)
+                .resolveMethod(named: "advance()", as: (() -> Int64).self, mutating: true)
+        }
+        let call = try await runtime.resolveSwiftFunction(
+            named: module + "Caller.advanceIntegerFirst()",
+            as: (() -> Int64).self,
+            in: callerScope
+        )
+        #expect(try unsafe call.unsafeInvoke() == 11)
+        let plan = try unsafe await advance("IntegerFirst").prepareImportedReplacementAndWait(
+            with: try await advance("FloatingFirst"),
+            in: callerScope,
+            using: runtime
+        )
+        try unsafe plan.install()
+        #expect(try unsafe call.unsafeInvoke() == 99)
+        try plan.restore()
+        #expect(try unsafe call.unsafeInvoke() == 11)
+    }
 }
 #endif

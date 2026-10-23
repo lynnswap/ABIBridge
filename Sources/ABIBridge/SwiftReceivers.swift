@@ -66,13 +66,18 @@ struct SwiftReceiverPlan: Sendable {
     /// Requires that `replacement`, the receiver of another declaration,
     /// receives `self` as this one does: in the same mode and ownership, and
     /// a value passing alike.
+    ///
+    /// A mutating `self` passes as one address, as an inout argument does, so
+    /// the value it addresses takes no part. Another `self` passes as its
+    /// value does: in registers, or, for an indirect value, as the address of
+    /// storage of the same size and alignment.
     func requireReplacement(
         _ replacement: SwiftReceiverPlan,
         declaration: NativeDeclaration
     ) throws {
         guard mode == replacement.mode, isMutating == replacement.isMutating,
             isConsuming == replacement.isConsuming,
-            mode == .object
+            mode == .object || isMutating
                 || SwiftDeclaredLowering.passAlike(type, replacement.type, isResult: false)
         else {
             throw ABIResolutionError.signatureMismatch(
@@ -90,8 +95,8 @@ struct SwiftReceiverPlan: Sendable {
         let passing =
             switch mode {
             case .object: "a class instance"
-            case .address: "self passed by address"
-            case .value: "self " + SwiftDeclaredLowering.lowering(of: type)
+            case .address where isMutating: "self passed by address"
+            case .address, .value: "self " + SwiftDeclaredLowering.lowering(of: type)
             }
         return passing + (isMutating ? ", mutating" : "") + (isConsuming ? ", consuming" : "")
     }
