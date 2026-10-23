@@ -113,6 +113,10 @@ const void *ABISwiftFunctionTypeMetadata(uintptr_t flags, const void *const *par
 /// Parses the subject or type constraint of a compiler-emitted requirement. A protocol or layout requirement has no type constraint in its second field.
 ABISwiftSyntax *ABICopySwiftGenericRequirementTypeSyntax(const void *requirement, bool constraint);
 const void *ABISwiftConformanceDescriptor(const void *witnessTable);
+/// The witness table pattern that a conformance descriptor references.
+const void *ABISwiftConformanceWitnessTablePattern(const void *descriptor);
+/// The address that slot `index` of a witness table holds without pointer-authentication bits: a witness's code, or the async function pointer of an async witness. The value identifies the witness; it is not authenticated for a call.
+const void *ABISwiftWitnessTableEntry(const void *table, size_t index, bool asynchronous);
 /// Copies up to `capacity` descriptors of the conformances to `protocol` that the conformance records of the image containing `address` list, and returns how many the image lists.
 size_t ABISwiftImageConformanceDescriptors(const void *address, const void *protocol,
     const void **descriptors, size_t capacity);

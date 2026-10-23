@@ -540,6 +540,7 @@ struct SwiftMemberInvocationTests {
             swiftSource: """
                 public protocol Shape {
                     init()
+                    var name: String { get set }
                     func area() -> Int64
                     func scaled(_ factor: Int64) -> Int64
                 }
@@ -549,6 +550,7 @@ struct SwiftMemberInvocationTests {
                     @inline(never) public func describe() -> String { "shape \\(area())" }
                 }
                 public final class Square: Shape {
+                    public var name = "square"
                     let size: Int64
                     public init() { size = 0 }
                     public init(_ size: Int64) { self.size = size }
@@ -556,6 +558,7 @@ struct SwiftMemberInvocationTests {
                     @inline(never) public func scaled(_ factor: Int64) -> Int64 { size * factor }
                 }
                 public final class Twin: Shape {
+                    public var name = "twin"
                     let size: Int64
                     public init() { size = 0 }
                     public init(_ size: Int64) { self.size = size }
@@ -564,6 +567,10 @@ struct SwiftMemberInvocationTests {
                 }
                 public final class Crate<Element> { public init() {} }
                 extension Crate: Shape where Element: Equatable {
+                    public var name: String {
+                        get { "crate" }
+                        set {}
+                    }
                     @inline(never) public func area() -> Int64 { 21 }
                     @inline(never) public func scaled(_ factor: Int64) -> Int64 { 21 * factor }
                 }
@@ -580,6 +587,7 @@ struct SwiftMemberInvocationTests {
             swiftSource: """
                 import \(base)
                 open class Plate: Shape {
+                    public var name = "plate"
                     public required init() {}
                     @inline(never) public func area() -> Int64 { 11 }
                     @inline(never) public func scaled(_ factor: Int64) -> Int64 { 11 * factor }
@@ -599,6 +607,7 @@ struct SwiftMemberInvocationTests {
                 import \(base)
                 import \(other)
                 public final class Hidden: Shape {
+                    public var name = "hidden"
                     public init() {}
                     @inline(never) public func area() -> Int64 { 5 }
                     @inline(never) public func scaled(_ factor: Int64) -> Int64 { 5 * factor }
@@ -619,10 +628,11 @@ struct SwiftMemberInvocationTests {
 
         // The linker folds Square's and Twin's identical witnesses into one
         // address; each still serves only its own conformance.
-        let witnesses = try ["6SquareC", "4TwinC"].map { owner in
+        let witnesses = try ["Square", "Twin"].map { owner in
             let symbol = try runtime.resolveAndWait(
                 NativeDeclaration(
-                    machOName: "_$s\(base.utf8.count)\(base)\(owner)AA5ShapeA2aDP4areas5Int64VyFTW",
+                    name: "protocol witness for \(base).Shape.area() -> Swift.Int64"
+                        + " in conformance \(base).\(owner) : \(base).Shape in \(base)",
                     language: .swift
                 ),
                 in: .path(protocols.libraryURL)
@@ -727,13 +737,30 @@ struct SwiftMemberInvocationTests {
             }
             return message.contains("witness of \(last).Hidden's conformance")
         }
-        // The witnesses of a conformance in Shape's image name all of its
-        // requirements, so a member that only its extension declares applies.
+        // The witnesses of a conformance in Shape's image name its method
+        // requirements, so a method that only its extension declares applies.
+        // The property's modify coroutine, which has a witness that the index
+        // does not record, is not a method and does not need a name.
         let describe = try await hidden.resolveMethod(
             named: base + ".Shape.describe()",
             as: (() -> String).self
         )
         #expect(try unsafe describe.unsafeInvoke(on: receiver) == "shape 5")
+        // Square's own witness table names them as well.
+        let square = try await runtime.resolveSwiftType(
+            named: base + ".Square",
+            in: .path(protocols.libraryURL)
+        )
+        let makeSquare = try await runtime.resolveSwiftFunction(
+            named: base + ".makeSquare()",
+            as: (() -> AnyObject).self,
+            in: .path(protocols.libraryURL)
+        )
+        let describeSquare = try await square.resolveMethod(
+            named: base + ".Shape.describe()",
+            as: (() -> String).self
+        )
+        #expect(try unsafe describeSquare.unsafeInvoke(on: makeSquare.unsafeInvoke()) == "shape 9")
 
     }
 

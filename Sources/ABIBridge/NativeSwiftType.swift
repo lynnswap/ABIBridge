@@ -700,6 +700,7 @@ public actor NativeSwiftType: Hashable {
                             tier.candidates += try witnesses(
                                 of: declaration,
                                 through: own,
+                                excluding: tier.candidates,
                                 includingSharedCache: includingSharedCache
                             )
                         }
