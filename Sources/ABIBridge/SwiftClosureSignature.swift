@@ -1286,19 +1286,22 @@ private final class SwiftNativeClosureContext {
     }
 }
 
-/// The function type whose values a value of `metadata` stores in its own
-/// storage: a function type itself, or an Optional's payload function, which
-/// Swift stores in the function's storage with nil as a null function pointer.
+/// The Swift function type whose closures a value of `metadata` stores in
+/// its own storage: a thick Swift function type itself, or an Optional's
+/// payload of one, which Swift stores in the function's storage with nil as
+/// a null function pointer. The function metadata's convention decides it: a
+/// C function pointer, a block, or a thin function is a plain pointer with no
+/// context, which values store as it is.
 func swiftStoredFunction(_ metadata: Any.Type) -> Any.Type? {
-    switch runtimeMetadataKind(metadata) {
-    case .function: return metadata
-    case .optional:
-        let optional = unsafeBitCast(metadata, to: UnsafeRawPointer.self)
-        guard let payload = ABISwiftEnumCasePayloadMetadata(optional, 0) else { return nil }
-        let wrapped = unsafeBitCast(payload, to: Any.Type.self)
-        return runtimeMetadataKind(wrapped) == .function ? wrapped : nil
-    default: return nil
-    }
+    if RuntimeFunctionMetadata.isSwiftFunction(metadata) { return metadata }
+    guard runtimeMetadataKind(metadata) == .optional,
+        let payload = ABISwiftEnumCasePayloadMetadata(
+            unsafeBitCast(metadata, to: UnsafeRawPointer.self),
+            0
+        )
+    else { return nil }
+    let wrapped = unsafeBitCast(payload, to: Any.Type.self)
+    return RuntimeFunctionMetadata.isSwiftFunction(wrapped) ? wrapped : nil
 }
 
 extension ABISwiftClosureValue {

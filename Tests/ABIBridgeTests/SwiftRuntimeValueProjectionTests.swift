@@ -801,6 +801,28 @@ struct SwiftRuntimeValueProjectionTests {
         }
     }
 
+    /// An Optional C function pointer or block in a payload is a plain
+    /// pointer, which needs no adaptation and keeps its value.
+    @Test func optionalForeignFunctionPayloadsPassUnchanged() async throws {
+        let make = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeRuntimeProjectionForeignHandler(_:)",
+            as: ((Bool) -> NativeSwiftValue).self
+        )
+        let function = try unsafe make.unsafeInvoke(false)
+        let pointer = try #require(try await function.resolveEnumPayload(forCase: "function"))
+        #expect(try pointer.withCopy { ($0 as? (@convention(c) (Int64) -> Int64)?)??(41) } == 42)
+        let block = try unsafe make.unsafeInvoke(true)
+        let body = try #require(try await block.resolveEnumPayload(forCase: "block"))
+        #expect(try body.withCopy { ($0 as? (@convention(block) (Int64) -> Int64)?)??(40) } == 42)
+        let rebuilt = try await block.type.makeEnumCase(named: "block", payload: body)
+        guard case .block(let native) = try rebuilt.take(as: RuntimeProjectionForeignHandler.self)
+        else {
+            Issue.record("The rebuilt case is not the block case")
+            return
+        }
+        #expect(native?(40) == 42)
+    }
+
     @Test func plainSynchronousAndCallerIsolatedAsyncClosuresKeepTheirEffects() async throws {
         let runtime = ABIRuntime.shared
         let make = try await runtime.resolveSwiftFunction(

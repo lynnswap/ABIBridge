@@ -168,6 +168,18 @@ public enum RuntimeProjectionOptionalHandler {
         : RuntimeProjectionOptionalHandler.handler(body)
 }
 
+/// C function pointers and blocks are plain pointers, which payloads keep
+/// as they are.
+public enum RuntimeProjectionForeignHandler {
+    case function((@convention(c) (Int64) -> Int64)?)
+    case block((@convention(block) (Int64) -> Int64)?)
+}
+@inline(never) public func makeRuntimeProjectionForeignHandler(_ block: Bool) -> some Any {
+    block
+        ? RuntimeProjectionForeignHandler.block({ $0 + 2 })
+        : RuntimeProjectionForeignHandler.function({ $0 + 1 })
+}
+
 public typealias RuntimeProjectionPreparationSignature =
     (
         Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64,
