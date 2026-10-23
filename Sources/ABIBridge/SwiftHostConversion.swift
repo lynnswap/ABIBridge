@@ -58,6 +58,16 @@ struct SwiftHostConversion: Sendable {
             @Sendable (SwiftArgumentConvention, Bool, Any.Type) throws -> SwiftCallbackDecoder
         /// Checks that the host value can own a native result.
         let validateOwnedResult: @Sendable () throws -> Void
+        /// Native values: copies the value in the storage into new storage.
+        let copyNative: @Sendable (NativeValueStorage) throws -> NativeValueStorage
+        /// Native values: destroys the value at the address.
+        let destroyNative: @Sendable (UnsafeMutableRawPointer) -> Void
+        /// Native values: moves the value at the second address to the
+        /// first.
+        let moveNative: @Sendable (UnsafeMutableRawPointer, UnsafeMutableRawPointer) -> Void
+        /// Native values: moves the part of a value at a logical offset with
+        /// a size from a callback's result into native result storage.
+        let initializeNativeResult: SwiftResultInitializer
     }
 
     private init<Value>(
@@ -205,6 +215,37 @@ struct SwiftHostConversion: Sendable {
 
     /// Checks that a host value can own a native result.
     func validateOwnedResult() throws { try operations.validateOwnedResult() }
+
+    // MARK: Native values
+
+    /// A copy of the native value in `storage`.
+    func copyNative(_ storage: NativeValueStorage) throws -> NativeValueStorage {
+        try operations.copyNative(storage)
+    }
+
+    func destroyNative(at address: UnsafeMutableRawPointer) { operations.destroyNative(address) }
+
+    /// Moves the part of a native value at a logical offset with a size from
+    /// a callback's result storage into native result storage.
+    var initializeNativeResult: SwiftResultInitializer { operations.initializeNativeResult }
+
+    /// Storage for a callback's result, which moves an owned native value
+    /// for the host value into native result storage.
+    func prepareResult(
+        _ value: UnsafeRawPointer,
+        retainingCode owner: Any?
+    ) throws -> (UnsafeMutableRawPointer) -> Void {
+        let native = try encodeResult(value, retainingCode: owner)
+        SwiftValueCodeLifetime.connect(
+            [SwiftValueCodeLifetime.current, native.codeLifetime].compactMap { $0 },
+            retaining: []
+        )
+        let move = operations.moveNative
+        return { output in
+            move(output, native.address)
+            native.relinquishValue()
+        }
+    }
 
     // MARK: Host values
 
@@ -454,7 +495,21 @@ extension SwiftHostConversion {
                     }
                     return { address, _ in inputConstants.load(from: address, as: Value.self) }
                 },
-                validateOwnedResult: {}
+                validateOwnedResult: {},
+                copyNative: { source in
+                    if requiresValue, source.address.load(as: UnsafeRawPointer?.self) == nil {
+                        throw ABIInvocationError.unexpectedNilResult(
+                            expected: String(reflecting: Value.self)
+                        )
+                    }
+                    let storage = NativeValueStorage(size: size, alignment: alignment)
+                    storage.initialize(constants.load(from: source.address, as: Value.self))
+                    return storage
+                },
+                destroyNative: { $0.assumingMemoryBound(to: Value.self).deinitialize(count: 1) },
+                moveNative: moveNative(Value.self),
+                initializeNativeResult: schema.kind == .scalar
+                    ? copyNativeBytes : swiftResultInitializer(nativeMetadata: Value.self)
             )
         )
     }
@@ -488,7 +543,17 @@ extension SwiftHostConversion {
                         return try codec.decode(storage, retaining: storage)
                     }
                 },
-                validateOwnedResult: {}
+                validateOwnedResult: {},
+                copyNative: { source in
+                    let copy = NativeValueStorage(size: type.size, alignment: type.alignment)
+                    if type.size != 0 {
+                        copy.address.copyMemory(from: source.address, byteCount: type.size)
+                    }
+                    return copy
+                },
+                destroyNative: { _ in },
+                moveNative: { $0.copyMemory(from: $1, byteCount: type.size) },
+                initializeNativeResult: copyNativeBytes
             )
         )
     }
@@ -575,7 +640,23 @@ extension SwiftHostConversion {
                     }
                     return { borrow($1.borrow($0), SwiftValueCodeLifetime.current) }
                 },
-                validateOwnedResult: {}
+                validateOwnedResult: {},
+                copyNative: {
+                    SwiftClosureStorage.copy(
+                        $0.address.load(as: ABISwiftClosureValue.self),
+                        retaining: $0,
+                        codeLifetime: $0.codeLifetime
+                    )
+                },
+                destroyNative: { SwiftClosureStorage.destroy($0) },
+                moveNative: { $0.copyMemory(from: $1, byteCount: type.size) },
+                initializeNativeResult: { offset, size, destination, source in
+                    precondition(
+                        offset == 0 && size == MemoryLayout<ABISwiftClosureValue>.size,
+                        "A prepared closure result transfers one native function/context pair."
+                    )
+                    destination.copyMemory(from: source, byteCount: size)
+                }
             )
         )
     }
@@ -646,7 +727,17 @@ extension SwiftHostConversion {
                         asynchronous: asynchronous
                     )
                 },
-                validateOwnedResult: { try plan.requireOwnedValue(as: Value.self) }
+                validateOwnedResult: { try plan.requireOwnedValue(as: Value.self) },
+                copyNative: copyNative(
+                    plan.valueType.metadata,
+                    type: plan.type,
+                    makeStorage: { plan.makeStorage() }
+                ),
+                destroyNative: destroyNative(plan.valueType.metadata, type: plan.type),
+                moveNative: moveNative(plan.valueType.metadata),
+                initializeNativeResult: swiftResultInitializer(
+                    nativeMetadata: plan.valueType.metadata
+                )
             )
         )
     }
@@ -805,7 +896,22 @@ extension SwiftHostConversion {
                 callbackDecoder: { convention, _, _ in
                     try plan.callbackDecoder(consuming: convention == .consuming)
                 },
-                validateOwnedResult: { try plan.validateOwnedResult() }
+                validateOwnedResult: { try plan.validateOwnedResult() },
+                copyNative: copyNative(
+                    plan.nativeMetadata,
+                    type: plan.type,
+                    makeStorage: { plan.makeResultStorage() }
+                ),
+                destroyNative: destroyNative(plan.nativeMetadata, type: plan.type),
+                moveNative: moveNative(plan.nativeMetadata),
+                initializeNativeResult: { offset, size, destination, source in
+                    plan.initializeNativeResult(
+                        logicalOffset: offset,
+                        size: size,
+                        destination: destination,
+                        source: source
+                    )
+                }
             )
         )
     }
@@ -847,9 +953,81 @@ extension SwiftHostConversion {
                 },
                 decode: { _, _, _, _ in throw unsupported() },
                 callbackDecoder: { _, _, failure in try callbackDecoder(failure) },
-                validateOwnedResult: { throw unsupported() }
+                validateOwnedResult: { throw unsupported() },
+                copyNative: { try value.copyNative($0) },
+                destroyNative: { value.destroyNative(at: $0) },
+                moveNative: { _, _ in
+                    preconditionFailure("An ownership wrapper is not a result.")
+                },
+                initializeNativeResult: { _, _, _, _ in
+                    preconditionFailure("An ownership wrapper is not a result.")
+                }
             )
         )
+    }
+}
+
+/// Copies the bytes of a value that has no Swift ownership.
+private let copyNativeBytes: SwiftResultInitializer = { _, size, destination, source in
+    destination.copyMemory(from: source, byteCount: size)
+}
+
+extension SwiftHostConversion {
+    /// Copies a native value of `metadata` stored as `type` into storage from
+    /// `makeStorage`. A noncopyable value is not copied.
+    private static func copyNative(
+        _ metadata: Any.Type,
+        type: CValueType,
+        makeStorage: @escaping @Sendable () -> NativeValueStorage
+    ) -> @Sendable (NativeValueStorage) throws -> NativeValueStorage {
+        let constants = SwiftValueConstants(
+            ABISwiftValueIsIndirect(type.handle) ? Void.self : metadata
+        )
+        return { source in
+            guard SwiftCopyability.accepts(metadata) else { return source }
+            let restored = constants.isEmpty ? nil : constants.copyStorage(from: source.address)
+            let result = makeStorage()
+            SwiftValueCodeLifetime.connect(
+                [source.codeLifetime, result.codeLifetime].compactMap { $0 },
+                retaining: []
+            )
+            ABISwiftCopyValue(
+                unsafeBitCast(metadata, to: UnsafeRawPointer.self),
+                result.address,
+                restored?.address ?? source.address
+            )
+            result.assumeInitialized {
+                ABISwiftDestroyValue(unsafeBitCast(metadata, to: UnsafeRawPointer.self), $0)
+            }
+            return result
+        }
+    }
+
+    /// Moves a native value of `metadata`.
+    private static func moveNative(
+        _ metadata: Any.Type
+    ) -> @Sendable (UnsafeMutableRawPointer, UnsafeMutableRawPointer) -> Void {
+        { destination, source in
+            ABISwiftTakeValue(
+                unsafeBitCast(metadata, to: UnsafeRawPointer.self),
+                destination,
+                source
+            )
+        }
+    }
+
+    /// Destroys a native value of `metadata` stored as `type`.
+    private static func destroyNative(
+        _ metadata: Any.Type,
+        type: CValueType
+    ) -> @Sendable (UnsafeMutableRawPointer) -> Void {
+        let constants = SwiftValueConstants(
+            ABISwiftValueIsIndirect(type.handle) ? Void.self : metadata
+        )
+        return { address in
+            constants.initialize(at: address)
+            ABISwiftDestroyValue(unsafeBitCast(metadata, to: UnsafeRawPointer.self), address)
+        }
     }
 }
 

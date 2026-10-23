@@ -260,194 +260,62 @@ final class SwiftHookIncomingOwner {
     init(_ signature: SwiftHookSignature) { self.signature = signature }
 }
 
+/// Copies and destroys the native values a hook receives and returns.
 struct SwiftHookValueOperations: Sendable {
     let copy: @Sendable (NativeValueStorage) throws -> NativeValueStorage
     let destroy: @Sendable (UnsafeMutableRawPointer) -> Void
 
-    private init(
-        copy: @escaping @Sendable (NativeValueStorage) throws -> NativeValueStorage,
-        destroy: @escaping @Sendable (UnsafeMutableRawPointer) -> Void
-    ) {
-        self.copy = copy; self.destroy = destroy
+    /// The operations on the native result that `conversion` decodes.
+    init(result conversion: SwiftHostConversion) {
+        copy = { try conversion.copyNative($0) }
+        destroy = { conversion.destroyNative(at: $0) }
     }
 
-    init<Value>(_ host: Value.Type, result: SwiftGenericResult, type: CValueType) throws {
-        switch result {
-        case .runtimeValue(let plan):
-            self.init(
-                metadata: plan.valueType.metadata,
-                type: type,
-                makeStorage: { plan.makeStorage() }
-            )
-        case .tuple(let tuple):
-            self.init(
-                metadata: tuple.nativeMetadata,
-                type: type,
-                makeStorage: { tuple.makeResultStorage() }
-            )
-        default:
-            let codec: SwiftValueCodec<Value>
-            switch result {
-            case .value: codec = SwiftValueCodec(nativeStorage: type)
-            case .closure(let closure): codec = SwiftValueCodec(closure: closure)
-            default: codec = try SwiftValueCodec(position: .result)
-            }
-            self.init(
-                copy: { try codec.copyNativeStorage($0) },
-                destroy: { codec.destroyNativeValue(at: $0) }
-            )
+    /// The operations on a native argument that `argument` passes. A tuple
+    /// argument passes as its elements' addresses.
+    init(argument: SwiftCallValues.Argument) {
+        guard argument.convention != .inoutValue, let tuple = argument.conversion.tuple else {
+            let conversion = argument.conversion
+            copy = { try conversion.copyNative($0) }
+            destroy = { conversion.destroyNative(at: $0) }
+            return
         }
-    }
-
-    private init(
-        metadata: Any.Type,
-        type: CValueType,
-        makeStorage: @escaping @Sendable () -> NativeValueStorage
-    ) {
-        let constants = SwiftValueConstants(
-            ABISwiftValueIsIndirect(type.handle) ? Void.self : metadata
-        )
         copy = { source in
-            guard SwiftCopyability.accepts(metadata) else { return source }
-            let restored = constants.isEmpty ? nil : constants.copyStorage(from: source.address)
-            let result = makeStorage()
-            SwiftValueCodeLifetime.connect(
-                [source.codeLifetime, result.codeLifetime].compactMap { $0 },
-                retaining: []
-            )
-            ABISwiftCopyValue(
-                unsafeBitCast(metadata, to: UnsafeRawPointer.self),
-                result.address,
-                restored?.address ?? source.address
-            )
-            result.assumeInitialized {
-                ABISwiftDestroyValue(unsafeBitCast(metadata, to: UnsafeRawPointer.self), $0)
+            guard SwiftCopyability.accepts(tuple.nativeMetadata) else {
+                throw NativeSwiftValueError.noncopyableType
             }
-            return result
-        }
-        destroy = { address in
-            constants.initialize(at: address)
-            ABISwiftDestroyValue(unsafeBitCast(metadata, to: UnsafeRawPointer.self), address)
-        }
-    }
-
-    init(host: Any.Type, argument: SwiftGenericArgument, type: CValueType) throws {
-        if case .convention(let conversion) = argument {
-            guard case .ownership(let convention, let value) = conversion.kind else {
-                preconditionFailure("A convention argument converts its wrapper's ownership.")
-            }
-            try self.init(value, expandsTuples: convention != .inoutValue, type: type)
-            return
-        }
-        if let tuple = SwiftGenericParameters.expandedTuple(argument) {
-            self.init(expanded: tuple)
-            return
-        }
-        if let runtime = argument.runtimeValue {
-            self.init(
-                metadata: runtime.valueType.metadata,
-                type: type,
-                makeStorage: { runtime.makeStorage() }
+            let value = tuple.materializeArgument(
+                from: source.address,
+                consuming: false,
+                retaining: source
             )
-            return
-        }
-        if argument.closure != nil || host is any SwiftClosureValue.Type {
-            self.init(closure: ())
-            return
-        }
-        let result: SwiftGenericResult =
-            if case .value = argument { .value(type) } else { .concrete }
-        func prepare<Value>(_ value: Value.Type) throws -> Self {
-            try Self(value, result: result, type: type)
-        }
-        self = try _openExistential(host, do: prepare)
-    }
-
-    /// The operations on the native value that `conversion` passes as `type`.
-    private init(_ conversion: SwiftHostConversion, expandsTuples: Bool, type: CValueType) throws {
-        switch conversion.kind {
-        case .ownership(let convention, let value):
-            try self.init(value, expandsTuples: convention != .inoutValue, type: type)
-        case .tuple(let tuple) where expandsTuples:
-            self.init(expanded: tuple)
-        case .runtimeValue(let runtime):
-            if expandsTuples, let tuple = runtime.nativeTuple {
-                self.init(expanded: tuple)
-            } else {
-                self.init(
-                    metadata: runtime.valueType.metadata,
-                    type: type,
-                    makeStorage: { runtime.makeStorage() }
+            let addresses = tuple.nativeArgumentAddresses(value.address)
+            let vector = NativeValueStorage(
+                size: addresses.count * MemoryLayout<UnsafeMutableRawPointer?>.stride,
+                alignment: MemoryLayout<UnsafeMutableRawPointer?>.alignment,
+                owner: value,
+                codeLifetime: value.codeLifetime,
+                didRelinquish: { value.relinquishValue() }
+            )
+            for (index, address) in addresses.enumerated() {
+                vector.address.storeBytes(
+                    of: address,
+                    toByteOffset: index * MemoryLayout<UnsafeMutableRawPointer?>.stride,
+                    as: UnsafeMutableRawPointer?.self
                 )
             }
-        case .closure:
-            self.init(closure: ())
-        case .identity:
-            func prepare<Value>(_ value: Value.Type) throws -> Self {
-                try Self(value, result: .value(type), type: type)
-            }
-            self = try _openExistential(conversion.host, do: prepare)
-        case .tuple, .adapter:
-            func prepare<Value>(_ value: Value.Type) throws -> Self {
-                try Self(value, result: .concrete, type: type)
-            }
-            self = try _openExistential(conversion.host, do: prepare)
+            return vector
         }
-    }
-
-    private init(closure: Void) {
-        self.init(
-            copy: {
-                SwiftClosureStorage.copy(
-                    $0.address.load(as: ABISwiftClosureValue.self),
-                    retaining: $0,
-                    codeLifetime: $0.codeLifetime
+        destroy = { source in
+            let addresses = source.assumingMemoryBound(to: UnsafeMutableRawPointer?.self)
+            for (index, leaf) in tuple.leaves.enumerated() {
+                SwiftValueConstants(leaf.nativeType).initialize(at: addresses[index]!)
+                ABISwiftDestroyValue(
+                    unsafeBitCast(leaf.nativeType, to: UnsafeRawPointer.self),
+                    addresses[index]!
                 )
-            },
-            destroy: { SwiftClosureStorage.destroy($0) }
-        )
-    }
-
-    /// Operations on a tuple argument that passes as its elements' addresses.
-    private init(expanded tuple: SwiftTupleValuePlan) {
-        self.init(
-                copy: { source in
-                    guard SwiftCopyability.accepts(tuple.nativeMetadata) else {
-                        throw NativeSwiftValueError.noncopyableType
-                    }
-                    let value = tuple.materializeArgument(
-                        from: source.address,
-                        consuming: false,
-                        retaining: source
-                    )
-                    let addresses = tuple.nativeArgumentAddresses(value.address)
-                    let vector = NativeValueStorage(
-                        size: addresses.count * MemoryLayout<UnsafeMutableRawPointer?>.stride,
-                        alignment: MemoryLayout<UnsafeMutableRawPointer?>.alignment,
-                        owner: value,
-                        codeLifetime: value.codeLifetime,
-                        didRelinquish: { value.relinquishValue() }
-                    )
-                    for (index, address) in addresses.enumerated() {
-                        vector.address.storeBytes(
-                            of: address,
-                            toByteOffset: index * MemoryLayout<UnsafeMutableRawPointer?>.stride,
-                            as: UnsafeMutableRawPointer?.self
-                        )
-                    }
-                    return vector
-                },
-                destroy: { source in
-                    let addresses = source.assumingMemoryBound(to: UnsafeMutableRawPointer?.self)
-                    for (index, leaf) in tuple.leaves.enumerated() {
-                        SwiftValueConstants(leaf.nativeType).initialize(at: addresses[index]!)
-                        ABISwiftDestroyValue(
-                            unsafeBitCast(leaf.nativeType, to: UnsafeRawPointer.self),
-                            addresses[index]!
-                        )
-                    }
-                }
-            )
+            }
+        }
     }
 }
 
@@ -509,22 +377,9 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
             arguments: parameters.arguments,
             consumingArguments: values.arguments.map(\.consumes)
         )
-        callbackResult = try SwiftCallbackResult(
-            failure: (any Error).self,
-            generic: generic?.result ?? .concrete
-        )
-        resultOperations = try SwiftHookValueOperations(
-            Result.self,
-            result: generic?.result ?? .concrete,
-            type: values.result.type
-        )
-        argumentOperations = try zip(signature.parameters, parameters.arguments).enumerated().map {
-            try SwiftHookValueOperations(
-                host: $0.element.0,
-                argument: $0.element.1,
-                type: values.arguments[$0.offset].type
-            )
-        }
+        callbackResult = try SwiftCallbackResult(values.result.conversion, failure: (any Error).self)
+        resultOperations = SwiftHookValueOperations(result: values.result.conversion)
+        argumentOperations = values.arguments.map(SwiftHookValueOperations.init(argument:))
     }
 
     func invoke(
