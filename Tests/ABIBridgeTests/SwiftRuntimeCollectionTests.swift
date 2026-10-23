@@ -161,4 +161,44 @@ struct SwiftRuntimeCollectionTests {
             try unsafe append.unsafeInvoke(NativeSwiftInout<[NativeSwiftValue]>([]))
         }
     }
+
+    @Test func handlesNestedDeeperThanTheirConversionsAreRejectedByAnyName() async throws {
+        let runtime = ABIRuntime.shared
+        let record = "ManagedSwiftFixtures.CollectionRuntimeRecord"
+        func position(_ error: ABIResolutionError?) -> ABIResolutionError.SignatureMismatch.Position? {
+            guard case .signatureMismatch(let mismatch) = error else { return nil }
+            return mismatch.position
+        }
+        // An Optional collection, for a complete declaration and for a label-only name.
+        for name in [
+            "ManagedSwiftFixtures.countOptionalCollectionRecords(Swift.Optional<Swift.Array<\(record)>>) -> Swift.Int64",
+            "ManagedSwiftFixtures.countOptionalCollectionRecords(_:)",
+        ] {
+            let error = await #expect(throws: ABIResolutionError.self) {
+                _ = try await runtime.resolveSwiftFunction(named: name, as: (([NativeSwiftValue]?) -> Int64).self)
+            }
+            #expect(position(error) == .argument(0))
+        }
+        let result = await #expect(throws: ABIResolutionError.self) {
+            _ = try await runtime.resolveSwiftFunction(
+                named: "ManagedSwiftFixtures.makeOptionalCollectionRecords(Swift.Int64) -> Swift.Optional<Swift.Array<\(record)>>",
+                as: ((Int64) -> [NativeSwiftValue]?).self)
+        }
+        #expect(position(result) == .result)
+        // A collection of collections.
+        let nested = await #expect(throws: ABIResolutionError.self) {
+            _ = try await runtime.resolveSwiftFunction(
+                named: "ManagedSwiftFixtures.countNestedCollectionRecords(Swift.Array<Swift.Array<\(record)>>) -> Swift.Int64",
+                as: (([[NativeSwiftValue]]) -> Int64).self)
+        }
+        #expect(position(nested) == .argument(0))
+        // The handles of a collection itself convert.
+        let describe = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.describeCollectionRecords(Swift.Array<\(record)>) -> Swift.String",
+            as: (([NativeSwiftValue]) -> String).self)
+        let make = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeCollectionRecords(_:)", as: ((Int64) -> [NativeSwiftValue]).self)
+        let records = try unsafe make.unsafeInvoke(2)
+        #expect(try unsafe describe.unsafeInvoke(records) == "r0#0,r1#1")
+    }
 }

@@ -12,7 +12,9 @@ extension Dictionary: SwiftCollectionValue { static var mangledDeclaration: Stri
 extension Set: SwiftCollectionValue { static var mangledDeclaration: String { "Sh" } }
 
 struct SwiftValueCodec<Value>: Sendable {
-    let type: CValueType
+    /// The native value that the codec converts a `Value` to and from.
+    let schema: SwiftValueSchema
+    var type: CValueType { schema.type }
     private let cValue: CValueCodec<Value>?
     private let objectResult: Bool
     private let closure: SwiftClosureCodec?
@@ -20,14 +22,15 @@ struct SwiftValueCodec<Value>: Sendable {
     private let constants = SwiftValueConstants(Value.self)
 
     init(nativeStorage type: CValueType) {
-        self.type = type
+        schema = SwiftValueSchema(storage: type, metadata: Value.self)
         cValue = nil; closure = nil; tuple = nil
         let base = (Value.self as? any NativeOptionalValue.Type)?.wrappedType ?? Value.self
         objectResult = base is AnyClass || base == AnyObject.self
     }
 
     init(closure: SwiftClosureCodec) {
-        self.closure = closure; type = closure.type
+        self.closure = closure
+        schema = SwiftValueSchema(type: closure.type, kind: .function, metadata: nil)
         cValue = nil; tuple = nil; objectResult = false
     }
 
@@ -41,118 +44,28 @@ struct SwiftValueCodec<Value>: Sendable {
     /// - Parameter position: Where the value occurs, which decides how an
     ///   undecided inferred value is passed. Optional payloads are nested;
     ///   tuple elements take the tuple's element position.
-    init(position: SwiftValuePosition = .nested) throws {
-        guard !(Value.self is any SwiftConventionArgument.Type) else {
-            throw ABIResolutionError.unsupportedDeclaration("Swift argument convention markers require the invocation argument path; results and managed callbacks cannot use them.")
-        }
+    init(position: SwiftValuePosition) throws {
         let preparedTuple = try SwiftGenericCallPlan.concreteTuple(Value.self, position: position)
         tuple = preparedTuple?.needsConversion == true ? preparedTuple : nil
         if let tuple {
-            type = tuple.type; closure = nil; cValue = nil; objectResult = false
+            schema = SwiftValueSchema(type: tuple.type, kind: .tuple, metadata: tuple.nativeMetadata)
+            closure = nil; cValue = nil; objectResult = false
             return
         }
         if let closureType = Value.self as? any SwiftClosureValue.Type {
             let codec = try closureType.makeClosureCodec()
-            closure = codec; type = codec.type; cValue = nil; objectResult = false
+            schema = SwiftValueSchema(type: codec.type, kind: .function, metadata: nil)
+            closure = codec; cValue = nil; objectResult = false
             return
         }
         closure = nil
+        schema = try SwiftValueSchema.host(Value.self, position: position)
+        cValue = schema.kind == .scalar ? try CValueCodec<Value>() : nil
         let base = (Value.self as? any NativeOptionalValue.Type)?.wrappedType ?? Value.self
-        // These wrappers are host classes; their reference is not the native value.
-        guard Value.self == base
-            || (base != NativeSwiftValue.self && base != NativeSwiftBorrowedValue.self)
-        else {
-            throw ABIResolutionError.unsupportedDeclaration(
-                "An Optional runtime value is unsupported; pass a NativeSwiftValue of the Optional type."
-            )
-        }
         let isObject = base is AnyClass || base == AnyObject.self
         // A type with its own Swift ABI keeps it, even in an Optional.
         let isAdapter = base is any ABIBridgeValue.Type && !(base is any ABIBridgeSwiftValue.Type)
-        let managed = Value.self as? any ABIBridgeSwiftValue.Type
-        objectResult = isObject && (!isAdapter || managed != nil)
-        if let tuple = SwiftTupleMetadata(Value.self) {
-            func field<Element>(_ type: Element.Type) throws -> CValueType {
-                guard !(type is any ABIBridgeValue.Type) || type is any ABIBridgeSwiftValue.Type,
-                      !(type is any SwiftClosureValue.Type) else {
-                    throw ABIResolutionError.unsupportedDeclaration("Tuple elements require their native Swift storage representation.")
-                }
-                return try SwiftValueCodec<Element>(position: position.tupleElement).type
-            }
-            type = try tuple.layout(for: Value.self, fields: tuple.elements.map {
-                try _openExistential($0.type, do: field)
-            })
-            cValue = nil
-        } else if let metatype = SwiftMetatypeMetadata(base) {
-            type = Value.self is any NativeOptionalValue.Type && metatype.isSingleton
-                ? CValueType(swiftOptionalSingleton: ()) : try metatype.valueType(for: Value.self)
-            cValue = nil
-        } else if let managed {
-            type = try SwiftValueSchema.explicitValueLayout(
-                of: Value.self,
-                abi: managed.swiftABIType,
-                source: "The ABIBridgeSwiftValue conformance"
-            )
-            cValue = nil
-        } else if isAdapter {
-            let codec = try CValueCodec<Value>()
-            cValue = codec
-            type = codec.type
-        } else if isObject {
-            type = try CValueType(scalar: ABIValuePointer)
-            cValue = nil
-        } else if let existential = SwiftExistentialRepresentation(base) {
-            type = try existential.valueType(for: Value.self)
-            cValue = nil
-        } else if base is any SwiftCollectionValue.Type {
-            type = try CValueType(scalar: ABIValuePointer)
-            cValue = nil
-        } else if base == String.self {
-            let word = try CValueType(scalar: MemoryLayout<UInt>.size == 8 ? ABIValueUInt64 : ABIValueUInt32)
-            type = try CValueType(fields: Array(repeating: word, count: MemoryLayout<String>.size / MemoryLayout<UInt>.size))
-            cValue = nil
-        } else if let optional = Value.self as? any NativeOptionalValue.Type,
-            !(base is any NativePointerValue.Type)
-        {
-            // An Optional of a value with Swift storage is a Swift enum.
-            type = try SwiftValueSchema.optionalStorage(
-                of: Value.self,
-                wrapped: SwiftValueSchema.optionalPayloadStorage(optional.wrappedType),
-                wrappedType: optional.wrappedType
-            )
-            cValue = nil
-        } else if Self.infersLayout {
-            // Explicit ABIs and built-in codecs take precedence over inference.
-            type = try SwiftInferredValue.layout(of: Value.self, position: position)
-            cValue = nil
-        } else {
-            let codec = try CValueCodec<Value>()
-            cValue = codec
-            type = codec.type
-        }
-        if cValue == nil && managed == nil {
-            guard type.size == MemoryLayout<Value>.size, type.alignment == MemoryLayout<Value>.alignment else {
-                throw ABIResolutionError.unsupportedDeclaration(
-                    "Unsupported Swift storage layout for \(String(reflecting: Value.self))."
-                )
-            }
-        }
-    }
-
-    /// Whether `init` lowers Value from its metadata: a struct or enum with no
-    /// Swift ABI conformance, adapter, built-in codec, or C representation.
-    static var infersLayout: Bool {
-        let kind = runtimeMetadataKind(Value.self)
-        guard kind == .structure || kind == .enumeration else { return false }
-        return !(Value.self is any ABIBridgeSwiftValue.Type)
-            && !(Value.self is any ABIBridgeValue.Type)
-            && !(Value.self is any SwiftCollectionValue.Type) && Value.self != String.self
-            && !CValueCodec<Value>.hasRepresentation
-    }
-
-    /// Whether a value of this type is passed as its own Swift storage, without conversion.
-    var storesSwiftValue: Bool {
-        closure == nil && tuple == nil && cValue?.convertsValue != true
+        objectResult = isObject && (!isAdapter || Value.self is any ABIBridgeSwiftValue.Type)
     }
 
     func makeStorage() -> NativeValueStorage {

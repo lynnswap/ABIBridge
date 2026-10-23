@@ -377,19 +377,22 @@ public actor NativeSwiftType: Hashable {
         let cachedCodec: SwiftReceiverCodec?
         // The declaration's formal self, when its convention applies to a
         // representation's value.
-        var formalSelf: CValueType?
+        var formalSelf: SwiftValueSchema?
         if let receiverABI {
-            let formalType = try SwiftValueSchema.explicitLayout(of: metadata, abi: receiverABI)
-            codec = SwiftReceiverCodec(runtimeType: metadata, formalType: formalType)
+            let schema = SwiftValueSchema(
+                storage: try SwiftValueSchema.explicitLayout(of: metadata, abi: receiverABI),
+                metadata: metadata
+            )
+            codec = SwiftReceiverCodec(runtimeType: metadata, schema: schema)
             cachedCodec = nil
         } else if (representation == nil || representation == metadata || protocolSelf != nil),
-            let formalType = try generic?.receiverType()
+            let formal = try generic?.receiverSchema()
         {
             if let representation, representation != metadata {
-                codec = try SwiftReceiverCodec.make(for: representation, formalType: formalType)
-                formalSelf = formalType
+                codec = try SwiftReceiverCodec.make(for: representation, formal: formal)
+                formalSelf = formal
             } else {
-                codec = SwiftReceiverCodec(runtimeType: metadata, formalType: formalType)
+                codec = SwiftReceiverCodec(runtimeType: metadata, schema: formal)
             }
             cachedCodec = nil
         } else {
@@ -437,16 +440,20 @@ public actor NativeSwiftType: Hashable {
         isConsuming: Bool,
         protocolSelf: SwiftFormalType?
     ) throws {
-        let formalSelf: CValueType?
+        let formalSelf: SwiftValueSchema?
         do {
-            formalSelf = try generic?.receiverType()
+            formalSelf = try generic?.receiverSchema()
         } catch {
             return
         }
-        guard let storage = formalSelf ?? SwiftValueSchema.establishedOptionalStorage(of: metadata)
+        guard
+            let schema = formalSelf
+                ?? SwiftValueSchema.establishedOptionalStorage(of: metadata).map({
+                    SwiftValueSchema(storage: $0, metadata: metadata)
+                })
         else { return }
         let declared = try SwiftReceiverPlan(
-            codec: SwiftReceiverCodec(runtimeType: metadata, formalType: storage),
+            codec: SwiftReceiverCodec(runtimeType: metadata, schema: schema),
             metadata: metadata,
             isMutating: isMutating,
             isConsuming: isConsuming,
@@ -482,21 +489,18 @@ public actor NativeSwiftType: Hashable {
     /// receiver is a reference, which SwiftReceiverPlan checks.
     private nonisolated func checkReceiverRepresentation(
         _ representation: Any.Type,
-        formalSelf: CValueType?
+        formalSelf: SwiftValueSchema?
     ) throws {
-        func layout<Value>(_: Value.Type) throws -> CValueType {
-            try SwiftValueCodec<Value>(position: .receiver).type
-        }
-        let own = try _openExistential(representation, do: layout)
+        let own = try SwiftValueSchema(host: representation, position: .receiver).type
         let host: CValueType
         let declared: CValueType
         if let formalSelf {
-            declared = formalSelf
+            declared = formalSelf.type
             host =
-                withExtendedLifetime(formalSelf, { ABISwiftValueIsIndirect(formalSelf.handle) })
+                withExtendedLifetime(declared, { ABISwiftValueIsIndirect(declared.handle) })
                 ? try CValueType(indirectSwiftSize: own.size, alignment: own.alignment) : own
-        } else if let type = try? _openExistential(metadata, do: layout) {
-            declared = type
+        } else if let schema = try? SwiftValueSchema(host: metadata, position: .receiver) {
+            declared = schema.type
             host = own
         } else {
             return

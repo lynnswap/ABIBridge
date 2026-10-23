@@ -55,7 +55,7 @@ struct SwiftArgumentCodec<Value>: Sendable {
         defaultConsuming: Bool,
         generic: SwiftGenericArgument = .concrete,
         asynchronous: Bool = false,
-        position: SwiftValuePosition = .parameter
+        position: SwiftValuePosition
     ) throws {
         switch generic {
         case .convention(let codec):
@@ -168,7 +168,11 @@ private func swiftConventionCodec<Value>(
     wrap: @escaping @Sendable (Value) -> Any,
     unwrap: @escaping @Sendable (Any) -> Value
 ) throws -> SwiftConventionCodec {
-    let codec = try SwiftArgumentCodec<Value>(defaultConsuming: consumes, generic: generic)
+    let codec = try SwiftArgumentCodec<Value>(
+        defaultConsuming: consumes,
+        generic: generic,
+        position: .parameter
+    )
     return SwiftConventionCodec(
         type: codec.type,
         consumes: consumes,
@@ -283,7 +287,8 @@ public final class NativeSwiftInout<Value> {
                 "Inout buffers require actual Swift value storage, not a converted foreign representation."
             )
         }
-        _ = try SwiftValueCodec<Value>()
+        // The pointee is stored in the buffer and passes by address.
+        _ = try SwiftValueCodec<Value>(position: .nested)
     }
 
     private func encoded() -> NativeValueStorage {
@@ -508,7 +513,7 @@ extension NativeSwiftInout: SwiftConventionArgument {
             if case .tuple(let plan, _, _) = generic {
                 tuple = plan
             } else {
-                tuple = try SwiftGenericCallPlan.concreteTuple(Value.self)
+                tuple = try SwiftGenericCallPlan.concreteTuple(Value.self, position: .nested)
             }
             if let tuple, tuple.needsConversion { return try tupleCodec(tuple, generic: generic) }
             if tuple != nil {
