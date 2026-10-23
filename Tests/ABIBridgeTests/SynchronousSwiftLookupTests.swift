@@ -18,11 +18,13 @@ struct SynchronousSwiftLookupTests {
                 let type = try runtime.resolveSwiftTypeAndWait(
                     named: "ABIBridgeTests.SwiftMemberRenderer"
                 )
-                let method = try type.resolveMethodAndWait(
-                    named: "render(_:)",
-                    as: ((Int) -> Int).self
+                let method = try type.resolveAndWait(
+                    .method(
+                        "render(_:)",
+                        as: ((Int) -> Int).self
+                    )
                 )
-                let getter = try type.resolveGetterAndWait(named: "text", as: (() -> String).self)
+                let getter = try type.resolveAndWait(.getter("text", as: (() -> String).self))
                 pause.readyAndWait()
                 return (type, method, getter)
             }
@@ -35,12 +37,12 @@ struct SynchronousSwiftLookupTests {
         let getter: NativeSwiftMethod<() -> String>
         if asynchronous {
             type = try await runtime.resolveSwiftType(named: "ABIBridgeTests.SwiftMemberRenderer")
-            method = try await type.resolveMethod(named: "render(_:)", as: ((Int) -> Int).self)
-            getter = try await type.resolveGetter(named: "text", as: (() -> String).self)
+            method = try await type.resolve(.method("render(_:)", as: ((Int) -> Int).self))
+            getter = try await type.resolve(.getter("text", as: (() -> String).self))
         } else {
             type = try runtime.resolveSwiftTypeAndWait(named: "ABIBridgeTests.SwiftMemberRenderer")
-            method = try type.resolveMethodAndWait(named: "render(_:)", as: ((Int) -> Int).self)
-            getter = try type.resolveGetterAndWait(named: "text", as: (() -> String).self)
+            method = try type.resolveAndWait(.method("render(_:)", as: ((Int) -> Int).self))
+            getter = try type.resolveAndWait(.getter("text", as: (() -> String).self))
         }
         let receiver = SwiftMemberRenderer(text: "observed")
         #expect(try unsafe method.unsafeInvoke(on: receiver, 10) == 18)
@@ -70,17 +72,21 @@ struct SynchronousSwiftLookupTests {
                 let type = try runtime.resolveSwiftTypeAndWait(
                     named: "ABIBridgeTests.SwiftMemberRenderer"
                 )
-                let initialize = try type.resolveInitializerAndWait(
-                    named: "init(text:)",
-                    as: ((String) -> AnyObject).self
+                let initialize = try type.resolveAndWait(
+                    .initializer(
+                        "init(text:)",
+                        as: ((String) -> AnyObject).self
+                    )
                 )
-                _ = try type.resolveSetterAndWait(named: "text", as: String.self)
-                _ = try type.resolveStaticMethodAndWait(
-                    named: "decorate(_:)",
-                    as: ((String) -> String).self
+                _ = try type.resolveAndWait(.setter("text", as: ((String) -> Void).self))
+                _ = try type.resolveAndWait(
+                    .staticMethod(
+                        "decorate(_:)",
+                        as: ((String) -> String).self
+                    )
                 )
-                _ = try type.resolveStaticGetterAndWait(named: "standard", as: (() -> String).self)
-                _ = try type.resolveStaticSetterAndWait(named: "count", as: Int.self)
+                _ = try type.resolveAndWait(.staticGetter("standard", as: (() -> String).self))
+                _ = try type.resolveAndWait(.staticSetter("count", as: ((Int) -> Void).self))
                 pause.readyAndWait()
                 return (type, initialize)
             }
@@ -96,36 +102,48 @@ struct SynchronousSwiftLookupTests {
         let count: NativeSwiftFunction<(Int) -> Void>
         if asynchronous {
             type = try await runtime.resolveSwiftType(named: "ABIBridgeTests.SwiftMemberRenderer")
-            initialize = try await type.resolveInitializer(
-                named: "init(text:)",
-                as: ((String) -> AnyObject).self
+            initialize = try await type.resolve(
+                .initializer(
+                    "init(text:)",
+                    as: ((String) -> AnyObject).self
+                )
             )
-            setter = try await type.resolveSetter(named: "text", as: String.self)
-            decorate = try await type.resolveStaticMethod(
-                named: "decorate(_:)",
-                as: ((String) -> String).self
+            setter = try await type.resolve(.setter("text", as: ((String) -> Void).self))
+            decorate = try await type.resolve(
+                .staticMethod(
+                    "decorate(_:)",
+                    as: ((String) -> String).self
+                )
             )
-            standard = try await type.resolveStaticGetter(
-                named: "standard",
-                as: (() -> String).self
+            standard = try await type.resolve(
+                .staticGetter(
+                    "standard",
+                    as: (() -> String).self
+                )
             )
-            count = try await type.resolveStaticSetter(named: "count", as: Int.self)
+            count = try await type.resolve(.staticSetter("count", as: ((Int) -> Void).self))
         } else {
             type = try runtime.resolveSwiftTypeAndWait(named: "ABIBridgeTests.SwiftMemberRenderer")
-            initialize = try type.resolveInitializerAndWait(
-                named: "init(text:)",
-                as: ((String) -> AnyObject).self
+            initialize = try type.resolveAndWait(
+                .initializer(
+                    "init(text:)",
+                    as: ((String) -> AnyObject).self
+                )
             )
-            setter = try type.resolveSetterAndWait(named: "text", as: String.self)
-            decorate = try type.resolveStaticMethodAndWait(
-                named: "decorate(_:)",
-                as: ((String) -> String).self
+            setter = try type.resolveAndWait(.setter("text", as: ((String) -> Void).self))
+            decorate = try type.resolveAndWait(
+                .staticMethod(
+                    "decorate(_:)",
+                    as: ((String) -> String).self
+                )
             )
-            standard = try type.resolveStaticGetterAndWait(
-                named: "standard",
-                as: (() -> String).self
+            standard = try type.resolveAndWait(
+                .staticGetter(
+                    "standard",
+                    as: (() -> String).self
+                )
             )
-            count = try type.resolveStaticSetterAndWait(named: "count", as: Int.self)
+            count = try type.resolveAndWait(.staticSetter("count", as: ((Int) -> Void).self))
         }
         #expect(!pause.hasFinished)
         MainActor.assertIsolated()
@@ -155,9 +173,11 @@ struct SynchronousSwiftLookupTests {
         let preparation = Task {
             try await runtime.prepare { runtime in
                 defer { pause.finish() }
-                let function = try runtime.resolveSwiftFunctionAndWait(
-                    named: "ABIBridgeTests.swiftABIString(_:)",
-                    as: ((String) -> String).self
+                let function = try runtime.resolveAndWait(
+                    .function(
+                        "ABIBridgeTests.swiftABIString(_:)",
+                        as: ((String) -> String).self
+                    )
                 )
                 pause.readyAndWait()
                 return function
@@ -166,9 +186,11 @@ struct SynchronousSwiftLookupTests {
         defer { pause.release() }
         await pause.waitUntilReady()
 
-        let demanded = try await runtime.resolveSwiftFunction(
-            named: "ABIBridgeTests.swiftABIString(_:)",
-            as: ((String) -> String).self
+        let demanded = try await runtime.resolve(
+            .function(
+                "ABIBridgeTests.swiftABIString(_:)",
+                as: ((String) -> String).self
+            )
         )
         #expect(try unsafe demanded.unsafeInvoke("demanded") == "demanded!")
         #expect(!pause.hasFinished)

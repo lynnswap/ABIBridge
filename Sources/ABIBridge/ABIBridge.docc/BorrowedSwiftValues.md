@@ -4,7 +4,7 @@ Receive a runtime-only value in a native callback and call its members using its
 
 ## Prepare the type and members
 
-Resolve the nominal type and prepare ordinary getter or method handles; their `AndWait` variants select synchronous lookup. The same member handle accepts an owned ``NativeSwiftValue`` or an active ``NativeSwiftBorrowedValue``.
+Resolve the nominal type and prepare ordinary getter or method handles; `resolveAndWait` selects synchronous lookup. The same member handle accepts an owned ``NativeSwiftValue`` or an active ``NativeSwiftBorrowedValue``.
 
 Supply `receiverABI` when the receiver's passing convention is unavailable from its representation, its generic declaration, or the convention inferred from its metadata; see <doc:SwiftFunctionInvocation#Infer-struct-and-enum-conventions>. Use `.opaque` for formally indirect self and established components for a direct value.
 
@@ -17,12 +17,12 @@ nonisolated(nonsending) func visitRecords(
 ) async throws {
     let runtime = ABIRuntime.shared
     let type = try await runtime.resolveSwiftType(named: "Example.Record")
-    let text = try await type.resolveGetter(named: "text", as: (() -> String).self, receiverABI: .opaque(named: type.name))
-    let visit = try await runtime.resolveSwiftFunction(
-        named: "Example.visit((Example.Record) -> ()) -> ()",
+    let text = try await type.resolve(.getter("text", as: (() -> String).self, receiverABI: .opaque(named: type.name)))
+    let visit = try await runtime.resolve(.function(
+        "Example.visit((Example.Record) -> ()) -> ()",
         as: ((NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Void>) -> Void).self,
         valueABIs: [type: .opaque(named: type.name)]
-    )
+    ))
     let callback = try NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Void> { record in
         do {
             onValue(try unsafe text.unsafeInvoke(on: record))

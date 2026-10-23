@@ -102,9 +102,11 @@ struct HookInvocationDiagnosticsTests {
             as: ((AnyObject) -> Int32).self,
             onFailure: { Issue.record($0) }
         ) { call, object in
-            let setter = try runtime.object(object).resolveMethodAndWait(
-                selector: "setValue:",
-                as: ((Int32) -> Void).self
+            let setter = try runtime.object(object).resolveAndWait(
+                .message(
+                    "setValue:",
+                    as: ((Int32) -> Void).self
+                )
             )
             try unsafe setter.unsafeInvoke(9)
             return try call.proceed(object)

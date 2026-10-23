@@ -14,17 +14,28 @@ func validateAsyncFunctionHooks(runtime: ABIRuntime, provider: ImageSelector, ca
     let failures = Mutex(0)
     let failure: @Sendable (any Error) -> Void = { _ in failures.withLock { $0 += 1 } }
     typealias Echo = nonisolated(nonsending) (Int64) async -> Int64
-    let function = try await runtime.resolveSwiftFunction(
-        named: "SwiftImportProvider.asyncHookEcho(_:)",
-        as: Echo.self, genericArguments: [.type(Int64.self)], in: provider)
-    let integer = try await runtime.resolveSwiftFunction(
-        named: "SwiftImportCallerControl.importedAsyncHookInteger(_:)",
-        as: Echo.self,
+    let function = try await runtime.resolve(
+        .function(
+            "SwiftImportProvider.asyncHookEcho(_:)",
+            as: Echo.self,
+            genericArguments: [.type(Int64.self)]
+        ),
+        in: provider
+    )
+    let integer = try await runtime.resolve(
+        .function(
+            "SwiftImportCallerControl.importedAsyncHookInteger(_:)",
+            as: Echo.self
+        ),
         in: caller
     )
-    let text = try await runtime.resolveSwiftFunction(
-        named: "SwiftImportCallerControl.importedAsyncHookString(_:)",
-        as: (nonisolated(nonsending) (String) async -> String).self, in: caller)
+    let text = try await runtime.resolve(
+        .function(
+            "SwiftImportCallerControl.importedAsyncHookString(_:)",
+            as: (nonisolated(nonsending) (String) async -> String).self
+        ),
+        in: caller
+    )
     _ = try unsafe await integer.unsafeInvoke(1)
     let hook = try unsafe await function.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call, value in
         await Task.yield()
@@ -37,14 +48,18 @@ func validateAsyncFunctionHooks(runtime: ABIRuntime, provider: ImageSelector, ca
     try check(try unsafe await integer.unsafeInvoke(1) == 1, "Invalidated async import remains callable through its saved dispatcher")
 
     typealias Throwing = nonisolated(nonsending) (Int64) async throws(NSError) -> String
-    let throwing = try await runtime.resolveSwiftFunction(
-        named: "SwiftImportProvider.asyncHookThrowing(_:)",
-        as: Throwing.self,
+    let throwing = try await runtime.resolve(
+        .function(
+            "SwiftImportProvider.asyncHookThrowing(_:)",
+            as: Throwing.self
+        ),
         in: provider
     )
-    let throwingCaller = try await runtime.resolveSwiftFunction(
-        named: "SwiftImportCallerControl.importedAsyncHookThrowing(_:)",
-        as: Throwing.self,
+    let throwingCaller = try await runtime.resolve(
+        .function(
+            "SwiftImportCallerControl.importedAsyncHookThrowing(_:)",
+            as: Throwing.self
+        ),
         in: caller
     )
     _ = try unsafe await throwingCaller.unsafeInvoke(1)
@@ -67,12 +82,20 @@ func validateAsyncFunctionHooks(runtime: ABIRuntime, provider: ImageSelector, ca
     }
     throwingHook.invalidate()
 
-    let actor = try await runtime.resolveSwiftFunction(
-        named: "SwiftImportProvider.asyncHookActor(_:)",
-        as: (@Sendable @concurrent (Int64) async -> Int64).self, in: provider)
-    let actorCaller = try await runtime.resolveSwiftFunction(
-        named: "SwiftImportCallerControl.importedAsyncHookActor(_:)",
-        as: (@concurrent (Int64) async -> Int64).self, in: caller)
+    let actor = try await runtime.resolve(
+        .function(
+            "SwiftImportProvider.asyncHookActor(_:)",
+            as: (@Sendable @concurrent (Int64) async -> Int64).self
+        ),
+        in: provider
+    )
+    let actorCaller = try await runtime.resolve(
+        .function(
+            "SwiftImportCallerControl.importedAsyncHookActor(_:)",
+            as: (@concurrent (Int64) async -> Int64).self
+        ),
+        in: caller
+    )
     _ = try unsafe await actorCaller.unsafeInvoke(1)
     let actorHook = try unsafe await actor.hookMainActorImportedCalls(in: caller, using: runtime, onFailure: failure) { call, value in
         MainActor.preconditionIsolated()
@@ -96,18 +119,30 @@ func validateAsyncMethodHooks(runtime: ABIRuntime, provider: ImageSelector, call
     let failures = Mutex(0)
     let name = "SwiftImportProvider.AsyncHookRenderer"
     let type = try await runtime.resolveSwiftType(named: name, in: provider)
-    let method = try await type.resolveMethod(
-        named: "render(_:)",
-        as: (nonisolated(nonsending) (String) async throws(NSError) -> String).self)
-    let make = try await runtime.resolveSwiftFunction(
-        named: "SwiftImportProvider.makeAsyncHookRenderer() -> " + name,
-        as: (() -> AnyObject).self, in: provider)
+    let method = try await type.resolve(
+        .method(
+            "render(_:)",
+            as: (nonisolated(nonsending) (String) async throws(NSError) -> String).self
+        )
+    )
+    let make = try await runtime.resolve(
+        .function(
+            "SwiftImportProvider.makeAsyncHookRenderer() -> " + name,
+            as: (() -> AnyObject).self
+        ),
+        in: provider
+    )
     var object: AnyObject? = try unsafe make.unsafeInvoke()
     weak var observed = object
     let identity = ObjectIdentifier(object!)
-    let oracle = try await runtime.resolveSwiftFunction(
-        named: "SwiftImportCallerControl.importedAsyncHookMethod(" + name + ", Swift.String) async throws(__C.NSError) -> Swift.String",
-        as: (nonisolated(nonsending) (AnyObject, String) async throws(NSError) -> String).self, in: caller)
+    let oracle = try await runtime.resolve(
+        .function(
+            "SwiftImportCallerControl.importedAsyncHookMethod(" + name
+                + ", Swift.String) async throws(__C.NSError) -> Swift.String",
+            as: (nonisolated(nonsending) (AnyObject, String) async throws(NSError) -> String).self
+        ),
+        in: caller
+    )
     let hook = try unsafe await method.hookVirtualCalls(onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value in
         guard ObjectIdentifier(try call.receiver(as: AnyObject.self)) == identity else { throw AsyncHookValidationFailure.callback }
         let result = try await call.proceed(value)

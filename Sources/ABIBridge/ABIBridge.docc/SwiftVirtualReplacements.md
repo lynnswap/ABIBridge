@@ -6,12 +6,12 @@ Select a class method by its source declaration and replace the entry in that cl
 
 ```swift
 let type = try runtime.resolveSwiftTypeAndWait(named: "Rendering.Renderer")
-let method = try type.resolveMethodAndWait(
-    named: "render(_:)", as: ((String) -> String).self
-)
-let replacement = try type.resolveMethodAndWait(
-    named: "debugRender(_:)", as: ((String) -> String).self
-)
+let method = try type.resolveAndWait(.method(
+    "render(_:)", as: ((String) -> String).self
+))
+let replacement = try type.resolveAndWait(.method(
+    "debugRender(_:)", as: ((String) -> String).self
+))
 let plan = try unsafe method.prepareVirtualReplacementAndWait(with: replacement)
 let previous = plan.original
 // Initialize any state needed by debugRender before publishing its pointer.
@@ -38,15 +38,15 @@ Preparation compares the replacement's declaration with the original's. Each arg
 
 ## Replace class members
 
-A `class func`, and a `class var`'s or `class subscript`'s getter and setter, receive their class's metatype as `self` and dispatch through entries of the class's metadata. Resolve them with `resolveStaticMethod`, `resolveStaticGetter`, or `resolveStaticSetter`, and prepare the replacement on the returned `NativeSwiftFunction`:
+A `class func`, and a `class var`'s or `class subscript`'s getter and setter, receive their class's metatype as `self` and dispatch through entries of the class's metadata. Resolve them with `staticMethod`, `staticGetter`, or `staticSetter` requests, and prepare the replacement on the returned `NativeSwiftFunction`:
 
 ```swift
-let scale = try type.resolveStaticMethodAndWait(
-    named: "scale(for:)", as: ((Double) -> Double).self
-)
-let replacement = try type.resolveStaticMethodAndWait(
-    named: "debugScale(for:)", as: ((Double) -> Double).self
-)
+let scale = try type.resolveAndWait(.staticMethod(
+    "scale(for:)", as: ((Double) -> Double).self
+))
+let replacement = try type.resolveAndWait(.staticMethod(
+    "debugScale(for:)", as: ((Double) -> Double).self
+))
 let plan = try unsafe scale.prepareVirtualReplacementAndWait(with: replacement)
 try unsafe plan.install()
 // The predecessor runs with the lookup type's metatype as self.
@@ -58,7 +58,7 @@ Selection, class scope, and restoration follow the rules for methods. The replac
 
 ## Understand the class scope
 
-The type used for member lookup, such as `resolveMethod` or `resolveStaticMethod`, determines the metadata to change. Looking up an inherited method on `PreviewRenderer` changes the copy in `PreviewRenderer` metadata, including when the symbol itself belongs to its superclass. An override uses the original introducing method descriptor to find the inherited slot and its pointer-authentication discriminator. ABIBridge names that descriptor by the same member of each ancestor class, which the remangler spells from the declaration's own symbol, and the declaring class's override table must reference it; an unrelated same-named method in a superclass is not sufficient.
+The type that resolves the member's request determines the metadata to change. Looking up an inherited method on `PreviewRenderer` changes the copy in `PreviewRenderer` metadata, including when the symbol itself belongs to its superclass. An override uses the original introducing method descriptor to find the inherited slot and its pointer-authentication discriminator. ABIBridge names that descriptor by the same member of each ancestor class, which the remangler spells from the declaration's own symbol, and the declaring class's override table must reference it; an unrelated same-named method in a superclass is not sufficient.
 
 Existing superclass, sibling and subclass metadata copies are unchanged. A subclass initialized after installation can inherit a modified entry; restoration of the selected class does not rewrite copies made elsewhere. Coordinate metadata initialization if this boundary matters to the application.
 

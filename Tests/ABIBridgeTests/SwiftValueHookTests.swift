@@ -26,14 +26,18 @@ struct SwiftValueHookTests {
             in: fixture.providerScope
         )
         for (member, caller, consuming) in [("sum", "wideSum", false), ("consume", "wideConsume", true)] {
-            let method = try await type.resolveMethod(
-                named: member + "(_:)",
-                as: ((Int64) -> Int64).self,
-                consuming: consuming
+            let method = try await type.resolve(
+                .method(
+                    member + "(_:)",
+                    as: ((Int64) -> Int64).self,
+                    receiver: consuming ? .consuming : nil
+                )
             )
-            let oracle = try await fixture.runtime.resolveSwiftFunction(
-                named: fixture.callerModule + "." + caller + "(_:_:)",
-                as: ((Int64, Int64) -> Int64).self,
+            let oracle = try await fixture.runtime.resolve(
+                .function(
+                    fixture.callerModule + "." + caller + "(_:_:)",
+                    as: ((Int64, Int64) -> Int64).self
+                ),
                 in: fixture.callerScope
             )
             let hook = try await unsafe method.hookImportedCalls(in: fixture.callerScope, onFailure: { Issue.record("Unexpected: \($0)") }) { call, value in
@@ -46,13 +50,17 @@ struct SwiftValueHookTests {
             hook.invalidate()
             #expect(try unsafe oracle.unsafeInvoke(40, 2) == 212)
         }
-        let method = try await type.resolveMethod(
-            named: "payload(Swift.Int64) -> " + fixture.module + ".ReplacementPayload",
-            as: ((Int64) -> SwiftABIFive).self
+        let method = try await type.resolve(
+            .method(
+                "payload(Swift.Int64) -> " + fixture.module + ".ReplacementPayload",
+                as: ((Int64) -> SwiftABIFive).self
+            )
         )
-        let oracle = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".widePayload(_:_:)",
-            as: ((Int64, Int64) -> Int64).self,
+        let oracle = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".widePayload(_:_:)",
+                as: ((Int64, Int64) -> Int64).self
+            ),
             in: fixture.callerScope
         )
         let hook = try await unsafe method.hookImportedCalls(in: fixture.callerScope, onFailure: { Issue.record("Unexpected: \($0)") }) { call, value in
@@ -71,10 +79,12 @@ struct SwiftValueHookTests {
             as: Int64.self,
             in: fixture.providerScope
         )
-        let method = try await type.resolveMethod(named: "scalar(_:)", as: ((Int64) -> Int64).self)
-        let oracle = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".importedValueMethod(_:)",
-            as: ((Int64) -> Int64).self,
+        let method = try await type.resolve(.method("scalar(_:)", as: ((Int64) -> Int64).self))
+        let oracle = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".importedValueMethod(_:)",
+                as: ((Int64) -> Int64).self
+            ),
             in: fixture.callerScope
         )
         let hook = try await unsafe method.hookImportedCalls(in: fixture.callerScope, onFailure: { Issue.record("Unexpected: \($0)") }) { call, value in
@@ -102,12 +112,20 @@ struct SwiftValueHookTests {
             as: Int64.self,
             in: fixture.providerScope
         )
-        let method = try await type.resolveMethod(
-            named: "stack(_:_:_:_:_:_:_:_:_:_:_:_:)",
-            as: ((Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64) -> Int64).self)
-        let oracle = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".stackedValue()",
-            as: (() -> Int64).self,
+        let method = try await type.resolve(
+            .method(
+                "stack(_:_:_:_:_:_:_:_:_:_:_:_:)",
+                as: ((
+                    Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64,
+                    Int64
+                ) -> Int64).self
+            )
+        )
+        let oracle = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".stackedValue()",
+                as: (() -> Int64).self
+            ),
             in: fixture.callerScope
         )
         let hook = try await unsafe method.hookImportedCalls(in: fixture.callerScope, onFailure: { Issue.record("Unexpected: \($0)") }) { call,a,b,c,d,e,f,g,h,i,j,k,l in
@@ -119,10 +137,12 @@ struct SwiftValueHookTests {
         hook.invalidate()
         #expect(try unsafe oracle.unsafeInvoke() == 118)
 
-        let scalar = try await type.resolveMethod(named: "scalar(_:)", as: ((Int64) -> Int64).self)
-        let scalarCaller = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".importedValueMethod(_:)",
-            as: ((Int64) -> Int64).self,
+        let scalar = try await type.resolve(.method("scalar(_:)", as: ((Int64) -> Int64).self))
+        let scalarCaller = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".importedValueMethod(_:)",
+                as: ((Int64) -> Int64).self
+            ),
             in: fixture.callerScope
         )
         let saved = SavedValueInvocation()
@@ -155,14 +175,18 @@ struct SwiftValueHookTests {
             as: Int64.self,
             in: fixture.providerScope
         )
-        let method = try await type.resolveMethod(
-            named: "increment(_:)",
-            as: ((Int64) -> Int64).self,
-            mutating: true
+        let method = try await type.resolve(
+            .method(
+                "increment(_:)",
+                as: ((Int64) -> Int64).self,
+                receiver: .mutating
+            )
         )
-        let oracle = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".incrementValue(_:_:)",
-            as: ((Int64, Int64) -> Int64).self,
+        let oracle = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".incrementValue(_:_:)",
+                as: ((Int64, Int64) -> Int64).self
+            ),
             in: fixture.callerScope
         )
         let failures = Mutex<[String]>([])
@@ -198,10 +222,14 @@ struct SwiftValueHookTests {
             as: String.self,
             in: fixture.providerScope
         )
-        let method = try await type.resolveMethod(named: "consume()", as: (() -> String).self, consuming: true)
-        let oracle = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".consumeTextValue(_:)",
-            as: ((String) -> String).self,
+        let method = try await type.resolve(
+            .method("consume()", as: (() -> String).self, receiver: .consuming)
+        )
+        let oracle = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".consumeTextValue(_:)",
+                as: ((String) -> String).self
+            ),
             in: fixture.callerScope
         )
         let hook = try await unsafe method.hookImportedCalls(in: fixture.callerScope, onFailure: { Issue.record("Unexpected: \($0)") }) { call in
@@ -239,14 +267,18 @@ struct SwiftValueHookTests {
             as: String.self,
             in: fixture.providerScope
         )
-        let method = try await type.resolveMethod(
-            named: "append(_:)",
-            as: ((String) -> String).self,
-            mutating: true
+        let method = try await type.resolve(
+            .method(
+                "append(_:)",
+                as: ((String) -> String).self,
+                receiver: .mutating
+            )
         )
-        let oracle = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".appendTextValue(_:_:)",
-            as: ((String, String) -> String).self,
+        let oracle = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".appendTextValue(_:_:)",
+                as: ((String, String) -> String).self
+            ),
             in: fixture.callerScope
         )
         let hook = try await unsafe method.hookImportedCalls(in: fixture.callerScope, onFailure: { Issue.record("Unexpected: \($0)") }) { call, suffix in
@@ -275,9 +307,13 @@ struct SwiftValueHookTests {
         @inline(never) public func consumeReferenceValue(_ token: ValueToken, _ value: Int64) -> Int64 { ReferenceValue(token).consume(value) }
         """); defer { fixture.cleanup() }
         let name = fixture.module + ".ValueToken"
-        let make = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.module + ".makeValueToken() -> " + name,
-            as: (() -> AnyObject).self, in: fixture.providerScope)
+        let make = try await fixture.runtime.resolve(
+            .function(
+                fixture.module + ".makeValueToken() -> " + name,
+                as: (() -> AnyObject).self
+            ),
+            in: fixture.providerScope
+        )
         var object: AnyObject? = try unsafe make.unsafeInvoke()
         weak var observed = object
         let identity = ObjectIdentifier(object!)
@@ -286,15 +322,21 @@ struct SwiftValueHookTests {
             as: AnyObject.self,
             in: fixture.providerScope
         )
-        let method = try await type.resolveMethod(
-            named: "consume(_:)",
-            as: ((Int64) -> Int64).self,
-            consuming: true
+        let method = try await type.resolve(
+            .method(
+                "consume(_:)",
+                as: ((Int64) -> Int64).self,
+                receiver: .consuming
+            )
         )
-        let oracle = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule
-                + ".consumeReferenceValue(\(name), Swift.Int64) -> Swift.Int64",
-            as: ((AnyObject, Int64) -> Int64).self, in: fixture.callerScope)
+        let oracle = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule
+                    + ".consumeReferenceValue(\(name), Swift.Int64) -> Swift.Int64",
+                as: ((AnyObject, Int64) -> Int64).self
+            ),
+            in: fixture.callerScope
+        )
         let hook = try await unsafe method.hookImportedCalls(in: fixture.callerScope, onFailure: { Issue.record("Unexpected: \($0)") }) { call, value in
             #expect(ObjectIdentifier(try call.receiver(as: AnyObject.self)) == identity)
             if value == 0 { return 1000 }
@@ -330,9 +372,13 @@ struct SwiftValueHookTests {
         }
         """); defer { fixture.cleanup() }
         let name = fixture.module + ".ValueBox"
-        let make = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.module + ".makeValueBox() -> " + name,
-            as: (() -> AnyObject).self, in: fixture.providerScope)
+        let make = try await fixture.runtime.resolve(
+            .function(
+                fixture.module + ".makeValueBox() -> " + name,
+                as: (() -> AnyObject).self
+            ),
+            in: fixture.providerScope
+        )
         var object: AnyObject? = try unsafe make.unsafeInvoke()
         weak var observed = object
         let type = try await fixture.runtime.resolveSwiftType(
@@ -340,10 +386,16 @@ struct SwiftValueHookTests {
             as: AnyObject.self,
             in: fixture.providerScope
         )
-        let setter = try await type.resolveSetter(named: "text", as: String.self, mutating: false)
-        let oracle = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".setBoxValue(\(name), Swift.String) -> Swift.String",
-            as: ((AnyObject, String) -> String).self, in: fixture.callerScope)
+        let setter = try await type.resolve(
+            .setter("text", as: ((String) -> Void).self, receiver: .borrowing)
+        )
+        let oracle = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".setBoxValue(\(name), Swift.String) -> Swift.String",
+                as: ((AnyObject, String) -> String).self
+            ),
+            in: fixture.callerScope
+        )
         let hook = try await unsafe setter.hookImportedCalls(in: fixture.callerScope, onFailure: { Issue.record("Unexpected: \($0)") }) { call, value in
             _ = try call.receiver(as: AnyObject.self)
             try call.proceed(value + " edited")
@@ -385,16 +437,20 @@ struct SwiftValueHookTests {
             named: fixture.module + ".HookToken",
             in: fixture.providerScope
         )
-        let function = try await fixture.runtime.resolveSwiftFunction(
-            named: "\(fixture.module).tokensAndWords(Swift.Int64) -> (\(token.name), Swift.Int64, "
-                + "\(token.name), Swift.Int64, Swift.Int64, Swift.Int64, Swift.Int64)",
-            as: ((Int64) -> (HookWord, Int64, HookWord, Int64, Int64, Int64, Int64)).self,
-            valueABIs: [token: try .opaque(named: token.name)],
+        let function = try await fixture.runtime.resolve(
+            .function(
+                "\(fixture.module).tokensAndWords(Swift.Int64) -> (\(token.name), Swift.Int64, "
+                    + "\(token.name), Swift.Int64, Swift.Int64, Swift.Int64, Swift.Int64)",
+                as: ((Int64) -> (HookWord, Int64, HookWord, Int64, Int64, Int64, Int64)).self,
+                valueABIs: [token: try .opaque(named: token.name)]
+            ),
             in: fixture.providerScope
         )
-        let oracle = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".importedTokensAndWords(_:)",
-            as: ((Int64) -> [Int64]).self,
+        let oracle = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".importedTokensAndWords(_:)",
+                as: ((Int64) -> [Int64]).self
+            ),
             in: fixture.callerScope
         )
         #expect(try unsafe oracle.unsafeInvoke(1) == [1, 2, 3, 4, 5, 6, 7])

@@ -22,10 +22,12 @@ struct SwiftCollectionValueTests {
         let path = try #require(Bundle(for: LifetimeToken.self).executableURL)
         let name =
             "ManagedSwiftFixtures.variadicStrings(Swift.String, Swift.String...) -> [Swift.String]"
-        let call = try await runtime.resolveSwiftFunction(
-            named: name,
-            as: ((String, [String]) -> [String]).self,
-            declaredAs: "(Swift.String, Swift.String...) -> [Swift.String]",
+        let call = try await runtime.resolve(
+            .function(
+                name,
+                as: ((String, [String]) -> [String]).self,
+                declaredAs: "(Swift.String, Swift.String...) -> [Swift.String]"
+            ),
             in: .path(path)
         )
         let long = String(repeating: "owned", count: 100)
@@ -35,16 +37,20 @@ struct SwiftCollectionValueTests {
         output[1] = "changed"
         #expect(input == [long, "tail"])
 
-        let own = try await runtime.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
-            as: (([String]) -> NativeSwiftValue).self,
-            genericArguments: [.type([String].self)],
+        let own = try await runtime.resolve(
+            .function(
+                "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+                as: (([String]) -> NativeSwiftValue).self,
+                genericArguments: [.type([String].self)]
+            ),
             in: .path(path)
         )
         let nativeInput = try unsafe own.unsafeInvoke(input)
-        let runtimeCall = try await runtime.resolveSwiftFunction(
-            named: name,
-            as: ((String, NativeSwiftValue) -> NativeSwiftValue).self,
+        let runtimeCall = try await runtime.resolve(
+            .function(
+                name,
+                as: ((String, NativeSwiftValue) -> NativeSwiftValue).self
+            ),
             in: .path(path)
         )
         let nativeOutput = try unsafe runtimeCall.unsafeInvoke("first", nativeInput)
@@ -54,8 +60,11 @@ struct SwiftCollectionValueTests {
     }
 
     @Test func nativeArrayCallsPreserveCopyOnWrite() async throws {
-        let append = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.appendStrings(_:_:)", as: (([String], String) -> [String]).self
+        let append = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.appendStrings(_:_:)",
+                as: (([String], String) -> [String]).self
+            )
         )
         let long = String(repeating: "owned", count: 100)
         for input in [[], [""], [long, "second"]] {
@@ -67,14 +76,20 @@ struct SwiftCollectionValueTests {
     }
 
     @Test func optionalValuesDistinguishNilAndEmpty() async throws {
-        let strings = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.optionalStrings(_:)", as: (([String]?) -> [String]?).self
+        let strings = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.optionalStrings(_:)",
+                as: (([String]?) -> [String]?).self
+            )
         )
         for input: [String]? in [nil, [], [""], [String(repeating: "long", count: 100)]] {
             #expect(try unsafe strings.unsafeInvoke(input) == optionalStrings(input))
         }
-        let decorate = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.decorateOptionalString(_:)", as: ((String?) -> String?).self
+        let decorate = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.decorateOptionalString(_:)",
+                as: ((String?) -> String?).self
+            )
         )
         for input: String? in [nil, "", "short", String(repeating: "long", count: 100)] {
             #expect(try unsafe decorate.unsafeInvoke(input) == decorateOptionalString(input))
@@ -82,8 +97,11 @@ struct SwiftCollectionValueTests {
     }
 
     @Test func arrayElementsUseTheirOwnValueWitnesses() async throws {
-        let copy = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.copyManagedRecords(_:)", as: (([ManagedRecord]) -> [ManagedRecord]).self
+        let copy = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.copyManagedRecords(_:)",
+                as: (([ManagedRecord]) -> [ManagedRecord]).self
+            )
         )
         weak var observed: LifetimeToken?
         var destroyed = 0
@@ -105,20 +123,29 @@ struct SwiftCollectionValueTests {
     }
 
     @Test func nativeClosuresReceiveAndReturnCollections() async throws {
-        let apply = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.applyArrayClosure(_:_:)",
-            as: ((NativeSwiftClosure<([String]) -> [String]>, [String]) -> [String]).self
+        let apply = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.applyArrayClosure(_:_:)",
+                as: ((NativeSwiftClosure<([String]) -> [String]>, [String]) -> [String]).self
+            )
         )
         let transform = try NativeSwiftClosure { (value: [String]) in value + ["callback"] }
         #expect(try unsafe apply.unsafeInvoke(transform, ["input"]) == ["input", "callback"])
-        let applyDictionary = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.applyDictionaryClosure(_:_:)",
-            as: ((NativeSwiftClosure<([String: Int64]) -> Set<Int64>>, [String: Int64]) -> Set<Int64>).self
+        let applyDictionary = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.applyDictionaryClosure(_:_:)",
+                as: ((NativeSwiftClosure<([String: Int64]) -> Set<Int64>>, [String: Int64]) -> Set<
+                    Int64
+                >).self
+            )
         )
         let values = try NativeSwiftClosure { (value: [String: Int64]) in Set(value.values).union([9]) }
         #expect(try unsafe applyDictionary.unsafeInvoke(values, ["a": 1, "b": 2]) == [1, 2, 9])
-        let make = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.makeArrayClosure(_:)", as: ((String) -> NativeSwiftClosure<([String]) -> [String]>).self
+        let make = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.makeArrayClosure(_:)",
+                as: ((String) -> NativeSwiftClosure<([String]) -> [String]>).self
+            )
         )
         let suffix = String(repeating: "suffix", count: 100)
         let returned = try unsafe make.unsafeInvoke(suffix)
@@ -127,23 +154,29 @@ struct SwiftCollectionValueTests {
     }
 
     @Test func optionalClosuresPreservePayloadsAndNil() async throws {
-        let strings = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.applyOptionalArrayClosure(_:_:)",
-            as: ((NativeSwiftClosure<([String]?) -> [String]?>, [String]?) -> [String]?).self
+        let strings = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.applyOptionalArrayClosure(_:_:)",
+                as: ((NativeSwiftClosure<([String]?) -> [String]?>, [String]?) -> [String]?).self
+            )
         )
         let optionalArray = try NativeSwiftClosure { (value: [String]?) in value.map { $0 + ["callback"] } }
         for value: [String]? in [nil, [], ["first"]] {
             #expect(try unsafe strings.unsafeInvoke(optionalArray, value) == value.map { $0 + ["callback"] })
         }
-        let apply = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.applyOptionalStringClosure(_:_:)",
-            as: ((NativeSwiftClosure<(String?) -> String?>, String?) -> String?).self
+        let apply = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.applyOptionalStringClosure(_:_:)",
+                as: ((NativeSwiftClosure<(String?) -> String?>, String?) -> String?).self
+            )
         )
         let suffix = String(repeating: "!", count: 100)
         let callback = try NativeSwiftClosure { (value: String?) in value.map { $0 + suffix } }
-        let make = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.makeOptionalStringClosure(_:)",
-            as: ((String) -> NativeSwiftClosure<(String?) -> String?>).self
+        let make = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.makeOptionalStringClosure(_:)",
+                as: ((String) -> NativeSwiftClosure<(String?) -> String?>).self
+            )
         )
         let returned = try unsafe make.unsafeInvoke(suffix)
         for value: String? in [nil, "", "input", String(repeating: "input", count: 100)] {
@@ -157,14 +190,16 @@ struct SwiftCollectionValueTests {
         let type = try await ABIRuntime.shared.resolveSwiftType(
             named: "ManagedSwiftFixtures.CollectionStore",
                                                          as: CollectionStore.self)
-        let create = try await type.resolveInitializer(
-            named: "init(_:_:)",
-            as: (([String], String?) -> CollectionStore).self
+        let create = try await type.resolve(
+            .initializer(
+                "init(_:_:)",
+                as: (([String], String?) -> CollectionStore).self
+            )
         )
-        let get = try await type.resolveGetter(named: "values", as: (() -> [String]).self)
-        let set = try await type.resolveSetter(named: "values", as: [String].self)
-        let title = try await type.resolveSetter(named: "title", as: String?.self)
-        let append = try await type.resolveMethod(named: "append(_:)", as: ((String) -> [String]).self)
+        let get = try await type.resolve(.getter("values", as: (() -> [String]).self))
+        let set = try await type.resolve(.setter("values", as: (([String]) -> Void).self))
+        let title = try await type.resolve(.setter("title", as: ((String?) -> Void).self))
+        let append = try await type.resolve(.method("append(_:)", as: ((String) -> [String]).self))
         let long = String(repeating: "member", count: 100)
         let input = [long]
         let receiver = try unsafe create.unsafeInvoke(input, nil)
@@ -183,9 +218,12 @@ struct SwiftCollectionValueTests {
         let type = try await ABIRuntime.shared.resolveSwiftType(
             named: "ManagedSwiftFixtures.CollectionStore",
                                                          as: CollectionStore.self)
-        let retain = try await type.resolveMethod(
-            named: "retainCallback(_:)",
-                                           as: ((NativeSwiftClosure<([String]) -> [String]>) -> Void).self)
+        let retain = try await type.resolve(
+            .method(
+                "retainCallback(_:)",
+                as: ((NativeSwiftClosure<([String]) -> [String]>) -> Void).self
+            )
+        )
         let receiver = CollectionStore([], nil)
         weak var observed: CollectionCapture?
         let value = String(repeating: "captured", count: 100)
@@ -203,13 +241,17 @@ struct SwiftCollectionValueTests {
 
     @Test func laterConversionFailureReleasesArrayElements() async throws {
         let runtime = ABIRuntime.shared
-        let prototype = try await runtime.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.recordsWithSuffix(_:_:)",
-            as: (([ManagedRecord], Int64) -> [ManagedRecord]).self
+        let prototype = try await runtime.resolve(
+            .function(
+                "ManagedSwiftFixtures.recordsWithSuffix(_:_:)",
+                as: (([ManagedRecord], Int64) -> [ManagedRecord]).self
+            )
         )
-        let failing = try await runtime.resolveSwiftFunction(
-            named: prototype.symbol.declaration.name,
-            as: (([ManagedRecord], RejectingCollectionArgument) -> [ManagedRecord]).self
+        let failing = try await runtime.resolve(
+            .function(
+                prototype.symbol.declaration.name,
+                as: (([ManagedRecord], RejectingCollectionArgument) -> [ManagedRecord]).self
+            )
         )
         weak var observed: LifetimeToken?
         var destroyed = 0

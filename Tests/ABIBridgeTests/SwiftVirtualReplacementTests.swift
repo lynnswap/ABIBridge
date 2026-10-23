@@ -15,28 +15,38 @@ struct SwiftVirtualReplacementTests {
             named: name,
             in: fixture.providerScope
         )
-        let make = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.module + ".makeRenderer() -> " + name,
-            as: (() -> AnyObject).self,
+        let make = try await fixture.runtime.resolve(
+            .function(
+                fixture.module + ".makeRenderer() -> " + name,
+                as: (() -> AnyObject).self
+            ),
             in: fixture.providerScope
         )
         let object = try unsafe make.unsafeInvoke()
-        let target = try await type.resolveMethod(named: "scalar(_:)", as: ((Int64) -> Int64).self)
-        let sendableTarget = try await type.resolveMethod(
-            named: "scalar(_:)",
-            as: (@Sendable (Int64) -> Int64).self
+        let target = try await type.resolve(.method("scalar(_:)", as: ((Int64) -> Int64).self))
+        let sendableTarget = try await type.resolve(
+            .method(
+                "scalar(_:)",
+                as: (@Sendable (Int64) -> Int64).self
+            )
         )
-        let replacement = try await type.resolveMethod(
-            named: "replacementScalar(_:)",
-            as: ((Int64) -> Int64).self
+        let replacement = try await type.resolve(
+            .method(
+                "replacementScalar(_:)",
+                as: ((Int64) -> Int64).self
+            )
         )
-        let sendableReplacement = try await type.resolveMethod(
-            named: "replacementScalar(_:)",
-            as: (@Sendable (Int64) -> Int64).self
+        let sendableReplacement = try await type.resolve(
+            .method(
+                "replacementScalar(_:)",
+                as: (@Sendable (Int64) -> Int64).self
+            )
         )
-        let oracle = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".classScalar(\(name), Swift.Int64) -> Swift.Int64",
-            as: ((AnyObject, Int64) -> Int64).self,
+        let oracle = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".classScalar(\(name), Swift.Int64) -> Swift.Int64",
+                as: ((AnyObject, Int64) -> Int64).self
+            ),
             in: fixture.callerScope
         )
         let ordinary =
@@ -100,28 +110,36 @@ struct SwiftVirtualReplacementTests {
             named: fixture.module + ".OverridingRenderer",
             in: fixture.providerScope
         )
-        let replacement = try await base.resolveMethod(
-            named: "replacementScalar(_:)",
-            as: ((Int64) -> Int64).self
+        let replacement = try await base.resolve(
+            .method(
+                "replacementScalar(_:)",
+                as: ((Int64) -> Int64).self
+            )
         )
-        let call = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".classScalar(\(baseName), Swift.Int64) -> Swift.Int64",
-            as: ((AnyObject, Int64) -> Int64).self,
+        let call = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".classScalar(\(baseName), Swift.Int64) -> Swift.Int64",
+                as: ((AnyObject, Int64) -> Int64).self
+            ),
             in: fixture.callerScope
         )
         var objects: [AnyObject] = []
         for name in ["makeRenderer", "makeInheritedRenderer", "makeOverridingRenderer"] {
-            let make = try await fixture.runtime.resolveSwiftFunction(
-                named: fixture.module + ".\(name)() -> \(baseName)",
-                as: (() -> AnyObject).self,
+            let make = try await fixture.runtime.resolve(
+                .function(
+                    fixture.module + ".\(name)() -> \(baseName)",
+                    as: (() -> AnyObject).self
+                ),
                 in: fixture.providerScope
             )
             objects.append(try unsafe make.unsafeInvoke())
         }
         for (index, type) in [base, inherited, overridden].enumerated() {
-            let method = try await type.resolveMethod(
-                named: "scalar(_:)",
-                as: ((Int64) -> Int64).self
+            let method = try await type.resolve(
+                .method(
+                    "scalar(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             )
             let plan = try unsafe method.prepareVirtualReplacementAndWait(with: replacement)
             let original = plan.original
@@ -151,9 +169,11 @@ struct SwiftVirtualReplacementTests {
                 try unsafe original.unsafeInvoke(on: objects[index], 40) == (index == 2 ? 44 : 42)
             )
         }
-        let final = try await base.resolveMethod(
-            named: "finalScalar(_:)",
-            as: ((Int64) -> Int64).self
+        let final = try await base.resolve(
+            .method(
+                "finalScalar(_:)",
+                as: ((Int64) -> Int64).self
+            )
         )
         #expect(throws: ABIResolutionError.self) {
             try unsafe final.prepareVirtualReplacementAndWait(with: replacement)
@@ -168,34 +188,46 @@ struct SwiftVirtualReplacementTests {
             named: baseName,
             in: fixture.providerScope
         )
-        let kindReplacement = try await base.resolveStaticMethod(
-            named: "replacementKind(_:)",
-            as: ((Int64) -> Int64).self
+        let kindReplacement = try await base.resolve(
+            .staticMethod(
+                "replacementKind(_:)",
+                as: ((Int64) -> Int64).self
+            )
         )
-        let getterReplacement = try await base.resolveStaticGetter(
-            named: "replacementLevel",
-            as: (() -> Int64).self
+        let getterReplacement = try await base.resolve(
+            .staticGetter(
+                "replacementLevel",
+                as: (() -> Int64).self
+            )
         )
-        let setterReplacement = try await base.resolveStaticSetter(
-            named: "replacementLevel",
-            as: Int64.self
+        let setterReplacement = try await base.resolve(
+            .staticSetter(
+                "replacementLevel",
+                as: ((Int64) -> Void).self
+            )
         )
-        let kindOracle = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".classKind(\(baseName), Swift.Int64) -> Swift.Int64",
-            as: ((AnyObject, Int64) -> Int64).self,
+        let kindOracle = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".classKind(\(baseName), Swift.Int64) -> Swift.Int64",
+                as: ((AnyObject, Int64) -> Int64).self
+            ),
             in: fixture.callerScope
         )
         // Sets the class var, then reads it, through the object's metatype.
-        let levelOracle = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".classLevel(\(baseName), Swift.Int64) -> Swift.Int64",
-            as: ((AnyObject, Int64) -> Int64).self,
+        let levelOracle = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".classLevel(\(baseName), Swift.Int64) -> Swift.Int64",
+                as: ((AnyObject, Int64) -> Int64).self
+            ),
             in: fixture.callerScope
         )
         var objects: [AnyObject] = []
         for factory in ["makeRenderer", "makeInheritedRenderer", "makeOverridingRenderer"] {
-            let make = try await fixture.runtime.resolveSwiftFunction(
-                named: fixture.module + ".\(factory)() -> " + baseName,
-                as: (() -> AnyObject).self,
+            let make = try await fixture.runtime.resolve(
+                .function(
+                    fixture.module + ".\(factory)() -> " + baseName,
+                    as: (() -> AnyObject).self
+                ),
                 in: fixture.providerScope
             )
             objects.append(try unsafe make.unsafeInvoke())
@@ -210,17 +242,23 @@ struct SwiftVirtualReplacementTests {
                 named: fixture.module + "." + name,
                 in: fixture.providerScope
             )
-            let kind = try unsafe await type.resolveStaticMethod(
-                named: "kind(_:)",
-                as: ((Int64) -> Int64).self
+            let kind = try unsafe await type.resolve(
+                .staticMethod(
+                    "kind(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ).prepareVirtualReplacement(with: kindReplacement)
-            let getter = try unsafe await type.resolveStaticGetter(
-                named: "level",
-                as: (() -> Int64).self
+            let getter = try unsafe await type.resolve(
+                .staticGetter(
+                    "level",
+                    as: (() -> Int64).self
+                )
             ).prepareVirtualReplacement(with: getterReplacement)
-            let setter = try unsafe await type.resolveStaticSetter(
-                named: "level",
-                as: Int64.self
+            let setter = try unsafe await type.resolve(
+                .staticSetter(
+                    "level",
+                    as: ((Int64) -> Void).self
+                )
             ).prepareVirtualReplacement(with: setterReplacement)
             // The predecessors receive the lookup type's metatype.
             #expect(try unsafe kind.original.unsafeInvoke(40) == kinds[index])
@@ -250,9 +288,11 @@ struct SwiftVirtualReplacementTests {
         }
 
         // A static member has no class slot.
-        let staticKind = try await base.resolveStaticMethod(
-            named: "staticKind(_:)",
-            as: ((Int64) -> Int64).self
+        let staticKind = try await base.resolve(
+            .staticMethod(
+                "staticKind(_:)",
+                as: ((Int64) -> Int64).self
+            )
         )
         #expect(throws: ABIResolutionError.self) {
             try unsafe staticKind.prepareVirtualReplacementAndWait(with: kindReplacement)
@@ -267,21 +307,27 @@ struct SwiftVirtualReplacementTests {
             named: name,
             in: fixture.providerScope
         )
-        let make = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.module + ".makeRenderer() -> " + name,
-            as: (() -> AnyObject).self,
+        let make = try await fixture.runtime.resolve(
+            .function(
+                fixture.module + ".makeRenderer() -> " + name,
+                as: (() -> AnyObject).self
+            ),
             in: fixture.providerScope
         )
         let object = try unsafe make.unsafeInvoke()
-        let method = try await type.resolveMethod(named: "text(_:)", as: ((String) -> String).self)
-        let replacement = try await type.resolveMethod(
-            named: "replacementText(_:)",
-            as: ((String) -> String).self
+        let method = try await type.resolve(.method("text(_:)", as: ((String) -> String).self))
+        let replacement = try await type.resolve(
+            .method(
+                "replacementText(_:)",
+                as: ((String) -> String).self
+            )
         )
         let plan = try unsafe method.prepareVirtualReplacementAndWait(with: replacement)
-        let oracle = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".classText(\(name), Swift.String) -> Swift.String",
-            as: ((AnyObject, String) -> String).self,
+        let oracle = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".classText(\(name), Swift.String) -> Swift.String",
+                as: ((AnyObject, String) -> String).self
+            ),
             in: fixture.callerScope
         )
         let input = String(repeating: "swift class", count: 100)
@@ -334,13 +380,17 @@ struct SwiftVirtualReplacementTests {
             named: parentModule + ".Parent",
             in: .path(parent.libraryURL)
         )
-        let replacement = try await parentType.resolveMethod(
-            named: "replacement(_:)",
-            as: ((Int64) -> Int64).self
+        let replacement = try await parentType.resolve(
+            .method(
+                "replacement(_:)",
+                as: ((Int64) -> Int64).self
+            )
         )
-        let make = try await runtime.resolveSwiftFunction(
-            named: childModule + ".make() -> " + childName,
-            as: (() -> AnyObject).self,
+        let make = try await runtime.resolve(
+            .function(
+                childModule + ".make() -> " + childName,
+                as: (() -> AnyObject).self
+            ),
             in: .path(child.libraryURL)
         )
         let object = try unsafe make.unsafeInvoke()
@@ -355,13 +405,17 @@ struct SwiftVirtualReplacementTests {
                 child.libraryURL, Int64(43)
             ),
         ] {
-            let method = try await type.resolveMethod(
-                named: methodName + "(_:)",
-                as: ((Int64) -> Int64).self
+            let method = try await type.resolve(
+                .method(
+                    methodName + "(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             )
-            let oracle = try await runtime.resolveSwiftFunction(
-                named: oracleName,
-                as: ((AnyObject, Int64) -> Int64).self,
+            let oracle = try await runtime.resolve(
+                .function(
+                    oracleName,
+                    as: ((AnyObject, Int64) -> Int64).self
+                ),
                 in: .path(scope)
             )
             let plan = try unsafe method.prepareVirtualReplacementAndWait(with: replacement)
@@ -383,32 +437,42 @@ struct SwiftVirtualReplacementTests {
             named: childName,
             in: fixture.providerScope
         )
-        let make = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.module + ".makeCoalescedChild() -> " + childName,
-            as: (() -> AnyObject).self,
+        let make = try await fixture.runtime.resolve(
+            .function(
+                fixture.module + ".makeCoalescedChild() -> " + childName,
+                as: (() -> AnyObject).self
+            ),
             in: fixture.providerScope
         )
         let object = try unsafe make.unsafeInvoke()
-        let inherited = try await type.resolveMethod(named: "value()", as: (() -> Int64).self)
-        let extra = try await type.resolveMethod(named: "extra()", as: (() -> Int64).self)
-        let final = try await type.resolveMethod(named: "finalValue()", as: (() -> Int64).self)
-        let replacement = try await type.resolveMethod(
-            named: "replacement()",
-            as: (() -> Int64).self
+        let inherited = try await type.resolve(.method("value()", as: (() -> Int64).self))
+        let extra = try await type.resolve(.method("extra()", as: (() -> Int64).self))
+        let final = try await type.resolve(.method("finalValue()", as: (() -> Int64).self))
+        let replacement = try await type.resolve(
+            .method(
+                "replacement()",
+                as: (() -> Int64).self
+            )
         )
-        let valueCall = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".coalescedValue(" + parentName + ") -> Swift.Int64",
-            as: ((AnyObject) -> Int64).self,
+        let valueCall = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".coalescedValue(" + parentName + ") -> Swift.Int64",
+                as: ((AnyObject) -> Int64).self
+            ),
             in: fixture.callerScope
         )
-        let extraCall = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".coalescedExtra(" + childName + ") -> Swift.Int64",
-            as: ((AnyObject) -> Int64).self,
+        let extraCall = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".coalescedExtra(" + childName + ") -> Swift.Int64",
+                as: ((AnyObject) -> Int64).self
+            ),
             in: fixture.callerScope
         )
-        let finalCall = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".coalescedFinal(" + childName + ") -> Swift.Int64",
-            as: ((AnyObject) -> Int64).self,
+        let finalCall = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".coalescedFinal(" + childName + ") -> Swift.Int64",
+                as: ((AnyObject) -> Int64).self
+            ),
             in: fixture.callerScope
         )
         // Establish that this fixture exercises the aliasing regression.
@@ -478,25 +542,33 @@ struct SwiftVirtualReplacementTests {
             in: .path(parent.libraryURL)
         )
         let type = try await runtime.resolveSwiftType(named: name, in: .path(child.libraryURL))
-        let method = try await type.resolveMethod(named: "value()", as: (() -> Int64).self)
-        let replacement = try await type.resolveMethod(
-            named: "replacement()",
-            as: (() -> Int64).self
+        let method = try await type.resolve(.method("value()", as: (() -> Int64).self))
+        let replacement = try await type.resolve(
+            .method(
+                "replacement()",
+                as: (() -> Int64).self
+            )
         )
-        let make = try await runtime.resolveSwiftFunction(
-            named: childModule + ".make() -> " + name,
-            as: (() -> AnyObject).self,
+        let make = try await runtime.resolve(
+            .function(
+                childModule + ".make() -> " + name,
+                as: (() -> AnyObject).self
+            ),
             in: .path(child.libraryURL)
         )
         let object = try unsafe make.unsafeInvoke()
-        let baseCall = try await runtime.resolveSwiftFunction(
-            named: parentModule + ".invoke(" + parentModule + ".Parent) -> Swift.Int64",
-            as: ((AnyObject) -> Int64).self,
+        let baseCall = try await runtime.resolve(
+            .function(
+                parentModule + ".invoke(" + parentModule + ".Parent) -> Swift.Int64",
+                as: ((AnyObject) -> Int64).self
+            ),
             in: .path(parent.libraryURL)
         )
-        let childCall = try await runtime.resolveSwiftFunction(
-            named: childModule + ".invoke(" + name + ") -> Swift.Int64",
-            as: ((AnyObject) -> Int64).self,
+        let childCall = try await runtime.resolve(
+            .function(
+                childModule + ".invoke(" + name + ") -> Swift.Int64",
+                as: ((AnyObject) -> Int64).self
+            ),
             in: .path(child.libraryURL)
         )
         #expect(throws: ABIResolutionError.self) {

@@ -13,42 +13,54 @@ private final class SelectorReceiver: NSObject {
 struct ObjectiveCSelectorTests {
     @MainActor @Test func lookupAcceptsCompilerCheckedSelectors() throws {
         let runtime = ABIRuntime()
-        let append = try runtime.resolveObjCMethodAndWait(
-            on: NSMutableString.self,
-            selector: #selector(NSMutableString.append(_:)),
-            as: ((String) -> Void).self
+        let append = try runtime.resolveAndWait(
+            .message(
+                #selector(NSMutableString.append(_:)),
+                as: ((String) -> Void).self
+            ),
+            on: NSMutableString.self
         )
         let text = NSMutableString(string: "a")
         try unsafe append.unsafeInvoke(on: text, "b")
         #expect(text as String == "ab")
         let receiver = SelectorReceiver(value: 7)
         let selector = #selector(SelectorReceiver.increment(_:))
-        let bound = try runtime.object(receiver).resolveMethodAndWait(
-            selector: selector,
-            as: ((Int) -> Int).self
+        let bound = try runtime.object(receiver).resolveAndWait(
+            .message(
+                selector,
+                as: ((Int) -> Int).self
+            )
         )
-        let message = try runtime.resolveObjCMethodAndWait(
-            on: SelectorReceiver.self,
-            selector: selector,
-            as: ((Int) -> Int).self
+        let message = try runtime.resolveAndWait(
+            .message(
+                selector,
+                as: ((Int) -> Int).self
+            ),
+            on: SelectorReceiver.self
         )
-        let captured = try runtime.resolveObjCImplementationAndWait(
-            on: SelectorReceiver.self,
-            selector: selector,
-            as: ((Int) -> Int).self
+        let captured = try runtime.resolveAndWait(
+            .implementation(
+                selector,
+                as: ((Int) -> Int).self
+            ),
+            on: SelectorReceiver.self
         )
         #expect(try unsafe bound.unsafeInvoke(41) == 42)
         #expect(try unsafe message.unsafeInvoke(on: receiver, 41) == 42)
         #expect(try unsafe captured.unsafeInvoke(on: receiver, 41) == 42)
-        let getter = try runtime.object(receiver).resolveMethodAndWait(
-            selector: #selector(getter: SelectorReceiver.numberValue),
-            as: (() -> Int).self
+        let getter = try runtime.object(receiver).resolveAndWait(
+            .message(
+                #selector(getter: SelectorReceiver.numberValue),
+                as: (() -> Int).self
+            )
         )
         #expect(try unsafe getter.unsafeInvoke() == 7)
-        let classMethod = try runtime.resolveObjCMethodAndWait(
+        let classMethod = try runtime.resolveAndWait(
+            .message(
+                #selector(SelectorReceiver.classValue),
+                as: (() -> Int).self
+            ),
             on: SelectorReceiver.self,
-            selector: #selector(SelectorReceiver.classValue),
-            as: (() -> Int).self,
             classMethod: true
         )
         #expect(try unsafe classMethod.unsafeInvoke(on: SelectorReceiver.self as AnyObject) == 42)
@@ -129,9 +141,11 @@ struct ObjectiveCSelectorTests {
             token = try #require(unsafe runtime.installHooks([request]).first)
         }
         defer { token.invalidate() }
-        let message = try runtime.object(receiver).resolveMethodAndWait(
-            selector: selector,
-            as: ((Int) -> Int).self
+        let message = try runtime.object(receiver).resolveAndWait(
+            .message(
+                selector,
+                as: ((Int) -> Int).self
+            )
         )
         #expect(try unsafe message.unsafeInvoke(31) == 42)
     }
@@ -185,16 +199,20 @@ struct ObjectiveCSelectorTests {
             token = try #require(unsafe runtime.installHooks([request]).first)
         }
         defer { token.invalidate() }
-        let allocate = try runtime.resolveObjCMethodAndWait(
+        let allocate = try runtime.resolveAndWait(
+            .message(
+                "alloc",
+                as: (() -> SelectorReceiver).self
+            ),
             on: SelectorReceiver.self,
-            selector: "alloc",
-            as: (() -> SelectorReceiver).self,
             classMethod: true
         )
         let allocated = try unsafe allocate.unsafeInvoke(on: SelectorReceiver.self as AnyObject)
-        let initialize = try runtime.object(allocated).resolveMethodAndWait(
-            selector: selector,
-            as: ((Int) -> SelectorReceiver).self
+        let initialize = try runtime.object(allocated).resolveAndWait(
+            .message(
+                selector,
+                as: ((Int) -> SelectorReceiver).self
+            )
         )
         let value = try unsafe initialize.unsafeInvoke(32)
         #expect(value.numberValue == 42)

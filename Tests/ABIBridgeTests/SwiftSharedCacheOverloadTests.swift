@@ -55,9 +55,11 @@ struct SwiftSharedCacheOverloadTests {
             )
         })
         let runtime = ABIRuntime(resolver: SymbolResolver(resolver))
-        let function = try await runtime.resolveSwiftFunction(
-            named: module + ".value()",
-            as: (() -> String).self,
+        let function = try await runtime.resolve(
+            .function(
+                module + ".value()",
+                as: (() -> String).self
+            ),
             in: .path(fixture.libraryURL)
         )
         #expect(function.symbol.linkageName.hasSuffix(local[0].name))
@@ -65,7 +67,7 @@ struct SwiftSharedCacheOverloadTests {
             named: module + ".Counter",
             in: .path(fixture.libraryURL)
         )
-        let method = try await type.resolveMethod(named: "value()", as: (() -> String).self)
+        let method = try await type.resolve(.method("value()", as: (() -> String).self))
         #expect(method.symbol.linkageName.hasSuffix(local[1].name))
     }
 }

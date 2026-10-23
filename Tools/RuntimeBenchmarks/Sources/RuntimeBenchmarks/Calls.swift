@@ -33,7 +33,7 @@ struct Benchmark {
         let object = ABIRuntime().object(PreparationBox("value"))
         let name = "add(Swift.Int64) -> Swift.Int64"
         let firstStart = ContinuousClock.now
-        let first = try object.resolveMethodAndWait(named: name, as: ((Int64) -> Int64).self)
+        let first = try object.resolveAndWait(.method(name, as: ((Int64) -> Int64).self))
         let firstValue = try unsafe first.unsafeInvoke(35)
         precondition(firstValue == 42)
         print(
@@ -45,9 +45,11 @@ struct Benchmark {
             var checksum: Int64 = 0
             let start = ContinuousClock.now
             for value in 0..<count {
-                let method = try object.resolveMethodAndWait(
-                    named: name,
-                    as: ((Int64) -> Int64).self
+                let method = try object.resolveAndWait(
+                    .method(
+                        name,
+                        as: ((Int64) -> Int64).self
+                    )
                 )
                 checksum += try unsafe method.unsafeInvoke(Int64(value))
             }
@@ -65,25 +67,31 @@ struct Benchmark {
         let runtime = ABIRuntime()
         let source = ImageSelector.automatic
         let start = ContinuousClock.now
-        let regular = try await runtime.resolveSwiftFunction(
-            named: "BenchmarkSwiftProvider.add(_:_:)",
-            as: ((Int64, Int64) -> Int64).self,
+        let regular = try await runtime.resolve(
+            .function(
+                "BenchmarkSwiftProvider.add(_:_:)",
+                as: ((Int64, Int64) -> Int64).self
+            ),
             in: source
         )
         print("Swift regular first preparation: \(seconds(start.duration(to:.now))*1000) ms")
         let genericStart = ContinuousClock.now
-        let generic = try await runtime.resolveSwiftFunction(
-            named: "BenchmarkSwiftProvider.identity(_:)",
-            as: ((Int64) -> Int64).self,
-            genericArguments: [.type(Int64.self)],
+        let generic = try await runtime.resolve(
+            .function(
+                "BenchmarkSwiftProvider.identity(_:)",
+                as: ((Int64) -> Int64).self,
+                genericArguments: [.type(Int64.self)]
+            ),
             in: source
         )
         print("Swift generic first preparation: \(seconds(genericStart.duration(to:.now))*1000) ms")
         let constrainedStart = ContinuousClock.now
-        let constrained = try await runtime.resolveSwiftFunction(
-            named: "BenchmarkSwiftProvider.hashEcho(_:)",
-            as: ((Int64) -> Int64).self,
-            genericArguments: [.type(Int64.self)],
+        let constrained = try await runtime.resolve(
+            .function(
+                "BenchmarkSwiftProvider.hashEcho(_:)",
+                as: ((Int64) -> Int64).self,
+                genericArguments: [.type(Int64.self)]
+            ),
             in: source
         )
         print(
@@ -148,14 +156,18 @@ struct Benchmark {
             )
         }
         let receiver = ABIPerfReceiver()
-        let objc = try runtime.object(receiver).resolveMethodAndWait(
-            selector: "add:right:",
-            as: ((Int64, Int64) -> Int64).self
+        let objc = try runtime.object(receiver).resolveAndWait(
+            .message(
+                "add:right:",
+                as: ((Int64, Int64) -> Int64).self
+            )
         )
-        let captured = try runtime.resolveObjCImplementationAndWait(
-            on: ABIPerfReceiver.self,
-            selector: "add:right:",
-            as: ((Int64, Int64) -> Int64).self
+        let captured = try runtime.resolveAndWait(
+            .implementation(
+                "add:right:",
+                as: ((Int64, Int64) -> Int64).self
+            ),
+            on: ABIPerfReceiver.self
         )
         try measure("Swift frontend ObjC message", n: iterations) {
             try unsafe objc.unsafeInvoke($0, 7)
@@ -163,10 +175,12 @@ struct Benchmark {
         try measure("Swift frontend captured ObjC IMP", n: iterations) {
             try unsafe captured.unsafeInvoke(on: receiver, $0, 7)
         }
-        let size = try runtime.resolveObjCImplementationAndWait(
-            on: ABIPerfReceiver.self,
-            selector: "shiftSize:",
-            as: ((CGSize) -> CGSize).self
+        let size = try runtime.resolveAndWait(
+            .implementation(
+                "shiftSize:",
+                as: ((CGSize) -> CGSize).self
+            ),
+            on: ABIPerfReceiver.self
         )
         try measure("Swift frontend ObjC aggregate", n: iterations) {
             Int64(
@@ -174,10 +188,12 @@ struct Benchmark {
                     .width
             )
         }
-        let echo = try runtime.resolveObjCImplementationAndWait(
-            on: ABIPerfReceiver.self,
-            selector: "echoObject:",
-            as: ((NSString) -> NSString).self
+        let echo = try runtime.resolveAndWait(
+            .implementation(
+                "echoObject:",
+                as: ((NSString) -> NSString).self
+            ),
+            on: ABIPerfReceiver.self
         )
         let object: NSString = "Benchmark object"
         try measure("Swift frontend ObjC object", n: iterations, delta: 0) { value in
@@ -185,9 +201,11 @@ struct Benchmark {
             precondition(result === object)
             return value
         }
-        let decorate = try await runtime.resolveSwiftFunction(
-            named: "BenchmarkSwiftProvider.decorate(_:)",
-            as: ((String) -> String).self
+        let decorate = try await runtime.resolve(
+            .function(
+                "BenchmarkSwiftProvider.decorate(_:)",
+                as: ((String) -> String).self
+            )
         )
         let input = String(repeating: "x", count: 64)
         measure("Swift direct String", n: iterations, delta: 65) {
@@ -196,9 +214,11 @@ struct Benchmark {
         try measure("Swift prepared String", n: iterations, delta: 65) {
             $0 + Int64(try unsafe decorate.unsafeInvoke(input).utf8.count)
         }
-        let apply = try await runtime.resolveSwiftFunction(
-            named: "BenchmarkSwiftProvider.apply(_:_:)",
-            as: ((NativeSwiftClosure<(Int64) -> Int64>, Int64) -> Int64).self,
+        let apply = try await runtime.resolve(
+            .function(
+                "BenchmarkSwiftProvider.apply(_:_:)",
+                as: ((NativeSwiftClosure<(Int64) -> Int64>, Int64) -> Int64).self
+            ),
             in: source
         )
         let callback = try NativeSwiftClosure<(Int64) -> Int64> { $0 + 1 }

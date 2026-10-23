@@ -207,10 +207,12 @@ struct SwiftFunctionInvocationTests {
             "\(module).tokenAndWords() -> (\(module).Token, Swift.Int64, Swift.Int64, Swift.Int64, Swift.Int64, Swift.Int64)"
         // The token's output passes as an ordinary pointer, and the five words
         // as the indirect result.
-        let call = try await runtime.resolveSwiftFunction(
-            named: name,
-            as: (() -> (IndirectWord, Int64, Int64, Int64, Int64, Int64)).self,
-            valueABIs: valueABIs,
+        let call = try await runtime.resolve(
+            .function(
+                name,
+                as: (() -> (IndirectWord, Int64, Int64, Int64, Int64, Int64)).self,
+                valueABIs: valueABIs
+            ),
             in: .path(library.libraryURL)
         )
         let (word, a, b, c, d, e) = try unsafe call.unsafeInvoke()
@@ -218,10 +220,12 @@ struct SwiftFunctionInvocationTests {
         // Two outputs pass as two ordinary pointers, which leaves the indirect
         // result unset.
         do {
-            _ = try await runtime.resolveSwiftFunction(
-                named: name,
-                as: (() -> (IndirectWord, IndirectBlock)).self,
-                valueABIs: valueABIs,
+            _ = try await runtime.resolve(
+                .function(
+                    name,
+                    as: (() -> (IndirectWord, IndirectBlock)).self,
+                    valueABIs: valueABIs
+                ),
                 in: .path(library.libraryURL)
             )
             Issue.record("Two output addresses stood for an output and the indirect result")
@@ -236,9 +240,11 @@ struct SwiftFunctionInvocationTests {
             "swiftABIMixedLabels(_:increment:)", "swiftABIAllNamed(value:increment:)",
             "swiftABIAllUnnamed(_:_:)",
         ] {
-            let function = try await ABIRuntime.shared.resolveSwiftFunction(
-                named: "ABIBridgeTests." + name,
-                as: ((Int64, Int64) -> Int64).self
+            let function = try await ABIRuntime.shared.resolve(
+                .function(
+                    "ABIBridgeTests." + name,
+                    as: ((Int64, Int64) -> Int64).self
+                )
             )
             #expect(try unsafe function.unsafeInvoke(35, 7) == 42)
         }
@@ -249,24 +255,30 @@ struct SwiftFunctionInvocationTests {
             "swiftABIAsyncMixedLabels(_:increment:)", "swiftABIAsyncAllNamed(value:increment:)",
             "swiftABIAsyncAllUnnamed(_:_:)",
         ] {
-            let function = try await ABIRuntime.shared.resolveSwiftFunction(
-                named: "ABIBridgeTests." + name,
-                as: (@concurrent (Int64, Int64) async -> Int64).self
+            let function = try await ABIRuntime.shared.resolve(
+                .function(
+                    "ABIBridgeTests." + name,
+                    as: (@concurrent (Int64, Int64) async -> Int64).self
+                )
             )
             #expect(try unsafe await function.unsafeInvoke(35, 7) == 42)
         }
     }
 
     @MainActor @Test func labelOnlyNamesUseCanonicalImportedClassNames() async throws {
-        let function = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ABIBridgeTests.swiftABIImportedObject(_:)",
-            as: ((NSString) -> NSString).self
+        let function = try await ABIRuntime.shared.resolve(
+            .function(
+                "ABIBridgeTests.swiftABIImportedObject(_:)",
+                as: ((NSString) -> NSString).self
+            )
         )
         let value = NSString(string: "value")
         #expect(try unsafe function.unsafeInvoke(value) === swiftABIImportedObject(value))
-        let optional = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ABIBridgeTests.swiftABIOptionalImportedObject(_:)",
-            as: ((NSString?) -> NSString?).self
+        let optional = try await ABIRuntime.shared.resolve(
+            .function(
+                "ABIBridgeTests.swiftABIOptionalImportedObject(_:)",
+                as: ((NSString?) -> NSString?).self
+            )
         )
         #expect(try unsafe optional.unsafeInvoke(value) === swiftABIOptionalImportedObject(value))
         #expect(try unsafe optional.unsafeInvoke(nil) == nil)
@@ -281,15 +293,19 @@ struct SwiftFunctionInvocationTests {
                 language: .swift
             )
         )
-        let empty = try await runtime.resolveSwiftFunction(
-            named: "ABIBridgeTests.swiftABIVoid(_:)",
-            as: ((EmptyArgument) -> Int32).self,
+        let empty = try await runtime.resolve(
+            .function(
+                "ABIBridgeTests.swiftABIVoid(_:)",
+                as: ((EmptyArgument) -> Int32).self
+            ),
             in: symbol.image
         )
         #expect(try unsafe empty.unsafeInvoke(()) == swiftABIVoid(()))
-        let store = try await runtime.resolveSwiftFunction(
-            named: "ABIBridgeTests.swiftABIStore(_:)",
-            as: ((UnsafeMutablePointer<Int32>) -> Void).self,
+        let store = try await runtime.resolve(
+            .function(
+                "ABIBridgeTests.swiftABIStore(_:)",
+                as: ((UnsafeMutablePointer<Int32>) -> Void).self
+            ),
             in: .path(URL(fileURLWithPath: symbol.image.path))
         )
         var value: Int32 = 0
@@ -298,10 +314,11 @@ struct SwiftFunctionInvocationTests {
     }
 
     @Test func foreignClassWrappersUseTheirDeclaredValueLayout() async throws {
-        let function = try await ABIRuntime.shared.resolveSwiftFunction(
-            named:
+        let function = try await ABIRuntime.shared.resolve(
+            .function(
                 "ABIBridgeTests.swiftABIFour(ABIBridgeTests.SwiftABIFour) -> ABIBridgeTests.SwiftABIFour",
-            as: ((ForeignSwiftFour) -> ForeignSwiftFour).self
+                as: ((ForeignSwiftFour) -> ForeignSwiftFour).self
+            )
         )
         let input = ForeignSwiftFour(
             nativeValue: try .init(
@@ -322,7 +339,7 @@ struct SwiftFunctionInvocationTests {
             at position: ABIResolutionError.SignatureMismatch.Position
         ) {
             do {
-                _ = try ABIRuntime.shared.resolveSwiftFunctionAndWait(named: name, as: signature)
+                _ = try ABIRuntime.shared.resolveAndWait(.function(name, as: signature))
                 Issue.record("\(signature) resolved \(name)")
             } catch let ABIResolutionError.signatureMismatch(mismatch) {
                 #expect(mismatch.position == position)
@@ -339,9 +356,11 @@ struct SwiftFunctionInvocationTests {
             at: .argument(0)
         )
         // An adapter that the declaration lowers the same way still resolves.
-        let unsigned = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
-            named: answer,
-            as: (() -> UInt32).self
+        let unsigned = try ABIRuntime.shared.resolveAndWait(
+            .function(
+                answer,
+                as: (() -> UInt32).self
+            )
         )
         #expect(try unsafe unsigned.unsafeInvoke() == 42)
     }
@@ -349,16 +368,20 @@ struct SwiftFunctionInvocationTests {
     @Test func completeNamesCompareTheSlotsOfTupleParameters() throws {
         // A tuple parameter expands into its elements, which a struct with the
         // same fields puts in the same registers.
-        let sum = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
-            named: "ABIBridgeTests.swiftABIPointSum((Swift.Double, Swift.Double)) -> Swift.Double",
-            as: ((CGPoint) -> Double).self
+        let sum = try ABIRuntime.shared.resolveAndWait(
+            .function(
+                "ABIBridgeTests.swiftABIPointSum((Swift.Double, Swift.Double)) -> Swift.Double",
+                as: ((CGPoint) -> Double).self
+            )
         )
         #expect(try unsafe sum.unsafeInvoke(CGPoint(x: 1.5, y: 2.5)) == 4)
         // Each Int32 element takes its own register, which one Int64 does not.
         do {
-            _ = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
-                named: "ABIBridgeTests.swiftABIPairSum((Swift.Int32, Swift.Int32)) -> Swift.Int32",
-                as: ((Int64) -> Int32).self
+            _ = try ABIRuntime.shared.resolveAndWait(
+                .function(
+                    "ABIBridgeTests.swiftABIPairSum((Swift.Int32, Swift.Int32)) -> Swift.Int32",
+                    as: ((Int64) -> Int32).self
+                )
             )
             Issue.record("An Int64 was accepted for two Int32 elements")
         } catch let ABIResolutionError.signatureMismatch(mismatch) {
@@ -369,18 +392,20 @@ struct SwiftFunctionInvocationTests {
     @Test func completeNamesLowerCFunctionPointersInsideTuples() throws {
         typealias Body = @convention(c) (Int64) -> Int64
         // A C function pointer passes as one pointer wherever a tuple holds it.
-        let apply = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
-            named:
+        let apply = try ABIRuntime.shared.resolveAndWait(
+            .function(
                 "ABIBridgeTests.swiftABIApplyForeignPair((@convention(c) (Swift.Int64) -> Swift.Int64, Swift.Int64)) -> Swift.Int64",
-            as: (((UnsafeRawPointer, Int64)) -> Int64).self
+                as: (((UnsafeRawPointer, Int64)) -> Int64).self
+            )
         )
         let body: Body = { $0 + 21 }
         let address = unsafeBitCast(body, to: UnsafeRawPointer.self)
         #expect(try unsafe apply.unsafeInvoke((address, 21)) == 42)
-        let make = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
-            named:
+        let make = try ABIRuntime.shared.resolveAndWait(
+            .function(
                 "ABIBridgeTests.swiftABIMakeForeignPair() -> ((@convention(c) (Swift.Int64) -> Swift.Int64)?, Swift.Int64)",
-            as: (() -> (UnsafeRawPointer?, Int64)).self
+                as: (() -> (UnsafeRawPointer?, Int64)).self
+            )
         )
         let (pointer, value) = try unsafe make.unsafeInvoke()
         let made = try #require(pointer)
@@ -388,9 +413,11 @@ struct SwiftFunctionInvocationTests {
     }
 
     @Test func immutableInterfaceCanBeUsedConcurrently() async throws {
-        let function = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ABIBridgeTests.swiftABIString(_:)",
-            as: ((String) -> String).self
+        let function = try await ABIRuntime.shared.resolve(
+            .function(
+                "ABIBridgeTests.swiftABIString(_:)",
+                as: ((String) -> String).self
+            )
         )
         try await withThrowingTaskGroup(of: String.self) { group in
             for index in 0..<16 {
@@ -404,32 +431,40 @@ struct SwiftFunctionInvocationTests {
 
     @Test func scalarResultsAndArguments() async throws {
         let runtime = ABIRuntime()
-        let answer = try await runtime.resolveSwiftFunction(
-            named: "ABIBridgeTests.swiftABIAnswer() -> Swift.Int32",
-            as: (() -> Int32).self
+        let answer = try await runtime.resolve(
+            .function(
+                "ABIBridgeTests.swiftABIAnswer() -> Swift.Int32",
+                as: (() -> Int32).self
+            )
         )
         #expect(try unsafe answer.unsafeInvoke() == swiftABIAnswer())
-        let negative = try await runtime.resolveSwiftFunction(
-            named: "ABIBridgeTests.swiftABINegative(Swift.Int8) -> Swift.Int8",
-            as: ((Int8) -> Int8).self
+        let negative = try await runtime.resolve(
+            .function(
+                "ABIBridgeTests.swiftABINegative(Swift.Int8) -> Swift.Int8",
+                as: ((Int8) -> Int8).self
+            )
         )
         #expect(try unsafe negative.unsafeInvoke(-12) == swiftABINegative(-12))
-        let negate = try await runtime.resolveSwiftFunction(
-            named: "ABIBridgeTests.swiftABINegate(Swift.Bool) -> Swift.Bool",
-            as: ((Bool) -> Bool).self
+        let negate = try await runtime.resolve(
+            .function(
+                "ABIBridgeTests.swiftABINegate(Swift.Bool) -> Swift.Bool",
+                as: ((Bool) -> Bool).self
+            )
         )
         #expect(try unsafe negate.unsafeInvoke(false) == swiftABINegate(false))
         #expect(try unsafe negate.unsafeInvoke(true) == swiftABINegate(true))
     }
 
     @Test func manyIntegerAndFloatingArgumentsSpillIndependently() async throws {
-        let function = try await ABIRuntime.shared.resolveSwiftFunction(
-            named:
+        let function = try await ABIRuntime.shared.resolve(
+            .function(
                 "ABIBridgeTests.swiftABIMany(Swift.Int32, Swift.Int32, Swift.Int32, Swift.Int32, Swift.Int32, Swift.Int32, Swift.Int32, Swift.Int32, Swift.Int8, Swift.Int16, Swift.Float, Swift.Float, Swift.Float, Swift.Float, Swift.Float, Swift.Float, Swift.Float, Swift.Float, Swift.Float, Swift.Double) -> Swift.Double",
-            as: ((
-                Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int8, Int16, Float, Float,
-                Float, Float, Float, Float, Float, Float, Float, Double
-            ) -> Double).self
+                as: ((
+                    Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int8, Int16, Float,
+                    Float,
+                    Float, Float, Float, Float, Float, Float, Float, Double
+                ) -> Double).self
+            )
         )
         #expect(
             try unsafe function.unsafeInvoke(
@@ -459,17 +494,21 @@ struct SwiftFunctionInvocationTests {
 
     @Test func stringOwnershipAndFourFloatingResultRegisters() async throws {
         let runtime = ABIRuntime()
-        let append = try await runtime.resolveSwiftFunction(
-            named: "ABIBridgeTests.swiftABIString(Swift.String) -> Swift.String",
-            as: ((String) -> String).self
+        let append = try await runtime.resolve(
+            .function(
+                "ABIBridgeTests.swiftABIString(Swift.String) -> Swift.String",
+                as: ((String) -> String).self
+            )
         )
         for length in [0, 4, 80, 1024] {
             let value = String(repeating: "ab", count: length)
             #expect(try unsafe append.unsafeInvoke(value) == swiftABIString(value))
         }
-        let rect = try await runtime.resolveSwiftFunction(
-            named: "ABIBridgeTests.swiftABIRect(__C.CGRect) -> __C.CGRect",
-            as: ((CGRect) -> CGRect).self
+        let rect = try await runtime.resolve(
+            .function(
+                "ABIBridgeTests.swiftABIRect(__C.CGRect) -> __C.CGRect",
+                as: ((CGRect) -> CGRect).self
+            )
         )
         let value = CGRect(x: 1, y: 2, width: 3, height: 4)
         #expect(try unsafe rect.unsafeInvoke(value) == swiftABIRect(value))
@@ -477,9 +516,11 @@ struct SwiftFunctionInvocationTests {
 
     @MainActor @Test func objectArgumentsAreBorrowedAndResultsAreOwned() async throws {
         let runtime = ABIRuntime()
-        let echo = try await runtime.resolveSwiftFunction(
-            named: "ABIBridgeTests.swiftABIObject(_:)",
-            as: ((SwiftABIObject?) -> SwiftABIObject?).self
+        let echo = try await runtime.resolve(
+            .function(
+                "ABIBridgeTests.swiftABIObject(_:)",
+                as: ((SwiftABIObject?) -> SwiftABIObject?).self
+            )
         )
         var object: SwiftABIObject? = .init(42)
         weak let observed = object
@@ -490,10 +531,11 @@ struct SwiftFunctionInvocationTests {
         returned = nil
         #expect(observed == nil)
         #expect(try unsafe echo.unsafeInvoke(nil) == nil)
-        let create = try await runtime.resolveSwiftFunction(
-            named:
+        let create = try await runtime.resolve(
+            .function(
                 "ABIBridgeTests.swiftABICreateObject(Swift.Int) -> ABIBridgeTests.SwiftABIObject",
-            as: ((Int) -> SwiftABIObject).self
+                as: ((Int) -> SwiftABIObject).self
+            )
         )
         var created: SwiftABIObject? = try unsafe create.unsafeInvoke(7)
         weak let createdReference = created
@@ -504,18 +546,20 @@ struct SwiftFunctionInvocationTests {
 
     @Test func directAndIndirectAggregateResultsAndIntegerCoalescing() async throws {
         let runtime = ABIRuntime()
-        let four = try await runtime.resolveSwiftFunction(
-            named:
+        let four = try await runtime.resolve(
+            .function(
                 "ABIBridgeTests.swiftABIFour(ABIBridgeTests.SwiftABIFour) -> ABIBridgeTests.SwiftABIFour",
-            as: ((SwiftABIFour) -> SwiftABIFour).self
+                as: ((SwiftABIFour) -> SwiftABIFour).self
+            )
         )
         let a = try unsafe four.unsafeInvoke(.init(a: 1, b: 2, c: 3, d: 4))
         let expectedA = swiftABIFour(.init(a: 1, b: 2, c: 3, d: 4))
         #expect([a.a, a.b, a.c, a.d] == [expectedA.a, expectedA.b, expectedA.c, expectedA.d])
-        let five = try await runtime.resolveSwiftFunction(
-            named:
+        let five = try await runtime.resolve(
+            .function(
                 "ABIBridgeTests.swiftABIFive(ABIBridgeTests.SwiftABIFive) -> ABIBridgeTests.SwiftABIFive",
-            as: ((SwiftABIFive) -> SwiftABIFive).self
+                as: ((SwiftABIFive) -> SwiftABIFive).self
+            )
         )
         let b = try unsafe five.unsafeInvoke(.init(a: 1, b: 2, c: 3, d: 4, e: 5))
         let expectedB = swiftABIFive(.init(a: 1, b: 2, c: 3, d: 4, e: 5))
@@ -524,10 +568,11 @@ struct SwiftFunctionInvocationTests {
                 expectedB.a, expectedB.b, expectedB.c, expectedB.d, expectedB.e,
             ]
         )
-        let small = try await runtime.resolveSwiftFunction(
-            named:
+        let small = try await runtime.resolve(
+            .function(
                 "ABIBridgeTests.swiftABISmall(ABIBridgeTests.SwiftABISmall) -> ABIBridgeTests.SwiftABISmall",
-            as: ((SwiftABISmall) -> SwiftABISmall).self
+                as: ((SwiftABISmall) -> SwiftABISmall).self
+            )
         )
         let c = try unsafe small.unsafeInvoke(.init(a: -5, b: 20, c: 30, d: 1.5))
         let expectedC = swiftABISmall(.init(a: -5, b: 20, c: 30, d: 1.5))
@@ -543,28 +588,36 @@ struct SwiftFunctionInvocationTests {
             "Example.throwing() throws -> Swift.Int",
         ] {
             #expect(throws: ABIResolutionError.self) {
-                _ = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
-                    named: name,
-                    as: (() -> Int).self
+                _ = try ABIRuntime.shared.resolveAndWait(
+                    .function(
+                        name,
+                        as: (() -> Int).self
+                    )
                 )
             }
         }
         #expect(throws: ABIResolutionError.self) {
-            _ = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
-                named: "Example.invalid(_:_:)",
-                as: ((Int) -> Int).self
+            _ = try ABIRuntime.shared.resolveAndWait(
+                .function(
+                    "Example.invalid(_:_:)",
+                    as: ((Int) -> Int).self
+                )
             )
         }
         #expect(throws: ABIResolutionError.self) {
-            _ = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
-                named: "ABIBridgeTests.swiftABIAnswer() -> Swift.Int32",
-                as: (() -> Character).self
+            _ = try ABIRuntime.shared.resolveAndWait(
+                .function(
+                    "ABIBridgeTests.swiftABIAnswer() -> Swift.Int32",
+                    as: (() -> Character).self
+                )
             )
         }
         #expect(throws: ABIResolutionError.self) {
-            _ = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
-                named: "ABIBridgeTests.swiftABIAbsent() -> ()",
-                as: (() -> Void).self
+            _ = try ABIRuntime.shared.resolveAndWait(
+                .function(
+                    "ABIBridgeTests.swiftABIAbsent() -> ()",
+                    as: (() -> Void).self
+                )
             )
         }
     }

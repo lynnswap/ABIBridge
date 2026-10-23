@@ -40,7 +40,7 @@ A method declared with `objc_method_family(none)` can use an `init`- or `alloc`-
 
 ## Continue, replace, and recover from failures
 
-``NativeObjCMethodInvocation/receiver`` returns the current instance or class object. ``NativeObjCMethodInvocation/proceed(_:)`` calls the next registration in this invocation's snapshot, followed by the native implementation. It does not send the selector again. Use ordinary selector dispatch when intentional recursive entry is needed; use ``ABIRuntime/resolveObjCImplementationAndWait(on:selector:as:variadicFrom:classMethod:options:retaining:)-(_,String,_,_,_,_,_)`` to capture a fixed implementation independently of a callback's continuation.
+``NativeObjCMethodInvocation/receiver`` returns the current instance or class object. ``NativeObjCMethodInvocation/proceed(_:)`` calls the next registration in this invocation's snapshot, followed by the native implementation. It does not send the selector again. Use ordinary selector dispatch when intentional recursive entry is needed; resolve a ``NativeObjCImplementationRequest`` to capture a fixed implementation independently of a callback's continuation.
 
 A callback can change arguments and results, omit `proceed`, or call it repeatedly for an ordinary method with borrowed self. Callback values have ordinary Swift ownership and can be saved. See <doc:HookArguments> for object mutations, reference replacement, and diagnostics.
 

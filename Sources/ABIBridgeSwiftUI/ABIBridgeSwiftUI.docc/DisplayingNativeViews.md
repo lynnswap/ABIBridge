@@ -21,10 +21,10 @@ import SwiftUI
 
 @MainActor
 func loadPanel(title: String) throws -> NativeSwiftView {
-    let make = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
-        named: "Example.makePanel(_:)",
+    let make = try ABIRuntime.shared.resolveAndWait(.function(
+        "Example.makePanel(_:)",
         as: ((String) -> NativeSwiftValue).self
-    )
+    ))
     return try NativeSwiftView(unsafe make.unsafeInvoke(title))
 }
 ```

@@ -13,9 +13,11 @@ private final class BlockOwner: NSObject {
 
 struct ObjectiveCBlockTests {
     @MainActor @Test func capturingAndNullableArgumentsStayOnCaller() throws {
-        let method = try ABIRuntime.shared.object(ABIBlockFixture()).resolveMethodAndWait(
-            selector: "apply:using:",
-            as: ((Int32, IntegerBlock?) -> Int32).self
+        let method = try ABIRuntime.shared.object(ABIBlockFixture()).resolveAndWait(
+            .message(
+                "apply:using:",
+                as: ((Int32, IntegerBlock?) -> Int32).self
+            )
         )
         let owner = BlockOwner()
         let callback: IntegerBlock = { value in
@@ -31,13 +33,17 @@ struct ObjectiveCBlockTests {
         try autoreleasepool {
             let fixture = ABIBlockFixture()
             let object = ABIRuntime.shared.object(fixture)
-            let setter = try object.resolveMethodAndWait(
-                selector: "setHandler:",
-                as: ((IntegerBlock?) -> Void).self
+            let setter = try object.resolveAndWait(
+                .message(
+                    "setHandler:",
+                    as: ((IntegerBlock?) -> Void).self
+                )
             )
-            let getter = try object.resolveMethodAndWait(
-                selector: "handler",
-                as: (() -> IntegerBlock?).self
+            let getter = try object.resolveAndWait(
+                .message(
+                    "handler",
+                    as: (() -> IntegerBlock?).self
+                )
             )
             try autoreleasepool {
                 let owner = BlockOwner()
@@ -63,10 +69,12 @@ struct ObjectiveCBlockTests {
             weak var observed: BlockOwner?
             var returned: ObjectBlock?
             try autoreleasepool {
-                let method = try ABIRuntime.shared.object(ABIBlockFixture()).resolveMethodAndWait(
-                    selector: selector,
-                    as: ((NSObject) -> ObjectBlock).self,
-                    options: .init(returnsRetainedObject: retained)
+                let method = try ABIRuntime.shared.object(ABIBlockFixture()).resolveAndWait(
+                    .message(
+                        selector,
+                        as: ((NSObject) -> ObjectBlock).self,
+                        options: .init(returnsRetainedObject: retained)
+                    )
                 )
                 let owner = BlockOwner()
                 observed = owner
@@ -81,27 +89,35 @@ struct ObjectiveCBlockTests {
 
     @Test func nilResultsAndNonBlockObjectsAreChecked() throws {
         let object = ABIRuntime.shared.object(ABIBlockFixture())
-        let optional = try object.resolveMethodAndWait(
-            selector: "nilBlock",
-            as: (() -> IntegerBlock?).self
+        let optional = try object.resolveAndWait(
+            .message(
+                "nilBlock",
+                as: (() -> IntegerBlock?).self
+            )
         )
         #expect(try unsafe optional.unsafeInvoke() == nil)
-        let required = try object.resolveMethodAndWait(
-            selector: "nilBlock",
-            as: (() -> IntegerBlock).self
+        let required = try object.resolveAndWait(
+            .message(
+                "nilBlock",
+                as: (() -> IntegerBlock).self
+            )
         )
         #expect(throws: ABIInvocationError.self) { try unsafe required.unsafeInvoke() }
-        let wrong = try object.resolveMethodAndWait(
-            selector: "plainObject",
-            as: (() -> IntegerBlock).self
+        let wrong = try object.resolveAndWait(
+            .message(
+                "plainObject",
+                as: (() -> IntegerBlock).self
+            )
         )
         #expect(throws: ABIInvocationError.self) { try unsafe wrong.unsafeInvoke() }
     }
 
     @Test func nestedCompletionBlocksRoundTripThroughTheCompilerABI() throws {
-        let getter = try ABIRuntime.shared.object(ABIBlockFixture()).resolveMethodAndWait(
-            selector: "provider",
-            as: (() -> ProviderBlock).self
+        let getter = try ABIRuntime.shared.object(ABIBlockFixture()).resolveAndWait(
+            .message(
+                "provider",
+                as: (() -> ProviderBlock).self
+            )
         )
         let provider = try unsafe getter.unsafeInvoke()
         var received: [String]?
@@ -110,9 +126,11 @@ struct ObjectiveCBlockTests {
     }
 
     @Test func objectEncodedBlocksPreserveTheirTypedRepresentation() throws {
-        let erase = try ABIRuntime.shared.object(ABIBlockFixture()).resolveMethodAndWait(
-            selector: "eraseBlock:",
-            as: ((IntegerBlock?) -> IntegerBlock?).self
+        let erase = try ABIRuntime.shared.object(ABIBlockFixture()).resolveAndWait(
+            .message(
+                "eraseBlock:",
+                as: ((IntegerBlock?) -> IntegerBlock?).self
+            )
         )
         let owner = BlockOwner()
         let callback: IntegerBlock = { owner.value + $0 }
@@ -124,16 +142,20 @@ struct ObjectiveCBlockTests {
     @Test func ordinarySwiftClosuresAndFunctionPointersAreNotBlocks() throws {
         let object = ABIRuntime.shared.object(ABIBlockFixture())
         #expect(throws: ABIResolutionError.self) {
-            _ = try object.resolveMethodAndWait(
-                selector: "apply:using:",
-                as: ((Int32, ((Int32) -> Int32)?) -> Int32).self
+            _ = try object.resolveAndWait(
+                .message(
+                    "apply:using:",
+                    as: ((Int32, ((Int32) -> Int32)?) -> Int32).self
+                )
             )
         }
         typealias CFunction = @convention(c) (Int32) -> Int32
         #expect(throws: ABIResolutionError.self) {
-            _ = try object.resolveMethodAndWait(
-                selector: "apply:using:",
-                as: ((Int32, CFunction) -> Int32).self
+            _ = try object.resolveAndWait(
+                .message(
+                    "apply:using:",
+                    as: ((Int32, CFunction) -> Int32).self
+                )
             )
         }
     }

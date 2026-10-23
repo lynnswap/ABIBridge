@@ -15,31 +15,41 @@ func validateHooks(providerPath: String, callerPath: String) async throws {
     let runtime = ABIRuntime()
     let provider = ImageSelector.path(URL(fileURLWithPath: providerPath))
     let importer = ImageSelector.path(URL(fileURLWithPath: callerPath))
-    let integer = try await runtime.resolveSwiftFunction(
-        named: "SwiftFunctionFixture.hookEcho(_:)",
-        as: ((Int64) -> Int64).self,
-        genericArguments: [.type(Int64.self)],
+    let integer = try await runtime.resolve(
+        .function(
+            "SwiftFunctionFixture.hookEcho(_:)",
+            as: ((Int64) -> Int64).self,
+            genericArguments: [.type(Int64.self)]
+        ),
         in: provider
     )
-    let text = try await runtime.resolveSwiftFunction(
-        named: "SwiftFunctionFixture.hookEcho(_:)",
-        as: ((String) -> String).self,
-        genericArguments: [.type(String.self)],
+    let text = try await runtime.resolve(
+        .function(
+            "SwiftFunctionFixture.hookEcho(_:)",
+            as: ((String) -> String).self,
+            genericArguments: [.type(String.self)]
+        ),
         in: provider
     )
-    let intCaller = try await runtime.resolveSwiftFunction(
-        named: "SwiftExtensionFixture.importedHookInteger(_:)",
-        as: ((Int64) -> Int64).self,
+    let intCaller = try await runtime.resolve(
+        .function(
+            "SwiftExtensionFixture.importedHookInteger(_:)",
+            as: ((Int64) -> Int64).self
+        ),
         in: importer
     )
-    let textCaller = try await runtime.resolveSwiftFunction(
-        named: "SwiftExtensionFixture.importedHookString(_:)",
-        as: ((String) -> String).self,
+    let textCaller = try await runtime.resolve(
+        .function(
+            "SwiftExtensionFixture.importedHookString(_:)",
+            as: ((String) -> String).self
+        ),
         in: importer
     )
-    let arrayCaller = try await runtime.resolveSwiftFunction(
-        named: "SwiftExtensionFixture.importedHookArray(_:)",
-        as: (([String]) -> [String]).self,
+    let arrayCaller = try await runtime.resolve(
+        .function(
+            "SwiftExtensionFixture.importedHookArray(_:)",
+            as: (([String]) -> [String]).self
+        ),
         in: importer
     )
     check(try unsafe intCaller.unsafeInvoke(40) == 40)
@@ -69,14 +79,18 @@ func validateHooks(providerPath: String, callerPath: String) async throws {
     intHook.invalidate(); textHook.invalidate()
     check(try unsafe textCaller.unsafeInvoke("value") == "value")
 
-    let throwing = try await runtime.resolveSwiftFunction(
-        named: "SwiftFunctionFixture.hookThrowing(_:)",
-        as: ((Int64) throws(NSError) -> Int64).self,
+    let throwing = try await runtime.resolve(
+        .function(
+            "SwiftFunctionFixture.hookThrowing(_:)",
+            as: ((Int64) throws(NSError) -> Int64).self
+        ),
         in: provider
     )
-    let throwingCaller = try await runtime.resolveSwiftFunction(
-        named: "SwiftExtensionFixture.importedHookThrowing(_:)",
-        as: ((Int64) throws(NSError) -> Int64).self,
+    let throwingCaller = try await runtime.resolve(
+        .function(
+            "SwiftExtensionFixture.importedHookThrowing(_:)",
+            as: ((Int64) throws(NSError) -> Int64).self
+        ),
         in: importer
     )
     check(try unsafe throwingCaller.unsafeInvoke(1) == 2)
@@ -121,20 +135,26 @@ func validateAsyncHooks(providerPath: String, callerPath: String) async throws {
     let failures = Mutex(0)
     let failure: @Sendable (any Error) -> Void = { _ in failures.withLock { $0 += 1 } }
     typealias Echo = nonisolated(nonsending) (Int64) async -> Int64
-    let integer = try await runtime.resolveSwiftFunction(
-        named: "SwiftFunctionFixture.hookAsyncEcho(_:)",
-        as: Echo.self,
-        genericArguments: [.type(Int64.self)],
+    let integer = try await runtime.resolve(
+        .function(
+            "SwiftFunctionFixture.hookAsyncEcho(_:)",
+            as: Echo.self,
+            genericArguments: [.type(Int64.self)]
+        ),
         in: provider
     )
-    let integerCaller = try await runtime.resolveSwiftFunction(
-        named: "SwiftExtensionFixture.importedAsyncHookInteger(_:)",
-        as: Echo.self,
+    let integerCaller = try await runtime.resolve(
+        .function(
+            "SwiftExtensionFixture.importedAsyncHookInteger(_:)",
+            as: Echo.self
+        ),
         in: importer
     )
-    let textCaller = try await runtime.resolveSwiftFunction(
-        named: "SwiftExtensionFixture.importedAsyncHookString(_:)",
-        as: (nonisolated(nonsending) (String) async -> String).self,
+    let textCaller = try await runtime.resolve(
+        .function(
+            "SwiftExtensionFixture.importedAsyncHookString(_:)",
+            as: (nonisolated(nonsending) (String) async -> String).self
+        ),
         in: importer
     )
     check(try unsafe await integerCaller.unsafeInvoke(1) == 1)
@@ -153,14 +173,18 @@ func validateAsyncHooks(providerPath: String, callerPath: String) async throws {
     integerHook.invalidate()
     check(try unsafe await integerCaller.unsafeInvoke(1) == 1)
     typealias Throwing = nonisolated(nonsending) (Int64) async throws(NSError) -> String
-    let throwing = try await runtime.resolveSwiftFunction(
-        named: "SwiftFunctionFixture.hookAsyncThrowing(_:)",
-        as: Throwing.self,
+    let throwing = try await runtime.resolve(
+        .function(
+            "SwiftFunctionFixture.hookAsyncThrowing(_:)",
+            as: Throwing.self
+        ),
         in: provider
     )
-    let throwingCaller = try await runtime.resolveSwiftFunction(
-        named: "SwiftExtensionFixture.importedAsyncHookThrowing(_:)",
-        as: Throwing.self,
+    let throwingCaller = try await runtime.resolve(
+        .function(
+            "SwiftExtensionFixture.importedAsyncHookThrowing(_:)",
+            as: Throwing.self
+        ),
         in: importer
     )
     _ = try unsafe await throwingCaller.unsafeInvoke(1)
@@ -193,21 +217,25 @@ func validateAsyncHooks(providerPath: String, callerPath: String) async throws {
         named: "SwiftFunctionFixture.AsyncHookRenderer",
         in: provider
     )
-    let method = try await type.resolveMethod(
-        named: "render(_:)",
-        as: (nonisolated(nonsending) (String) async -> String).self
+    let method = try await type.resolve(
+        .method(
+            "render(_:)",
+            as: (nonisolated(nonsending) (String) async -> String).self
+        )
     )
-    let make = try await runtime.resolveSwiftFunction(
-        named:
+    let make = try await runtime.resolve(
+        .function(
             "SwiftFunctionFixture.makeAsyncHookRenderer() -> SwiftFunctionFixture.AsyncHookRenderer",
-        as: (() -> AnyObject).self,
+            as: (() -> AnyObject).self
+        ),
         in: provider
     )
     let object = try unsafe make.unsafeInvoke()
-    let methodCaller = try await runtime.resolveSwiftFunction(
-        named:
+    let methodCaller = try await runtime.resolve(
+        .function(
             "SwiftExtensionFixture.importedAsyncHookMethod(SwiftFunctionFixture.AsyncHookRenderer, Swift.String) async -> Swift.String",
-        as: (nonisolated(nonsending) (AnyObject, String) async -> String).self,
+            as: (nonisolated(nonsending) (AnyObject, String) async -> String).self
+        ),
         in: importer
     )
     let identity = ObjectIdentifier(object)
@@ -225,20 +253,26 @@ func validateAsyncHooks(providerPath: String, callerPath: String) async throws {
 
 @MainActor
 func prepareGenericGetters(type: NativeSwiftType, object: NativeObject) async throws {
-    _ = try await type.resolveGetter(
-        named: "checked",
-        as: (() throws -> String).self,
-        declaredAs: "() throws(B) -> A"
+    _ = try await type.resolve(
+        .getter(
+            "checked",
+            as: (() throws -> String).self,
+            declaredAs: "() throws(B) -> A"
+        )
     )
-    _ = try await type.resolveStaticGetter(
-        named: "checkedType",
-        as: (() throws -> String.Type).self,
-        declaredAs: "() throws(B) -> A.Type"
+    _ = try await type.resolve(
+        .staticGetter(
+            "checkedType",
+            as: (() throws -> String.Type).self,
+            declaredAs: "() throws(B) -> A.Type"
+        )
     )
-    _ = try await object.resolveGetter(
-        named: "delayedChecked",
-        as: (() async throws -> String).self,
-        declaredAs: "() async throws(B) -> A"
+    _ = try await object.resolve(
+        .getter(
+            "delayedChecked",
+            as: (() async throws -> String).self,
+            declaredAs: "() async throws(B) -> A"
+        )
     )
 }
 
@@ -248,7 +282,7 @@ func prepare<Signature>(
     in scope: ImageSelector,
     using runtime: ABIRuntime
 ) async throws -> NativeSwiftFunction<Signature> {
-    try await runtime.resolveSwiftFunction(named: name, as: signature, in: scope)
+    try await runtime.resolve(.function(name, as: signature), in: scope)
 }
 
 // Compile the Sendable entry points outside ABIBridge; the independent provider
@@ -327,9 +361,11 @@ func prepare(_ path: String) async throws -> NativeSwiftFunction<(String) -> Str
         in: [scope]
     )
     async let preparation = runtime.prepare(request)
-    let answer = try await runtime.resolveSwiftFunction(
-        named: "SwiftFunctionFixture.answer()",
-        as: (() -> Int64).self,
+    let answer = try await runtime.resolve(
+        .function(
+            "SwiftFunctionFixture.answer()",
+            as: (() -> Int64).self
+        ),
         in: scope
     )
     let prepared = try await preparation
@@ -346,10 +382,11 @@ func prepare(_ path: String) async throws -> NativeSwiftFunction<(String) -> Str
         in: scope,
         using: runtime
     )
-    let transform = try await runtime.resolveSwiftFunction(
-        named:
+    let transform = try await runtime.resolve(
+        .function(
             "SwiftFunctionFixture.transform(SwiftFunctionFixture.Three) -> SwiftFunctionFixture.Three",
-        as: ((ThreeValue) -> ThreeValue).self,
+            as: ((ThreeValue) -> ThreeValue).self
+        ),
         in: scope
     )
     let transformed = try unsafe transform.unsafeInvoke(.init(1, 2, 3))
@@ -366,19 +403,25 @@ func validateRuntimeSubscripts(_ path: String) async throws {
     defer { dlclose(original) }
     let runtime = ABIRuntime()
     let scope = ImageSelector.path(URL(fileURLWithPath: path))
-    let make = try await runtime.resolveSwiftFunction(
-        named: "SwiftFunctionFixture.makeRuntimeLookup(_:_:)",
-        as: ((String, Int64) -> NativeSwiftValue).self,
+    let make = try await runtime.resolve(
+        .function(
+            "SwiftFunctionFixture.makeRuntimeLookup(_:_:)",
+            as: ((String, Int64) -> NativeSwiftValue).self
+        ),
         in: scope
     )
-    let makeKey = try await runtime.resolveSwiftFunction(
-        named: "SwiftFunctionFixture.makeRuntimeLookupKey(_:)",
-        as: ((String) -> NativeSwiftValue).self,
+    let makeKey = try await runtime.resolve(
+        .function(
+            "SwiftFunctionFixture.makeRuntimeLookupKey(_:)",
+            as: ((String) -> NativeSwiftValue).self
+        ),
         in: scope
     )
-    let makeReplacement = try await runtime.resolveSwiftFunction(
-        named: "SwiftFunctionFixture.makeRuntimeLookupReplacement(_:_:)",
-        as: ((String, Int64) -> NativeSwiftValue).self,
+    let makeReplacement = try await runtime.resolve(
+        .function(
+            "SwiftFunctionFixture.makeRuntimeLookupReplacement(_:_:)",
+            as: ((String, Int64) -> NativeSwiftValue).self
+        ),
         in: scope
     )
     let keyText = String(repeating: "external key ", count: 6)
@@ -393,19 +436,23 @@ func validateRuntimeSubscripts(_ path: String) async throws {
         key.type: try NativeType.opaque(named: key.type.name),
         replacement.type: try NativeType.opaque(named: replacement.type.name),
     ]
-    let getter = try await source.type.resolveMethod(
-        named: "SwiftFunctionFixture.RuntimeLookup.subscript.getter : (A.ID) -> A?",
-        as: ((NativeSwiftValue) -> NativeSwiftValue).self,
-        declaredAs: "(A.ID) -> A?",
-        valueABIs: abis,
-        receiverABI: .opaque(named: source.type.name)
+    let getter = try await source.type.resolve(
+        .getter(
+            "SwiftFunctionFixture.RuntimeLookup.subscript.getter : (A.ID) -> A?",
+            as: ((NativeSwiftValue) -> NativeSwiftValue).self,
+            declaredAs: "(A.ID) -> A?",
+            valueABIs: abis,
+            receiverABI: .opaque(named: source.type.name)
+        )
     )
-    let setter = try await source.type.resolveMethod(
-        named: "SwiftFunctionFixture.RuntimeLookup.subscript.setter : (A.ID) -> A?",
-        as: ((NativeSwiftValue, NativeSwiftValue) -> Void).self,
-        valueABIs: abis,
-        receiverABI: .opaque(named: source.type.name),
-        mutating: true
+    let setter = try await source.type.resolve(
+        .setter(
+            "SwiftFunctionFixture.RuntimeLookup.subscript.setter : (A.ID) -> A?",
+            as: ((NativeSwiftValue, NativeSwiftValue) -> Void).self,
+            valueABIs: abis,
+            receiverABI: .opaque(named: source.type.name),
+            receiver: .mutating
+        )
     )
     let setterKey = try key.copy()
     try unsafe setter.unsafeInvoke(on: source, replacement, setterKey)
@@ -420,10 +467,12 @@ func validateRuntimeSubscripts(_ path: String) async throws {
     else {
         fatalError("The subscript did not return the assigned element")
     }
-    let number = try await elementType.resolveGetter(
-        named: "number",
-        as: (() -> Int64).self,
-        receiverABI: .opaque(named: elementType.name)
+    let number = try await elementType.resolve(
+        .getter(
+            "number",
+            as: (() -> Int64).self,
+            receiverABI: .opaque(named: elementType.name)
+        )
     )
     let actual = try unsafe number.unsafeInvoke(on: element)
     precondition(actual == 42)
@@ -442,9 +491,11 @@ func prepareRuntimeProjection(
     defer { dlclose(original) }
     let runtime = ABIRuntime()
     let scope = ImageSelector.path(URL(fileURLWithPath: path))
-    let make = try await runtime.resolveSwiftFunction(
-        named: "SwiftFunctionFixture.makeRuntimeProjection(_:)",
-        as: ((Int64) -> NativeSwiftValue).self,
+    let make = try await runtime.resolve(
+        .function(
+            "SwiftFunctionFixture.makeRuntimeProjection(_:)",
+            as: ((Int64) -> NativeSwiftValue).self
+        ),
         in: scope
     )
     let value = try unsafe make.unsafeInvoke(41)
@@ -465,10 +516,12 @@ func prepareRuntimeProjection(
         payload: payload,
         valueABIs: [bodyType: .opaque(named: bodyType.name)]
     )
-    let readConstructed = try await runtime.resolveSwiftFunction(
-        named: "SwiftFunctionFixture.readRuntimeProjection(_:)",
-        as: ((NativeSwiftValue) -> Int64).self,
-        valueABIs: [value.type: .opaque(named: value.type.name)],
+    let readConstructed = try await runtime.resolve(
+        .function(
+            "SwiftFunctionFixture.readRuntimeProjection(_:)",
+            as: ((NativeSwiftValue) -> Int64).self,
+            valueABIs: [value.type: .opaque(named: value.type.name)]
+        ),
         in: scope
     )
     let constructedNumber = try unsafe readConstructed.unsafeInvoke(constructed)
@@ -477,10 +530,12 @@ func prepareRuntimeProjection(
     let concreteSource = try source.copyUnderlyingValue()
     precondition(source.type != concreteSource.type)
     precondition(concreteSource.type.name == "SwiftFunctionFixture.RuntimeProjectionBody")
-    let read = try await concreteSource.type.resolveGetter(
-        named: "number",
-        as: (() -> Int64).self,
-        receiverABI: .opaque(named: concreteSource.type.name)
+    let read = try await concreteSource.type.resolve(
+        .getter(
+            "number",
+            as: (() -> Int64).self,
+            receiverABI: .opaque(named: concreteSource.type.name)
+        )
     )
     let sourceNumber = try unsafe read.unsafeInvoke(on: concreteSource)
     precondition(sourceNumber == 41)
@@ -518,9 +573,11 @@ let nativeKeyPath = try await keyPathRoot.resolveWritableKeyPath(
     named: "payload",
     valueType: keyPathPayload
 )
-let validateKeyPath = try await keyPathRuntime.resolveSwiftFunction(
-    named: "SwiftFunctionFixture.validateRuntimePayloadKeyPath(_:)",
-    as: ((NativeSwiftValue) -> Bool).self,
+let validateKeyPath = try await keyPathRuntime.resolve(
+    .function(
+        "SwiftFunctionFixture.validateRuntimePayloadKeyPath(_:)",
+        as: ((NativeSwiftValue) -> Bool).self
+    ),
     in: keyPathProvider
 )
 keyPathRuntime.removeCachedResults()
@@ -540,9 +597,11 @@ let observedKeyPath = try await observedRoot.resolveWritableKeyPath(
     valueType: keyPathString,
     keyValueCodingKey: "nativeText"
 )
-let validateObservedKeyPath = try await keyPathRuntime.resolveSwiftFunction(
-    named: "SwiftFunctionFixture.validateRuntimeObservedKeyPath(_:)",
-    as: ((NativeSwiftValue) -> Bool).self,
+let validateObservedKeyPath = try await keyPathRuntime.resolve(
+    .function(
+        "SwiftFunctionFixture.validateRuntimeObservedKeyPath(_:)",
+        as: ((NativeSwiftValue) -> Bool).self
+    ),
     in: keyPathProvider
 )
 let keyPathObservationMatches = try unsafe validateObservedKeyPath.unsafeInvoke(observedKeyPath)
@@ -552,10 +611,12 @@ print("Public writable key paths support KVO with an explicit Objective-C key")
 let runtimeProjection = try await prepareRuntimeProjection(path)
 let projectionBody = try unsafe runtimeProjection.unsafeInvoke()
 precondition(projectionBody.type.name == "SwiftFunctionFixture.RuntimeProjectionBody")
-let projectionNumber = try await projectionBody.type.resolveGetter(
-    named: "number",
-    as: (() -> Int64).self,
-    receiverABI: .opaque(named: projectionBody.type.name)
+let projectionNumber = try await projectionBody.type.resolve(
+    .getter(
+        "number",
+        as: (() -> Int64).self,
+        receiverABI: .opaque(named: projectionBody.type.name)
+    )
 )
 let projectionResult = try unsafe projectionNumber.unsafeInvoke(on: projectionBody)
 precondition(projectionResult == 42)
@@ -568,10 +629,12 @@ let enumType = try await keyPathRuntime.resolveSwiftType(
     in: keyPathProvider
 )
 let emptyEnum = try enumType.makeEnumCase(named: "empty")
-let isEmptyEnum = try await keyPathRuntime.resolveSwiftFunction(
-    named: "SwiftFunctionFixture.isEmptyRuntimeProjection(_:)",
-    as: ((NativeSwiftValue) -> Bool).self,
-    valueABIs: [enumType: .opaque(named: enumType.name)],
+let isEmptyEnum = try await keyPathRuntime.resolve(
+    .function(
+        "SwiftFunctionFixture.isEmptyRuntimeProjection(_:)",
+        as: ((NativeSwiftValue) -> Bool).self,
+        valueABIs: [enumType: .opaque(named: enumType.name)]
+    ),
     in: keyPathProvider
 )
 let hasEmptyCase = try unsafe isEmptyEnum.unsafeInvoke(emptyEnum)

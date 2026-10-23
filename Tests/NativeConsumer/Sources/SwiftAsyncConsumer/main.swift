@@ -31,8 +31,11 @@ func extractedAsyncMethod() throws -> NativeSwiftMethod<nonisolated(nonsending) 
     do {
         let original = AsyncReceiver(1)
         observed = original
-        method = try ABIRuntime.shared.object(original).resolveMethodAndWait(
-            named: "score(_:)", as: (nonisolated(nonsending) (Int64) async throws(Failure) -> Int64).self
+        method = try ABIRuntime.shared.object(original).resolveAndWait(
+            .method(
+                "score(_:)",
+                as: (nonisolated(nonsending) (Int64) async throws(Failure) -> Int64).self
+            )
         ).method
     }
     precondition(observed == nil)
@@ -51,20 +54,29 @@ do {
 } catch let error as NativeSwiftError {
     error.withUnderlyingError { precondition(($0 as? Failure)?.code == 45) }
 }
-let decorate = try await runtime.resolveSwiftFunction(
-    named: "SwiftAsyncConsumer.decorate(_:)",
-    as: ((String) async -> String).self)
+let decorate = try await runtime.resolve(
+    .function(
+        "SwiftAsyncConsumer.decorate(_:)",
+        as: ((String) async -> String).self
+    )
+)
 let result = try unsafe await decorate.unsafeInvoke("public")
 precondition(result == "public!")
 MainActor.preconditionIsolated()
-let inherited = try await runtime.resolveSwiftFunction(
-    named: "SwiftAsyncConsumer.inherited(_:)",
-    as: (nonisolated(nonsending) (Int64) async -> Int64).self)
+let inherited = try await runtime.resolve(
+    .function(
+        "SwiftAsyncConsumer.inherited(_:)",
+        as: (nonisolated(nonsending) (Int64) async -> Int64).self
+    )
+)
 let sum = try await Context.$value.withValue(35) { try unsafe await inherited.unsafeInvoke(7) }
 precondition(sum == 42)
-let checked = try await runtime.resolveSwiftFunction(
-    named: "SwiftAsyncConsumer.checked(_:)",
-    as: (@concurrent (Bool) async throws(Failure) -> Int64).self)
+let checked = try await runtime.resolve(
+    .function(
+        "SwiftAsyncConsumer.checked(_:)",
+        as: (@concurrent (Bool) async throws(Failure) -> Int64).self
+    )
+)
 let success = try unsafe await checked.unsafeInvoke(false)
 precondition(success == 7)
 do {
@@ -94,9 +106,14 @@ do {
     if prefix.isEmpty { throw Failure(code: 44) }
     return prefix + text
 }
-let update = try await runtime.resolveSwiftFunction(
-    named: "SwiftAsyncConsumer.update(_:_:_:)",
-    as: (@concurrent (NativeSwiftInout<String>, NativeSwiftConsuming<String>, NativeSwiftBorrowing<String>) async throws(Failure) -> String).self)
+let update = try await runtime.resolve(
+    .function(
+        "SwiftAsyncConsumer.update(_:_:_:)",
+        as: (@concurrent (
+            NativeSwiftInout<String>, NativeSwiftConsuming<String>, NativeSwiftBorrowing<String>
+        ) async throws(Failure) -> String).self
+    )
+)
 let buffer = NativeSwiftInout("value")
 let updated = try unsafe await update.unsafeInvoke(buffer, .init("!"), .init("public:"))
 precondition(updated == "public:value!" && buffer.value == "value!")
@@ -110,16 +127,22 @@ precondition(buffer.value == "value!?")
 public protocol Summary: Sendable { var number: Int64 { get } }
 public struct SummaryValue: Summary { public let number: Int64 }
 public func echoSummary(_ value: any Summary) -> any Summary { value }
-let echoSummary = try await runtime.resolveSwiftFunction(
-    named: "SwiftAsyncConsumer.echoSummary(_:)",
-    as: ((any Summary) -> any Summary).self)
+let echoSummary = try await runtime.resolve(
+    .function(
+        "SwiftAsyncConsumer.echoSummary(_:)",
+        as: ((any Summary) -> any Summary).self
+    )
+)
 let summary = try unsafe echoSummary.unsafeInvoke(SummaryValue(number: 42))
 precondition(summary.number == 42 && summary is SummaryValue)
 private struct HiddenSummary: Summary { let number: Int64 }
 public func makeSummary() -> some Summary { HiddenSummary(number: 43) }
-let makeSummaryFunction = try await runtime.resolveSwiftFunction(
-    named: "SwiftAsyncConsumer.makeSummary()",
-    as: (() -> NativeSwiftValue).self)
+let makeSummaryFunction = try await runtime.resolve(
+    .function(
+        "SwiftAsyncConsumer.makeSummary()",
+        as: (() -> NativeSwiftValue).self
+    )
+)
 let opaque = try unsafe makeSummaryFunction.unsafeInvoke()
 try opaque.withCopy { precondition(($0 as? any Summary)?.number == 43) }
 print("Public async consumer passed: suspension, task locals, caller executor, typed errors, inout, per-argument ownership, existentials, and opaque results")

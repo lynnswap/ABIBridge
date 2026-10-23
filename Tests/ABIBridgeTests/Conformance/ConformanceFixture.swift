@@ -107,10 +107,12 @@ final class ConformanceFixture: @unchecked Sendable {
         as signature: Signature.Type,
         valueABIs: [NativeSwiftType: NativeType] = [:]
     ) async throws -> NativeSwiftFunction<Signature> {
-        try await runtime.resolveSwiftFunction(
-            named: module + "." + declaration,
-            as: signature,
-            valueABIs: valueABIs,
+        try await runtime.resolve(
+            .function(
+                module + "." + declaration,
+                as: signature,
+                valueABIs: valueABIs
+            ),
             in: scope
         )
     }
@@ -118,9 +120,11 @@ final class ConformanceFixture: @unchecked Sendable {
     /// Calls a provider factory, such as `cmMakeCounter`, that takes no
     /// arguments and returns an instance of the provider class `type`.
     func make(_ factory: String, returning type: String) throws -> AnyObject {
-        let make = try runtime.resolveSwiftFunctionAndWait(
-            named: "\(module).\(factory)() -> \(module).\(type)",
-            as: (() -> AnyObject).self,
+        let make = try runtime.resolveAndWait(
+            .function(
+                "\(module).\(factory)() -> \(module).\(type)",
+                as: (() -> AnyObject).self
+            ),
             in: scope
         )
         return try unsafe make.unsafeInvoke()

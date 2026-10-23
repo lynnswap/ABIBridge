@@ -20,10 +20,12 @@ private final class ClosureCapture: Sendable {
 
 struct ClosureHandoffStressTests {
     @Test func repeatedNativeHandoffsPreserveOneOwningEntry() async throws {
-        let echo = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.echoClosure(_:)",
-            as: ((NativeSwiftClosure<(Int64) -> Int64>) -> NativeSwiftClosure<(Int64) -> Int64>)
-                .self
+        let echo = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.echoClosure(_:)",
+                as: ((NativeSwiftClosure<(Int64) -> Int64>) -> NativeSwiftClosure<(Int64) -> Int64>)
+                    .self
+            )
         )
         let destroyed = ClosureCounter()
         weak var observed: ClosureCapture?

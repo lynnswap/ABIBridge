@@ -25,10 +25,14 @@ private enum ValueHookProbeFailure: Error { case afterProceed }
         as: Int64.self,
         in: provider
     )
-    let adding = try await counter.resolveMethod(named: "adding(_:)", as: ((Int64) -> Int64).self)
-    let addCaller = try await runtime.resolveSwiftFunction(
-        named: "SwiftImportCallerControl.hookValueAdd(_:)",
-        as: ((Int64) -> Int64).self, in: caller)
+    let adding = try await counter.resolve(.method("adding(_:)", as: ((Int64) -> Int64).self))
+    let addCaller = try await runtime.resolve(
+        .function(
+            "SwiftImportCallerControl.hookValueAdd(_:)",
+            as: ((Int64) -> Int64).self
+        ),
+        in: caller
+    )
     let addHook = try await unsafe adding.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call, value in
         guard try call.receiver(as: Int64.self) == 40 else { throw ArchitectureValidationFailure(description: "Register self snapshot") }
         return try call.proceed(value + 1) + 100
@@ -38,14 +42,20 @@ private enum ValueHookProbeFailure: Error { case afterProceed }
     addHook.invalidate()
     try check(try unsafe addCaller.unsafeInvoke(2) == 42, "Value receiver fallback survives invalidation")
 
-    let increment = try await counter.resolveMethod(
-        named: "increment(_:)",
-        as: ((Int64) -> Int64).self,
-        mutating: true
+    let increment = try await counter.resolve(
+        .method(
+            "increment(_:)",
+            as: ((Int64) -> Int64).self,
+            receiver: .mutating
+        )
     )
-    let incrementCaller = try await runtime.resolveSwiftFunction(
-        named: "SwiftImportCallerControl.hookValueIncrement(_:_:)",
-        as: ((Int64, Int64) -> Int64).self, in: caller)
+    let incrementCaller = try await runtime.resolve(
+        .function(
+            "SwiftImportCallerControl.hookValueIncrement(_:_:)",
+            as: ((Int64, Int64) -> Int64).self
+        ),
+        in: caller
+    )
     let incrementHook = try await unsafe increment.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call, delta in
         let before = try call.receiver(as: Int64.self)
         let result = try call.proceed(delta + 1)
@@ -64,14 +74,20 @@ private enum ValueHookProbeFailure: Error { case afterProceed }
         in: provider
     )
     for (member, callName, consuming) in [("sum", "hookWideValueSum", false), ("consume", "hookWideValueConsume", true)] {
-        let method = try await wide.resolveMethod(
-            named: member + "(_:)",
-            as: ((Int64) -> Int64).self,
-            consuming: consuming
+        let method = try await wide.resolve(
+            .method(
+                member + "(_:)",
+                as: ((Int64) -> Int64).self,
+                receiver: consuming ? .consuming : nil
+            )
         )
-        let call = try await runtime.resolveSwiftFunction(
-            named: "SwiftImportCallerControl." + callName + "(_:_:)",
-            as: ((Int64, Int64) -> Int64).self, in: caller)
+        let call = try await runtime.resolve(
+            .function(
+                "SwiftImportCallerControl." + callName + "(_:_:)",
+                as: ((Int64, Int64) -> Int64).self
+            ),
+            in: caller
+        )
         let hook = try await unsafe method.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call, value in
             let receiver = try call.receiver(as: VirtualPayload.self)
             guard receiver.a == 40 && receiver.e == 44 else { throw ArchitectureValidationFailure(description: "Indirect self snapshot") }
@@ -88,10 +104,16 @@ private enum ValueHookProbeFailure: Error { case afterProceed }
         as: String.self,
         in: provider
     )
-    let consume = try await textType.resolveMethod(named: "consume()", as: (() -> String).self, consuming: true)
-    let textCaller = try await runtime.resolveSwiftFunction(
-        named: "SwiftImportCallerControl.hookValueConsumeText(_:)",
-        as: ((String) -> String).self, in: caller)
+    let consume = try await textType.resolve(
+        .method("consume()", as: (() -> String).self, receiver: .consuming)
+    )
+    let textCaller = try await runtime.resolve(
+        .function(
+            "SwiftImportCallerControl.hookValueConsumeText(_:)",
+            as: ((String) -> String).self
+        ),
+        in: caller
+    )
     let consumed = try await unsafe consume.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call in
         let value = try call.receiver(as: String.self)
         if value == "skip" { return "skipped" }
@@ -112,14 +134,20 @@ private enum ValueHookProbeFailure: Error { case afterProceed }
     consumed.invalidate()
     try check(try unsafe textCaller.unsafeInvoke(input) == "value:" + input, "Consumed value fallback retains its compiler convention")
 
-    let append = try await textType.resolveMethod(
-        named: "append(_:)",
-        as: ((String) -> String).self,
-        mutating: true
+    let append = try await textType.resolve(
+        .method(
+            "append(_:)",
+            as: ((String) -> String).self,
+            receiver: .mutating
+        )
     )
-    let appendCaller = try await runtime.resolveSwiftFunction(
-        named: "SwiftImportCallerControl.hookValueAppendText(_:_:)",
-        as: ((String, String) -> String).self, in: caller)
+    let appendCaller = try await runtime.resolve(
+        .function(
+            "SwiftImportCallerControl.hookValueAppendText(_:_:)",
+            as: ((String, String) -> String).self
+        ),
+        in: caller
+    )
     let appendHook = try await unsafe append.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call, suffix in
         let before = try call.receiver(as: String.self)
         let result = try call.proceed(suffix + " edited")
@@ -131,12 +159,19 @@ private enum ValueHookProbeFailure: Error { case afterProceed }
         "Mutating String self updates caller storage and subsequent snapshots")
     appendHook.invalidate()
 
-    let stack = try await counter.resolveMethod(
-        named: "stack(_:_:_:_:_:_:_:_:_:_:_:_:)",
-        as: ((Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64) -> Int64).self)
-    let stackCaller = try await runtime.resolveSwiftFunction(
-        named: "SwiftImportCallerControl.hookValueStack()",
-        as: (() -> Int64).self,
+    let stack = try await counter.resolve(
+        .method(
+            "stack(_:_:_:_:_:_:_:_:_:_:_:_:)",
+            as: ((
+                Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64
+            ) -> Int64).self
+        )
+    )
+    let stackCaller = try await runtime.resolve(
+        .function(
+            "SwiftImportCallerControl.hookValueStack()",
+            as: (() -> Int64).self
+        ),
         in: caller
     )
     let stacked = try await unsafe stack.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call,a,b,c,d,e,f,g,h,i,j,k,l in

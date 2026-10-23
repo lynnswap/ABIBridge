@@ -28,9 +28,12 @@ extension ErrorCounter: ABIBridgeSwiftValue { public static var swiftABIType: Na
             throw ArchitectureValidationFailure(description: "Native call unexpectedly succeeded")
         } catch let error as NativeSwiftError { return error }
     }
-    let untyped = try await runtime.resolveSwiftFunction(
-        named: "SwiftValueFixtures.untypedError(_:_:)",
-        as: ((ErrorToken, Bool) throws -> String).self)
+    let untyped = try await runtime.resolve(
+        .function(
+            "SwiftValueFixtures.untypedError(_:_:)",
+            as: ((ErrorToken, Bool) throws -> String).self
+        )
+    )
     weak var observed: ErrorToken?
     var held: NativeSwiftError?
     try autoreleasepool {
@@ -48,34 +51,46 @@ extension ErrorCounter: ABIBridgeSwiftValue { public static var swiftABIType: Na
     try withExtendedLifetime(held) { try check(observed != nil, "Error wrapper retains native payload") }
     held = nil
     try check(observed == nil, "Final error release destroys the payload")
-    let small = try await runtime.resolveSwiftFunction(
-        named: "SwiftValueFixtures.smallError(_:)",
-        as: ((Bool) throws(SmallError) -> Double).self)
+    let small = try await runtime.resolve(
+        .function(
+            "SwiftValueFixtures.smallError(_:)",
+            as: ((Bool) throws(SmallError) -> Double).self
+        )
+    )
     try check(try unsafe small.unsafeInvoke(false) == 1.5, "Normal floating result uses its register bank")
     let smallFailure = try failure { try unsafe small.unsafeInvoke(true) }
     try smallFailure.withUnderlyingError {
         try check(($0 as? SmallError)?.code == 0, "Zero-valued typed error uses a separate failure indicator")
     }
-    let floating = try await runtime.resolveSwiftFunction(
-        named: "SwiftValueFixtures.floatingError(_:)",
-        as: ((Bool) throws(FloatingError) -> Void).self)
+    let floating = try await runtime.resolve(
+        .function(
+            "SwiftValueFixtures.floatingError(_:)",
+            as: ((Bool) throws(FloatingError) -> Void).self
+        )
+    )
     try unsafe floating.unsafeInvoke(false)
     let floatingFailure = try failure { try unsafe floating.unsafeInvoke(true) }
     try floatingFailure.withUnderlyingError {
         try check(($0 as? FloatingError)?.value == 1.5, "Floating error uses the hidden output buffer")
     }
-    let indirect = try await runtime.resolveSwiftFunction(
-        named: "SwiftValueFixtures.indirectError(_:_:)",
-        as: ((ErrorToken, Bool) throws(IndirectError) -> String).self)
+    let indirect = try await runtime.resolve(
+        .function(
+            "SwiftValueFixtures.indirectError(_:_:)",
+            as: ((ErrorToken, Bool) throws(IndirectError) -> String).self
+        )
+    )
     let token = ErrorToken()
     try check(try unsafe indirect.unsafeInvoke(token, false) == "success", "Resilient-error signature preserves success")
     let indirectFailure = try failure { try unsafe indirect.unsafeInvoke(token, true) }
     try indirectFailure.withUnderlyingError {
         try check(($0 as? IndirectError)?.token === token, "Resilient native error is taken from indirect storage")
     }
-    let large = try await runtime.resolveSwiftFunction(
-        named: "SwiftValueFixtures.largeError(_:_:)",
-        as: ((ErrorToken, Bool) throws(LargeError) -> LargeError).self)
+    let large = try await runtime.resolve(
+        .function(
+            "SwiftValueFixtures.largeError(_:_:)",
+            as: ((ErrorToken, Bool) throws(LargeError) -> LargeError).self
+        )
+    )
     let result = try unsafe large.unsafeInvoke(token, false)
     try check(result.token === token && result.d == 4, "Large result has independent indirect storage")
     let largeFailure = try failure { try unsafe large.unsafeInvoke(token, true) }
@@ -87,9 +102,13 @@ extension ErrorCounter: ABIBridgeSwiftValue { public static var swiftABIType: Na
         named: "SwiftValueFixtures.ErrorCounter",
         as: ErrorCounter.self
     )
-    let advance = try await type.resolveMethod(
-        named: "advance(_:)",
-        as: ((Bool) throws(SmallError) -> Int64).self, mutating: true)
+    let advance = try await type.resolve(
+        .method(
+            "advance(_:)",
+            as: ((Bool) throws(SmallError) -> Int64).self,
+            receiver: .mutating
+        )
+    )
     var counter = ErrorCounter(41)
     let mutationFailure = try failure { try unsafe advance.unsafeInvoke(on: &counter, true) }
     try mutationFailure.withUnderlyingError {

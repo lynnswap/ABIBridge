@@ -150,19 +150,23 @@ struct NativeSwiftAsyncClosureTests {
             ) async -> Double
         >
         let callback = try Many(asyncMany)
-        let apply = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.applyManyAsyncClosure(_:)",
-            as: (@concurrent (Many) async -> Double).self
+        let apply = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.applyManyAsyncClosure(_:)",
+                as: (@concurrent (Many) async -> Double).self
+            )
         )
         #expect(try unsafe await apply.unsafeInvoke(callback) == 577.5)
     }
 
     @Test func returnedTypedClosureObservesCancellationOnTheOriginalTask() async throws {
-        let factory = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.makeTypedAsyncClosure(_:)",
-            as: ((ErrorLifetimeToken) -> NativeSwiftClosure<
-                @Sendable @concurrent (AsyncGate, Bool) async throws(ManagedFailure) -> String
-            >).self
+        let factory = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.makeTypedAsyncClosure(_:)",
+                as: ((ErrorLifetimeToken) -> NativeSwiftClosure<
+                    @Sendable @concurrent (AsyncGate, Bool) async throws(ManagedFailure) -> String
+                >).self
+            )
         )
         let token = ErrorLifetimeToken(), gate = AsyncGate()
         let task = Task {
@@ -179,11 +183,13 @@ struct NativeSwiftAsyncClosureTests {
     }
 
     @MainActor @Test func returnedCallerClosureKeepsItsNativeIsolation() async throws {
-        let factory = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.makeCallerAsyncClosure(_:expectMainActor:)",
-            as: ((ErrorLifetimeToken, Bool) -> NativeSwiftClosure<
-                nonisolated(nonsending) @Sendable (AsyncGate, Int64) async -> Int64
-            >).self
+        let factory = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.makeCallerAsyncClosure(_:expectMainActor:)",
+                as: ((ErrorLifetimeToken, Bool) -> NativeSwiftClosure<
+                    nonisolated(nonsending) @Sendable (AsyncGate, Int64) async -> Int64
+                >).self
+            )
         )
         let gate = AsyncGate()
         let task = Task { @MainActor in
@@ -202,17 +208,23 @@ struct NativeSwiftAsyncClosureTests {
             @Sendable @concurrent (AsyncGate, Int64) async -> String
         >
         let runtime = ABIRuntime.shared
-        let factory = try await runtime.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.makeConcurrentAsyncClosure(_:)",
-            as: ((ErrorLifetimeToken) -> Callback).self
+        let factory = try await runtime.resolve(
+            .function(
+                "ManagedSwiftFixtures.makeConcurrentAsyncClosure(_:)",
+                as: ((ErrorLifetimeToken) -> Callback).self
+            )
         )
-        let identity = try await runtime.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.handoffAsyncClosure(_:)",
-            as: ((Callback) -> Callback).self
+        let identity = try await runtime.resolve(
+            .function(
+                "ManagedSwiftFixtures.handoffAsyncClosure(_:)",
+                as: ((Callback) -> Callback).self
+            )
         )
-        let retain = try await runtime.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.retainAsyncClosure(_:)",
-            as: ((Callback) -> StoredAsyncClosure).self
+        let retain = try await runtime.resolve(
+            .function(
+                "ManagedSwiftFixtures.retainAsyncClosure(_:)",
+                as: ((Callback) -> StoredAsyncClosure).self
+            )
         )
         weak var observed: ErrorLifetimeToken?
         var stored: StoredAsyncClosure?
@@ -266,13 +278,16 @@ struct NativeSwiftAsyncClosureTests {
     }
 
     @Test func nativeTypedCallerReceivesTheOriginalError() async throws {
-        let apply = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.applyTypedAsyncClosure(_:_:_:)",
-            as: (@concurrent (
-                NativeSwiftClosure<
-                    @Sendable @concurrent (AsyncGate, Bool) async throws(ManagedFailure) -> String
-                >, AsyncGate, Bool
-            ) async throws(ManagedFailure) -> String).self
+        let apply = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.applyTypedAsyncClosure(_:_:_:)",
+                as: (@concurrent (
+                    NativeSwiftClosure<
+                        @Sendable @concurrent (AsyncGate, Bool) async throws(ManagedFailure) ->
+                            String
+                    >, AsyncGate, Bool
+                ) async throws(ManagedFailure) -> String).self
+            )
         )
         let token = ErrorLifetimeToken()
         let gate = AsyncGate()
@@ -336,12 +351,14 @@ struct NativeSwiftAsyncClosureTests {
 
     @MainActor @Test func nativeConcurrentCallPreservesTaskLocalsAndRestoresItsCaller() async throws
     {
-        let apply = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.applyConcurrentAsyncClosure(_:_:_:)",
-            as: (@concurrent (
-                NativeSwiftClosure<@Sendable @concurrent (AsyncGate, Int64) async -> String>,
-                AsyncGate, Int64
-            ) async -> String).self
+        let apply = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.applyConcurrentAsyncClosure(_:_:_:)",
+                as: (@concurrent (
+                    NativeSwiftClosure<@Sendable @concurrent (AsyncGate, Int64) async -> String>,
+                    AsyncGate, Int64
+                ) async -> String).self
+            )
         )
         let gate = AsyncGate()
         let task = Task { @MainActor in
@@ -360,13 +377,15 @@ struct NativeSwiftAsyncClosureTests {
     }
 
     @MainActor @Test func nativeCallerIsolatedCallPreservesItsExecutor() async throws {
-        let apply = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.applyCallerAsyncClosure(_:_:_:)",
-            as: (nonisolated(nonsending) (
-                NativeSwiftClosure<
-                    nonisolated(nonsending) @Sendable (AsyncGate, Int64) async -> Int64
-                >, AsyncGate, Int64
-            ) async -> Int64).self
+        let apply = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.applyCallerAsyncClosure(_:_:_:)",
+                as: (nonisolated(nonsending) (
+                    NativeSwiftClosure<
+                        nonisolated(nonsending) @Sendable (AsyncGate, Int64) async -> Int64
+                    >, AsyncGate, Int64
+                ) async -> Int64).self
+            )
         )
         let gate = AsyncGate()
         let task = Task { @MainActor in
@@ -383,11 +402,13 @@ struct NativeSwiftAsyncClosureTests {
     }
 
     @Test func returnedConcurrentClosureRetainsItsCaptureAcrossSuspension() async throws {
-        let factory = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.makeConcurrentAsyncClosure(_:)",
-            as: ((ErrorLifetimeToken) -> NativeSwiftClosure<
-                @Sendable @concurrent (AsyncGate, Int64) async -> String
-            >).self
+        let factory = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.makeConcurrentAsyncClosure(_:)",
+                as: ((ErrorLifetimeToken) -> NativeSwiftClosure<
+                    @Sendable @concurrent (AsyncGate, Int64) async -> String
+                >).self
+            )
         )
         let gate = AsyncGate()
         weak var observed: ErrorLifetimeToken?

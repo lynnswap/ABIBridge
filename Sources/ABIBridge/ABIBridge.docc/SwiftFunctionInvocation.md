@@ -7,10 +7,10 @@ Resolve a Swift function by source-level name and invoke it with ordinary Swift 
 For an already-loaded module defining `func decorate(_ value: String) -> String`:
 
 ```swift
-let decorate = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
-    named: "Example.decorate(_:)",
+let decorate = try ABIRuntime.shared.resolveAndWait(.function(
+    "Example.decorate(_:)",
     as: ((String) -> String).self
-)
+))
 let message = try unsafe decorate.unsafeInvoke("Hello")
 ```
 
@@ -28,26 +28,26 @@ The check needs the declared type's convention: a built-in representation, an ``
 
 ```swift
 let uint32 = try runtime.resolveSwiftTypeAndWait(named: "Swift.UInt32")
-let target = try screenType.resolveGetterAndWait(
-    named: "target.getter : __C.HIDTarget",
+let target = try screenType.resolveAndWait(.getter(
+    "target.getter : __C.HIDTarget",
     as: (() -> UInt32).self,
     valueABIs: [uint32: .uint32]
-)
+))
 ```
 
 ## Await lookup and preparation
 
-`resolveSwiftFunction` searches and prepares the call interface on a worker queue while the caller suspends. `resolveSwiftFunctionAndWait` performs that work synchronously and can block the caller, including inside an async function. Both reuse symbol indexes and prepared layouts, and join any preparation already running for the required work.
+`resolve` searches and prepares the call interface on a worker queue while the caller suspends. `resolveAndWait` performs that work synchronously and can block the caller, including inside an async function. Both reuse symbol indexes and prepared layouts, and join any preparation already running for the required work.
 
-From `MainActor`, await the factory to keep lookup and preparation from blocking the actor:
+From `MainActor`, await `resolve` to keep lookup and preparation from blocking the actor:
 
 ```swift
 @MainActor
 func makeMessage() async throws -> String {
-    let decorate = try await ABIRuntime.shared.resolveSwiftFunction(
-        named: "Example.decorate(_:)",
+    let decorate = try await ABIRuntime.shared.resolve(.function(
+        "Example.decorate(_:)",
         as: ((String) -> String).self
-    )
+    ))
     return try unsafe decorate.unsafeInvoke("Hello")
 }
 ```
@@ -57,10 +57,10 @@ The native signature controls invocation separately. A synchronous signature run
 ```swift
 @MainActor
 func loadContents() async throws -> String {
-    let load = try await ABIRuntime.shared.resolveSwiftFunction(
-        named: "Example.load(_:)",
+    let load = try await ABIRuntime.shared.resolve(.function(
+        "Example.load(_:)",
         as: (@concurrent (String) async throws -> String).self
-    )
+    ))
     return try unsafe await load.unsafeInvoke("settings")
 }
 ```
@@ -72,12 +72,12 @@ Neither factory invokes the native body or requires earlier preparation. Optiona
 Prepared functions, methods, bound methods, and closures use one complete function type as their generic parameter:
 
 ```swift
-let decorate: NativeSwiftFunction<(String) -> String> = try runtime.resolveSwiftFunctionAndWait(
-    named: "Example.decorate(_:)", as: ((String) -> String).self
-)
-let load: NativeSwiftFunction<@concurrent (String) async throws -> String> = try runtime.resolveSwiftFunctionAndWait(
-    named: "Example.load(_:)", as: (@concurrent (String) async throws -> String).self
-)
+let decorate: NativeSwiftFunction<(String) -> String> = try runtime.resolveAndWait(.function(
+    "Example.decorate(_:)", as: ((String) -> String).self
+))
+let load: NativeSwiftFunction<@concurrent (String) async throws -> String> = try runtime.resolveAndWait(.function(
+    "Example.load(_:)", as: (@concurrent (String) async throws -> String).self
+))
 ```
 
 Invocation can throw bridge errors even when the native signature is nonthrowing. Native failures arrive as ``NativeSwiftError``. Include native errors and async isolation in the function type; see <doc:SwiftErrorABI> and <doc:SwiftAsyncABI>. For changes from earlier handle types, see <doc:SwiftAPIMigration>.
@@ -166,10 +166,10 @@ Incorrect signatures, invalid pointers, and violated ownership or isolation cont
 A native `T...` parameter takes one `Array<T>` argument in the call signature. For `func collect(_ values: String...) -> [String]`, use the complete declaration to select the variadic overload:
 
 ```swift
-let collect = try runtime.resolveSwiftFunctionAndWait(
-    named: "Example.collect(Swift.String...) -> [Swift.String]",
+let collect = try runtime.resolveAndWait(.function(
+    "Example.collect(Swift.String...) -> [Swift.String]",
     as: (([String]) -> [String]).self
-)
+))
 let values = try unsafe collect.unsafeInvoke(["first", "second"])
 ```
 

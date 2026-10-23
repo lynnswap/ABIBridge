@@ -9,12 +9,12 @@ For a capturing closure with typed arguments and a scoped `proceed` continuation
 Resolve the original declaration and its compiled replacement using ordinary Swift function types:
 
 ```swift
-let original = try await runtime.resolveSwiftFunction(
-    named: "Rendering.transform(_:)", as: ((String) -> String).self
-)
-let replacement = try await runtime.resolveSwiftFunction(
-    named: "Rendering.debugTransform(_:)", as: ((String) -> String).self
-)
+let original = try await runtime.resolve(.function(
+    "Rendering.transform(_:)", as: ((String) -> String).self
+))
+let replacement = try await runtime.resolve(.function(
+    "Rendering.debugTransform(_:)", as: ((String) -> String).self
+))
 let plan = try await unsafe original.prepareImportedReplacement(
     with: replacement, in: .framework(named: "PreviewClient")
 )

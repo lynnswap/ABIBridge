@@ -52,14 +52,18 @@ private final class ExtractedCounterOwner {
     do {
         let receiver = MethodExtractionReceiver(1)
         originalSwift = receiver
-        sync = try await runtime.object(receiver).resolveMethod(
-            named: "adding(_:)",
-            as: ((Int64) -> Int64).self
+        sync = try await runtime.object(receiver).resolve(
+            .method(
+                "adding(_:)",
+                as: ((Int64) -> Int64).self
+            )
         )
         .method
-        async = try await runtime.object(receiver).resolveMethod(
-            named: "addingLater(_:)",
-            as: (nonisolated(nonsending) (Int64) async throws -> Int64).self
+        async = try await runtime.object(receiver).resolve(
+            .method(
+                "addingLater(_:)",
+                as: (nonisolated(nonsending) (Int64) async throws -> Int64).self
+            )
         ).method
     }
     try check(
@@ -97,18 +101,22 @@ private final class ExtractedCounterOwner {
     let message: NativeObjCMethod<Int64, Int64> = try autoreleasepool {
         let object = MethodExtractionObject(1)
         originalObject = object
-        return try runtime.object(object).resolveMethodAndWait(
-            selector: "adding:",
-            as: ((Int64) -> Int64).self
+        return try runtime.object(object).resolveAndWait(
+            .message(
+                "adding:",
+                as: ((Int64) -> Int64).self
+            )
         ).method
     }
     try check(originalObject == nil, "Extracted Objective-C message releases the source binding")
     let object = MethodExtractionObject(35)
     let rebound = try message.bind(to: object)
-    let captured = try runtime.resolveObjCImplementationAndWait(
-        on: MethodExtractionObject.self,
-        selector: "adding:",
-        as: ((Int64) -> Int64).self
+    let captured = try runtime.resolveAndWait(
+        .implementation(
+            "adding:",
+            as: ((Int64) -> Int64).self
+        ),
+        on: MethodExtractionObject.self
     )
     try check(
         try unsafe rebound.unsafeInvoke(7) == 42,

@@ -24,19 +24,25 @@ struct SwiftClassHookTests {
         // Resolution prepares the conversions that the hook reuses.
         SwiftPreparationValue.preparationThreads.withLock { $0.removeAll() }
         defer { SwiftPreparationValue.preparationThreads.withLock { $0.removeAll() } }
-        let method = try await type.resolveMethod(
-            named: memberName + "(Swift.Int64) -> Swift.Int64",
-            as: ((Int64) -> SwiftPreparationValue).self
+        let method = try await type.resolve(
+            .method(
+                memberName + "(Swift.Int64) -> Swift.Int64",
+                as: ((Int64) -> SwiftPreparationValue).self
+            )
         )
-        let make = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.module + ".makeRenderer() -> " + name,
-            as: (() -> AnyObject).self,
+        let make = try await fixture.runtime.resolve(
+            .function(
+                fixture.module + ".makeRenderer() -> " + name,
+                as: (() -> AnyObject).self
+            ),
             in: fixture.providerScope
         )
-        let caller = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + "." + callerName + "(" + name
-                + ", Swift.Int64) -> Swift.Int64",
-            as: ((AnyObject, Int64) -> Int64).self,
+        let caller = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + "." + callerName + "(" + name
+                    + ", Swift.Int64) -> Swift.Int64",
+                as: ((AnyObject, Int64) -> Int64).self
+            ),
             in: fixture.callerScope
         )
         let object = try unsafe make.unsafeInvoke()
@@ -103,20 +109,26 @@ struct SwiftClassHookTests {
             named: fixture.module + ".HookThrower",
             in: fixture.providerScope
         )
-        let method = try await type.resolveMethod(
-            named: "value(_:)",
-            as: ((Int64) throws(NSError) -> Int64).self
+        let method = try await type.resolve(
+            .method(
+                "value(_:)",
+                as: ((Int64) throws(NSError) -> Int64).self
+            )
         )
-        let make = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.module + ".makeHookThrower() -> " + fixture.module + ".HookThrower",
-            as: (() -> AnyObject).self,
+        let make = try await fixture.runtime.resolve(
+            .function(
+                fixture.module + ".makeHookThrower() -> " + fixture.module + ".HookThrower",
+                as: (() -> AnyObject).self
+            ),
             in: fixture.providerScope
         )
         let errorName = try swiftFunctionTypeName(NSError.self)
-        let caller = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".importedThrower(" + fixture.module
-                + ".HookThrower, Swift.Int64) throws(" + errorName + ") -> Swift.Int64",
-            as: ((AnyObject, Int64) throws(NSError) -> Int64).self,
+        let caller = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".importedThrower(" + fixture.module
+                    + ".HookThrower, Swift.Int64) throws(" + errorName + ") -> Swift.Int64",
+                as: ((AnyObject, Int64) throws(NSError) -> Int64).self
+            ),
             in: fixture.callerScope
         )
         let object = try unsafe make.unsafeInvoke()
@@ -147,13 +159,17 @@ struct SwiftClassHookTests {
             as: Int64.self,
             in: fixture.providerScope
         )
-        let method = try await type.resolveMethod(
-            named: "scalar(_:)",
-            as: (@Sendable (Int64) -> Int64).self
+        let method = try await type.resolve(
+            .method(
+                "scalar(_:)",
+                as: (@Sendable (Int64) -> Int64).self
+            )
         )
-        let oracle = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".importedValueMethod(_:)",
-            as: ((Int64) -> Int64).self,
+        let oracle = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".importedValueMethod(_:)",
+                as: ((Int64) -> Int64).self
+            ),
             in: fixture.callerScope
         )
         let state = SwiftClassActorState()
@@ -175,16 +191,20 @@ struct SwiftClassHookTests {
         let fixture = try CompiledSwiftReplacementFixture(writable: false);
         defer { fixture.cleanup() }
         let baseName = fixture.module + ".ReplacementRenderer"
-        let oracle = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".classScalar(\(baseName), Swift.Int64) -> Swift.Int64",
-            as: ((AnyObject, Int64) -> Int64).self,
+        let oracle = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".classScalar(\(baseName), Swift.Int64) -> Swift.Int64",
+                as: ((AnyObject, Int64) -> Int64).self
+            ),
             in: fixture.callerScope
         )
         var objects: [AnyObject] = []
         for factory in ["makeRenderer", "makeInheritedRenderer", "makeOverridingRenderer"] {
-            let make = try await fixture.runtime.resolveSwiftFunction(
-                named: fixture.module + ".\(factory)() -> " + baseName,
-                as: (() -> AnyObject).self,
+            let make = try await fixture.runtime.resolve(
+                .function(
+                    fixture.module + ".\(factory)() -> " + baseName,
+                    as: (() -> AnyObject).self
+                ),
                 in: fixture.providerScope
             )
             objects.append(try unsafe make.unsafeInvoke())
@@ -196,9 +216,11 @@ struct SwiftClassHookTests {
                 named: fixture.module + "." + name,
                 in: fixture.providerScope
             )
-            let method = try await type.resolveMethod(
-                named: "scalar(_:)",
-                as: ((Int64) -> Int64).self
+            let method = try await type.resolve(
+                .method(
+                    "scalar(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             )
             let identity = ObjectIdentifier(objects[index])
             let hook = try await unsafe method.hookVirtualCalls(onFailure: {
@@ -222,28 +244,36 @@ struct SwiftClassHookTests {
         let fixture = try CompiledSwiftReplacementFixture(writable: false)
         defer { fixture.cleanup() }
         let baseName = fixture.module + ".ReplacementRenderer"
-        let kindOracle = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".classKind(\(baseName), Swift.Int64) -> Swift.Int64",
-            as: ((AnyObject, Int64) -> Int64).self,
+        let kindOracle = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".classKind(\(baseName), Swift.Int64) -> Swift.Int64",
+                as: ((AnyObject, Int64) -> Int64).self
+            ),
             in: fixture.callerScope
         )
         // Sets the class var, then reads it, through the object's metatype.
-        let levelOracle = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".classLevel(\(baseName), Swift.Int64) -> Swift.Int64",
-            as: ((AnyObject, Int64) -> Int64).self,
+        let levelOracle = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".classLevel(\(baseName), Swift.Int64) -> Swift.Int64",
+                as: ((AnyObject, Int64) -> Int64).self
+            ),
             in: fixture.callerScope
         )
-        let subscriptOracle = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule
-                + ".classSubscript(\(baseName), Swift.Int64) -> Swift.Int64",
-            as: ((AnyObject, Int64) -> Int64).self,
+        let subscriptOracle = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule
+                    + ".classSubscript(\(baseName), Swift.Int64) -> Swift.Int64",
+                as: ((AnyObject, Int64) -> Int64).self
+            ),
             in: fixture.callerScope
         )
         var objects: [AnyObject] = []
         for factory in ["makeRenderer", "makeInheritedRenderer", "makeOverridingRenderer"] {
-            let make = try await fixture.runtime.resolveSwiftFunction(
-                named: fixture.module + ".\(factory)() -> " + baseName,
-                as: (() -> AnyObject).self,
+            let make = try await fixture.runtime.resolve(
+                .function(
+                    fixture.module + ".\(factory)() -> " + baseName,
+                    as: (() -> AnyObject).self
+                ),
                 in: fixture.providerScope
             )
             objects.append(try unsafe make.unsafeInvoke())
@@ -259,15 +289,19 @@ struct SwiftClassHookTests {
                 named: fixture.module + "." + name,
                 in: fixture.providerScope
             )
-            let kind = try await type.resolveStaticMethod(
-                named: "kind(_:)",
-                as: ((Int64) -> Int64).self
+            let kind = try await type.resolve(
+                .staticMethod(
+                    "kind(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             )
-            let getter = try await type.resolveStaticGetter(named: "level", as: (() -> Int64).self)
-            let setter = try await type.resolveStaticSetter(named: "level", as: Int64.self)
-            let element = try await type.resolveStaticMethod(
-                named: "subscript.getter : (Swift.Int64) -> Swift.Int64",
-                as: ((Int64) -> Int64).self
+            let getter = try await type.resolve(.staticGetter("level", as: (() -> Int64).self))
+            let setter = try await type.resolve(.staticSetter("level", as: ((Int64) -> Void).self))
+            let element = try await type.resolve(
+                .staticMethod(
+                    "subscript.getter : (Swift.Int64) -> Swift.Int64",
+                    as: ((Int64) -> Int64).self
+                )
             )
             let hooks = [
                 try await unsafe kind.hookVirtualCalls(onFailure: failure) { call, value in
@@ -308,13 +342,17 @@ struct SwiftClassHookTests {
             named: baseName,
             in: fixture.providerScope
         )
-        let staticKind = try await base.resolveStaticMethod(
-            named: "staticKind(_:)",
-            as: ((Int64) -> Int64).self
+        let staticKind = try await base.resolve(
+            .staticMethod(
+                "staticKind(_:)",
+                as: ((Int64) -> Int64).self
+            )
         )
-        let free = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.module + ".scalar(_:)",
-            as: ((Int64) -> Int64).self,
+        let free = try await fixture.runtime.resolve(
+            .function(
+                fixture.module + ".scalar(_:)",
+                as: ((Int64) -> Int64).self
+            ),
             in: fixture.providerScope
         )
         for function in [staticKind, free] {
@@ -373,24 +411,32 @@ struct SwiftClassHookTests {
         let signature =
             "<A where A == \(fixture.module).HookGenericBase<A1>, "
             + "A1: \(fixture.module).HookNumber>() -> Swift.Int64"
-        let instance = try await type.resolveMethod(
-            named: member + "sameTypeInstance" + signature,
-            as: (() -> Int64).self,
-            genericArguments: [.type(firstType)]
+        let instance = try await type.resolve(
+            .method(
+                member + "sameTypeInstance" + signature,
+                as: (() -> Int64).self,
+                genericArguments: [.type(firstType)]
+            )
         )
-        let metatype = try await type.resolveStaticMethod(
-            named: "static " + member + "sameTypeStatic" + signature,
-            as: (() -> Int64).self,
-            genericArguments: [.type(firstType)]
+        let metatype = try await type.resolve(
+            .staticMethod(
+                "static " + member + "sameTypeStatic" + signature,
+                as: (() -> Int64).self,
+                genericArguments: [.type(firstType)]
+            )
         )
-        let instanceCall = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".sameTypeInstanceCall(Swift.Bool) -> Swift.Int64",
-            as: ((Bool) -> Int64).self,
+        let instanceCall = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".sameTypeInstanceCall(Swift.Bool) -> Swift.Int64",
+                as: ((Bool) -> Int64).self
+            ),
             in: fixture.callerScope
         )
-        let staticCall = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".sameTypeStaticCall(Swift.Bool) -> Swift.Int64",
-            as: ((Bool) -> Int64).self,
+        let staticCall = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".sameTypeStaticCall(Swift.Bool) -> Swift.Int64",
+                as: ((Bool) -> Int64).self
+            ),
             in: fixture.callerScope
         )
         for first in [true, false] {
@@ -429,26 +475,34 @@ struct SwiftClassHookTests {
             named: name,
             in: fixture.providerScope
         )
-        let make = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.module + ".makeRenderer() -> " + name,
-            as: (() -> AnyObject).self,
+        let make = try await fixture.runtime.resolve(
+            .function(
+                fixture.module + ".makeRenderer() -> " + name,
+                as: (() -> AnyObject).self
+            ),
             in: fixture.providerScope
         )
-        let makeChild = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.module + ".makeInheritedRenderer() -> " + name,
-            as: (() -> AnyObject).self,
+        let makeChild = try await fixture.runtime.resolve(
+            .function(
+                fixture.module + ".makeInheritedRenderer() -> " + name,
+                as: (() -> AnyObject).self
+            ),
             in: fixture.providerScope
         )
         let object = try unsafe make.unsafeInvoke(), child = try unsafe makeChild.unsafeInvoke()
         let identity = ObjectIdentifier(object)
-        let oracle = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".classScalar(\(name), Swift.Int64) -> Swift.Int64",
-            as: ((AnyObject, Int64) -> Int64).self,
+        let oracle = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".classScalar(\(name), Swift.Int64) -> Swift.Int64",
+                as: ((AnyObject, Int64) -> Int64).self
+            ),
             in: fixture.callerScope
         )
-        let method = try await type.resolveMethod(
-            named: "scalar(_:)",
-            as: (@Sendable (Int64) -> Int64).self
+        let method = try await type.resolve(
+            .method(
+                "scalar(_:)",
+                as: (@Sendable (Int64) -> Int64).self
+            )
         )
         let first = try await unsafe method.hookVirtualCalls(onFailure: {
             Issue.record("Unexpected: \($0)")
@@ -494,20 +548,26 @@ struct SwiftClassHookTests {
             named: name,
             in: fixture.providerScope
         )
-        let make = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.module + ".makeEditable() -> " + name,
-            as: (() -> AnyObject).self,
+        let make = try await fixture.runtime.resolve(
+            .function(
+                fixture.module + ".makeEditable() -> " + name,
+                as: (() -> AnyObject).self
+            ),
             in: fixture.providerScope
         )
         let object = try #require(try unsafe make.unsafeInvoke() as? NSObject)
-        let oracle = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".callEditable(\(name), Swift.Int64) -> Swift.Int64",
-            as: ((AnyObject, Int64) -> Int64).self,
+        let oracle = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".callEditable(\(name), Swift.Int64) -> Swift.Int64",
+                as: ((AnyObject, Int64) -> Int64).self
+            ),
             in: fixture.callerScope
         )
-        let method = try await type.resolveMethod(
-            named: "adding(_:)",
-            as: (@Sendable (Int64) -> Int64).self
+        let method = try await type.resolve(
+            .method(
+                "adding(_:)",
+                as: (@Sendable (Int64) -> Int64).self
+            )
         )
         let hook = try await unsafe method.hookImportedCalls(
             in: fixture.callerScope,
@@ -545,19 +605,23 @@ struct SwiftClassHookTests {
             named: name,
             in: fixture.providerScope
         )
-        let make = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.module + ".makeTextReceiver() -> " + name,
-            as: (() -> AnyObject).self,
+        let make = try await fixture.runtime.resolve(
+            .function(
+                fixture.module + ".makeTextReceiver() -> " + name,
+                as: (() -> AnyObject).self
+            ),
             in: fixture.providerScope
         )
         let object = try unsafe make.unsafeInvoke()
-        let oracle = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".setAndRead(\(name), Swift.String) -> Swift.String",
-            as: ((AnyObject, String) -> String).self,
+        let oracle = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".setAndRead(\(name), Swift.String) -> Swift.String",
+                as: ((AnyObject, String) -> String).self
+            ),
             in: fixture.callerScope
         )
-        let getter = try await type.resolveGetter(named: "text", as: (() -> String).self)
-        let setter = try await type.resolveSetter(named: "text", as: String.self)
+        let getter = try await type.resolve(.getter("text", as: (() -> String).self))
+        let setter = try await type.resolve(.setter("text", as: ((String) -> Void).self))
         let setterHook = try await unsafe setter.hookVirtualCalls(onFailure: {
             Issue.record("Unexpected: \($0)")
         }) { call, value in
@@ -588,24 +652,30 @@ struct SwiftClassHookTests {
             named: name,
             in: fixture.providerScope
         )
-        let make = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.module + ".makeCallbackRenderer(Swift.Int64) -> " + name,
-            as: ((Int64) -> AnyObject).self,
+        let make = try await fixture.runtime.resolve(
+            .function(
+                fixture.module + ".makeCallbackRenderer(Swift.Int64) -> " + name,
+                as: ((Int64) -> AnyObject).self
+            ),
             in: fixture.providerScope
         )
         var object: AnyObject? = try unsafe make.unsafeInvoke(10)
         weak var weakObject = object
         let identity = ObjectIdentifier(object!)
-        let oracle = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule
-                + ".callbackConsumeSelf(\(name), Swift.Int64) -> Swift.Int64",
-            as: ((AnyObject, Int64) -> Int64).self,
+        let oracle = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule
+                    + ".callbackConsumeSelf(\(name), Swift.Int64) -> Swift.Int64",
+                as: ((AnyObject, Int64) -> Int64).self
+            ),
             in: fixture.callerScope
         )
-        let method = try await type.resolveMethod(
-            named: "consumeSelf(_:)",
-            as: ((Int64) -> Int64).self,
-            consuming: true
+        let method = try await type.resolve(
+            .method(
+                "consumeSelf(_:)",
+                as: ((Int64) -> Int64).self,
+                receiver: .consuming
+            )
         )
         let hook = try await unsafe method.hookVirtualCalls(onFailure: {
             Issue.record("Unexpected: \($0)")
@@ -636,20 +706,26 @@ struct SwiftClassHookTests {
             named: name,
             in: fixture.providerScope
         )
-        let make = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.module + ".makeRenderer() -> " + name,
-            as: (() -> AnyObject).self,
+        let make = try await fixture.runtime.resolve(
+            .function(
+                fixture.module + ".makeRenderer() -> " + name,
+                as: (() -> AnyObject).self
+            ),
             in: fixture.providerScope
         )
         let object = SwiftClassObject(try unsafe make.unsafeInvoke())
-        let oracle = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".classScalar(\(name), Swift.Int64) -> Swift.Int64",
-            as: ((AnyObject, Int64) -> Int64).self,
+        let oracle = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".classScalar(\(name), Swift.Int64) -> Swift.Int64",
+                as: ((AnyObject, Int64) -> Int64).self
+            ),
             in: fixture.callerScope
         )
-        let method = try await type.resolveMethod(
-            named: "scalar(_:)",
-            as: (@Sendable (Int64) -> Int64).self
+        let method = try await type.resolve(
+            .method(
+                "scalar(_:)",
+                as: (@Sendable (Int64) -> Int64).self
+            )
         )
         let failures = Mutex<[String]>([])
         let state = SwiftClassActorState()
@@ -694,22 +770,28 @@ struct SwiftClassHookTests {
             named: name,
             in: fixture.providerScope
         )
-        let make = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.module + ".makeEscaped() -> " + name,
-            as: (() -> AnyObject).self,
+        let make = try await fixture.runtime.resolve(
+            .function(
+                fixture.module + ".makeEscaped() -> " + name,
+                as: (() -> AnyObject).self
+            ),
             in: fixture.providerScope
         )
         let object = try unsafe make.unsafeInvoke()
-        let first = try await type.resolveMethod(named: "init(_:)", as: ((Int64) -> Int64).self)
-        let second = try await type.resolveMethod(named: "deinit(_:)", as: ((Int64) -> Int64).self)
-        let firstCall = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".escapedInit(\(name), Swift.Int64) -> Swift.Int64",
-            as: ((AnyObject, Int64) -> Int64).self,
+        let first = try await type.resolve(.method("init(_:)", as: ((Int64) -> Int64).self))
+        let second = try await type.resolve(.method("deinit(_:)", as: ((Int64) -> Int64).self))
+        let firstCall = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".escapedInit(\(name), Swift.Int64) -> Swift.Int64",
+                as: ((AnyObject, Int64) -> Int64).self
+            ),
             in: fixture.callerScope
         )
-        let secondCall = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".escapedDeinit(\(name), Swift.Int64) -> Swift.Int64",
-            as: ((AnyObject, Int64) -> Int64).self,
+        let secondCall = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".escapedDeinit(\(name), Swift.Int64) -> Swift.Int64",
+                as: ((AnyObject, Int64) -> Int64).self
+            ),
             in: fixture.callerScope
         )
         let virtual = try await unsafe first.hookVirtualCalls(onFailure: {
@@ -723,13 +805,17 @@ struct SwiftClassHookTests {
         defer { imported.invalidate() }
         #expect(try unsafe firstCall.unsafeInvoke(object, 40) == 51)
         #expect(try unsafe secondCall.unsafeInvoke(object, 40) == 62)
-        let floating = try await type.resolveMethod(
-            named: "takeFloat(_:)",
-            as: ((Float) -> Int64).self
+        let floating = try await type.resolve(
+            .method(
+                "takeFloat(_:)",
+                as: ((Float) -> Int64).self
+            )
         )
-        let floatCall = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".callFloat(\(name), Swift.Float) -> Swift.Int64",
-            as: ((AnyObject, Float) -> Int64).self,
+        let floatCall = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".callFloat(\(name), Swift.Float) -> Swift.Int64",
+                as: ((AnyObject, Float) -> Int64).self
+            ),
             in: fixture.callerScope
         )
         let floatHook = try await unsafe floating.hookImportedCalls(
@@ -745,16 +831,20 @@ struct SwiftClassHookTests {
         let name = fixture.callerModule + ".CallerOverridingRenderer"
         let baseName = fixture.module + ".ReplacementRenderer"
         let type = try await fixture.runtime.resolveSwiftType(named: name, in: fixture.callerScope)
-        let make = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".makeCallerRenderer() -> " + name,
-            as: (() -> AnyObject).self,
+        let make = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".makeCallerRenderer() -> " + name,
+                as: (() -> AnyObject).self
+            ),
             in: fixture.callerScope
         )
         let object = try unsafe make.unsafeInvoke()
-        let method = try await type.resolveMethod(named: "text(_:)", as: ((String) -> String).self)
-        let oracle = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".classText(\(baseName), Swift.String) -> Swift.String",
-            as: ((AnyObject, String) -> String).self,
+        let method = try await type.resolve(.method("text(_:)", as: ((String) -> String).self))
+        let oracle = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".classText(\(baseName), Swift.String) -> Swift.String",
+                as: ((AnyObject, String) -> String).self
+            ),
             in: fixture.callerScope
         )
         let virtual = try await unsafe method.hookVirtualCalls(onFailure: {
@@ -782,7 +872,7 @@ struct SwiftClassHookTests {
             in: fixture.providerScope
         )
         do {
-            _ = try await base.resolveMethod(named: "deinit", as: (() -> UnsafeRawPointer?).self)
+            _ = try await base.resolve(.method("deinit", as: (() -> UnsafeRawPointer?).self))
             Issue.record("A deinitializing receiver cannot use an ordinary method")
         } catch ABIResolutionError.unsupportedDeclaration {}
     }
@@ -797,19 +887,23 @@ struct SwiftClassHookTests {
             named: name,
             in: fixture.providerScope
         )
-        let make = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.module + ".makeRenderer() -> " + name,
-            as: (() -> AnyObject).self,
+        let make = try await fixture.runtime.resolve(
+            .function(
+                fixture.module + ".makeRenderer() -> " + name,
+                as: (() -> AnyObject).self
+            ),
             in: fixture.providerScope
         )
         var object: AnyObject? = try unsafe make.unsafeInvoke()
         weak var observed = object
-        let oracle = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.callerModule + ".classScalar(\(name), Swift.Int64) -> Swift.Int64",
-            as: ((AnyObject, Int64) -> Int64).self,
+        let oracle = try await fixture.runtime.resolve(
+            .function(
+                fixture.callerModule + ".classScalar(\(name), Swift.Int64) -> Swift.Int64",
+                as: ((AnyObject, Int64) -> Int64).self
+            ),
             in: fixture.callerScope
         )
-        let method = try await type.resolveMethod(named: "scalar(_:)", as: ((Int64) -> Int64).self)
+        let method = try await type.resolve(.method("scalar(_:)", as: ((Int64) -> Int64).self))
         let saved = SavedSwiftClassInvocation(), failures = Mutex<[String]>([]),
             proceeded = Mutex(0)
         let first = try await unsafe method.hookVirtualCalls(onFailure: { error in
