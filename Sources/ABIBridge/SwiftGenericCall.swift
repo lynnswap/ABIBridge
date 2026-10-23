@@ -791,6 +791,15 @@ struct SwiftGenericCallPlan: Sendable {
         return result
     }
 
+    /// Whether the declaration receives a metatype as `self`, in the
+    /// context register: a class's static member or initializer, whose
+    /// metatype is thick, or a protocol's member, which receives `Self.Type`.
+    /// A static member of a struct or an enum receives its thin metatype,
+    /// which passes nothing.
+    var receivesMetatype: Bool {
+        receiver == .object || binding.declaration.protocolSelf != nil
+    }
+
     private var receiverContext: SwiftGenericTypeContext? {
         receiver == .object || receiver == .address ? context : nil
     }

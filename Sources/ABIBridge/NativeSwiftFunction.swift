@@ -155,18 +155,19 @@ public struct NativeSwiftFunction<Signature>: Sendable {
     }
 
     /// Requires that `replacement`'s declaration receives the calls of this
-    /// function's declaration: its call plan, and a static member's `self`
-    /// only where this declaration's callers pass one.
+    /// function's declaration: its call plan, and a metatype as `self` only
+    /// where this declaration's callers pass one, as its plan says.
     func requireReplacement<ReplacementSignature>(
         _ replacement: NativeSwiftFunction<ReplacementSignature>
     ) throws {
-        guard context != 0 || replacement.context == 0 else {
+        let passesMetatype = call.generic?.receivesMetatype == true
+        guard passesMetatype || replacement.call.generic?.receivesMetatype != true else {
             throw ABIResolutionError.signatureMismatch(
                 .init(
                     declaration: replacement.declaration,
                     position: .receiver,
                     expected: "No self, which the original's callers do not pass",
-                    found: ["The metatype of a static member as self"]
+                    found: ["A metatype as self"]
                 )
             )
         }

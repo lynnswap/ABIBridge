@@ -201,9 +201,7 @@ struct SwiftHookDeclarationTests {
                     public init() {}
                     @inline(never) open func generic<T>(_ value: T) -> Int64 { 1 }
                     @inline(never) open func plain(_ value: Int64) -> Int64 { value }
-                    @inline(never) open class func scaled(_ value: Int64) -> Int64 { value * 2 }
                 }
-                @inline(never) public func identity(_ value: Int64) -> Int64 { value }
                 """,
             linkArguments: ["-O", "-swift-version", "6", "-parse-as-library"]
         )
@@ -273,21 +271,93 @@ struct SwiftHookDeclarationTests {
         expectMismatch(at: .argument(0)) {
             _ = try unsafe plain.prepareImportedReplacementAndWait(with: generic, in: scope)
         }
-        // A class method takes its metatype as self, which callers of a free
-        // function do not pass; a free function ignores the one it receives.
-        let scaled = try await renderer.resolveStaticMethod(
-            named: "scaled(_:)",
-            as: ((Int64) -> Int64).self
+    }
+
+    /// A class's static member and a protocol's member receive a metatype as
+    /// `self`, as their call plans say; a struct's or an enum's static member
+    /// receives its thin metatype, which passes nothing. A replacement may
+    /// take a metatype only where callers of the original pass one.
+    @Test func staticReplacementsReceiveAMetatypeOnlyWhereCallersPassOne() async throws {
+        let module =
+            "StaticReplacement_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let provider = try FixtureLibrary(
+            load: false,
+            swiftModule: module,
+            swiftSource: """
+                @inline(never) public func identity(_ value: Int64) -> Int64 { value }
+                public struct ScaledValue {
+                    @inline(never) public static func scaled(_ value: Int64) -> Int64 { value * 3 }
+                }
+                public enum ScaledChoice {
+                    case only
+                    @inline(never) public static func scaled(_ value: Int64) -> Int64 { value * 4 }
+                }
+                open class ScaledClass {
+                    public init() {}
+                    @inline(never) open class func scaled(_ value: Int64) -> Int64 { value * 2 }
+                }
+                """,
+            linkArguments: ["-O", "-swift-version", "6", "-emit-module", "-parse-as-library"]
         )
-        let identity = try await function("identity(_:)", as: ((Int64) -> Int64).self)
-        expectMismatch(at: .receiver) {
-            _ = try unsafe identity.prepareImportedReplacementAndWait(with: scaled, in: scope)
+        let caller = try FixtureLibrary(
+            load: false,
+            swiftModule: module + "Caller",
+            swiftSource: """
+                import \(module)
+                @inline(never) public func callIdentity(_ value: Int64) -> Int64 { identity(value) }
+                """,
+            linkArguments: [
+                "-O", "-swift-version", "6", "-parse-as-library", "-I", provider.directory.path,
+                provider.libraryURL.path,
+            ]
+        )
+        try provider.load(); try caller.load()
+        defer { caller.cleanup(); provider.cleanup() }
+        let runtime = ABIRuntime()
+        let scope = ImageSelector.path(provider.libraryURL)
+        let callerScope = ImageSelector.path(caller.libraryURL)
+        let identity = try await runtime.resolveSwiftFunction(
+            named: module + ".identity(_:)",
+            as: ((Int64) -> Int64).self,
+            in: scope
+        )
+        let call = try await runtime.resolveSwiftFunction(
+            named: module + "Caller.callIdentity(_:)",
+            as: ((Int64) -> Int64).self,
+            in: callerScope
+        )
+        func scaled(_ type: String) async throws -> NativeSwiftFunction<(Int64) -> Int64> {
+            try await runtime.resolveSwiftType(named: module + "." + type, in: scope)
+                .resolveStaticMethod(named: "scaled(_:)", as: ((Int64) -> Int64).self)
         }
-        do {
-            _ = try unsafe scaled.prepareImportedReplacementAndWait(with: identity, in: scope)
-            Issue.record("The provider imports no reference to scaled(_:)")
-        } catch ABIResolutionError.declarationNotFound {
-            // Compatible: only import selection finds no reference.
+        for (type, factor) in [("ScaledValue", Int64(3)), ("ScaledChoice", 4)] {
+            let plan = try unsafe identity.prepareImportedReplacementAndWait(
+                with: try await scaled(type),
+                in: callerScope,
+                using: runtime
+            )
+            try unsafe plan.install()
+            #expect(try unsafe call.unsafeInvoke(20) == 20 * factor, "\(type)")
+            try plan.restore()
+            #expect(try unsafe call.unsafeInvoke(20) == 20, "\(type)")
+        }
+        let classScaled = try await scaled("ScaledClass")
+        #expect {
+            _ = try unsafe identity.prepareImportedReplacementAndWait(
+                with: classScaled,
+                in: callerScope,
+                using: runtime
+            )
+        } throws: { error in
+            guard case ABIResolutionError.signatureMismatch(let mismatch) = error else {
+                return false
+            }
+            return mismatch.position == .receiver
+        }
+        // A free function ignores the metatype that callers of a class
+        // method pass; the provider imports no reference to it.
+        #expect(throws: ABIResolutionError.declarationNotFound(classScaled.declaration)) {
+            _ = try unsafe classScaled.prepareImportedReplacementAndWait(with: identity, in: scope)
         }
     }
 }
