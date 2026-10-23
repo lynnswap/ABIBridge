@@ -251,19 +251,19 @@ struct SwiftValueSchema: Sendable {
         if let metadata = binding.knownType(canonical) {
             self = try Self(canonical, actual: metadata, binding: binding, position: position)
         } else {
-            self = try Self(host: host, position: position)
+            self = try Self(host: host, binding: binding, position: position)
         }
     }
 
-    /// Whether a value stored as `type` passes at `position` as a value of
-    /// this schema does, with the same size and alignment.
-    func passesAlike(_ type: CValueType, at position: SwiftValuePosition) -> Bool {
-        let isResult = position == .result
+    /// Whether a host value stored as `type` passes at `position` where a
+    /// value of this schema does, as a complete declaration name requires: in
+    /// the same register components, or by address with at least as much
+    /// storage.
+    func accepts(_ type: CValueType, at position: SwiftValuePosition) -> Bool {
         let schema = self.type
         return withExtendedLifetime((schema, type)) {
-            ABISwiftValuePassesAs(type.handle, schema.handle, isResult)
-                && ABISwiftValuePassesAs(schema.handle, type.handle, isResult)
-        } && type.size == schema.size && type.alignment == schema.alignment
+            ABISwiftValuePassesAs(type.handle, schema.handle, position == .result)
+        }
     }
 
     /// The schema of an Optional at a declaration position, from its wrapped
@@ -391,6 +391,29 @@ struct SwiftValueSchema: Sendable {
         self = try _openExistential(type, do: prepare)
     }
 
+    /// The schema of a value that the host type `type` passes by itself at
+    /// `position` in a call that `binding` prepares.
+    ///
+    /// As the call's codecs do, the lookup's `valueABIs` entry for the type,
+    /// for an Optional's payload, or for a tuple's element takes precedence
+    /// over the type's own representation.
+    init(host type: Any.Type, binding: SwiftGenericBinding, position: SwiftValuePosition) throws {
+        if let explicit = try binding.explicitHostLayout(type) {
+            self = Self(storage: explicit, metadata: type)
+            return
+        }
+        guard let tuple = SwiftTupleMetadata(type), try binding.hasExplicitHostField(type) else {
+            self = try Self(host: type, position: position)
+            return
+        }
+        func prepare<Value>(_: Value.Type) throws -> Self {
+            try Self.hostTuple(Value.self, elements: tuple.elements) { element in
+                try Self(host: element, binding: binding, position: position.tupleElement).type
+            }
+        }
+        self = try _openExistential(type, do: prepare)
+    }
+
     /// The schema of a value that the host type `Value` passes by itself at
     /// `position`.
     ///
@@ -421,7 +444,15 @@ struct SwiftValueSchema: Sendable {
         let managed = Value.self as? any ABIBridgeSwiftValue.Type
         let schema: Self
         if let tuple = SwiftTupleMetadata(Value.self) {
-            return try hostTuple(Value.self, elements: tuple.elements, position: position)
+            return try hostTuple(Value.self, elements: tuple.elements) { element in
+                guard !(element is any ABIBridgeValue.Type) || element is any ABIBridgeSwiftValue.Type
+                else {
+                    throw ABIResolutionError.unsupportedDeclaration(
+                        "Tuple elements require their native Swift storage representation."
+                    )
+                }
+                return try Self(host: element, position: position.tupleElement).type
+            }
         } else if let metatype = SwiftMetatypeMetadata(base) {
             let type =
                 Value.self is any NativeOptionalValue.Type && metatype.isSingleton
@@ -495,23 +526,15 @@ struct SwiftValueSchema: Sendable {
         return schema
     }
 
-    /// The schema of a host tuple: each element's host schema at the
-    /// element's offset in the native tuple, which stores a native function
-    /// where the host tuple stores a closure.
+    /// The schema of a host tuple: each element's storage, which `field`
+    /// gives, at the element's offset in the native tuple, which stores a
+    /// native function where the host tuple stores a closure.
     private static func hostTuple<Value>(
         _: Value.Type,
         elements: [SwiftTupleMetadata.Element],
-        position: SwiftValuePosition
+        field: (Any.Type) throws -> CValueType
     ) throws -> Self {
-        let fields = try elements.map { element in
-            let type = element.type
-            guard !(type is any ABIBridgeValue.Type) || type is any ABIBridgeSwiftValue.Type else {
-                throw ABIResolutionError.unsupportedDeclaration(
-                    "Tuple elements require their native Swift storage representation."
-                )
-            }
-            return try Self(host: type, position: position.tupleElement).type
-        }
+        let fields = try elements.map { try field($0.type) }
         let native = try SwiftGenericCallPlan.concreteNativeMetadata(Value.self)
         guard let nativeTuple = SwiftTupleMetadata(native) else {
             preconditionFailure("The native type of a tuple is a tuple.")

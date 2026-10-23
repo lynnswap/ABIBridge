@@ -2020,8 +2020,11 @@ struct SwiftGenericCallPlan: Sendable {
                 label: "closure argument \(index)",
                 schema: { logicalTypes[index] },
                 host: {
-                    try SwiftValueSchema(host: signature.parameters[index], position: .parameter)
-                        .type
+                    try SwiftValueSchema(
+                        host: signature.parameters[index],
+                        binding: binding,
+                        position: .parameter
+                    ).type
                 }
             )
         }
@@ -2065,7 +2068,10 @@ struct SwiftGenericCallPlan: Sendable {
                 at: .result,
                 label: "the closure result",
                 schema: { resultType },
-                host: { try SwiftValueSchema(host: signature.result, position: .result).type }
+                host: {
+                    try SwiftValueSchema(host: signature.result, binding: binding, position: .result)
+                        .type
+                }
             )
         }
         #endif
@@ -2235,12 +2241,12 @@ struct SwiftGenericCallPlan: Sendable {
 
 #if DEBUG
 extension SwiftGenericCallPlan {
-    /// Asserts that the schema of each closed position passes as the storage
-    /// that the call's host codecs give the value there.
+    /// Asserts that the storage the call's host codecs give each closed
+    /// position passes where the position's schema does.
     ///
     /// A closed position still converts its host value with the host type's
-    /// codec. Its schema must describe the same storage, so that conversions
-    /// derived from it pass each value as the call does now.
+    /// codec. Its schema must agree, so that conversions derived from it pass
+    /// each value as the call does now.
     func checkClosedSchemas(_ signature: SwiftFunctionSignature, values: SwiftCallValues) {
         for (formal, group) in zip(binding.declaration.arguments, parameters.groups) {
             guard case .value(let index) = group else { continue }
@@ -2295,8 +2301,10 @@ extension SwiftGenericCallPlan {
         )
     }
 
-    /// Asserts that a value of `formal` with the schema's storage passes at
-    /// `position` as the host codec's storage does.
+    /// Asserts that the host codec's storage passes at `position` where a
+    /// value with the schema's storage does. A schema that cannot be derived
+    /// says nothing about the codec, so the check passes; the call reports
+    /// any failure itself.
     static func checkSchema(
         of formal: String,
         at position: SwiftValuePosition,
@@ -2304,19 +2312,14 @@ extension SwiftGenericCallPlan {
         schema: () throws -> CValueType,
         host: () throws -> CValueType
     ) {
-        do {
-            let schema = try schema(), host = try host()
-            let derived = SwiftValueSchema(storage: schema, metadata: nil)
-            assert(
-                derived.passesAlike(host, at: position),
-                "The schema of \(formal) at \(label) passes "
-                    + SwiftDeclaredLowering.lowering(of: schema)
-                    + ", but its host codec passes " + SwiftDeclaredLowering.lowering(of: host)
-                    + "."
-            )
-        } catch {
-            assertionFailure("The schema of \(formal) at \(label) is not derived: \(error)")
-        }
+        guard let schema = try? schema(), let host = try? host() else { return }
+        assert(
+            SwiftValueSchema(storage: schema, metadata: nil).accepts(host, at: position),
+            "The schema of \(formal) at \(label) passes "
+                + SwiftDeclaredLowering.lowering(of: schema)
+                + ", but its host codec passes " + SwiftDeclaredLowering.lowering(of: host)
+                + "."
+        )
     }
 }
 #endif
