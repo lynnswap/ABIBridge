@@ -52,6 +52,12 @@ struct SwiftGenericBinding: Sendable {
     let typeOwners: [NativeSwiftType]
     private let boundTypes = SwiftBoundTypeStorage()
     private let knownTypes: [[UInt8]: Any.Type]
+    /// The descriptors of the private and local types that the caller's
+    /// types name, keyed by the declarations that establish them.
+    private let anonymousContextDescriptors: [[UInt8]: SwiftNominalDescriptor]
+    /// The caller's private and local types whose declarations are not
+    /// established.
+    private let undeclaredTypes: [Any.Type]
     private let valueABIs: [ObjectIdentifier: NativeType]
     private let resolver: SymbolResolver
     private var packElementIndex: Int?
@@ -165,6 +171,31 @@ struct SwiftGenericBinding: Sendable {
         self.arguments = bound
         typeOwners = owners
         knownTypes = known
+        // The runtime names a private or local type by its anonymous
+        // context's address. Its declaration, which a declared type spells,
+        // comes from the same evidence as a closure discriminator's.
+        var declared: [[UInt8]: SwiftNominalDescriptor] = [:]
+        var undeclared: [Any.Type] = []
+        let roots =
+            valueABIs.keys.map(\.metadata) + bound.values.flatMap(\.types) + signature.parameters
+            + [signature.result, signature.failure]
+        for type in roots.flatMap({ (try? Self.anonymousContextTypes(in: $0)) ?? [] }) {
+            guard let declaration = swiftAnonymousContextDeclaration(type) else {
+                if !undeclared.contains(where: { $0 == type }) { undeclared.append(type) }
+                continue
+            }
+            // A declaration that this cannot key leaves the symbol lookup.
+            let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
+            if let name = DeclarationKey.demangle("$s" + declaration, language: .swift),
+                let key = try? Self.key(name),
+                let address = ABISwiftTypeDescriptor(metadata),
+                let descriptor = try? SwiftNominalDescriptor(address: address)
+            {
+                declared[key] = descriptor
+            }
+        }
+        anonymousContextDescriptors = declared
+        undeclaredTypes = undeclared
         let invertibleProtocols = [
             (name: "Swift.Copyable", mask: UInt16(1), accepts: SwiftCopyability.accepts),
             (name: "Swift.Escapable", mask: UInt16(2), accepts: SwiftEscapability.accepts),
@@ -1188,17 +1219,39 @@ struct SwiftGenericBinding: Sendable {
             {
                 return [type]
             }
-            descriptor = try SwiftNominalDescriptor(
-                resolver.resolve(
-                    .init(
-                        name: "nominal type descriptor for " + declarationName,
-                        language: .swift,
-                        kind: .data
-                    ),
-                    in: .automatic,
-                    loading: .loadedOnly
-                )
-            )
+            if let declared = (try? Self.key(declarationName)).flatMap({
+                anonymousContextDescriptors[$0]
+            }) {
+                descriptor = declared
+            } else {
+                do {
+                    descriptor = try SwiftNominalDescriptor(
+                        resolver.resolve(
+                            .init(
+                                name: "nominal type descriptor for " + declarationName,
+                                language: .swift,
+                                kind: .data
+                            ),
+                            in: .automatic,
+                            loading: .loadedOnly
+                        )
+                    )
+                } catch ABIResolutionError.declarationNotFound where !undeclaredTypes.isEmpty {
+                    // An undeclared caller type can be the one it declares.
+                    throw ABIResolutionError.metadataUnavailable(
+                        "Cannot resolve \(declarationName): no loaded image has the symbol of its "
+                            + "nominal type descriptor. The requested signature names "
+                            + undeclaredTypes.map { String(reflecting: $0) }.joined(separator: ", ")
+                            + ", which the runtime spells by an anonymous context's address, as a "
+                            + "private, fileprivate, or local declaration or a type within one, "
+                            + "and whose declaration ABIBridge cannot establish. "
+                            + swiftMissingAnonymousContextDeclaration
+                            + " Keep the image's local symbols, or pass the value as a "
+                            + "NativeSwiftValue or NativeSwiftBorrowedValue, which takes its type "
+                            + "from the declaration."
+                    )
+                }
+            }
         }
         let arguments: [NativeSwiftGenericArgument] = try parameters.map { parameter in
             let values = try types(parameter, packIndex: packIndex).map {
@@ -1583,9 +1636,70 @@ struct SwiftGenericBinding: Sendable {
         } else {
             actual = try swiftNativeTypeName(type)
         }
-        guard try Self.key(expected) == Self.key(actual) else {
-            throw ABIResolutionError.signatureMismatch(.init(expected: expected, found: [actual]))
+        guard try Self.key(expected) != Self.key(actual) else { return }
+        // Names that disagree can still name one type: the runtime spells a
+        // private or local type by its anonymous context's address, and a
+        // declaration by its private or local discriminator. The metadata
+        // that the declared type resolves to decides, the same resolution
+        // that reference conversions and closure plans make before this.
+        let mismatch = ABIResolutionError.signatureMismatch(
+            .init(expected: expected, found: [actual])
+        )
+        let host = (type as? any SwiftClosureValue.Type)?.swiftFunctionType ?? type
+        let native: Any.Type
+        do {
+            native = try types(formal, packIndex: packIndex)[0]
+        } catch {
+            // Neither names nor metadata decide for a private host type whose
+            // declaration is not established.
+            let names = (try? Self.anonymousContextTypes(in: host)) ?? []
+            if names.contains(where: { type in undeclaredTypes.contains { $0 == type } }) {
+                throw error
+            }
+            throw mismatch
         }
+        guard native == host else { throw mismatch }
+    }
+
+    /// The structs, enums, and classes that anonymous contexts declare and
+    /// that `type` names, as itself or within its generic arguments, tuple
+    /// elements, function types, metatypes, or parameterized existentials.
+    private static func anonymousContextTypes(in type: Any.Type) throws -> [Any.Type] {
+        if let tuple = SwiftTupleMetadata(type) {
+            return try tuple.elements.flatMap { try anonymousContextTypes(in: $0.type) }
+        }
+        if runtimeMetadataKind(type) == .function {
+            let info = try SwiftFunctionMetadata(type)
+            let failure: [Any.Type] = info.extendedFlags & 1 != 0 ? [info.failure] : []
+            let actor: [Any.Type] = info.globalActor.map { [$0] } ?? []
+            return try ([info.result] + info.parameters + failure + actor)
+                .flatMap(anonymousContextTypes)
+        }
+        if let metatype = SwiftMetatypeMetadata(type), let instance = metatype.instance {
+            return try anonymousContextTypes(in: instance)
+        }
+        let pointer = unsafeBitCast(type, to: UnsafeRawPointer.self)
+        var failure: OpaquePointer?
+        guard let metadata = ABICopySwiftTypeMetadata(pointer, &failure) else {
+            throw ABIResolutionError.metadataUnavailable(
+                consumeRuntimeCallFailure(failure, domain: "ABIBridge.SwiftMetadata")
+                    .localizedDescription
+            )
+        }
+        defer { ABIReleaseSwiftTypeMetadata(metadata) }
+        // The arguments of a generic nominal type or a parameterized
+        // existential, with each pack's elements.
+        let arguments = (0..<ABISwiftTypeMetadataArgumentCount(metadata)).flatMap { index in
+            (0..<ABISwiftTypeMetadataArgumentElementCount(metadata, index)).map { element in
+                unsafeBitCast(
+                    ABISwiftTypeMetadataArgumentElement(metadata, index, element)!,
+                    to: Any.Type.self
+                )
+            }
+        }
+        var types = try arguments.flatMap(anonymousContextTypes)
+        if ABISwiftTypeIsDeclaredInAnonymousContext(pointer) { types.append(type) }
+        return types
     }
 
     /// The `valueABIs` layout of a closed value of a host type. Class

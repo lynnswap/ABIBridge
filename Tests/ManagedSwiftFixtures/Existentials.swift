@@ -26,6 +26,10 @@ extension ExistentialPackBase: ExistentialPackMarker {}
     _ body: (any ExistentialPackBase<repeat each Value> & ExistentialPackMarker) throws -> any ExistentialPackBase<repeat each Value> & ExistentialPackMarker
 ) rethrows -> any ExistentialPackBase<repeat each Value> & ExistentialPackMarker { try body(value) }
 @inline(never) public func echoNSObjectCopying<Value>(_ value: any NSObject & NSCopying, _ tag: Value) -> any NSObject & NSCopying { value }
+// The runtime has no mangled name for an Objective-C superclass existential.
+@inline(never) public func countNSObjectCopyingPairs<Value>(
+    _ pairs: [(Value, any NSObject & NSCopying)]
+) -> Int64 { Int64(pairs.count) }
 
 public final class ExistentialCache: NSCache<NSString, NSObject>, ExistentialPackMarker { public var number: Int64 { 42 } }
 @inline(never) public func echoObjCCacheExistential<Value>(_ value: any NSCache<NSString, NSObject> & ExistentialPackMarker,

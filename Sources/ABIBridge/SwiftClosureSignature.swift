@@ -123,14 +123,38 @@ func swiftClosureTypeHash(_ type: Any.Type) throws -> String {
     return "$s" + name
 }
 
+/// The mangled declaration, such as `4Priv1P33_…LLV`, of a struct, enum, or
+/// class that an anonymous context declares: a private, fileprivate, or local
+/// type, or a type within one. Declarations spell such a type with a private
+/// or local discriminator. Its runtime name instead spells the anonymous
+/// context that wraps it, or one of its enclosing types, by address.
+///
+/// The name that the type's anonymous context records in a -g -Onone build
+/// establishes the declaration, and so does the symbol of the type's nominal
+/// type descriptor. A type nested in a private type has no anonymous context
+/// of its own, so only its descriptor symbol establishes it. Nil when neither
+/// establishes it, for the reason `swiftMissingAnonymousContextDeclaration`
+/// gives.
+func swiftAnonymousContextDeclaration(_ type: Any.Type) -> String? {
+    let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
+    if let recorded = ABISwiftTypeAnonymousContextDeclaration(metadata) {
+        return String(cString: recorded)
+    }
+    return swiftTypeDeclarationFromSymbols(type)
+}
+
+/// Why `swiftAnonymousContextDeclaration(_:)` establishes no declaration.
+let swiftMissingAnonymousContextDeclaration =
+    "Its image has no symbol of its nominal type descriptor, which spells the declaration, as "
+    + "when the image is stripped of local symbols, and no anonymous context records the "
+    + "declaration, which Swift records only in -g -Onone builds."
+
 /// A struct or enum's declaration as the compiler mangles it in a
 /// discriminator.
 ///
-/// A private or fileprivate type, or a local one, is mangled with a private
-/// or local discriminator. Its runtime name instead spells the anonymous
-/// context that wraps it, or one of its enclosing types, by address. The
-/// type's descriptor symbol establishes its declaration, and so does the
-/// name that its anonymous context records in a -g -Onone build.
+/// A type that an anonymous context declares is mangled with its private or
+/// local discriminator, as `swiftAnonymousContextDeclaration(_:)`
+/// establishes it.
 ///
 /// A type in an extension of a generic type is mangled with the extension's
 /// generic signature, which its runtime name omits and its context
@@ -143,20 +167,15 @@ func swiftClosureTypeHash(_ type: Any.Type) throws -> String {
 func swiftNominalClosureDeclaration(_ type: Any.Type, runtimeName: String) throws -> String {
     let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
     if ABISwiftTypeIsDeclaredInAnonymousContext(metadata) {
-        if let recorded = ABISwiftTypeAnonymousContextDeclaration(metadata) {
-            return String(cString: recorded)
-        }
-        guard let declaration = swiftTypeDeclarationFromSymbols(type) else {
+        guard let declaration = swiftAnonymousContextDeclaration(type) else {
             throw ABIResolutionError.metadataUnavailable(
                 "No Swift closure type identity for \(String(reflecting: type)): it is declared "
                     + "in an anonymous context, as a private, fileprivate, or local declaration or "
                     + "within one. The closure's pointer-authentication discriminator hashes the "
                     + "declaration with its private or local discriminator, which its runtime name "
-                    + "replaces with the context's address. Its image has no symbol of its nominal "
-                    + "type descriptor, which spells the declaration, as when the image is stripped "
-                    + "of local symbols, and no anonymous context records the declaration, which "
-                    + "Swift records only in -g -Onone builds. Call through a compiled adapter "
-                    + "instead, or keep the image's local symbols."
+                    + "replaces with the context's address. "
+                    + swiftMissingAnonymousContextDeclaration
+                    + " Call through a compiled adapter instead, or keep the image's local symbols."
             )
         }
         return declaration

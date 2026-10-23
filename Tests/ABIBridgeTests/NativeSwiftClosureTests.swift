@@ -1326,6 +1326,74 @@ struct NativeSwiftClosureTests {
             )
         }
     }
+
+    /// A host type names a private type by its runtime name, whose anonymous
+    /// context the declaration spells as its private discriminator. The same
+    /// evidence establishes the declaration as for discriminators. Here only
+    /// the descriptor symbols are removed, which keeps the private function's
+    /// own symbol, so that only the evidence decides.
+    @Test(arguments: AnonymousContextEvidence.allCases)
+    func privateHostTypesResolveFromTheirDeclarations(
+        evidence: AnonymousContextEvidence
+    ) async throws {
+        let module = "PrivateHost_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let source = """
+            // A String field sets the addressable bit, which Hidden leaves clear.
+            public struct Label { public var text: String = "" }
+            private struct Hidden { var x: Double, y: Double }
+            public func hiddenType() -> Any.Type { Hidden.self }
+            @inline(never) private func apply(_ callback: (Hidden) -> Double) -> Double {
+                callback(.init(x: 40, y: 2))
+            }
+            public func keepApply() -> Double { apply { $0.x + $0.y } }
+            """
+        let strip = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString + ".txt")
+        try "_$s*Mn\n".write(to: strip, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: strip) }
+        let library = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: source,
+            linkArguments: ["-parse-as-library", "-swift-version", "6"]
+                + (evidence == .localSymbols
+                    ? [] : ["-Xlinker", "-non_global_symbols_strip_list", "-Xlinker", strip.path])
+                + (evidence == .recordedNames ? ["-g"] : [])
+        )
+        defer { library.cleanup() }
+        let runtime = ABIRuntime()
+        let hiddenType = try runtime.resolveSwiftFunctionAndWait(
+            named: module + ".hiddenType()",
+            as: (() -> Any.Type).self,
+            in: .path(library.libraryURL)
+        )
+        let declaration = try #require(
+            library.definedSymbols().compactMap {
+                DeclarationKey.demangle($0, language: .swift)
+            }.first { swiftDeclaration($0, declares: "apply") }
+        )
+        func apply<Hidden>(_: Hidden.Type) throws -> Double {
+            typealias Callback = NativeSwiftClosure<(Hidden) -> Double>
+            let apply = try runtime.resolveSwiftFunctionAndWait(
+                named: declaration,
+                as: ((Callback) -> Double).self,
+                in: .path(library.libraryURL)
+            )
+            return try unsafe apply.unsafeInvoke(Callback { _ in 42 })
+        }
+        let type = try unsafe hiddenType.unsafeInvoke()
+        guard evidence == .none else {
+            #expect(try _openExistential(type, do: apply) == 42)
+            return
+        }
+        #expect {
+            try _openExistential(type, do: apply)
+        } throws: { error in
+            guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                return false
+            }
+            return message.contains("no anonymous context records the declaration")
+        }
+    }
     #endif
 
     #if os(macOS)
