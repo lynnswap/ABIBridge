@@ -53,12 +53,6 @@ struct SwiftReceiverRequest: Sendable {
     /// Explicit self ABI; nil uses the type representation or the declaration.
     var abi: NativeType?
 
-    init(isMutating: Bool?, isConsuming: Bool, abi: NativeType?) {
-        self.isMutating = isMutating
-        self.isConsuming = isConsuming
-        self.abi = abi
-    }
-
     init(
         _ convention: NativeSwiftReceiverConvention?,
         role: SwiftMemberRequest.Role,
@@ -88,11 +82,6 @@ struct SwiftReceiverRequest: Sendable {
 public struct NativeSwiftFunctionRequest<Signature>: Sendable {
     let name: String
     let options: SwiftLookupOptions
-
-    init(name: String, options: SwiftLookupOptions) {
-        self.name = name
-        self.options = options
-    }
 
     /// Describes a free function.
     ///
@@ -162,16 +151,6 @@ public struct NativeSwiftInstanceMemberRequest<Signature>: Sendable {
     let member: SwiftMemberRequest
     let receiver: SwiftReceiverRequest
 
-    init(
-        _ role: SwiftMemberRequest.Role,
-        name: String,
-        options: SwiftLookupOptions,
-        receiver: SwiftReceiverRequest
-    ) {
-        member = .init(role: role, isStatic: false, name: name, options: options)
-        self.receiver = receiver
-    }
-
     private init(
         _ role: SwiftMemberRequest.Role,
         name: String,
@@ -181,16 +160,17 @@ public struct NativeSwiftInstanceMemberRequest<Signature>: Sendable {
         receiverABI: NativeType?,
         receiver convention: NativeSwiftReceiverConvention?
     ) {
-        self.init(
-            role,
+        member = .init(
+            role: role,
+            isStatic: false,
             name: name,
             options: .init(
                 genericArguments: genericArguments,
                 declaredSignature: declaredSignature,
                 valueABIs: valueABIs
-            ),
-            receiver: .init(convention, role: role, abi: receiverABI)
+            )
         )
+        receiver = .init(convention, role: role, abi: receiverABI)
     }
 
     /// Describes an instance method.
@@ -327,15 +307,6 @@ public struct NativeSwiftInstanceMemberRequest<Signature>: Sendable {
 public struct NativeSwiftTypeMemberRequest<Signature>: Sendable {
     let member: SwiftMemberRequest
 
-    init(_ role: SwiftMemberRequest.Role, name: String, options: SwiftLookupOptions) {
-        member = .init(
-            role: role,
-            isStatic: role != .initializer,
-            name: name,
-            options: options
-        )
-    }
-
     private init(
         _ role: SwiftMemberRequest.Role,
         name: String,
@@ -343,8 +314,9 @@ public struct NativeSwiftTypeMemberRequest<Signature>: Sendable {
         declaredSignature: String?,
         valueABIs: [NativeSwiftType: NativeType]
     ) {
-        self.init(
-            role,
+        member = .init(
+            role: role,
+            isStatic: role != .initializer,
             name: name,
             options: .init(
                 genericArguments: genericArguments,

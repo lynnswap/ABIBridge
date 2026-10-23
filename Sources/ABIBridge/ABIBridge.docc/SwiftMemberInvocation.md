@@ -299,7 +299,7 @@ Use ``NativeSwiftClosure`` for callback parameters and returned closures. Initia
 
 ## Subscript accessors
 
-Request a subscript's accessors with `getter` and `setter`, naming the complete accessor declaration. For `subscript(_ key: Element.ID) -> Element?` in a provider's `Lookup<Element: Identifiable>`, the getter takes one index and returns an optional element. The setter takes the new value first, followed by the indices.
+A subscript's accessors are the getter and setter of the member named `subscript`. The index and value types in the signature select among a type's subscripts, as they select among overloads of a label-only method name; a complete accessor declaration, such as `"Example.Lookup.subscript.getter : (A.ID) -> A?"`, selects exactly one. For `subscript(_ key: Element.ID) -> Element?` in a provider's `Lookup<Element: Identifiable>`, the getter takes one index and returns an optional element. The setter takes the new value first, followed by the indices. A generic subscript's own type parameters go in `genericArguments:`.
 
 This example uses owned runtime values: `lookup` contains `Lookup<Element>`, `key` contains `Element.ID`, and `replacement` contains `Optional<Element>`. The provider's receiver, index, and result use indirect storage:
 
@@ -309,17 +309,16 @@ let valueABIs = [
     replacement.type: try NativeType.opaque(named: replacement.type.name),
 ]
 let get = try await lookup.type.resolve(.getter(
-    "Example.Lookup.subscript.getter : (A.ID) -> A?",
+    "subscript",
     as: ((NativeSwiftValue) -> NativeSwiftValue).self,
     valueABIs: valueABIs,
     receiverABI: .opaque(named: lookup.type.name)
 ))
 let set = try await lookup.type.resolve(.setter(
-    "Example.Lookup.subscript.setter : (A.ID) -> A?",
+    "subscript",
     as: ((NativeSwiftValue, NativeSwiftValue) -> Void).self,
     valueABIs: valueABIs,
-    receiverABI: .opaque(named: lookup.type.name),
-    receiver: .mutating
+    receiverABI: .opaque(named: lookup.type.name)
 ))
 let setterKey = try key.copy()
 try unsafe set.unsafeInvoke(on: lookup, replacement, setterKey)
@@ -328,7 +327,7 @@ let updated = try unsafe get.unsafeInvoke(on: lookup, key)
 
 The setter consumes `replacement` and `setterKey`; the original `key` remains usable for the getter. Typed setter arguments transfer independent copies. A value setter receives `self` inout; pass a typed receiver with `inout` or an owned `NativeSwiftValue` whose storage can be updated.
 
-`resolveAndWait` performs the same lookup synchronously. Property getters, including properties returning closures, keep their zero-argument signature.
+`resolveAndWait` performs the same lookup synchronously. A property getter, including one returning a closure, takes no arguments; only a subscript's getter takes indices.
 
 ## Writable key paths
 

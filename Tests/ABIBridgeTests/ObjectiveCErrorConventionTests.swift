@@ -47,6 +47,30 @@ struct ObjectiveCErrorConventionTests {
         expectFixtureError(code: 7) { try unsafe implementation.unsafeInvoke(on: fixture, false) }
     }
 
+    @Test func selectorsDescribeThrowingMessages() async throws {
+        let fixture = try ABIErrorConventionFixture(value: 4)
+        let runtime = ABIRuntime.shared
+        let selector = #selector(ABIErrorConventionFixture.check(_:))
+        let bound = try await runtime.object(fixture).resolve(
+            .message(selector, as: ((Bool) throws -> Void).self)
+        )
+        try unsafe bound.unsafeInvoke(true)
+        expectFixtureError(code: 4) { try unsafe bound.unsafeInvoke(false) }
+
+        let message = try runtime.resolveAndWait(
+            .message(selector, as: ((Bool) throws -> Void).self),
+            on: ABIErrorConventionFixture.self
+        )
+        expectFixtureError(code: 4) { try unsafe message.unsafeInvoke(on: fixture, false) }
+
+        let implementation = try await runtime.resolve(
+            .implementation(selector, as: ((Bool) throws -> Void).self),
+            on: ABIErrorConventionFixture.self
+        )
+        try unsafe implementation.unsafeInvoke(on: fixture, true)
+        expectFixtureError(code: 4) { try unsafe implementation.unsafeInvoke(on: fixture, false) }
+    }
+
     @Test func objectMethodsThrowWhenTheyReturnNil() async throws {
         let fixture = try ABIErrorConventionFixture(value: 1)
         let describe = try await ABIRuntime.shared.object(fixture).resolve(

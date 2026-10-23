@@ -12,7 +12,7 @@ Swift functions and members and Objective-C messages are described by request va
 | `type.resolveMethod(named: n, as: s, …)` | `type.resolve(.method(n, as: s, …))` |
 | `type.resolveGetter(named: n, as: s, …)` | `type.resolve(.getter(n, as: s, …))` |
 | `type.resolveSetter(named: n, as: V.self, …)` | `type.resolve(.setter(n, as: ((V) -> Void).self, …))` |
-| `type.resolveMethod(named: "….subscript.getter : …", …)` | `type.resolve(.getter("….subscript.getter : …", …))` |
+| `type.resolveMethod(named: "….subscript.getter : …", …)` | `type.resolve(.getter("subscript", …))`, or the same complete name |
 | `type.resolveInitializer(named: n, as: s, …)` | `type.resolve(.initializer(n, as: s, …))` |
 | `type.resolveStaticMethod`, `resolveStaticGetter`, `resolveStaticSetter` | `type.resolve(.staticMethod(…))`, `.staticGetter(…)`, `.staticSetter(…)` |
 | `object.resolveMethod(named:)`, `resolveGetter`, `resolveSetter` | `object.resolve(.method(…))`, `.getter(…)`, `.setter(…)` |
@@ -40,7 +40,7 @@ What changes besides the spelling:
 
 - A setter request takes the complete function type of the call, `(Value) -> Void`, like every other member. A subscript setter takes the new value followed by the indices.
 - An object accepts `valueABIs:`, `receiverABI:`, and `receiver:` as its type does, and resolves initializer and static member requests for its own type.
-- Getter and setter requests accept `genericArguments:` for generic subscripts.
+- A subscript's accessors are `getter` and `setter` requests for the member named `subscript`, selected by their index and value types, or by a complete accessor declaration as before. Getter and setter requests accept `genericArguments:` for generic subscripts.
 - ``NativeSwiftReceiverConvention`` replaces the `mutating:` and `consuming:` flags, whose combination was invalid. Without a convention, methods and getters borrow `self` and setters follow their declaration.
 - Throwing Objective-C messages and implementations also accept a `Selector`.
 

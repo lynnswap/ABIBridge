@@ -2,35 +2,6 @@ import Foundation
 import ObjectiveC
 
 extension NativeObject {
-    /// Accepts a Selector with the same dispatch, ownership, and isolation contract.
-    public func resolveMethodAndWait<Result, each Argument>(
-        selector: Selector,
-        as signature: ((repeat each Argument) -> Result).Type,
-        variadicFrom: Int? = nil,
-        options: NativeMethodOptions = .init()
-    ) throws -> NativeBoundObjCMethod<Result, repeat each Argument> {
-        try resolveMethodAndWait(
-            selector: NSStringFromSelector(selector),
-            as: signature,
-            variadicFrom: variadicFrom,
-            options: options
-        )
-    }
-
-    /// Accepts a Selector with the same dispatch, ownership, and isolation contract.
-    public nonisolated(nonsending) func resolveMethod<Result, each Argument>(
-        selector: Selector,
-        as signature: ((repeat each Argument) -> Result).Type,
-        variadicFrom: Int? = nil,
-        options: NativeMethodOptions = .init()
-    ) async throws -> NativeBoundObjCMethod<Result, repeat each Argument> {
-        try await resolveMethod(
-            selector: NSStringFromSelector(selector),
-            as: signature,
-            variadicFrom: variadicFrom,
-            options: options
-        )
-    }
 
     /// Accepts a Selector with the same dispatch, ownership, and isolation contract.
     @unsafe public func hookMethod<Result, each Argument>(
@@ -78,89 +49,6 @@ extension NativeObject {
 }
 
 extension ABIRuntime {
-    /// Accepts a Selector with the same dispatch, ownership, and isolation contract.
-    public nonisolated func resolveObjCMethodAndWait<Result, each Argument>(
-        on type: AnyClass,
-        selector: Selector,
-        as signature: ((repeat each Argument) -> Result).Type,
-        variadicFrom: Int? = nil,
-        classMethod: Bool = false,
-        options: NativeMethodOptions = .init(),
-        retaining owner: Any? = nil
-    ) throws -> NativeObjCMethod<Result, repeat each Argument> {
-        try resolveObjCMethodAndWait(
-            on: type,
-            selector: NSStringFromSelector(selector),
-            as: signature,
-            variadicFrom: variadicFrom,
-            classMethod: classMethod,
-            options: options,
-            retaining: owner
-        )
-    }
-
-    /// Accepts a Selector with the same dispatch, ownership, and isolation contract.
-    public nonisolated(nonsending) func resolveObjCMethod<Result, each Argument>(
-        on type: AnyClass,
-        selector: Selector,
-        as signature: ((repeat each Argument) -> Result).Type,
-        variadicFrom: Int? = nil,
-        classMethod: Bool = false,
-        options: NativeMethodOptions = .init(),
-        retaining owner: Any? = nil
-    ) async throws -> NativeObjCMethod<Result, repeat each Argument> {
-        try await resolveObjCMethod(
-            on: type,
-            selector: NSStringFromSelector(selector),
-            as: signature,
-            variadicFrom: variadicFrom,
-            classMethod: classMethod,
-            options: options,
-            retaining: owner
-        )
-    }
-
-    /// Accepts a Selector with the same dispatch, ownership, and isolation contract.
-    public nonisolated func resolveObjCImplementationAndWait<Result, each Argument>(
-        on type: AnyClass,
-        selector: Selector,
-        as signature: ((repeat each Argument) -> Result).Type,
-        variadicFrom: Int? = nil,
-        classMethod: Bool = false,
-        options: NativeMethodOptions = .init(),
-        retaining owner: Any? = nil
-    ) throws -> NativeObjCImplementation<Result, repeat each Argument> {
-        try resolveObjCImplementationAndWait(
-            on: type,
-            selector: NSStringFromSelector(selector),
-            as: signature,
-            variadicFrom: variadicFrom,
-            classMethod: classMethod,
-            options: options,
-            retaining: owner
-        )
-    }
-
-    /// Accepts a Selector with the same dispatch, ownership, and isolation contract.
-    public nonisolated(nonsending) func resolveObjCImplementation<Result, each Argument>(
-        on type: AnyClass,
-        selector: Selector,
-        as signature: ((repeat each Argument) -> Result).Type,
-        variadicFrom: Int? = nil,
-        classMethod: Bool = false,
-        options: NativeMethodOptions = .init(),
-        retaining owner: Any? = nil
-    ) async throws -> NativeObjCImplementation<Result, repeat each Argument> {
-        try await resolveObjCImplementation(
-            on: type,
-            selector: NSStringFromSelector(selector),
-            as: signature,
-            variadicFrom: variadicFrom,
-            classMethod: classMethod,
-            options: options,
-            retaining: owner
-        )
-    }
 
     /// Accepts a Selector with the same dispatch, ownership, and isolation contract.
     @unsafe public nonisolated func hookInitializer<Result, each Argument>(
