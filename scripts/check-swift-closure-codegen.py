@@ -16,6 +16,10 @@ extensions rely on (#435):
 - an extension's requirement records omit conformances to marker protocols,
   so an extension that adds only marker protocols records no requirement.
 
+For types that their image does not export (#450), it also checks that the
+linked image names each one's descriptor with a local symbol under the
+declaration that the discriminator hashes, which spells marker protocols.
+
 It also checks the facts that closure discriminators of private types rely on
 (#451):
 
@@ -204,7 +208,24 @@ def check_extension_discriminators(directory, sdk):
         requirements[name] = int(header[2])
     require(requirements == {"Inner": 1, "Marked": 0, "Mixed": 1},
             f"arm64e: requirement records must omit marker protocols: {requirements}")
-    return {"declarations": declarations, "extensionRequirements": requirements}
+    require(all("s8SendableRz" in declarations[name] for name in ["Marked", "Mixed"]),
+            "arm64e: the declarations of Marked and Mixed must spell their Sendable requirement")
+    library = directory / "libExtensionProbe.dylib"
+    run("xcrun", "--sdk", "iphoneos", "swiftc", "-swift-version", "6", "-parse-as-library", "-Onone",
+        "-target", "arm64e-apple-ios18.4", "-sdk", sdk, "-module-name", "ExtensionProbe",
+        "-emit-library", str(source), "-o", str(library))
+    linkage = {}
+    for line in run("xcrun", "nm", "-m", str(library)).splitlines():
+        symbol = re.fullmatch(r"[0-9a-f]+ \([^)]*\) (external|non-external)[^_]*_\$s(\w+)Mn", line)
+        if symbol:
+            linkage[symbol[2]] = symbol[1]
+    for name, declaration in declarations.items():
+        expected = "external" if name == "Inner" else "non-external"
+        require(linkage.get(declaration) == expected,
+                f"arm64e: the linked image must name the descriptor of {name} by its declaration "
+                f"{declaration} in a symbol that is {expected}, not {linkage.get(declaration)}")
+    return {"declarations": declarations, "extensionRequirements": requirements,
+            "descriptorSymbols": {name: linkage[declarations[name]] for name in declarations}}
 
 
 def check_private_discriminators(directory, sdk):

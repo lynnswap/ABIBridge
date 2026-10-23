@@ -75,6 +75,32 @@ private final class PrivateClosureCaller {
     }
 }
 
+// The compiler signs a closure over a type in a constrained extension with a
+// discriminator that hashes the extension's generic signature, including its
+// Sendable requirement. The type's descriptor is not exported, and only its
+// local symbol spells that signature.
+struct ExtensionClosureBox<T> {}
+extension ExtensionClosureBox where T: Equatable & Sendable {
+    struct Point: ABIBridgeSwiftValue {
+        var x: Double, y: Double
+        static var swiftABIType: NativeType {
+            try! .structure(named: "Point", fields: [.double, .double])
+        }
+    }
+}
+private final class ExtensionClosureCaller {
+    typealias Point = ExtensionClosureBox<Int64>.Point
+    @inline(never) @_optimize(none)
+    func callPoint(_ callback: (Point) -> Double) -> Double { callback(Point(x: 40, y: 2)) }
+    @inline(never) @_optimize(none) func makePoint() -> Point { Point(x: 40, y: 2) }
+    @inline(never) @_optimize(none) func makePointReader() -> (Point) -> Double {
+        { $0.x + $0.y }
+    }
+    // An optimized build emits the type's metadata and conformance only for
+    // code that uses its metatype.
+    @inline(never) @_optimize(none) func types() -> [Any.Type] { [Point.self] }
+}
+
 @MainActor func validateSwiftClosureValues() async throws -> [String] {
     let runtime = ABIRuntime()
     var checks: [String] = []
@@ -646,6 +672,28 @@ private final class PrivateClosureCaller {
         let pointReader = try unsafe makePointReader.unsafeInvoke()
         try check(try unsafe pointReader.unsafeInvoke(makePoint.unsafeInvoke()) == 42,
                   "A returned closure over a private struct authenticates with the native discriminator")
+    }
+
+    do {
+        let caller = ExtensionClosureCaller()
+        try check(
+            caller.callPoint { $0.x + $0.y } == 42 && caller.makePointReader()(caller.makePoint()) == 42
+                && caller.types().count == 1,
+            "Constrained extension closure compiler control")
+        typealias Callback = NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Double>
+        let object = runtime.object(caller)
+        let callPoint = try await object.resolveMethod(
+            named: "callPoint(_:)", as: ((Callback) -> Double).self)
+        try check(try unsafe callPoint.unsafeInvoke(Callback { _ in 42 }) == 42,
+                  "A native call authenticates a closure over a type in a Sendable-constrained extension")
+        let makePoint = try await object.resolveMethod(
+            named: "makePoint()", as: (() -> NativeSwiftValue).self)
+        let makePointReader = try await object.resolveMethod(
+            named: "makePointReader()",
+            as: (() -> NativeSwiftClosure<(NativeSwiftValue) -> Double>).self)
+        let pointReader = try unsafe makePointReader.unsafeInvoke()
+        try check(try unsafe pointReader.unsafeInvoke(makePoint.unsafeInvoke()) == 42,
+                  "A returned closure over a type in a Sendable-constrained extension authenticates with the native discriminator")
     }
     return checks
 }
