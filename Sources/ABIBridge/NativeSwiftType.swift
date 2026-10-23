@@ -578,10 +578,10 @@ public actor NativeSwiftType: Hashable {
     private nonisolated func resolveMember(
         named name: String,
         signature: Any.Type,
-        genericArguments: [NativeSwiftGenericArgument] = [],
-        inherited: Bool = true,
-        declaredSignature: String? = nil,
-        valueABIs: [NativeSwiftType: NativeType] = [:],
+        genericArguments: [NativeSwiftGenericArgument],
+        inherited: Bool,
+        declaredSignature: String?,
+        valueABIs: [NativeSwiftType: NativeType],
         _ request: (_ owner: String) throws -> NativeDeclaration
     ) throws -> ResolvedMember {
         let description = try SwiftFunctionSignature(signature)
@@ -820,92 +820,199 @@ public actor NativeSwiftType: Hashable {
         return declaration[..<end.upperBound]
     }
 
-    /// Resolves a concrete instance implementation using a function-type metatype.
+    /// Resolves an instance member: a method, or a property's or subscript's
+    /// getter or setter.
     ///
     /// Search and preparation run synchronously on the caller's thread.
     ///
-    /// The signature excludes self. Mutating value members require an explicit mutating flag because their source-level symbol does not encode it. Consuming members similarly require consuming: true. Typed receivers transfer a copy; NativeSwiftValue transfers its owned value. Borrowed views allow nonconsuming calls within their active scope; only native inout callback borrows permit mutation.
+    /// The handle calls the implementation selected during lookup, without
+    /// virtual redispatch. Typed receivers transfer a copy to consuming
+    /// members; ``NativeSwiftValue`` transfers its owned value. Borrowed views
+    /// allow nonconsuming calls within their active scope; only native inout
+    /// callback borrows permit mutation.
     ///
-    /// A protocol-qualified requirement, including a subscript accessor's complete declaration, binds Self to this concrete type. It runs through the protocol's dispatch thunk, or, where the protocol exports none, the witness of this type's conformance. Lookup requires the native conformance and preserves the protocol's formal Self convention.
+    /// A protocol-qualified requirement, including a subscript accessor's,
+    /// binds `Self` to this concrete type. It runs through the protocol's
+    /// dispatch thunk, or, where the protocol exports none, the witness of
+    /// this type's conformance. Lookup requires the native conformance and
+    /// preserves the protocol's formal `Self` convention.
     ///
-    /// For runtime-only self, receiverABI supplies established fixed components or an opaque descriptor for formally indirect self. Without it, a struct or enum self uses the convention inferred from its metadata, and preparation fails when the evidence cannot decide it; see <doc:SwiftFunctionInvocation#Infer-struct-and-enum-conventions>.
-    /// - Parameters:
-    ///   - name: A relative member name or a complete qualified declaration.
-    ///   - signature: Explicit arguments and result.
-    ///   - genericArguments: Type arguments introduced by the member.
-    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types, such as structs and enums whose conventions ABIBridge cannot infer from their metadata. They take precedence over conformances and inferred conventions where the signature names their types, but inference does not consult them for the fields of a value it lowers. Inside an Optional, an entry describes only the declaration's own type, not an adapter host type, whose Optional can have another layout. An entry for an Optional itself must pass as Swift passes that Optional when ABIBridge establishes its payload's convention.
-    ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
-    ///   - receiverABI: Explicit self ABI; nil uses the type representation or generic declaration. For an Optional self that the declaration passes by value, it must describe the Optional's enum storage; a mutating self, or the self of a generic extension, passes by address.
-    ///   - isMutating: Whether a value receiver is passed inout.
-    ///   - isConsuming: Whether the member consumes its receiver.
-    /// - Returns: A reusable method with an explicit receiver.
+    /// For runtime-only `self`, the request's `receiverABI` supplies
+    /// established fixed components or an opaque descriptor for formally
+    /// indirect `self`. Without it, a struct or enum `self` uses the
+    /// convention inferred from its metadata, and preparation fails when the
+    /// evidence cannot decide it; see
+    /// <doc:SwiftFunctionInvocation#Infer-struct-and-enum-conventions>.
+    ///
+    /// - Parameter request: The member and its lookup options.
+    /// - Returns: A reusable method with an explicit receiver, retaining this
+    ///   type and the member's implementation images.
     /// - Throws: A lookup, representation, or preparation error.
-    public nonisolated func resolveMethodAndWait<Signature>(
-        named name: String,
-        as signature: Signature.Type,
-        genericArguments: [NativeSwiftGenericArgument] = [],
-        declaredAs declaredSignature: String? = nil,
-        valueABIs: [NativeSwiftType: NativeType] = [:],
-        receiverABI: NativeType? = nil,
-        mutating isMutating: Bool = false,
-        consuming isConsuming: Bool = false
+    public nonisolated func resolveAndWait<Signature>(
+        _ request: NativeSwiftInstanceMemberRequest<Signature>
     ) throws -> NativeSwiftMethod<Signature> {
-        let member = try resolveMember(
+        let member = try resolveMember(request.member, signature: Signature.self)
+        let receiver = try receiverPlan(
+            mutating: request.receiver.isMutating,
+            consuming: request.receiver.isConsuming,
+            generic: member.generic,
+            receiverABI: request.receiver.abi
+        )
+        return try prepareMethod(
+            member,
+            receiver: receiver,
+            consumesArguments: request.member.role == .setter
+        )
+    }
+
+    /// Resolves an instance member without blocking the caller's executor.
+    ///
+    /// Lookup and preparation run on a worker. Receivers remain with the
+    /// caller, and lookup does not invoke the member.
+    ///
+    /// - Parameter request: The member and its lookup options.
+    /// - Returns: A reusable method with an explicit receiver.
+    /// - Throws: The same lookup, representation, and preparation errors as
+    ///   synchronous resolution.
+    public nonisolated func resolve<Signature>(
+        _ request: NativeSwiftInstanceMemberRequest<Signature>
+    ) async throws -> NativeSwiftMethod<Signature> {
+        try await NativePreparation.run { try self.resolveAndWait(request) }
+    }
+
+    /// Resolves an initializer, or a static or class member, called on this
+    /// type.
+    ///
+    /// Search and preparation run synchronously on the caller's thread.
+    ///
+    /// This type's metadata is supplied as the member's `self`. A class
+    /// member exported only through its dispatch thunk runs this type's
+    /// virtual-table entry, so a subclass's override runs when the subclass
+    /// is this type. A protocol-qualified static requirement receives this
+    /// type's metatype as `Self`, and a protocol-qualified initializer
+    /// constructs this type through its conformance.
+    ///
+    /// - Parameter request: The member and its lookup options.
+    /// - Returns: A reusable function retaining this type and the member's
+    ///   implementation images.
+    /// - Throws: A lookup, representation, or preparation error.
+    public nonisolated func resolveAndWait<Signature>(
+        _ request: NativeSwiftTypeMemberRequest<Signature>
+    ) throws -> NativeSwiftFunction<Signature> {
+        let member = try resolveMember(request.member, signature: Signature.self)
+        switch request.member.role {
+        case .initializer:
+            return try prepareFunction(
+                member,
+                consumesArguments: true,
+                classReceiver: metadata is AnyClass
+            )
+        case .method, .getter, .setter:
+            return try prepareFunction(
+                member,
+                consumesArguments: request.member.role == .setter,
+                classReceiver: member.metadata is AnyClass
+            )
+        }
+    }
+
+    /// Resolves an initializer, or a static or class member, without blocking
+    /// the caller's executor.
+    ///
+    /// Lookup and preparation run on a worker; native invocation is a
+    /// separate operation.
+    ///
+    /// - Parameter request: The member and its lookup options.
+    /// - Returns: A reusable function retaining this type and the member's
+    ///   implementation images.
+    /// - Throws: The same lookup, representation, and preparation errors as
+    ///   synchronous resolution.
+    public nonisolated func resolve<Signature>(
+        _ request: NativeSwiftTypeMemberRequest<Signature>
+    ) async throws -> NativeSwiftFunction<Signature> {
+        try await NativePreparation.run { try self.resolveAndWait(request) }
+    }
+
+    /// Selects the member that `request` names and prepares its call plan.
+    ///
+    /// The request's role and static-ness decide the declaration that
+    /// candidate lookup searches for.
+    private nonisolated func resolveMember(
+        _ request: SwiftMemberRequest,
+        signature: Any.Type
+    ) throws -> ResolvedMember {
+        let name = request.name
+        let isStatic = request.isStatic
+        let isQualified = SwiftMemberLookup.isQualified(name)
+        switch request.role {
+        case .getter where !Self.namesSubscript(name):
+            try validateGetterSignature(signature)
+        case .initializer:
+            let member = SwiftMemberLookup.member(of: name) ?? name
+            guard member.hasPrefix("init(") || member.hasPrefix("init<") else {
+                throw ABIResolutionError.unsupportedDeclaration(
+                    "An initializer name must start with init( or init<, after a protocol that qualifies it."
+                )
+            }
+        case .method, .getter, .setter:
+            break
+        }
+        return try resolveMember(
             named: name,
             signature: signature,
-            genericArguments: genericArguments,
-            declaredSignature: declaredSignature,
-            valueABIs: valueABIs
+            genericArguments: request.options.genericArguments,
+            inherited: request.role != .initializer,
+            declaredSignature: request.options.declaredSignature,
+            valueABIs: request.options.valueABIs
         ) { owner in
-            NativeDeclaration(
-                name: try SwiftMemberLookup.qualifiedName(name, owner: owner),
-                language: .swift
-            )
-        }
-        let generic = member.generic
-        let receiver = try receiverPlan(
-            mutating: isMutating,
-            consuming: isConsuming,
-            generic: generic,
-            receiverABI: receiverABI
-        )
-        return try prepareMethod(member, receiver: receiver)
-    }
-
-    /// Resolves and prepares a method without blocking the caller's executor.
-    ///
-    /// Lookup and preparation run on a worker. Receivers remain with the caller, and lookup does not invoke the member.
-    /// - Returns: A reusable handle retaining its type and implementation.
-    /// - Throws: The same lookup, representation, and preparation errors.
-    public nonisolated func resolveMethod<Signature>(
-        named name: String,
-        as signature: Signature.Type,
-        genericArguments: [NativeSwiftGenericArgument] = [],
-        declaredAs declaredSignature: String? = nil,
-        valueABIs: [NativeSwiftType: NativeType] = [:],
-        receiverABI: NativeType? = nil,
-        mutating isMutating: Bool = false,
-        consuming isConsuming: Bool = false
-    ) async throws -> NativeSwiftMethod<Signature> {
-        try await NativePreparation.run {
-            try self.resolveMethodAndWait(
-                named: name,
-                as: signature,
-                genericArguments: genericArguments,
-                declaredAs: declaredSignature,
-                valueABIs: valueABIs,
-                receiverABI: receiverABI,
-                mutating: isMutating,
-                consuming: isConsuming
-            )
+            switch request.role {
+            case .method:
+                return NativeDeclaration(
+                    name: try SwiftMemberLookup.qualifiedName(
+                        name,
+                        owner: owner,
+                        isStatic: isStatic
+                    ),
+                    language: .swift
+                )
+            case .getter, .setter:
+                return try accessorDeclaration(
+                    named: name,
+                    ownerName: owner,
+                    setter: request.role == .setter,
+                    isStatic: isStatic
+                )
+            case .initializer:
+                // A protocol's initializer keeps its name; this type's own is
+                // named relative to it, and a class's allocates.
+                guard isQualified else {
+                    let allocating = metadata is AnyClass ? "__allocating_" + name : name
+                    return NativeDeclaration(name: owner + "." + allocating, language: .swift)
+                }
+                guard !SwiftMemberLookup.belongs(name, to: owner) else {
+                    throw ABIResolutionError.unsupportedDeclaration(
+                        "Name this type's own initializer relative to the type, such as init(text:)."
+                    )
+                }
+                return NativeDeclaration(name: name, language: .swift)
+            }
         }
     }
 
+    /// Whether a getter's name names a subscript, whose getter takes the
+    /// subscript's indices.
+    private static func namesSubscript(_ name: String) -> Bool {
+        var member = Substring(SwiftMemberLookup.member(of: name) ?? name)
+        if member.hasPrefix("static ") { member = member.dropFirst(7) }
+        guard member.hasPrefix("subscript") else { return false }
+        let rest = member.dropFirst("subscript".count)
+        return rest.isEmpty || rest.first == "." || rest.first == "(" || rest.first == "<"
+    }
 
     private nonisolated func prepareMethod<Signature>(
         _ member: ResolvedMember,
         receiver: SwiftReceiverPlan,
-        consumesArguments: Bool = false
+        consumesArguments: Bool
     ) throws -> NativeSwiftMethod<Signature> {
         try NativeSwiftMethod(
             entry: member.entry,
@@ -919,7 +1026,7 @@ public actor NativeSwiftType: Hashable {
 
     private nonisolated func prepareFunction<Signature>(
         _ member: ResolvedMember,
-        consumesArguments: Bool = false,
+        consumesArguments: Bool,
         classReceiver: Bool
     ) throws -> NativeSwiftFunction<Signature> {
         try NativeSwiftFunction(
@@ -931,144 +1038,6 @@ public actor NativeSwiftType: Hashable {
             generic: classReceiver
                 ? try member.generic.includingReceiver(.object) : member.generic
         )
-    }
-
-    /// Resolves a concrete allocating initializer.
-    ///
-    /// Search and preparation run synchronously on the caller's thread.
-    ///
-    /// Ordinary initializer arguments transfer ownership to the callee. The native metadata is supplied automatically, and the result uses the requested Swift class or fixed-layout value adapter. NativeSwiftBorrowing selects an explicitly borrowed initializer parameter.
-    ///
-    /// A protocol-qualified initializer requirement, such as Example.Shape.init(size:), constructs this type through its conformance and returns Self indirectly.
-    /// - Parameters:
-    ///   - name: The relative initializer name, such as init(text:), or one qualified by a protocol.
-    ///   - signature: Explicit arguments and constructed result.
-    ///   - genericArguments: Type arguments introduced by the initializer.
-    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types, such as structs and enums whose conventions ABIBridge cannot infer from their metadata. They take precedence over conformances and inferred conventions where the signature names their types, but inference does not consult them for the fields of a value it lowers. Inside an Optional, an entry describes only the declaration's own type, not an adapter host type, whose Optional can have another layout. An entry for an Optional itself must pass as Swift passes that Optional when ABIBridge establishes its payload's convention.
-    ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
-    /// - Returns: A reusable initializer retaining its type and implementation.
-    /// - Throws: A lookup, representation, or preparation error.
-    public nonisolated func resolveInitializerAndWait<Signature>(
-        named name: String,
-        as signature: Signature.Type,
-        genericArguments: [NativeSwiftGenericArgument] = [],
-        declaredAs declaredSignature: String? = nil,
-        valueABIs: [NativeSwiftType: NativeType] = [:]
-    ) throws -> NativeSwiftFunction<Signature> {
-        let isQualified = SwiftMemberLookup.isQualified(name)
-        let member = SwiftMemberLookup.member(of: name) ?? name
-        guard member.hasPrefix("init(") || member.hasPrefix("init<") else {
-            throw ABIResolutionError.unsupportedDeclaration(
-                "An initializer name must start with init( or init<, after a protocol that qualifies it."
-            )
-        }
-        let initializer = try resolveMember(
-            named: name,
-            signature: signature,
-            genericArguments: genericArguments,
-            inherited: false,
-            declaredSignature: declaredSignature,
-            valueABIs: valueABIs
-        ) { owner in
-            // A protocol's initializer keeps its name; this type's own is
-            // named relative to it, and a class's allocates.
-            guard isQualified else {
-                let allocating = metadata is AnyClass ? "__allocating_" + name : name
-                return NativeDeclaration(name: owner + "." + allocating, language: .swift)
-            }
-            guard !SwiftMemberLookup.belongs(name, to: owner) else {
-                throw ABIResolutionError.unsupportedDeclaration(
-                    "Name this type's own initializer relative to the type, such as init(text:)."
-                )
-            }
-            return NativeDeclaration(name: name, language: .swift)
-        }
-        return try prepareFunction(
-            initializer,
-            consumesArguments: true,
-            classReceiver: metadata is AnyClass
-        )
-    }
-
-    /// Resolves and prepares an initializer without blocking the caller's executor.
-    ///
-    /// Lookup and preparation run on a worker; native invocation is a separate operation.
-    /// - Returns: A reusable handle retaining its type and implementation.
-    /// - Throws: The same lookup, representation, and preparation errors.
-    public nonisolated func resolveInitializer<Signature>(
-        named name: String,
-        as signature: Signature.Type,
-        genericArguments: [NativeSwiftGenericArgument] = [],
-        declaredAs declaredSignature: String? = nil,
-        valueABIs: [NativeSwiftType: NativeType] = [:]
-    ) async throws -> NativeSwiftFunction<Signature> {
-        try await NativePreparation.run {
-            try self.resolveInitializerAndWait(
-                named: name,
-                as: signature,
-                genericArguments: genericArguments,
-                declaredAs: declaredSignature,
-                valueABIs: valueABIs
-            )
-        }
-    }
-
-    /// Resolves a concrete static or class implementation.
-    ///
-    /// Search and preparation run synchronously on the caller's thread.
-    ///
-    /// The declaring type's metadata is supplied as the Swift context. A protocol-qualified static requirement, such as Example.Shape.make(), receives this type's metatype as Self.
-    /// - Parameters:
-    ///   - name: A relative member name or a complete qualified declaration.
-    ///   - signature: Explicit arguments and result.
-    ///   - genericArguments: Type arguments introduced by the member.
-    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types, such as structs and enums whose conventions ABIBridge cannot infer from their metadata. They take precedence over conformances and inferred conventions where the signature names their types, but inference does not consult them for the fields of a value it lowers. Inside an Optional, an entry describes only the declaration's own type, not an adapter host type, whose Optional can have another layout. An entry for an Optional itself must pass as Swift passes that Optional when ABIBridge establishes its payload's convention.
-    ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
-    /// - Returns: A reusable function retaining its type and implementation.
-    /// - Throws: A lookup, representation, or preparation error.
-    public nonisolated func resolveStaticMethodAndWait<Signature>(
-        named name: String,
-        as signature: Signature.Type,
-        genericArguments: [NativeSwiftGenericArgument] = [],
-        declaredAs declaredSignature: String? = nil,
-        valueABIs: [NativeSwiftType: NativeType] = [:]
-    ) throws -> NativeSwiftFunction<Signature> {
-        let member = try resolveMember(
-            named: name,
-            signature: signature,
-            genericArguments: genericArguments,
-            declaredSignature: declaredSignature,
-            valueABIs: valueABIs
-        ) { owner in
-            NativeDeclaration(
-                name: try SwiftMemberLookup.qualifiedName(name, owner: owner, isStatic: true),
-                language: .swift
-            )
-        }
-        return try prepareFunction(member, classReceiver: member.metadata is AnyClass)
-    }
-
-    /// Resolves and prepares a static or class method without blocking the caller's executor.
-    ///
-    /// Lookup and preparation run on a worker; native invocation is a separate operation.
-    /// - Returns: A reusable handle retaining its type and implementation.
-    /// - Throws: The same lookup, representation, and preparation errors.
-    public nonisolated func resolveStaticMethod<Signature>(
-        named name: String,
-        as signature: Signature.Type,
-        genericArguments: [NativeSwiftGenericArgument] = [],
-        declaredAs declaredSignature: String? = nil,
-        valueABIs: [NativeSwiftType: NativeType] = [:]
-    ) async throws -> NativeSwiftFunction<Signature> {
-        try await NativePreparation.run {
-            try self.resolveStaticMethodAndWait(
-                named: name,
-                as: signature,
-                genericArguments: genericArguments,
-                declaredAs: declaredSignature,
-                valueABIs: valueABIs
-            )
-        }
     }
 
     private nonisolated func accessorDeclaration(
@@ -1084,138 +1053,6 @@ public actor NativeSwiftType: Hashable {
             name: try SwiftMemberLookup.qualifiedName(member, owner: ownerName, isStatic: isStatic),
             language: .swift
         )
-    }
-
-    /// Resolves a property setter that consumes its incoming value.
-    ///
-    /// Search and preparation run synchronously on the caller's thread.
-    ///
-    /// Setters with a class-bound formal self receive self as a reference. Ordinary value setters receive self inout, including protocol Self without a class constraint. A protocol setter with a concrete same-type Self receives self inout, even when that type is a class. Consuming setters transfer a typed copy or NativeSwiftValue's owned value. For an explicitly mutating or nonmutating setter, pass mutating: true or false.
-    /// - Parameters:
-    ///   - name: A property name or complete relative setter declaration.
-    ///   - valueType: The incoming value representation.
-    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types, such as structs and enums whose conventions ABIBridge cannot infer from their metadata. They take precedence over conformances and inferred conventions where the signature names their types, but inference does not consult them for the fields of a value it lowers. Inside an Optional, an entry describes only the declaration's own type, not an adapter host type, whose Optional can have another layout. An entry for an Optional itself must pass as Swift passes that Optional when ABIBridge establishes its payload's convention.
-    ///   - declaredSignature: The formal setter type and optional canonical generic signature.
-    ///   - receiverABI: Explicit self ABI; nil uses the type representation or generic declaration. For an Optional self that the declaration passes by value, it must describe the Optional's enum storage; a mutating self, or the self of a generic extension, passes by address.
-    ///   - isMutating: An inout override. Nil follows the declaration's default self convention unless consuming is true.
-    ///   - isConsuming: Whether the setter consumes its receiver.
-    /// - Returns: A reusable method with one explicit value argument.
-    /// - Throws: A lookup or unsupported-representation error.
-    public nonisolated func resolveSetterAndWait<Value>(
-        named name: String,
-        as valueType: Value.Type,
-        declaredAs declaredSignature: String? = nil,
-        valueABIs: [NativeSwiftType: NativeType] = [:],
-        receiverABI: NativeType? = nil,
-        mutating isMutating: Bool? = nil,
-        consuming isConsuming: Bool = false
-    ) throws -> NativeSwiftMethod<(Value) -> Void> {
-        let member = try resolveMember(
-            named: name,
-            signature: ((Value) -> Void).self,
-            declaredSignature: declaredSignature,
-            valueABIs: valueABIs
-        ) { owner in
-            try accessorDeclaration(
-                named: name,
-                ownerName: owner,
-                setter: true,
-                isStatic: false
-            )
-        }
-        let generic = member.generic
-        let receiver = try receiverPlan(
-            mutating: isMutating,
-            consuming: isConsuming,
-            generic: generic,
-            receiverABI: receiverABI
-        )
-        return try prepareMethod(member, receiver: receiver, consumesArguments: true)
-    }
-
-    /// Resolves and prepares a property setter without blocking the caller's executor.
-    ///
-    /// Lookup and preparation run on a worker; native invocation is a separate operation.
-    /// - Returns: A reusable handle retaining its type and implementation.
-    /// - Throws: The same lookup, representation, and preparation errors.
-    public nonisolated func resolveSetter<Value>(
-        named name: String,
-        as valueType: Value.Type,
-        declaredAs declaredSignature: String? = nil,
-        valueABIs: [NativeSwiftType: NativeType] = [:],
-        receiverABI: NativeType? = nil,
-        mutating isMutating: Bool? = nil,
-        consuming isConsuming: Bool = false
-    ) async throws -> NativeSwiftMethod<(Value) -> Void> {
-        try await NativePreparation.run {
-            try self.resolveSetterAndWait(
-                named: name,
-                as: valueType,
-                declaredAs: declaredSignature,
-                valueABIs: valueABIs,
-                receiverABI: receiverABI,
-                mutating: isMutating,
-                consuming: isConsuming
-            )
-        }
-    }
-
-    /// Resolves a static property setter that consumes its incoming value.
-    ///
-    /// Search and preparation run synchronously on the caller's thread.
-    ///
-    /// - Parameters:
-    ///   - name: A property name or complete relative setter declaration.
-    ///   - valueType: The incoming value representation.
-    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types, such as structs and enums whose conventions ABIBridge cannot infer from their metadata. They take precedence over conformances and inferred conventions where the signature names their types, but inference does not consult them for the fields of a value it lowers. Inside an Optional, an entry describes only the declaration's own type, not an adapter host type, whose Optional can have another layout. An entry for an Optional itself must pass as Swift passes that Optional when ABIBridge establishes its payload's convention.
-    ///   - declaredSignature: The formal setter type and optional canonical generic signature.
-    /// - Returns: A one-argument function with bound type metadata.
-    /// - Throws: A lookup or unsupported-representation error.
-    public nonisolated func resolveStaticSetterAndWait<Value>(
-        named name: String,
-        as valueType: Value.Type,
-        declaredAs declaredSignature: String? = nil,
-        valueABIs: [NativeSwiftType: NativeType] = [:]
-    ) throws -> NativeSwiftFunction<(Value) -> Void> {
-        let member = try resolveMember(
-            named: name,
-            signature: ((Value) -> Void).self,
-            declaredSignature: declaredSignature,
-            valueABIs: valueABIs
-        ) { owner in
-            try accessorDeclaration(
-                named: name,
-                ownerName: owner,
-                setter: true,
-                isStatic: true
-            )
-        }
-        return try prepareFunction(
-            member,
-            consumesArguments: true,
-            classReceiver: member.metadata is AnyClass
-        )
-    }
-
-    /// Resolves and prepares a static property setter without blocking the caller's executor.
-    ///
-    /// Lookup and preparation run on a worker; native invocation is a separate operation.
-    /// - Returns: A reusable handle retaining its type and implementation.
-    /// - Throws: The same lookup, representation, and preparation errors.
-    public nonisolated func resolveStaticSetter<Value>(
-        named name: String,
-        as valueType: Value.Type,
-        declaredAs declaredSignature: String? = nil,
-        valueABIs: [NativeSwiftType: NativeType] = [:]
-    ) async throws -> NativeSwiftFunction<(Value) -> Void> {
-        try await NativePreparation.run {
-            try self.resolveStaticSetterAndWait(
-                named: name,
-                as: valueType,
-                declaredAs: declaredSignature,
-                valueABIs: valueABIs
-            )
-        }
     }
 
 }
@@ -1567,121 +1404,6 @@ extension ABIRuntime {
 }
 
 extension NativeSwiftType {
-    /// Resolves a property getter using its complete zero-argument function type.
-    ///
-    /// Search and preparation run synchronously on the caller's thread.
-    ///
-    /// Use (() -> Value).self for a synchronous nonthrowing getter. Include its native throws type, async effect, and isolation convention when present.
-    ///
-    /// For a throwing generic getter, declaredAs supplies the source function type, such as "() throws(B) -> A". Getter symbols omit the formal error type; A and B refer to the enclosing declaration's generic parameters. valueABIs supplies formal ABIs for runtime-only closed nominal values. Receiver ownership and writeback follow the ordinary member contract. receiverABI can describe runtime-only fixed components or formally indirect self, as for method lookup.
-    ///
-    /// A protocol-qualified requirement getter binds Self to this concrete type. It resolves the protocol's dispatch thunk, or, where the protocol exports none, the witness of this type's conformance in loaded images. Lookup requires the type's native conformance; invocation uses that conformance's implementation and formal Self convention.
-    public nonisolated func resolveGetterAndWait<Signature>(
-        named name: String,
-        as signature: Signature.Type,
-        declaredAs declaredSignature: String? = nil,
-        valueABIs: [NativeSwiftType: NativeType] = [:],
-        receiverABI: NativeType? = nil,
-        mutating isMutating: Bool = false,
-        consuming isConsuming: Bool = false
-    ) throws -> NativeSwiftMethod<Signature> {
-        try validateGetterSignature(signature)
-        let member = try resolveMember(
-            named: name,
-            signature: signature,
-            declaredSignature: declaredSignature,
-            valueABIs: valueABIs
-        ) { owner in
-            try accessorDeclaration(
-                named: name,
-                ownerName: owner,
-                setter: false,
-                isStatic: false
-            )
-        }
-        let generic = member.generic
-        let receiver = try receiverPlan(
-            mutating: isMutating,
-            consuming: isConsuming,
-            generic: generic,
-            receiverABI: receiverABI
-        )
-        return try prepareMethod(member, receiver: receiver)
-    }
-
-    /// Resolves and prepares a getter without blocking the caller's executor.
-    ///
-    /// Lookup and preparation run on a worker. Receivers remain with the caller, and lookup does not invoke the member.
-    /// - Returns: A reusable handle retaining its type and implementation.
-    /// - Throws: The same lookup, representation, and preparation errors.
-    public nonisolated func resolveGetter<Signature>(
-        named name: String,
-        as signature: Signature.Type,
-        declaredAs declaredSignature: String? = nil,
-        valueABIs: [NativeSwiftType: NativeType] = [:],
-        receiverABI: NativeType? = nil,
-        mutating isMutating: Bool = false,
-        consuming isConsuming: Bool = false
-    ) async throws -> NativeSwiftMethod<Signature> {
-        try await NativePreparation.run {
-            try self.resolveGetterAndWait(
-                named: name,
-                as: signature,
-                declaredAs: declaredSignature,
-                valueABIs: valueABIs,
-                receiverABI: receiverABI,
-                mutating: isMutating,
-                consuming: isConsuming
-            )
-        }
-    }
-
-    /// Resolves a static getter using its complete zero-argument function type.
-    ///
-    /// Search and preparation run synchronously on the caller's thread. Native error, async, and isolation effects remain part of the signature. Throwing generic getters also require their source type in declaredAs. valueABIs supplies formal ABIs for runtime-only closed nominal values.
-    public nonisolated func resolveStaticGetterAndWait<Signature>(
-        named name: String,
-        as signature: Signature.Type,
-        declaredAs declaredSignature: String? = nil,
-        valueABIs: [NativeSwiftType: NativeType] = [:]
-    ) throws -> NativeSwiftFunction<Signature> {
-        try validateGetterSignature(signature)
-        let member = try resolveMember(
-            named: name,
-            signature: signature,
-            declaredSignature: declaredSignature,
-            valueABIs: valueABIs
-        ) { owner in
-            try accessorDeclaration(
-                named: name,
-                ownerName: owner,
-                setter: false,
-                isStatic: true
-            )
-        }
-        return try prepareFunction(member, classReceiver: member.metadata is AnyClass)
-    }
-
-    /// Resolves and prepares a static or class property getter without blocking the caller's executor.
-    ///
-    /// Lookup and preparation run on a worker; native invocation is a separate operation.
-    /// - Returns: A reusable handle retaining its type and implementation.
-    /// - Throws: The same lookup, representation, and preparation errors.
-    public nonisolated func resolveStaticGetter<Signature>(
-        named name: String,
-        as signature: Signature.Type,
-        declaredAs declaredSignature: String? = nil,
-        valueABIs: [NativeSwiftType: NativeType] = [:]
-    ) async throws -> NativeSwiftFunction<Signature> {
-        try await NativePreparation.run {
-            try self.resolveStaticGetterAndWait(
-                named: name,
-                as: signature,
-                declaredAs: declaredSignature,
-                valueABIs: valueABIs
-            )
-        }
-    }
 
     private nonisolated func validateGetterSignature(_ signature: Any.Type) throws {
         let description = try SwiftFunctionSignature(signature)

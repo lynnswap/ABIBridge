@@ -8,9 +8,9 @@ Resolve the class and method using source names and an ordinary Swift function t
 
 ```swift
 let renderer = try await runtime.resolveSwiftType(named: "Rendering.Renderer")
-let render = try await renderer.resolveMethod(
-    named: "render(_:)", as: ((String) -> String).self
-)
+let render = try await renderer.resolve(.method(
+    "render(_:)", as: ((String) -> String).self
+))
 let hook = try await unsafe render.hookVirtualCalls(
     onFailure: { error in print(error) }
 ) { call, text in
@@ -31,13 +31,13 @@ Other images call a library-evolution class member through its dispatch thunk, w
 
 ## Hook class members
 
-A `class func`, and a `class var`'s or `class subscript`'s getter and setter, receive their class's metatype as `self` and dispatch through entries of the class's metadata, which subclasses copy and override as they do instance entries. Resolve them with `resolveStaticMethod`, `resolveStaticGetter`, or `resolveStaticSetter`, then hook the returned `NativeSwiftFunction`:
+A `class func`, and a `class var`'s or `class subscript`'s getter and setter, receive their class's metatype as `self` and dispatch through entries of the class's metadata, which subclasses copy and override as they do instance entries. Resolve them with `staticMethod`, `staticGetter`, or `staticSetter` requests, then hook the returned `NativeSwiftFunction`:
 
 ```swift
 let preview = try await runtime.resolveSwiftType(named: "Rendering.PreviewRenderer")
-let scale = try await preview.resolveStaticMethod(
-    named: "scale(for:)", as: ((Double) -> Double).self
-)
+let scale = try await preview.resolve(.staticMethod(
+    "scale(for:)", as: ((Double) -> Double).self
+))
 let hook = try await unsafe scale.hookVirtualCalls(
     onFailure: { error in print(error) }
 ) { call, width in
@@ -61,10 +61,10 @@ Imported-member hooks also accept the concrete value representation selected dur
 let counter = try await runtime.resolveSwiftType(
     named: "Rendering.Counter", as: Int64.self
 )
-let increment = try await counter.resolveMethod(
-    named: "increment(_:)", as: ((Int64) -> Int64).self,
-    mutating: true
-)
+let increment = try await counter.resolve(.method(
+    "increment(_:)", as: ((Int64) -> Int64).self,
+    receiver: .mutating
+))
 let hook = try await unsafe increment.hookImportedCalls(
     in: .framework(named: "PreviewClient"),
     onFailure: { error in print(error) }
@@ -93,7 +93,7 @@ The callback applies to every receiver reaching that dispatcher. It is not filte
 
 Receiver reads and continuations are valid while their callback is active. Synchronous access stays on the entering thread; asynchronous access stays on the same Swift task. Expired, cross-thread, or cross-task access throws `NativeSwiftHookInvocationError`. A copied class reference or managed value snapshot has its normal Swift ownership and can outlive the callback; a pointer adapter keeps its declared pointee-lifetime obligations. Saving the invocation itself does not retain the receiver instance or callback captures after return.
 
-Getter results and setter arguments keep their ownership conventions. Resolve a setter with `resolveSetter` or `resolveSetterAndWait` to establish its consumed explicit argument independently of receiver ownership.
+Getter results and setter arguments keep their ownership conventions. Resolve a setter with a `setter` request to establish its consumed explicit argument independently of receiver ownership.
 
 Synchronous callbacks stay on the incoming thread. `hookMainActorVirtualCalls` and `hookMainActorImportedCalls` express a caller-supplied MainActor contract. They report background entry and bypass that callback before decoding its arguments or receiver. Synchronous bodies enter directly. Async bodies resume on MainActor after suspension. The error observer must be thread-safe.
 

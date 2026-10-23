@@ -132,24 +132,31 @@ struct CallerDescribedValueTests {
 
     @Test func swiftStructEnumArrayAndCallbackUseCallerDescriptions() async throws {
         let runtime = ABIRuntime.shared
-        let function = try await runtime.resolveSwiftFunction(
-            named: "ABIBridgeTests.callerRecord(_:)",
-            as: ((CallerRecord) -> CallerRecord).self
+        let function = try await runtime.resolve(
+            .function(
+                "ABIBridgeTests.callerRecord(_:)",
+                as: ((CallerRecord) -> CallerRecord).self
+            )
         )
         let input = CallerRecord(value: 2, tag: 3)
         let result = try unsafe function.unsafeInvoke(input)
         #expect(result.value == 3.5 && result.tag == 5)
-        let apply = try await runtime.resolveSwiftFunction(
-            named: "ABIBridgeTests.callerApply(_:_:)",
-            as: ((NativeSwiftClosure<(CallerRecord) -> CallerRecord>, CallerRecord) -> CallerRecord)
-                .self
+        let apply = try await runtime.resolve(
+            .function(
+                "ABIBridgeTests.callerApply(_:_:)",
+                as: ((NativeSwiftClosure<(CallerRecord) -> CallerRecord>, CallerRecord)
+                    -> CallerRecord)
+                    .self
+            )
         )
         let body = try NativeSwiftClosure { (value: CallerRecord) in callerRecord(value) }
         let callbackResult = try unsafe apply.unsafeInvoke(body, input)
         #expect(callbackResult.value == result.value && callbackResult.tag == result.tag)
-        let choice = try await runtime.resolveSwiftFunction(
-            named: "ABIBridgeTests.callerChoice(_:)",
-            as: ((CallerChoice) -> CallerChoice).self
+        let choice = try await runtime.resolve(
+            .function(
+                "ABIBridgeTests.callerChoice(_:)",
+                as: ((CallerChoice) -> CallerChoice).self
+            )
         )
         if case .number(let value) = try unsafe choice.unsafeInvoke(.number(42)) {
             #expect(value == 42)
@@ -160,9 +167,11 @@ struct CallerDescribedValueTests {
         } else {
             Issue.record("Expected empty case")
         }
-        let array = try await runtime.resolveSwiftFunction(
-            named: "ABIBridgeTests.callerRecords(_:)",
-            as: (([CallerRecord]) -> [CallerRecord]).self
+        let array = try await runtime.resolve(
+            .function(
+                "ABIBridgeTests.callerRecords(_:)",
+                as: (([CallerRecord]) -> [CallerRecord]).self
+            )
         )
         let records = try unsafe array.unsafeInvoke([input, CallerRecord(value: 4, tag: 5)])
         #expect(records.count == 2 && records[0].value == 4 && records[1].tag == 3)
@@ -178,17 +187,21 @@ struct CallerDescribedValueTests {
             named: "ABICXXFixture::nextMode(ABICXXFixture::RecordMode)",
             as: ((CallerMode) -> CallerMode).self
         )
-        let swift = try await runtime.resolveSwiftFunction(
-            named: "ABIBridgeTests.callerMode(_:)",
-            as: ((CallerMode) -> CallerMode).self
+        let swift = try await runtime.resolve(
+            .function(
+                "ABIBridgeTests.callerMode(_:)",
+                as: ((CallerMode) -> CallerMode).self
+            )
         )
         #expect(try unsafe c.unsafeInvoke(.slow) == .fast)
         #expect(try unsafe cxx.unsafeInvoke(.slow) == .fast)
         #expect(try unsafe swift.unsafeInvoke(.slow) == .fast)
         // An Optional keeps the Swift ABI rather than the foreign conversion.
-        let optional = try await runtime.resolveSwiftFunction(
-            named: "ABIBridgeTests.optionalCallerMode(_:)",
-            as: ((CallerMode?) -> CallerMode?).self
+        let optional = try await runtime.resolve(
+            .function(
+                "ABIBridgeTests.optionalCallerMode(_:)",
+                as: ((CallerMode?) -> CallerMode?).self
+            )
         )
         #expect(try unsafe optional.unsafeInvoke(.slow) == .fast)
         #expect(try unsafe optional.unsafeInvoke(nil) == nil)

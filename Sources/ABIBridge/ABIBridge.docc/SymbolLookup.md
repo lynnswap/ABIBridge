@@ -28,8 +28,11 @@ Native invocation follows the target's actor-isolation and thread-affinity requi
 Automatic lookup works without configuration. When you know which framework provides a declaration, specify it to reduce the images searched, especially when probing for optional APIs that may be absent:
 
 ```swift
-let decorate = try runtime.resolveSwiftFunctionAndWait(
-    named: "Example.decorate(_:)", as: ((String) -> String).self,
+let decorate = try runtime.resolveAndWait(
+    .function(
+        "Example.decorate(_:)",
+        as: ((String) -> String).self
+    ),
     in: .framework(named: "Example")
 )
 let first = try unsafe decorate.unsafeInvoke("Hello")

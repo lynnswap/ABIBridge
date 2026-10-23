@@ -13,10 +13,10 @@ extension Sample.Record: ABIBridgeSwiftValue {
     }
 }
 
-let transform = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
-    named: "Sample.transform(_:)",
+let transform = try ABIRuntime.shared.resolveAndWait(.function(
+    "Sample.transform(_:)",
     as: ((Sample.Record) -> Sample.Record).self
-)
+))
 let result = try unsafe transform.unsafeInvoke(input)
 ```
 

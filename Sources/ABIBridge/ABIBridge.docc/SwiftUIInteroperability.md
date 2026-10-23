@@ -26,10 +26,10 @@ public func makeHost(_ title: String) -> UIViewController {
 The consumer uses its supported object result:
 
 ```swift
-let make = try runtime.resolveSwiftFunctionAndWait(
-    named: "Example.makeHost(_:)",
+let make = try runtime.resolveAndWait(.function(
+    "Example.makeHost(_:)",
     as: ((String) -> UIViewController).self
-)
+))
 // Call and embed on MainActor, following UIKit child-controller containment.
 let controller = try unsafe make.unsafeInvoke("Native panel")
 ```
@@ -41,10 +41,10 @@ An AppKit provider can return NSView backed by NSHostingView. The provider compi
 Resolve a native factory returning some View with NativeSwiftValue. Swift's runtime can open its existing View conformance even when the concrete type is private or its module is unavailable at consumer compile time.
 
 ```swift
-let make = try runtime.resolveSwiftFunctionAndWait(
-    named: "Example.makePanel(_:)",
+let make = try runtime.resolveAndWait(.function(
+    "Example.makePanel(_:)",
     as: ((String) -> NativeSwiftValue).self
-)
+))
 let result = try unsafe make.unsafeInvoke("Native panel")
 ```
 

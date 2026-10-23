@@ -398,10 +398,12 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
             onFailure: { failures.append($0) }
         ) { call, value in try call.proceed(value * 2) }
         defer { first.invalidate(); second.invalidate() }
-        let saved = try runtime.resolveObjCImplementationAndWait(
-            on: ArchitectureHookReceiver.self,
-            selector: "adding:",
-            as: ((Int32) -> Int32).self
+        let saved = try runtime.resolveAndWait(
+            .implementation(
+                "adding:",
+                as: ((Int32) -> Int32).self
+            ),
+            on: ArchitectureHookReceiver.self
         )
         try check(
             receiver.adding(2) == 45,
@@ -434,18 +436,22 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         )
         try check(ABIValidateAuthenticatedFunction(), "Unmodified function-pointer authentication")
     case "swift":
-        let sum = try await runtime.resolveSwiftFunction(
-            named: "ArchitectureValidation.architectureSum(_:_:_:_:_:_:_:_:_:_:)",
-            as: ((Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Int).self
+        let sum = try await runtime.resolve(
+            .function(
+                "ArchitectureValidation.architectureSum(_:_:_:_:_:_:_:_:_:_:)",
+                as: ((Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Int).self
+            )
         )
         try check(
             unsafe sum.unsafeInvoke(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
                 == architectureSum(1, 2, 3, 4, 5, 6, 7, 8, 9, 10),
             "Swift register/stack arguments"
         )
-        let decorate = try await runtime.resolveSwiftFunction(
-            named: "ArchitectureValidation.architectureDecorate(_:)",
-            as: ((String) -> String).self
+        let decorate = try await runtime.resolve(
+            .function(
+                "ArchitectureValidation.architectureDecorate(_:)",
+                as: ((String) -> String).self
+            )
         )
         for size in [0, 100, 4096] {
             let value = String(repeating: "a", count: size)
@@ -459,9 +465,11 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         do {
             let receiver = ArchitectureCounter(40)
             observed = receiver
-            bound = try await runtime.object(receiver).resolveMethod(
-                named: "adding(_:)",
-                as: ((Int) -> Int).self
+            bound = try await runtime.object(receiver).resolve(
+                .method(
+                    "adding(_:)",
+                    as: ((Int) -> Int).self
+                )
             )
         }
         try check(observed != nil, "Swift bound receiver retention")
@@ -482,25 +490,31 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
             try check(receiver.value == 41, "Private Swift compiler accessor control")
             receiver.value = 40
             let object = runtime.object(receiver)
-            privateMethod = try await object.resolveMethod(
-                named: "adding(_:)",
-                as: ((Int) -> Int).self
+            privateMethod = try await object.resolve(
+                .method(
+                    "adding(_:)",
+                    as: ((Int) -> Int).self
+                )
             )
-            let complete = try await object.resolveMethod(
-                named: "adding(Swift.Int) -> Swift.Int",
-                as: ((Int) -> Int).self
+            let complete = try await object.resolve(
+                .method(
+                    "adding(Swift.Int) -> Swift.Int",
+                    as: ((Int) -> Int).self
+                )
             )
             try check(
                 unsafe complete.unsafeInvoke(2) == 42,
                 "Private Swift complete member declaration"
             )
-            let inherited = try await object.resolveMethod(
-                named: "inherited()",
-                as: (() -> Int).self
+            let inherited = try await object.resolve(
+                .method(
+                    "inherited()",
+                    as: (() -> Int).self
+                )
             )
             try check(unsafe inherited.unsafeInvoke() == 42, "Private Swift superclass declaration")
-            let getter = try await object.resolveGetter(named: "value", as: (() -> Int).self)
-            let setter = try await object.resolveSetter(named: "value", as: Int.self)
+            let getter = try await object.resolve(.getter("value", as: (() -> Int).self))
+            let setter = try await object.resolve(.setter("value", as: ((Int) -> Void).self))
             try unsafe setter.unsafeInvoke(50)
             try check(unsafe getter.unsafeInvoke() == 50, "Private Swift getter and setter")
         }
@@ -650,9 +664,11 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
             "libffi adapter and signed target"
         )
         let objcReceiver = ArchitectureObjCReceiver()
-        let objcMethod = try runtime.object(objcReceiver).resolveMethodAndWait(
-            selector: "adding:",
-            as: ((Int32) -> Int32).self
+        let objcMethod = try runtime.object(objcReceiver).resolveAndWait(
+            .message(
+                "adding:",
+                as: ((Int32) -> Int32).self
+            )
         )
         try check(
             try unsafe objcMethod.unsafeInvoke(2) == objcReceiver.adding(2),

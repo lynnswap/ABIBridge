@@ -422,16 +422,16 @@ extension ABIRuntime {
     // name selects the candidates whose native signatures the requested
     // types are compatible with.
     private nonisolated func prepareSwiftFunction<Signature>(
-        named name: String,
-        as signature: Signature.Type,
-        genericArguments: [NativeSwiftGenericArgument],
-        declaredSignature: String?,
-        valueABIs: [NativeSwiftType: NativeType],
+        _ request: NativeSwiftFunctionRequest<Signature>,
         candidates: (
             _ declaration: NativeDeclaration, _ extensionsOnly: Bool, _ includingSharedCache: Bool
         ) throws -> [SwiftCandidate]
     ) throws -> NativeSwiftFunction<Signature> {
-        let description = try SwiftFunctionSignature(signature)
+        let name = request.name
+        let genericArguments = request.options.genericArguments
+        let declaredSignature = request.options.declaredSignature
+        let valueABIs = request.options.valueABIs
+        let description = try SwiftFunctionSignature(Signature.self)
         let declaration = NativeDeclaration(name: name, language: .swift)
         let complete = SwiftMemberLookup.hasSignature(name)
         let key = DeclarationKey.make(name, language: .swift)
@@ -478,139 +478,101 @@ extension ABIRuntime {
         throw ABIResolutionError.declarationNotFound(declaration)
     }
 
-    /// Resolves a concrete Swift free function by its source-level name.
+    /// Resolves a Swift free function in the images a selector names.
     ///
     /// Search and preparation run synchronously on the caller's thread.
     ///
     /// - Parameters:
-    ///   - name: A qualified label-only name, such as Example.decorate(_:), or a complete demangled declaration.
-    ///   - signature: The complete Swift function type, including native error and async isolation conventions.
-    ///   - scope: Images to search; automatic scope considers only loaded images.
-    ///   - genericArguments: Scalar types and packs in declaration parameter order.
-    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types, such as structs and enums whose conventions ABIBridge cannot infer from their metadata. They take precedence over conformances and inferred conventions where the signature names their types, but inference does not consult them for the fields of a value it lowers. Inside an Optional, an entry describes only the declaration's own type, not an adapter host type, whose Optional can have another layout. An entry for an Optional itself must pass as Swift passes that Optional when ABIBridge establishes its payload's convention.
-    ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
+    ///   - request: The function and its lookup options.
+    ///   - scope: Images to search; automatic scope considers only loaded
+    ///     images.
     ///   - loading: Whether an explicit image may be acquired and initialized.
-    /// - Returns: A reusable handle retaining its image and prepared Swift ABI.
-    /// - Throws: A resolution, unsupported representation, or call preparation error.
-    public nonisolated func resolveSwiftFunctionAndWait<Signature>(
-        named name: String,
-        as signature: Signature.Type,
-        genericArguments: [NativeSwiftGenericArgument] = [],
-        declaredAs declaredSignature: String? = nil,
-        valueABIs: [NativeSwiftType: NativeType] = [:],
+    /// - Returns: A reusable handle retaining its image and prepared Swift
+    ///   ABI.
+    /// - Throws: A resolution, unsupported representation, or call
+    ///   preparation error.
+    public nonisolated func resolveAndWait<Signature>(
+        _ request: NativeSwiftFunctionRequest<Signature>,
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeSwiftFunction<Signature> {
-        try prepareSwiftFunction(
-            named: name,
-            as: signature,
-            genericArguments: genericArguments,
-            declaredSignature: declaredSignature,
-            valueABIs: valueABIs,
-            candidates: {
-                try resolver.swiftDeclarationCandidates(
-                    $0,
-                    in: scope,
-                    loading: loading,
-                    extensionsOnly: $1,
-                    includingSharedCache: $2
-                )
-            }
-        )
-    }
-
-    /// Resolves and prepares a Swift function without blocking the caller's executor.
-    ///
-    /// Image acquisition, search, and ABI preparation run on a worker. Native invocation is a separate operation.
-    /// - Returns: A reusable handle retaining its image and prepared Swift ABI.
-    /// - Throws: The same resolution, representation, and preparation errors as synchronous lookup.
-    public nonisolated func resolveSwiftFunction<Signature>(
-        named name: String,
-        as signature: Signature.Type,
-        genericArguments: [NativeSwiftGenericArgument] = [],
-        declaredAs declaredSignature: String? = nil,
-        valueABIs: [NativeSwiftType: NativeType] = [:],
-        in scope: ImageSelector = .automatic,
-        loading: ImageLoadingPolicy = .ifNeeded
-    ) async throws -> NativeSwiftFunction<Signature> {
-        try await prepare { runtime in
-            try runtime.resolveSwiftFunctionAndWait(
-                named: name,
-                as: signature,
-                genericArguments: genericArguments,
-                declaredAs: declaredSignature,
-                valueABIs: valueABIs,
+        try prepareSwiftFunction(request) {
+            try resolver.swiftDeclarationCandidates(
+                $0,
                 in: scope,
-                loading: loading
+                loading: loading,
+                extensionsOnly: $1,
+                includingSharedCache: $2
             )
         }
     }
 
-    /// Resolves a concrete Swift free function in an already retained image.
+    /// Resolves a Swift free function without blocking the caller's executor.
+    ///
+    /// Image acquisition, search, and ABI preparation run on a worker. Native
+    /// invocation is a separate operation.
+    ///
+    /// - Parameters:
+    ///   - request: The function and its lookup options.
+    ///   - scope: Images to search; automatic scope considers only loaded
+    ///     images.
+    ///   - loading: Whether an explicit image may be acquired and initialized.
+    /// - Returns: A reusable handle retaining its image and prepared Swift
+    ///   ABI.
+    /// - Throws: The same resolution, representation, and preparation errors
+    ///   as synchronous resolution.
+    public nonisolated func resolve<Signature>(
+        _ request: NativeSwiftFunctionRequest<Signature>,
+        in scope: ImageSelector = .automatic,
+        loading: ImageLoadingPolicy = .ifNeeded
+    ) async throws -> NativeSwiftFunction<Signature> {
+        try await prepare { try $0.resolveAndWait(request, in: scope, loading: loading) }
+    }
+
+    /// Resolves a Swift free function in an already retained image.
     ///
     /// Search and preparation run synchronously on the caller's thread.
     ///
     /// - Parameters:
-    ///   - name: The qualified demangled declaration.
-    ///   - signature: The complete Swift function type, including native error and async isolation conventions.
+    ///   - request: The function and its lookup options.
     ///   - image: An image whose symbol index is reused.
-    ///   - genericArguments: Scalar types and packs in declaration parameter order.
-    ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types, such as structs and enums whose conventions ABIBridge cannot infer from their metadata. They take precedence over conformances and inferred conventions where the signature names their types, but inference does not consult them for the fields of a value it lowers. Inside an Optional, an entry describes only the declaration's own type, not an adapter host type, whose Optional can have another layout. An entry for an Optional itself must pass as Swift passes that Optional when ABIBridge establishes its payload's convention.
-    ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
-    /// - Returns: A reusable handle retaining its image and prepared Swift ABI.
-    /// - Throws: A resolution, unsupported representation, or call preparation error.
-    public nonisolated func resolveSwiftFunctionAndWait<Signature>(
-        named name: String,
-        as signature: Signature.Type,
-        genericArguments: [NativeSwiftGenericArgument] = [],
-        declaredAs declaredSignature: String? = nil,
-        valueABIs: [NativeSwiftType: NativeType] = [:],
+    /// - Returns: A reusable handle retaining its image and prepared Swift
+    ///   ABI.
+    /// - Throws: A resolution, unsupported representation, or call
+    ///   preparation error.
+    public nonisolated func resolveAndWait<Signature>(
+        _ request: NativeSwiftFunctionRequest<Signature>,
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeSwiftFunction<Signature> {
-        try prepareSwiftFunction(
-            named: name,
-            as: signature,
-            genericArguments: genericArguments,
-            declaredSignature: declaredSignature,
-            valueABIs: valueABIs,
-            candidates: {
-                try resolver.swiftDeclarationCandidates(
-                    $0,
-                    in: image,
-                    loading: loading,
-                    extensionsOnly: $1,
-                    includingSharedCache: $2
-                )
-            }
-        )
+        try prepareSwiftFunction(request) {
+            try resolver.swiftDeclarationCandidates(
+                $0,
+                in: image,
+                loading: loading,
+                extensionsOnly: $1,
+                includingSharedCache: $2
+            )
+        }
     }
 
-    /// Resolves and prepares a Swift function in a retained image on an independent worker.
+    /// Resolves a Swift free function in a retained image without blocking
+    /// the caller's executor.
     ///
-    /// The caller suspends during lookup and preparation. Native invocation is a separate operation.
-    /// - Returns: A reusable handle retaining its image and prepared Swift ABI.
-    /// - Throws: The same resolution, representation, and preparation errors as synchronous lookup.
-    public nonisolated func resolveSwiftFunction<Signature>(
-        named name: String,
-        as signature: Signature.Type,
-        genericArguments: [NativeSwiftGenericArgument] = [],
-        declaredAs declaredSignature: String? = nil,
-        valueABIs: [NativeSwiftType: NativeType] = [:],
+    /// - Parameters:
+    ///   - request: The function and its lookup options.
+    ///   - image: An image whose symbol index is reused.
+    ///   - loading: Whether to ask dyld to acquire and initialize the image.
+    /// - Returns: A reusable handle retaining its image and prepared Swift
+    ///   ABI.
+    /// - Throws: The same resolution, representation, and preparation errors
+    ///   as synchronous resolution.
+    public nonisolated func resolve<Signature>(
+        _ request: NativeSwiftFunctionRequest<Signature>,
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
     ) async throws -> NativeSwiftFunction<Signature> {
-        try await prepare { runtime in
-            try runtime.resolveSwiftFunctionAndWait(
-                named: name,
-                as: signature,
-                genericArguments: genericArguments,
-                declaredAs: declaredSignature,
-                valueABIs: valueABIs,
-                in: image,
-                loading: loading
-            )
-        }
+        try await prepare { try $0.resolveAndWait(request, in: image, loading: loading) }
     }
 }

@@ -23,9 +23,12 @@ private nonisolated(nonsending) func inheritedValueBody(_ gate: AsyncValueGate, 
     }
     typealias Concurrent = NativeSwiftClosure<@Sendable @concurrent (AsyncValueGate, Int64) async -> String>
     typealias Caller = NativeSwiftClosure<nonisolated(nonsending) @Sendable (AsyncValueGate, Int64) async -> Int64>
-    let concurrent = try await runtime.resolveSwiftFunction(
-        named: "SwiftValueFixtures.applyConcurrentValueClosure(_:_:_:)",
-        as: (@concurrent (Concurrent, AsyncValueGate, Int64) async -> String).self)
+    let concurrent = try await runtime.resolve(
+        .function(
+            "SwiftValueFixtures.applyConcurrentValueClosure(_:_:_:)",
+            as: (@concurrent (Concurrent, AsyncValueGate, Int64) async -> String).self
+        )
+    )
     let gate = AsyncValueGate()
     let operation = Task { @MainActor in
         let callback = try Concurrent(concurrentValueBody)
@@ -38,9 +41,12 @@ private nonisolated(nonsending) func inheritedValueBody(_ gate: AsyncValueGate, 
     await gate.waitUntilSuspended(); await gate.open()
     try check(try await operation.value == "value:42", "Concurrent callback preserves task locals and restores the caller executor")
 
-    let caller = try await runtime.resolveSwiftFunction(
-        named: "SwiftValueFixtures.applyCallerValueClosure(_:_:_:)",
-        as: (nonisolated(nonsending) (Caller, AsyncValueGate, Int64) async -> Int64).self)
+    let caller = try await runtime.resolve(
+        .function(
+            "SwiftValueFixtures.applyCallerValueClosure(_:_:_:)",
+            as: (nonisolated(nonsending) (Caller, AsyncValueGate, Int64) async -> Int64).self
+        )
+    )
     let callerGate = AsyncValueGate()
     let inherited = Task { @MainActor in
         let callback = try Caller(inheritedValueBody)
@@ -51,9 +57,15 @@ private nonisolated(nonsending) func inheritedValueBody(_ gate: AsyncValueGate, 
     await callerGate.waitUntilSuspended(); await callerGate.open()
     try check(try await inherited.value == 42, "Caller-isolated callback retains native isolation across suspension")
 
-    let small = try await runtime.resolveSwiftFunction(
-        named: "SwiftValueFixtures.applySmallAsyncClosure(_:_:)",
-        as: (@concurrent (NativeSwiftClosure<@Sendable @concurrent (Int64) async throws(SmallError) -> Int64>, Int64) async throws(SmallError) -> Int64).self)
+    let small = try await runtime.resolve(
+        .function(
+            "SwiftValueFixtures.applySmallAsyncClosure(_:_:)",
+            as: (@concurrent (
+                NativeSwiftClosure<@Sendable @concurrent (Int64) async throws(SmallError) -> Int64>,
+                Int64
+            ) async throws(SmallError) -> Int64).self
+        )
+    )
     let smallBody: @Sendable (Int64) async throws(SmallError) -> Int64 = { (value: Int64) async throws(SmallError) in
         await Task.yield()
         if value < 0 { throw SmallError(0) }
@@ -68,9 +80,16 @@ private nonisolated(nonsending) func inheritedValueBody(_ gate: AsyncValueGate, 
         try error.withUnderlyingError { try check(($0 as? SmallError)?.code == 0, "Zero-valued async callback errors preserve the native error indicator") }
     }
 
-    let large = try await runtime.resolveSwiftFunction(
-        named: "SwiftValueFixtures.applyLargeAsyncClosure(_:_:_:)",
-        as: (@concurrent (NativeSwiftClosure<@Sendable @concurrent (ErrorToken, Bool) async throws(LargeError) -> LargeError>, ErrorToken, Bool) async throws(LargeError) -> LargeError).self)
+    let large = try await runtime.resolve(
+        .function(
+            "SwiftValueFixtures.applyLargeAsyncClosure(_:_:_:)",
+            as: (@concurrent (
+                NativeSwiftClosure<
+                    @Sendable @concurrent (ErrorToken, Bool) async throws(LargeError) -> LargeError
+                >, ErrorToken, Bool
+            ) async throws(LargeError) -> LargeError).self
+        )
+    )
     let largeBody: @Sendable (ErrorToken, Bool) async throws(LargeError) -> LargeError = { (token: ErrorToken, fail: Bool) async throws(LargeError) in
         await Task.yield()
         if fail { throw LargeError(token) }
@@ -88,20 +107,32 @@ private nonisolated(nonsending) func inheritedValueBody(_ gate: AsyncValueGate, 
     }
 
     typealias Stack = NativeSwiftClosure<@Sendable @concurrent (Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64) async -> Int64>
-    let stack = try await runtime.resolveSwiftFunction(
-        named: "SwiftValueFixtures.applyStackAsyncClosure(_:)",
-        as: (@concurrent (Stack) async -> Int64).self)
+    let stack = try await runtime.resolve(
+        .function(
+            "SwiftValueFixtures.applyStackAsyncClosure(_:)",
+            as: (@concurrent (Stack) async -> Int64).self
+        )
+    )
     try check(try unsafe await stack.unsafeInvoke(Stack(asyncStack)) == 385, "Async callback cleans up native stack arguments before suspension")
 
-    let make = try await runtime.resolveSwiftFunction(
-        named: "SwiftValueFixtures.makeConcurrentValueClosure(_:)",
-        as: ((ErrorToken) -> Concurrent).self)
-    let identity = try await runtime.resolveSwiftFunction(
-        named: "SwiftValueFixtures.handoffConcurrentValueClosure(_:)",
-        as: ((Concurrent) -> Concurrent).self)
-    let retain = try await runtime.resolveSwiftFunction(
-        named: "SwiftValueFixtures.retainConcurrentValueClosure(_:)",
-        as: ((Concurrent) -> AsyncClosureHolder).self)
+    let make = try await runtime.resolve(
+        .function(
+            "SwiftValueFixtures.makeConcurrentValueClosure(_:)",
+            as: ((ErrorToken) -> Concurrent).self
+        )
+    )
+    let identity = try await runtime.resolve(
+        .function(
+            "SwiftValueFixtures.handoffConcurrentValueClosure(_:)",
+            as: ((Concurrent) -> Concurrent).self
+        )
+    )
+    let retain = try await runtime.resolve(
+        .function(
+            "SwiftValueFixtures.retainConcurrentValueClosure(_:)",
+            as: ((Concurrent) -> AsyncClosureHolder).self
+        )
+    )
     weak var observed: ErrorToken?
     var stored: AsyncClosureHolder?
     do {
@@ -120,9 +151,12 @@ private nonisolated(nonsending) func inheritedValueBody(_ gate: AsyncValueGate, 
     stored = nil
     try check(observed == nil, "Final async closure release destroys the native capture")
 
-    let inheritedFactory = try await runtime.resolveSwiftFunction(
-        named: "SwiftValueFixtures.makeCallerValueClosure(_:)",
-        as: ((ErrorToken) -> Caller).self)
+    let inheritedFactory = try await runtime.resolve(
+        .function(
+            "SwiftValueFixtures.makeCallerValueClosure(_:)",
+            as: ((ErrorToken) -> Caller).self
+        )
+    )
     let inheritedGate = AsyncValueGate()
     let returnedCaller = Task { @MainActor in
         let value = try unsafe inheritedFactory.unsafeInvoke(ErrorToken())

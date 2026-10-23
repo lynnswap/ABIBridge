@@ -16,17 +16,21 @@ private struct CallerPadded { var value: Double; var tag: Int8 }
 struct ObjectiveCAggregateTests {
     @Test func nativeEncodingsAcceptCallerSelectedCompatibleStructures() throws {
         let fixture = ABIAggregateFixture()
-        let call = try ABIRuntime.shared.object(fixture).resolveMethodAndWait(
-            selector: "transformInsets:",
-            as: ((CallerInsets) -> CallerInsets).self
+        let call = try ABIRuntime.shared.object(fixture).resolveAndWait(
+            .message(
+                "transformInsets:",
+                as: ((CallerInsets) -> CallerInsets).self
+            )
         )
         let result = try unsafe call.unsafeInvoke(
             CallerInsets(top: 10, left: 20, bottom: 30, right: 40)
         )
         #expect(result.top == 11 && result.left == 22 && result.bottom == 33 && result.right == 44)
-        let native = try ABIRuntime.shared.object(fixture).resolveMethodAndWait(
-            selector: "transformInsets:",
-            as: ((ABIInsetsFixture) -> ABIInsetsFixture).self
+        let native = try ABIRuntime.shared.object(fixture).resolveAndWait(
+            .message(
+                "transformInsets:",
+                as: ((ABIInsetsFixture) -> ABIInsetsFixture).self
+            )
         )
         let value = try unsafe native.unsafeInvoke(
             ABIInsetsFixture(top: 1, left: 2, bottom: 3, right: 4)
@@ -41,9 +45,11 @@ struct ObjectiveCAggregateTests {
             values: (5, 6, 7),
             tag: 8
         )
-        let call = try ABIRuntime.shared.object(fixture).resolveMethodAndWait(
-            selector: "transformNested:",
-            as: ((ABINestedAggregate) -> ABINestedAggregate).self
+        let call = try ABIRuntime.shared.object(fixture).resolveAndWait(
+            .message(
+                "transformNested:",
+                as: ((ABINestedAggregate) -> ABINestedAggregate).self
+            )
         )
         let result = try unsafe call.unsafeInvoke(input)
         let expected = fixture.transformNested(input)
@@ -58,20 +64,24 @@ struct ObjectiveCAggregateTests {
 
     @Test func capturedImplementationUsesNativeAggregateRegisterClassification() throws {
         let fixture = ABIAggregateFixture()
-        let captured = try ABIRuntime.shared.resolveObjCImplementationAndWait(
-            on: ABIAggregateFixture.self,
-            selector: "transformInsets:",
-            as: ((CallerInsets) -> CallerInsets).self
+        let captured = try ABIRuntime.shared.resolveAndWait(
+            .implementation(
+                "transformInsets:",
+                as: ((CallerInsets) -> CallerInsets).self
+            ),
+            on: ABIAggregateFixture.self
         )
         let result = try unsafe captured.unsafeInvoke(
             on: fixture,
             CallerInsets(top: 1, left: 2, bottom: 3, right: 4)
         )
         #expect(result.top == 2 && result.left == 4 && result.bottom == 6 && result.right == 8)
-        let nested = try ABIRuntime.shared.resolveObjCImplementationAndWait(
-            on: ABIAggregateFixture.self,
-            selector: "transformNested:",
-            as: ((ABINestedAggregate) -> ABINestedAggregate).self
+        let nested = try ABIRuntime.shared.resolveAndWait(
+            .implementation(
+                "transformNested:",
+                as: ((ABINestedAggregate) -> ABINestedAggregate).self
+            ),
+            on: ABIAggregateFixture.self
         )
         let input = ABINestedAggregate(
             insets: .init(top: 1, left: 2, bottom: 3, right: 4),
@@ -84,16 +94,20 @@ struct ObjectiveCAggregateTests {
 
     @Test func sdkStructuresNeedNoLibrarySideTypeRegistration() throws {
         let fixture = ABIAggregateFixture()
-        let call = try ABIRuntime.shared.object(fixture).resolveMethodAndWait(
-            selector: "transformAffine:",
-            as: ((CGAffineTransform) -> CGAffineTransform).self
+        let call = try ABIRuntime.shared.object(fixture).resolveAndWait(
+            .message(
+                "transformAffine:",
+                as: ((CGAffineTransform) -> CGAffineTransform).self
+            )
         )
         let value = CGAffineTransform(a: 1, b: 2, c: 3, d: 4, tx: 5, ty: 6)
         #expect(try unsafe call.unsafeInvoke(value) == fixture.transformAffine(value))
-        let captured = try ABIRuntime.shared.resolveObjCImplementationAndWait(
-            on: ABIAggregateFixture.self,
-            selector: "transformAffine:",
-            as: ((CGAffineTransform) -> CGAffineTransform).self
+        let captured = try ABIRuntime.shared.resolveAndWait(
+            .implementation(
+                "transformAffine:",
+                as: ((CGAffineTransform) -> CGAffineTransform).self
+            ),
+            on: ABIAggregateFixture.self
         )
         #expect(
             try unsafe captured.unsafeInvoke(on: fixture, value) == fixture.transformAffine(value)
@@ -123,16 +137,20 @@ struct ObjectiveCAggregateTests {
 
     @Test func nativeTailPaddingDoesNotRequireALargerSwiftValueSize() throws {
         #expect(MemoryLayout<CallerPadded>.size < MemoryLayout<ABIPaddedAggregate>.size)
-        let call = try ABIRuntime.shared.object(ABIAggregateFixture()).resolveMethodAndWait(
-            selector: "transformPadded:",
-            as: ((CallerPadded) -> CallerPadded).self
+        let call = try ABIRuntime.shared.object(ABIAggregateFixture()).resolveAndWait(
+            .message(
+                "transformPadded:",
+                as: ((CallerPadded) -> CallerPadded).self
+            )
         )
         let result = try unsafe call.unsafeInvoke(CallerPadded(value: 1, tag: 2))
         #expect(result.value == 2.5 && result.tag == 4)
-        let captured = try ABIRuntime.shared.resolveObjCImplementationAndWait(
-            on: ABIAggregateFixture.self,
-            selector: "transformPadded:",
-            as: ((CallerPadded) -> CallerPadded).self
+        let captured = try ABIRuntime.shared.resolveAndWait(
+            .implementation(
+                "transformPadded:",
+                as: ((CallerPadded) -> CallerPadded).self
+            ),
+            on: ABIAggregateFixture.self
         )
         let actual = try unsafe captured.unsafeInvoke(
             on: ABIAggregateFixture(),
@@ -196,16 +214,20 @@ struct ObjectiveCAggregateTests {
         let runtime = ABIRuntime.shared
         let receiver = ABIAggregateFixture()
         let input = ABILongDoubleAggregate(value: 2, tag: 3)
-        let call = try runtime.object(receiver).resolveMethodAndWait(
-            selector: "transformLongDouble:",
-            as: ((ABILongDoubleAggregate) -> ABILongDoubleAggregate).self
+        let call = try runtime.object(receiver).resolveAndWait(
+            .message(
+                "transformLongDouble:",
+                as: ((ABILongDoubleAggregate) -> ABILongDoubleAggregate).self
+            )
         )
         let result = try unsafe call.unsafeInvoke(input)
         #expect(result.value == 3.5 && result.tag == 5)
-        let captured = try runtime.resolveObjCImplementationAndWait(
-            on: ABIAggregateFixture.self,
-            selector: "transformLongDouble:",
-            as: ((ABILongDoubleAggregate) -> ABILongDoubleAggregate).self
+        let captured = try runtime.resolveAndWait(
+            .implementation(
+                "transformLongDouble:",
+                as: ((ABILongDoubleAggregate) -> ABILongDoubleAggregate).self
+            ),
+            on: ABIAggregateFixture.self
         )
         let actual = try unsafe captured.unsafeInvoke(on: receiver, input)
         #expect(actual.value == 3.5 && actual.tag == 5)
@@ -226,9 +248,11 @@ struct ObjectiveCAggregateTests {
 
     @Test func undersizedTypedStorageIsRejectedBeforeDispatch() throws {
         #expect(throws: ABIResolutionError.self) {
-            _ = try ABIRuntime.shared.object(ABIAggregateFixture()).resolveMethodAndWait(
-                selector: "transformInsets:",
-                as: ((Double) -> Double).self
+            _ = try ABIRuntime.shared.object(ABIAggregateFixture()).resolveAndWait(
+                .message(
+                    "transformInsets:",
+                    as: ((Double) -> Double).self
+                )
             )
         }
     }

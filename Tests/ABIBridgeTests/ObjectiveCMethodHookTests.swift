@@ -32,10 +32,12 @@ struct ObjectiveCMethodHookTests {
             returnsRetainedObject: selector == "initRetainedValue",
             consumesReceiver: false
         )
-        let method = try runtime.object(object).resolveMethodAndWait(
-            selector: selector,
-            as: (() -> NSObject).self,
-            options: options
+        let method = try runtime.object(object).resolveAndWait(
+            .message(
+                selector,
+                as: (() -> NSObject).self,
+                options: options
+            )
         )
         #expect(try unsafe method.unsafeInvoke() === object.value)
         let calls = HookBox(0)

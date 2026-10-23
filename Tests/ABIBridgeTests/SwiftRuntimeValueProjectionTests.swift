@@ -10,9 +10,11 @@ private func runtimeProjectionChoice(
     _ kind: Int64,
     token: ErrorLifetimeToken = ErrorLifetimeToken()
 ) async throws -> NativeSwiftValue {
-    let make = try await ABIRuntime.shared.resolveSwiftFunction(
-        named: "ManagedSwiftFixtures.makeRuntimeProjectionChoice(_:_:)",
-        as: ((Int64, ErrorLifetimeToken) -> NativeSwiftValue).self
+    let make = try await ABIRuntime.shared.resolve(
+        .function(
+            "ManagedSwiftFixtures.makeRuntimeProjectionChoice(_:_:)",
+            as: ((Int64, ErrorLifetimeToken) -> NativeSwiftValue).self
+        )
     )
     return try unsafe make.unsafeInvoke(kind, token)
 }
@@ -84,10 +86,12 @@ struct SwiftRuntimeValueProjectionTests {
         let type = try await ABIRuntime.shared.resolveSwiftType(
             named: "ManagedSwiftFixtures.RuntimeEmptyCaseMode"
         )
-        let copy = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
-            as: ((NativeSwiftValue) -> NativeSwiftValue).self,
-            genericArguments: [.type(type)]
+        let copy = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+                as: ((NativeSwiftValue) -> NativeSwiftValue).self,
+                genericArguments: [.type(type)]
+            )
         )
         for (name, expected) in [("default", RuntimeEmptyCaseMode.default), ("static", .static)] {
             let value = try type.makeEnumCase(named: name)
@@ -189,10 +193,12 @@ struct SwiftRuntimeValueProjectionTests {
         let original = try await runtimeProjectionChoice(1)
         let payload = try #require(try await original.resolveEnumPayload(forCase: "text"))
         let value = try await original.type.makeEnumCase(named: "text", payload: payload)
-        let copy = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
-            as: ((NativeSwiftValue) -> NativeSwiftValue).self,
-            genericArguments: [.type(original.type)]
+        let copy = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+                as: ((NativeSwiftValue) -> NativeSwiftValue).self,
+                genericArguments: [.type(original.type)]
+            )
         )
         let result = try unsafe copy.unsafeInvoke(value)
         guard case .text(let text) = try result.take(as: RuntimeProjectionChoice.self) else {
@@ -265,9 +271,11 @@ struct SwiftRuntimeValueProjectionTests {
         let type = try await ABIRuntime.shared.resolveSwiftType(
             named: "ManagedSwiftFixtures.RuntimeProjectionMoveOnly"
         )
-        let make = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
-            as: ((Int64) -> NativeSwiftValue).self
+        let make = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
+                as: ((Int64) -> NativeSwiftValue).self
+            )
         )
         let payload = try unsafe make.unsafeInvoke(42)
         let constructed = try await type.makeEnumCase(named: "number", payload: payload)
@@ -279,9 +287,11 @@ struct SwiftRuntimeValueProjectionTests {
         }
         #expect(number == 42)
         #expect(try payload.take(as: Int64.self) == 42)
-        let ticket = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
-            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
+        let ticket = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
+                as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
+            )
         )
         let noncopyable = try unsafe ticket.unsafeInvoke(ErrorLifetimeToken())
         #expect(throws: NativeSwiftValueError.noncopyableType) {
@@ -318,9 +328,11 @@ struct SwiftRuntimeValueProjectionTests {
     }
 
     @Test func voidPayloadsAreDistinctFromHiddenNoncopyableMetadata() async throws {
-        let make = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.makeRuntimeProjectionUnit()",
-            as: (() -> NativeSwiftValue).self
+        let make = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.makeRuntimeProjectionUnit()",
+                as: (() -> NativeSwiftValue).self
+            )
         )
         let payload = try unsafe make.unsafeInvoke()
         let direct = try await ABIRuntime.shared.resolveSwiftType(
@@ -410,18 +422,22 @@ struct SwiftRuntimeValueProjectionTests {
     }
 
     @Test func genericAndOptionalPayloadTypesComeFromTheirInstantiatedMetadata() async throws {
-        let make = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.makeRuntimeProjectionGeneric(_:)",
-            as: ((String) -> NativeSwiftValue).self,
-            genericArguments: [.type(String.self)]
+        let make = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.makeRuntimeProjectionGeneric(_:)",
+                as: ((String) -> NativeSwiftValue).self,
+                genericArguments: [.type(String.self)]
+            )
         )
         let value = try unsafe make.unsafeInvoke("generic payload")
         let payload = try #require(try await value.resolveEnumPayload(forCase: "value"))
         #expect(try payload.take(as: String.self) == "generic payload")
         #expect(!value.isConsumed)
-        let optional = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.makeRuntimeProjectionOptional(_:)",
-            as: ((Bool) -> NativeSwiftValue).self
+        let optional = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.makeRuntimeProjectionOptional(_:)",
+                as: ((Bool) -> NativeSwiftValue).self
+            )
         )
         let some = try unsafe optional.unsafeInvoke(true)
         #expect(
@@ -435,27 +451,33 @@ struct SwiftRuntimeValueProjectionTests {
 
     @Test func projectedGenericValuesResolveTheirUninstantiatedGetterOwner() async throws {
         typealias Box = ExplicitBox<Int64>
-        let make = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.makeRuntimeProjectionGeneric(_:)",
-            as: ((Box) -> NativeSwiftValue).self,
-            genericArguments: [.type(Box.self)]
+        let make = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.makeRuntimeProjectionGeneric(_:)",
+                as: ((Box) -> NativeSwiftValue).self,
+                genericArguments: [.type(Box.self)]
+            )
         )
         let container = try unsafe make.unsafeInvoke(Box(42))
         let payload = try #require(try await container.resolveEnumPayload(forCase: "value"))
         #expect(payload.type.name == String(reflecting: Box.self))
-        let getter = try await payload.type.resolveGetter(
-            named: "value",
-            as: (() -> Int64).self,
-            receiverABI: .opaque(named: payload.type.name)
+        let getter = try await payload.type.resolve(
+            .getter(
+                "value",
+                as: (() -> Int64).self,
+                receiverABI: .opaque(named: payload.type.name)
+            )
         )
         #expect(try unsafe getter.unsafeInvoke(on: payload) == 42)
         #expect(!container.isConsumed && !payload.isConsumed)
     }
 
     @Test func projectionErrorsLeaveTheSourceOwned() async throws {
-        let make = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
-            as: ((Int64) -> NativeSwiftValue).self
+        let make = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
+                as: ((Int64) -> NativeSwiftValue).self
+            )
         )
         let value = try unsafe make.unsafeInvoke(42)
         #expect(throws: ABIResolutionError.self) {
@@ -469,9 +491,11 @@ struct SwiftRuntimeValueProjectionTests {
         #expect(try value.take(as: Int64.self) == 42)
         #expect(throws: NativeSwiftValueError.consumedValue) { try value.copyUnderlyingValue() }
         let counts = ArgumentCounts()
-        let move = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.makeRuntimeProjectionMoveOnly(_:)",
-            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
+        let move = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.makeRuntimeProjectionMoveOnly(_:)",
+                as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
+            )
         )
         let owned = try unsafe move.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
         #expect(throws: NativeSwiftValueError.noncopyableType) {
@@ -487,9 +511,11 @@ struct SwiftRuntimeValueProjectionTests {
 
     @Test(arguments: [false, true])
     func opaqueExistentialsCopyTheInlineOrBoxedConcreteValue(boxed: Bool) async throws {
-        let echo = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.echoExistential(_:)",
-            as: ((any ExistentialValue) -> NativeSwiftValue).self
+        let echo = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.echoExistential(_:)",
+                as: ((any ExistentialValue) -> NativeSwiftValue).self
+            )
         )
         let value: NativeSwiftValue
         if boxed {
@@ -510,17 +536,23 @@ struct SwiftRuntimeValueProjectionTests {
 
     @Test func classAndErrorExistentialsRetainTheConcreteOwner() async throws {
         let runtime = ABIRuntime.shared
-        let objectEcho = try await runtime.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.echoClassExistential(_:)",
-            as: ((any ExistentialObjectValue) -> NativeSwiftValue).self
+        let objectEcho = try await runtime.resolve(
+            .function(
+                "ManagedSwiftFixtures.echoClassExistential(_:)",
+                as: ((any ExistentialObjectValue) -> NativeSwiftValue).self
+            )
         )
-        let errorEcho = try await runtime.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.echoErrorExistential(_:)",
-            as: ((any Error) -> NativeSwiftValue).self
+        let errorEcho = try await runtime.resolve(
+            .function(
+                "ManagedSwiftFixtures.echoErrorExistential(_:)",
+                as: ((any Error) -> NativeSwiftValue).self
+            )
         )
-        let classErrorEcho = try await runtime.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.echoRuntimeProjectionClassFailure(_:)",
-            as: ((any RuntimeProjectionClassFailure) -> NativeSwiftValue).self
+        let classErrorEcho = try await runtime.resolve(
+            .function(
+                "ManagedSwiftFixtures.echoRuntimeProjectionClassFailure(_:)",
+                as: ((any RuntimeProjectionClassFailure) -> NativeSwiftValue).self
+            )
         )
         let counts = ArgumentCounts()
         var object: NativeSwiftValue?
@@ -552,9 +584,11 @@ struct SwiftRuntimeValueProjectionTests {
     }
 
     @Test func bridgedErrorsKeepTheirProjectedObjectAfterTheContainerDies() async throws {
-        let echo = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.echoErrorExistential(_:)",
-            as: ((any Error) -> NativeSwiftValue).self
+        let echo = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.echoErrorExistential(_:)",
+                as: ((any Error) -> NativeSwiftValue).self
+            )
         )
         let original = NSError(domain: "RuntimeProjectionError", code: 42)
         var copied: NativeSwiftValue?
@@ -575,9 +609,11 @@ struct SwiftRuntimeValueProjectionTests {
 
     @Test(arguments: [Int64(0), 1, 2])
     func unsupportedClassErrorPayloadsLeaveTheOriginalEnumOwned(_ kind: Int64) async throws {
-        let make = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.makeRuntimeProjectionUnsupportedErrorPayload(_:_:)",
-            as: ((Int64, ErrorLifetimeToken) -> NativeSwiftValue).self
+        let make = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.makeRuntimeProjectionUnsupportedErrorPayload(_:_:)",
+                as: ((Int64, ErrorLifetimeToken) -> NativeSwiftValue).self
+            )
         )
         let counts = ArgumentCounts()
         do {
@@ -614,9 +650,11 @@ struct SwiftRuntimeValueProjectionTests {
     }
 
     @Test func unsupportedStoredClosureResultIsRejectedBeforeInvocation() async throws {
-        let make = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.makeRuntimeProjectionUnsupportedErrorPayload(_:_:)",
-            as: ((Int64, ErrorLifetimeToken) -> NativeSwiftValue).self
+        let make = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.makeRuntimeProjectionUnsupportedErrorPayload(_:_:)",
+                as: ((Int64, ErrorLifetimeToken) -> NativeSwiftValue).self
+            )
         )
         let counts = ArgumentCounts()
         do {
@@ -639,10 +677,12 @@ struct SwiftRuntimeValueProjectionTests {
     }
 
     @Test func extendedExistentialsPreserveTheirSpecializedUnderlyingType() async throws {
-        let make = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.makeGenericExtendedCollection(_:)",
-            as: ((Int) -> NativeSwiftValue).self,
-            genericArguments: [.type(Int.self)]
+        let make = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.makeGenericExtendedCollection(_:)",
+                as: ((Int) -> NativeSwiftValue).self,
+                genericArguments: [.type(Int.self)]
+            )
         )
         let container = try unsafe make.unsafeInvoke(42)
         let underlying = try container.copyUnderlyingValue()
@@ -653,9 +693,11 @@ struct SwiftRuntimeValueProjectionTests {
     @MainActor @Test
     func projectedMainActorClosuresRetainCapturesAndEraseTheNativeResult() async throws {
         typealias Signature = @MainActor () -> NativeSwiftValue
-        let make = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.makeRuntimeProjectionRoot(_:)",
-            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
+        let make = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.makeRuntimeProjectionRoot(_:)",
+                as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
+            )
         )
         let counts = ArgumentCounts()
         var closure: NativeSwiftClosure<Signature>?
@@ -669,11 +711,13 @@ struct SwiftRuntimeValueProjectionTests {
             let previewType = try await ABIRuntime.shared.resolveSwiftType(
                 named: "ManagedSwiftFixtures.RuntimeProjectionPreview"
             )
-            let body = try await source.type.resolveGetter(
-                named: "body",
-                as: (() -> NativeSwiftValue).self,
-                valueABIs: [previewType: NativeType.opaque(named: previewType.name)],
-                receiverABI: NativeType.opaque(named: source.type.name)
+            let body = try await source.type.resolve(
+                .getter(
+                    "body",
+                    as: (() -> NativeSwiftValue).self,
+                    valueABIs: [previewType: NativeType.opaque(named: previewType.name)],
+                    receiverABI: NativeType.opaque(named: source.type.name)
+                )
             )
             let preview = try unsafe body.unsafeInvoke(on: source)
             let bodyType = try await ABIRuntime.shared.resolveSwiftType(
@@ -717,9 +761,11 @@ struct SwiftRuntimeValueProjectionTests {
 
     @MainActor @Test
     func formalGenericClosureResultsUseTheirBoundTypeWithoutAnABIOverride() async throws {
-        let make = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.makeRuntimeProjectionGenericPreview(_:)",
-            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
+        let make = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.makeRuntimeProjectionGenericPreview(_:)",
+                as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
+            )
         )
         let container = try unsafe make.unsafeInvoke(ErrorLifetimeToken())
         let payload = try #require(try await container.resolveEnumPayload(forCase: "singlePreview"))
@@ -746,9 +792,11 @@ struct SwiftRuntimeValueProjectionTests {
     @MainActor @Test
     func projectedAsyncMainActorClosuresPreserveSuspensionAndTypedFailure() async throws {
         typealias Signature = @MainActor (Bool) async throws(ScalarFailure) -> NativeSwiftValue
-        let make = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.makeRuntimeProjectionAsyncClosure(_:)",
-            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
+        let make = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.makeRuntimeProjectionAsyncClosure(_:)",
+                as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
+            )
         )
         let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken())
         let closure = try value.resolveClosureAndWait(as: Signature.self)
@@ -778,9 +826,11 @@ struct SwiftRuntimeValueProjectionTests {
     /// convention and that of owned runtime values, and nil stays nil.
     @Test func optionalClosurePayloadsAdaptTheirFunctions() async throws {
         typealias Increment = (Int64) -> Int64
-        let make = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.makeRuntimeProjectionOptionalHandler(_:labeled:)",
-            as: ((Int64?, Bool) -> NativeSwiftValue).self
+        let make = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.makeRuntimeProjectionOptionalHandler(_:labeled:)",
+                as: ((Int64?, Bool) -> NativeSwiftValue).self
+            )
         )
         for labeled in [false, true] {
             let name = labeled ? "labeled" : "handler"
@@ -804,9 +854,11 @@ struct SwiftRuntimeValueProjectionTests {
     /// An Optional C function pointer or block in a payload is a plain
     /// pointer, which needs no adaptation and keeps its value.
     @Test func optionalForeignFunctionPayloadsPassUnchanged() async throws {
-        let make = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.makeRuntimeProjectionForeignHandler(_:)",
-            as: ((Bool) -> NativeSwiftValue).self
+        let make = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.makeRuntimeProjectionForeignHandler(_:)",
+                as: ((Bool) -> NativeSwiftValue).self
+            )
         )
         let function = try unsafe make.unsafeInvoke(false)
         let pointer = try #require(try await function.resolveEnumPayload(forCase: "function"))
@@ -825,16 +877,20 @@ struct SwiftRuntimeValueProjectionTests {
 
     @Test func plainSynchronousAndCallerIsolatedAsyncClosuresKeepTheirEffects() async throws {
         let runtime = ABIRuntime.shared
-        let make = try await runtime.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.makeRuntimeProjectionPlainClosure(_:)",
-            as: ((Int64) -> NativeSwiftValue).self
+        let make = try await runtime.resolve(
+            .function(
+                "ManagedSwiftFixtures.makeRuntimeProjectionPlainClosure(_:)",
+                as: ((Int64) -> NativeSwiftValue).self
+            )
         )
         let synchronous = try unsafe make.unsafeInvoke(7)
         let closure = try synchronous.resolveClosureAndWait(as: ((Int64) -> Int64).self)
         #expect(try unsafe closure.unsafeInvoke(35) == 42)
-        let makeAsync = try await runtime.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.makeRuntimeProjectionAsyncPlainClosure(_:)",
-            as: ((Int64) -> NativeSwiftValue).self
+        let makeAsync = try await runtime.resolve(
+            .function(
+                "ManagedSwiftFixtures.makeRuntimeProjectionAsyncPlainClosure(_:)",
+                as: ((Int64) -> NativeSwiftValue).self
+            )
         )
         let asynchronous = try unsafe makeAsync.unsafeInvoke(7)
         let asyncClosure = try await asynchronous.resolveClosure(
@@ -862,17 +918,20 @@ struct SwiftRuntimeValueProjectionTests {
     @MainActor @Test
     func storedClosureOwnershipUsesExplicitWrappersForConsumptionAndMutation() async throws {
         let runtime = ABIRuntime.shared
-        let makeTicket = try await runtime.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
-            as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
+        let makeTicket = try await runtime.resolve(
+            .function(
+                "ManagedSwiftFixtures.makeOpaqueRuntimeTicket(_:)",
+                as: ((ErrorLifetimeToken) -> NativeSwiftValue).self
+            )
         )
         let counts = ArgumentCounts()
         let ticket = try unsafe makeTicket.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
-        let makeConsumer = try await runtime.resolveSwiftFunction(
-            named:
+        let makeConsumer = try await runtime.resolve(
+            .function(
                 "ManagedSwiftFixtures.makeRuntimeConsumer<A where A: ~Swift.Copyable>(A.Type) -> (__owned A) -> Swift.Int64",
-            as: ((RuntimeTicket.Type) -> NativeSwiftValue).self,
-            genericArguments: [.type(ticket.type)]
+                as: ((RuntimeTicket.Type) -> NativeSwiftValue).self,
+                genericArguments: [.type(ticket.type)]
+            )
         )
         let consumerValue = try unsafe makeConsumer.unsafeInvoke(RuntimeTicket.self)
         #expect(throws: ABIResolutionError.self) {
@@ -887,20 +946,23 @@ struct SwiftRuntimeValueProjectionTests {
         )
         #expect(ticket.isConsumed && counts.destructions == 1 && !consumerValue.isConsumed)
 
-        let makeSwap = try await runtime.resolveSwiftFunction(
-            named:
+        let makeSwap = try await runtime.resolve(
+            .function(
                 "ManagedSwiftFixtures.makeRuntimeSwap<A where A: ~Swift.Copyable>(A.Type) -> (inout A, inout A) -> ()",
-            as: ((Int64.Type) -> NativeSwiftValue).self,
-            genericArguments: [.type(Int64.self)]
+                as: ((Int64.Type) -> NativeSwiftValue).self,
+                genericArguments: [.type(Int64.self)]
+            )
         )
         let swapValue = try unsafe makeSwap.unsafeInvoke(Int64.self)
         let swap = try await swapValue.resolveClosure(
             as: ((NativeSwiftInout<NativeSwiftValue>, NativeSwiftInout<NativeSwiftValue>) -> Void)
                 .self
         )
-        let makeInteger = try await runtime.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
-            as: ((Int64) -> NativeSwiftValue).self
+        let makeInteger = try await runtime.resolve(
+            .function(
+                "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
+                as: ((Int64) -> NativeSwiftValue).self
+            )
         )
         let first = NativeSwiftInout(try unsafe makeInteger.unsafeInvoke(40))
         let second = NativeSwiftInout(try unsafe makeInteger.unsafeInvoke(2))
@@ -913,9 +975,11 @@ struct SwiftRuntimeValueProjectionTests {
     @MainActor @Test
     func enumClosurePreparationJoinsRequiredWorkAndCanonicalizesBothFieldPatterns() async throws {
         typealias Signature = RuntimeProjectionPreparationSignature
-        let make = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.makeRuntimeProjectionPreparationClosure(_:)",
-            as: ((Int64) -> NativeSwiftValue).self
+        let make = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.makeRuntimeProjectionPreparationClosure(_:)",
+                as: ((Int64) -> NativeSwiftValue).self
+            )
         )
         let container = try unsafe make.unsafeInvoke(7)
         let gate = ProjectionPreparationGate()
@@ -972,24 +1036,30 @@ struct SwiftRuntimeValueProjectionTests {
             #expect(invokeProjectionPreparation(native) == 42)
         }
         let runtime = ABIRuntime.shared
-        let export = try await runtime.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
-            as: ((NativeSwiftValue) -> Signature).self,
-            genericArguments: [.type(value.type)]
+        let export = try await runtime.resolve(
+            .function(
+                "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+                as: ((NativeSwiftValue) -> Signature).self,
+                genericArguments: [.type(value.type)]
+            )
         )
         let exported = try unsafe export.unsafeInvoke(value)
         #expect(invokeProjectionPreparation(exported) == 42)
-        let apply = try await runtime.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.applyRuntimeProjectionPreparationClosure(_:)",
-            as: ((NativeSwiftValue) -> Int64).self
+        let apply = try await runtime.resolve(
+            .function(
+                "ManagedSwiftFixtures.applyRuntimeProjectionPreparationClosure(_:)",
+                as: ((NativeSwiftValue) -> Int64).self
+            )
         )
         #expect(try unsafe apply.unsafeInvoke(value) == 42)
         #expect(!container.isConsumed && !value.isConsumed)
         #expect(invokeProjectionPreparation(try value.take(as: Signature.self)) == 42)
 
-        let makeGeneric = try await runtime.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.makeRuntimeProjectionGenericPreparationClosure(_:)",
-            as: ((Int64) -> NativeSwiftValue).self
+        let makeGeneric = try await runtime.resolve(
+            .function(
+                "ManagedSwiftFixtures.makeRuntimeProjectionGenericPreparationClosure(_:)",
+                as: ((Int64) -> NativeSwiftValue).self
+            )
         )
         let generic = try unsafe makeGeneric.unsafeInvoke(7)
         let genericValue = try #require(try generic.resolveEnumPayloadAndWait(forCase: "value"))
@@ -1037,21 +1107,27 @@ struct SwiftRuntimeValueProjectionTests {
             named: module + ".Selection",
             in: .path(fixture.libraryURL)
         )
-        let count = try await runtime.resolveSwiftFunction(
-            named: module + ".destructionCount()",
-            as: (() -> Int64).self,
+        let count = try await runtime.resolve(
+            .function(
+                module + ".destructionCount()",
+                as: (() -> Int64).self
+            ),
             in: .path(fixture.libraryURL)
         )
-        let read = try await type.resolveMethod(
-            named: "isEmpty()",
-            as: (() -> Bool).self,
-            receiverABI: .opaque(named: type.name)
+        let read = try await type.resolve(
+            .method(
+                "isEmpty()",
+                as: (() -> Bool).self,
+                receiverABI: .opaque(named: type.name)
+            )
         )
-        let fill = try await type.resolveMethod(
-            named: "fill()",
-            as: (() -> Void).self,
-            receiverABI: .opaque(named: type.name),
-            mutating: true
+        let fill = try await type.resolve(
+            .method(
+                "fill()",
+                as: (() -> Void).self,
+                receiverABI: .opaque(named: type.name),
+                receiver: .mutating
+            )
         )
         var value: NativeSwiftValue? = try type.makeEnumCase(named: "empty")
         #expect(try unsafe count.unsafeInvoke() == 0)
@@ -1081,9 +1157,11 @@ struct SwiftRuntimeValueProjectionTests {
             linkArguments: ["-swift-version", "5"]
         )
         defer { fixture.cleanup() }
-        let make = try await ABIRuntime().resolveSwiftFunction(
-            named: module + ".make()",
-            as: (() -> NativeSwiftValue).self,
+        let make = try await ABIRuntime().resolve(
+            .function(
+                module + ".make()",
+                as: (() -> NativeSwiftValue).self
+            ),
             in: .path(fixture.libraryURL)
         )
         let value = try unsafe make.unsafeInvoke()

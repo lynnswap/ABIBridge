@@ -17,13 +17,18 @@ func prepareEscapingForeignClosure(_ path: String) async throws -> StoredForeign
     guard let original = dlopen(path, RTLD_NOW | RTLD_LOCAL) else { fatalError(String(cString: dlerror())) }
     defer { dlclose(original) }
     let runtime = ABIRuntime()
-    let factory = try await runtime.resolveSwiftFunction(
-        named: "ClosureLease.makeClosure()", as: (() -> NativeSwiftClosure<(Int64) -> Int64>).self,
+    let factory = try await runtime.resolve(
+        .function(
+            "ClosureLease.makeClosure()",
+            as: (() -> NativeSwiftClosure<(Int64) -> Int64>).self
+        ),
         in: .path(URL(fileURLWithPath: path))
     )
-    let retain = try await runtime.resolveSwiftFunction(
-        named: "SwiftClosureConsumer.storeForeign(_:)",
-        as: ((NativeSwiftClosure<(Int64) -> Int64>) -> StoredForeignClosure).self
+    let retain = try await runtime.resolve(
+        .function(
+            "SwiftClosureConsumer.storeForeign(_:)",
+            as: ((NativeSwiftClosure<(Int64) -> Int64>) -> StoredForeignClosure).self
+        )
     )
     let value = try unsafe factory.unsafeInvoke()
     let result = try unsafe retain.unsafeInvoke(value)
@@ -41,16 +46,22 @@ func isLoaded(_ path: String) -> Bool {
 func prepareCollectionClosure(_ path: String) async throws -> NativeSwiftClosure<(String?) -> String?> {
     let runtime = ABIRuntime()
     let scope = ImageSelector.path(URL(fileURLWithPath: path))
-    let apply = try await runtime.resolveSwiftFunction(
-        named: "SwiftFunctionFixture.applyArray(_:_:)",
-        as: ((NativeSwiftClosure<([String]) -> [String]>, [String]) -> [String]).self, in: scope
+    let apply = try await runtime.resolve(
+        .function(
+            "SwiftFunctionFixture.applyArray(_:_:)",
+            as: ((NativeSwiftClosure<([String]) -> [String]>, [String]) -> [String]).self
+        ),
+        in: scope
     )
     let callback = try NativeSwiftClosure { (value: [String]) in value + ["callback"] }
     let actual = try unsafe apply.unsafeInvoke(callback, ["input"])
     precondition(actual == ["input", "callback"])
-    let make = try await runtime.resolveSwiftFunction(
-        named: "SwiftFunctionFixture.makeOptionalString(_:)",
-        as: ((String) -> NativeSwiftClosure<(String?) -> String?>).self, in: scope
+    let make = try await runtime.resolve(
+        .function(
+            "SwiftFunctionFixture.makeOptionalString(_:)",
+            as: ((String) -> NativeSwiftClosure<(String?) -> String?>).self
+        ),
+        in: scope
     )
     let result = try unsafe make.unsafeInvoke("!")
     runtime.removeCachedResults()
@@ -65,16 +76,22 @@ func prepareClosure(_ path: String) async throws -> NativeSwiftClosure<(Int64) -
     defer { dlclose(original) }
     let runtime = ABIRuntime()
     let scope = ImageSelector.path(URL(fileURLWithPath: path))
-    let apply = try await runtime.resolveSwiftFunction(
-        named: "SwiftFunctionFixture.applyClosure(_:_:)",
-        as: ((NativeSwiftClosure<(Int64) -> Int64>, Int64) -> Int64).self, in: scope
+    let apply = try await runtime.resolve(
+        .function(
+            "SwiftFunctionFixture.applyClosure(_:_:)",
+            as: ((NativeSwiftClosure<(Int64) -> Int64>, Int64) -> Int64).self
+        ),
+        in: scope
     )
     let callback = try NativeSwiftClosure { (value: Int64) in value + 7 }
     let applied = try unsafe apply.unsafeInvoke(callback, 35)
     precondition(applied == 42)
-    let make = try await runtime.resolveSwiftFunction(
-        named: "SwiftFunctionFixture.makeAdder(_:)",
-        as: ((Int64) -> NativeSwiftClosure<(Int64) -> Int64>).self, in: scope
+    let make = try await runtime.resolve(
+        .function(
+            "SwiftFunctionFixture.makeAdder(_:)",
+            as: ((Int64) -> NativeSwiftClosure<(Int64) -> Int64>).self
+        ),
+        in: scope
     )
     let result = try unsafe make.unsafeInvoke(7)
     runtime.removeCachedResults()
@@ -84,10 +101,13 @@ func prepareClosure(_ path: String) async throws -> NativeSwiftClosure<(Int64) -
 let callback = try await prepareClosure(CommandLine.arguments[1])
 typealias ConsumerInner = NativeSwiftClosure<(Int64) -> Int64>
 typealias ConsumerVisitor = NativeSwiftClosure<(ConsumerInner) throws -> Int64>
-let visitOwned = try await ABIRuntime.shared.resolveSwiftFunction(
-    named: "SwiftFunctionFixture.visitOwnedClosure(_:_:)",
-    as: ((ConsumerInner, ConsumerVisitor) throws -> Int64).self,
-    in: .path(URL(fileURLWithPath: CommandLine.arguments[1])))
+let visitOwned = try await ABIRuntime.shared.resolve(
+    .function(
+        "SwiftFunctionFixture.visitOwnedClosure(_:_:)",
+        as: ((ConsumerInner, ConsumerVisitor) throws -> Int64).self
+    ),
+    in: .path(URL(fileURLWithPath: CommandLine.arguments[1]))
+)
 let consumingVisitor = try ConsumerVisitor { borrowed in
     let consume = try NativeSwiftClosure<(NativeSwiftConsuming<ConsumerInner>) throws -> Int64> { value in
         try unsafe value.value.unsafeInvoke(35)

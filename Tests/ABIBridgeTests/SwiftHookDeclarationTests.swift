@@ -82,9 +82,11 @@ private final class DispatchedHookFixture {
         _ declaration: String,
         as signature: Signature.Type
     ) async throws -> NativeSwiftFunction<Signature> {
-        try await runtime.resolveSwiftFunction(
-            named: callerModule + "." + declaration,
-            as: signature,
+        try await runtime.resolve(
+            .function(
+                callerModule + "." + declaration,
+                as: signature
+            ),
             in: callerScope
         )
     }
@@ -107,7 +109,7 @@ struct SwiftHookDeclarationTests {
             named: fixture.module + ".Dispatched",
             in: fixture.providerScope
         )
-        let value = try await type.resolveMethod(named: "value(_:)", as: ((Int64) -> Int64).self)
+        let value = try await type.resolve(.method("value(_:)", as: ((Int64) -> Int64).self))
         #expect((value.entry.dispatch != nil) == stripped)
         let call = try await fixture.callerFunction(
             "callValue(_:_:)",
@@ -126,9 +128,11 @@ struct SwiftHookDeclarationTests {
         hook.invalidate()
         #expect(try unsafe call.unsafeInvoke(false, 40) == 41)
 
-        let patched = try await type.resolveMethod(
-            named: "patched(_:)",
-            as: ((Int64) -> Int64).self
+        let patched = try await type.resolve(
+            .method(
+                "patched(_:)",
+                as: ((Int64) -> Int64).self
+            )
         )
         let plan = try await unsafe value.prepareImportedReplacement(
             with: patched,
@@ -140,9 +144,11 @@ struct SwiftHookDeclarationTests {
         #expect(try unsafe call.unsafeInvoke(false, 40) == 140)
         // The captured thunk still dispatches on its receiver.
         let original = try #require(plan.slots.first?.original)
-        let child = try await fixture.runtime.resolveSwiftFunction(
-            named: fixture.module + ".makeDispatched(_:)",
-            as: ((Bool) -> AnyObject).self,
+        let child = try await fixture.runtime.resolve(
+            .function(
+                fixture.module + ".makeDispatched(_:)",
+                as: ((Bool) -> AnyObject).self
+            ),
             in: fixture.providerScope
         )
         #expect(try unsafe original.unsafeInvoke(on: child.unsafeInvoke(true), 40) == 42)
@@ -161,9 +167,11 @@ struct SwiftHookDeclarationTests {
             named: fixture.module + ".FirstValued",
             in: fixture.providerScope
         )
-        let requirement = try await first.resolveMethod(
-            named: fixture.module + ".Valued.value()",
-            as: (() -> Int64).self
+        let requirement = try await first.resolve(
+            .method(
+                fixture.module + ".Valued.value()",
+                as: (() -> Int64).self
+            )
         )
         let call = try await fixture.callerFunction("callValued(_:)", as: ((Bool) -> Int64).self)
         #expect(try unsafe call.unsafeInvoke(false) == 1)
@@ -220,10 +228,12 @@ struct SwiftHookDeclarationTests {
         ) async throws
             -> NativeSwiftFunction<Signature>
         {
-            try await runtime.resolveSwiftFunction(
-                named: module + "." + name,
-                as: signature,
-                valueABIs: valueABIs,
+            try await runtime.resolve(
+                .function(
+                    module + "." + name,
+                    as: signature,
+                    valueABIs: valueABIs
+                ),
                 in: scope
             )
         }
@@ -256,14 +266,18 @@ struct SwiftHookDeclarationTests {
             named: module + ".LoweringRenderer",
             in: scope
         )
-        let generic = try await renderer.resolveMethod(
-            named: "generic(_:)",
-            as: ((Int64) -> Int64).self,
-            genericArguments: [.type(Int64.self)]
+        let generic = try await renderer.resolve(
+            .method(
+                "generic(_:)",
+                as: ((Int64) -> Int64).self,
+                genericArguments: [.type(Int64.self)]
+            )
         )
-        let plain = try await renderer.resolveMethod(
-            named: "plain(_:)",
-            as: ((Int64) -> Int64).self
+        let plain = try await renderer.resolve(
+            .method(
+                "plain(_:)",
+                as: ((Int64) -> Int64).self
+            )
         )
         expectMismatch(at: .argument(0)) {
             _ = try unsafe generic.prepareVirtualReplacementAndWait(with: plain)
@@ -316,19 +330,23 @@ struct SwiftHookDeclarationTests {
         let runtime = ABIRuntime()
         let scope = ImageSelector.path(provider.libraryURL)
         let callerScope = ImageSelector.path(caller.libraryURL)
-        let identity = try await runtime.resolveSwiftFunction(
-            named: module + ".identity(_:)",
-            as: ((Int64) -> Int64).self,
+        let identity = try await runtime.resolve(
+            .function(
+                module + ".identity(_:)",
+                as: ((Int64) -> Int64).self
+            ),
             in: scope
         )
-        let call = try await runtime.resolveSwiftFunction(
-            named: module + "Caller.callIdentity(_:)",
-            as: ((Int64) -> Int64).self,
+        let call = try await runtime.resolve(
+            .function(
+                module + "Caller.callIdentity(_:)",
+                as: ((Int64) -> Int64).self
+            ),
             in: callerScope
         )
         func scaled(_ type: String) async throws -> NativeSwiftFunction<(Int64) -> Int64> {
             try await runtime.resolveSwiftType(named: module + "." + type, in: scope)
-                .resolveStaticMethod(named: "scaled(_:)", as: ((Int64) -> Int64).self)
+                .resolve(.staticMethod("scaled(_:)", as: ((Int64) -> Int64).self))
         }
         for (type, factor) in [("ScaledValue", Int64(3)), ("ScaledChoice", 4)] {
             let plan = try unsafe identity.prepareImportedReplacementAndWait(
@@ -407,11 +425,13 @@ struct SwiftHookDeclarationTests {
         let callerScope = ImageSelector.path(caller.libraryURL)
         func advance(_ type: String) async throws -> NativeSwiftMethod<() -> Int64> {
             try await runtime.resolveSwiftType(named: module + "." + type, in: scope)
-                .resolveMethod(named: "advance()", as: (() -> Int64).self, mutating: true)
+                .resolve(.method("advance()", as: (() -> Int64).self, receiver: .mutating))
         }
-        let call = try await runtime.resolveSwiftFunction(
-            named: module + "Caller.advanceIntegerFirst()",
-            as: (() -> Int64).self,
+        let call = try await runtime.resolve(
+            .function(
+                module + "Caller.advanceIntegerFirst()",
+                as: (() -> Int64).self
+            ),
             in: callerScope
         )
         #expect(try unsafe call.unsafeInvoke() == 11)

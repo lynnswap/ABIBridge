@@ -134,198 +134,134 @@ public final class NativeObject {
         return try codec.decode(storage)
     }
 
-    /// Resolves a Swift implementation for this object's concrete type.
+    /// Resolves an instance member of this object's Swift type and binds this
+    /// object as its receiver.
     ///
     /// Search and preparation run synchronously on the caller's thread.
     ///
-    /// The method retains the receiver and implementation image. Invocation remains on the caller's executor and calls the captured implementation. Existing generic class instances supply their enclosing type arguments. genericArguments supplies any parameters introduced by the member itself.
-    /// - Parameters:
-    ///   - name: A relative Swift member name and argument labels.
-    ///   - signature: Explicit arguments and result, excluding self.
-    ///   - genericArguments: Type arguments introduced by the member.
-    ///   - declaredSignature: The formal function type and optional canonical generic signature when binary metadata is insufficient.
-    ///   - isConsuming: Whether the Swift member consumes its receiver copy.
-    /// - Returns: A reusable method bound to this receiver.
-    /// - Throws: A lookup or unsupported-representation error.
-    public nonisolated func resolveMethodAndWait<Signature>(
-        named name: String,
-        as signature: Signature.Type,
-        genericArguments: [NativeSwiftGenericArgument] = [],
-        declaredAs declaredSignature: String? = nil,
-        consuming isConsuming: Bool = false
+    /// The object's class supplies the lookup type: the nearest class in its
+    /// hierarchy that has Swift metadata, including an imported Objective-C
+    /// class with Swift extension members. Existing generic class instances
+    /// supply their enclosing type arguments. The request's options apply as
+    /// they do on a ``NativeSwiftType``; a class receiver passes as a
+    /// reference. The handle retains the receiver and the member's
+    /// implementation images, and calls the implementation selected during
+    /// lookup.
+    ///
+    /// - Parameter request: The member and its lookup options.
+    /// - Returns: A reusable method bound to this object.
+    /// - Throws: A lookup, representation, or preparation error.
+    public func resolveAndWait<Signature>(
+        _ request: NativeSwiftInstanceMemberRequest<Signature>
     ) throws -> NativeBoundSwiftMethod<Signature> {
         let object = receiver!
-        let type = try swiftType()
-        let method = try type.resolveMethodAndWait(
-            named: name,
-            as: signature,
-            genericArguments: genericArguments,
-            declaredAs: declaredSignature,
-            consuming: isConsuming
-        )
+        let method = try swiftType().resolveAndWait(request)
         return NativeBoundSwiftMethod(method: method, receiver: object)
     }
 
-    /// Resolves a Swift method without blocking the caller's executor.
+    /// Resolves an instance member of this object's Swift type without
+    /// blocking the caller's executor, and binds this object.
     ///
-    /// Lookup and preparation run on a worker. The receiver and bound handle stay in the caller's isolation domain; lookup does not invoke the member.
-    /// - Returns: A reusable method retaining this receiver.
-    /// - Throws: The same lookup and representation errors as synchronous lookup.
-    public nonisolated(nonsending) func resolveMethod<Signature>(
-        named name: String,
-        as signature: Signature.Type,
-        genericArguments: [NativeSwiftGenericArgument] = [],
-        declaredAs declaredSignature: String? = nil,
-        consuming isConsuming: Bool = false
+    /// Lookup and preparation run on a worker. The receiver and bound handle
+    /// stay in the caller's isolation domain; lookup does not invoke the
+    /// member.
+    ///
+    /// - Parameter request: The member and its lookup options.
+    /// - Returns: A reusable method bound to this object.
+    /// - Throws: The same lookup, representation, and preparation errors as
+    ///   synchronous resolution.
+    public nonisolated(nonsending) func resolve<Signature>(
+        _ request: NativeSwiftInstanceMemberRequest<Signature>
     ) async throws -> NativeBoundSwiftMethod<Signature> {
         let objectType: AnyClass = Swift.type(of: receiver!)
         let method = try await runtime.prepare { runtime in
-            let type = try Self.swiftType(for: objectType, in: runtime)
-            return try type.resolveMethodAndWait(
-                named: name,
-                as: signature,
-                genericArguments: genericArguments,
-                declaredAs: declaredSignature,
-                consuming: isConsuming
-            )
+            try Self.swiftType(for: objectType, in: runtime).resolveAndWait(request)
         }
         return NativeBoundSwiftMethod(method: method, receiver: receiver!)
     }
 
-    /// Resolves a Swift setter bound to this object.
+    /// Resolves an initializer, or a static or class member, of this object's
+    /// Swift type.
     ///
-    /// Search and preparation run synchronously on the caller's thread.
+    /// Search and preparation run synchronously on the caller's thread. The
+    /// lookup type is the one that instance member requests use, and its
+    /// metadata is the member's `self`. The result retains no receiver.
     ///
-    /// The setter receives ownership of its ordinary incoming value.
-    /// - Parameters:
-    ///   - name: The Swift property name or complete relative setter declaration.
-    ///   - valueType: The incoming representation.
-    ///   - declaredSignature: The formal setter type and optional canonical generic signature.
-    ///   - isConsuming: Whether the setter also consumes a receiver copy.
-    /// - Returns: A one-argument bound method.
-    /// - Throws: A lookup or representation error.
-    public nonisolated func resolveSetterAndWait<Value>(
-        named name: String,
-        as valueType: Value.Type,
-        declaredAs declaredSignature: String? = nil,
-        consuming isConsuming: Bool = false
-    ) throws -> NativeBoundSwiftMethod<(Value) -> Void> {
-        let method = try swiftType().resolveSetterAndWait(
-            named: name,
-            as: valueType,
-            declaredAs: declaredSignature,
-            consuming: isConsuming
-        )
-        return NativeBoundSwiftMethod(method: method, receiver: receiver!)
+    /// - Parameter request: The member and its lookup options.
+    /// - Returns: A reusable function retaining the type and the member's
+    ///   implementation images.
+    /// - Throws: A lookup, representation, or preparation error.
+    public func resolveAndWait<Signature>(
+        _ request: NativeSwiftTypeMemberRequest<Signature>
+    ) throws -> NativeSwiftFunction<Signature> {
+        try swiftType().resolveAndWait(request)
     }
 
-    /// Resolves a Swift setter without blocking the caller's executor.
+    /// Resolves an initializer, or a static or class member, of this object's
+    /// Swift type without blocking the caller's executor.
     ///
-    /// Lookup and preparation run on a worker. The receiver and bound handle stay in the caller's isolation domain; lookup does not set the property.
-    /// - Returns: A reusable setter retaining this receiver.
-    /// - Throws: The same lookup and representation errors as synchronous lookup.
-    public nonisolated(nonsending) func resolveSetter<Value>(
-        named name: String,
-        as valueType: Value.Type,
-        declaredAs declaredSignature: String? = nil,
-        consuming isConsuming: Bool = false
-    ) async throws -> NativeBoundSwiftMethod<(Value) -> Void> {
+    /// - Parameter request: The member and its lookup options.
+    /// - Returns: A reusable function retaining the type and the member's
+    ///   implementation images.
+    /// - Throws: The same lookup, representation, and preparation errors as
+    ///   synchronous resolution.
+    public nonisolated(nonsending) func resolve<Signature>(
+        _ request: NativeSwiftTypeMemberRequest<Signature>
+    ) async throws -> NativeSwiftFunction<Signature> {
         let objectType: AnyClass = Swift.type(of: receiver!)
-        let method = try await runtime.prepare { runtime in
-            let type = try Self.swiftType(for: objectType, in: runtime)
-            return try type.resolveSetterAndWait(
-                named: name,
-                as: valueType,
-                declaredAs: declaredSignature,
-                consuming: isConsuming
-            )
+        return try await runtime.prepare { runtime in
+            try Self.swiftType(for: objectType, in: runtime).resolveAndWait(request)
         }
-        return NativeBoundSwiftMethod(method: method, receiver: receiver!)
     }
 
-    /// Resolves a selector using an ordinary Swift function type.
+    /// Resolves an Objective-C message for this receiver.
     ///
-    /// Describe explicit arguments and the result; the receiver and selector are supplied automatically. Calls use normal Objective-C dispatch. Lookup runs on the caller's executor and validates argument count and supported runtime encodings. For structures, the encoding supplies the native layout; the caller guarantees compatible Swift storage and ownership.
+    /// Search and preparation run synchronously on the caller's thread. The
+    /// receiver and selector are supplied automatically, and calls use normal
+    /// Objective-C dispatch. Lookup uses this receiver, so its dynamic method
+    /// resolution and forwarding signature apply, and validates the argument
+    /// count and supported runtime encodings. A class object receives class
+    /// messages.
     ///
-    /// - Parameters:
-    ///   - selector: The Objective-C selector, including argument colons.
-    ///   - signature: Explicit arguments, including any anonymous tail, and the result.
-    ///   - variadicFrom: Index of the first anonymous argument, or nil for a fixed signature.
-    ///   - options: Ownership overrides absent from runtime metadata.
+    /// - Parameter request: The message and its ownership options.
     /// - Returns: A method retaining this receiver.
-    /// - Throws: A resolution error for a missing selector or incompatible signature.
-    public func resolveMethodAndWait<Result, each Argument>(
-        selector: String,
-        as signature: ((repeat each Argument) -> Result).Type,
-        variadicFrom: Int? = nil,
-        options: NativeMethodOptions = .init()
+    /// - Throws: A resolution error for a missing selector or incompatible
+    ///   signature.
+    public func resolveAndWait<Result, each Argument>(
+        _ request: NativeObjCMessageRequest<Result, repeat each Argument>
     ) throws -> NativeBoundObjCMethod<Result, repeat each Argument> {
         let binding = try objcInvocationBinding(
-            selector: selector,
-            options: options,
+            selector: request.query.selector,
+            options: request.query.options,
             prepareImages: true
         )
-        return try NativeBoundObjCMethod(binding: binding, variadicFrom: variadicFrom)
+        return try NativeBoundObjCMethod(
+            binding: binding,
+            variadicFrom: request.query.variadicFrom,
+            reportsErrors: request.query.reportsErrors
+        )
     }
 
-    /// Resolves a selector that reports failure through a trailing `NSError **` parameter.
+    /// Resolves an Objective-C message for this receiver, preparing its image
+    /// and call ABI away from the caller's executor.
     ///
-    /// The signature omits that parameter and declares `throws`. A `Void` result corresponds to a `BOOL` method that fails with `NO`; another result corresponds to an object method that fails with `nil`. Invocation supplies the error slot and throws the method's `NSError`, or ``NativeObjCUnreportedFailure`` when it failed without one.
-    public func resolveMethodAndWait<Result, each Argument>(
-        selector: String,
-        as signature: ((repeat each Argument) throws -> Result).Type,
-        options: NativeMethodOptions = .init()
-    ) throws -> NativeBoundObjCMethod<Result, repeat each Argument> {
+    /// Receiver-specific dynamic resolution and forwarding-signature callbacks
+    /// stay on the caller's executor to honor its isolation. The receiver and
+    /// returned bound handle never move to the worker. Image acquisition and
+    /// signature decoding run on the worker; shared call interfaces join any
+    /// preparation already in progress. Invocation remains an explicit
+    /// operation on the caller's executor.
+    ///
+    /// - Parameter request: The message and its ownership options.
+    /// - Returns: A method retaining this receiver.
+    /// - Throws: The same resolution errors as synchronous resolution.
+    public nonisolated(nonsending) func resolve<Result, each Argument>(
+        _ request: NativeObjCMessageRequest<Result, repeat each Argument>
+    ) async throws -> NativeBoundObjCMethod<Result, repeat each Argument> {
+        let query = request.query
         let binding = try objcInvocationBinding(
-            selector: selector,
-            options: options,
-            prepareImages: true
-        )
-        return try NativeBoundObjCMethod(binding: binding, reportsErrors: true)
-    }
-
-    /// Resolves a selector while preparing its image and call ABI away from the caller's executor.
-    ///
-    /// Receiver-specific dynamic resolution and forwarding-signature callbacks stay on the caller's executor to honor its isolation. The receiver and returned bound handle never move to the worker. Image acquisition and signature decoding run on the worker; shared call interfaces join any preparation already in progress. Invocation remains an explicit operation on the caller's executor.
-    public nonisolated(nonsending) func resolveMethod<Result, each Argument>(
-        selector: String,
-        as signature: ((repeat each Argument) -> Result).Type,
-        variadicFrom: Int? = nil,
-        options: NativeMethodOptions = .init()
-    ) async throws -> NativeBoundObjCMethod<Result, repeat each Argument> {
-        try await resolveMethod(
-            selector: selector,
-            variadicFrom: variadicFrom,
-            options: options,
-            reportsErrors: false
-        )
-    }
-
-    /// Resolves a selector that reports failure through a trailing `NSError **` parameter, preparing its image and call ABI away from the caller's executor.
-    ///
-    /// The error convention matches `resolveMethodAndWait(selector:as:options:)` for a `throws` signature.
-    public nonisolated(nonsending) func resolveMethod<Result, each Argument>(
-        selector: String,
-        as signature: ((repeat each Argument) throws -> Result).Type,
-        options: NativeMethodOptions = .init()
-    ) async throws -> NativeBoundObjCMethod<Result, repeat each Argument> {
-        try await resolveMethod(
-            selector: selector,
-            variadicFrom: nil,
-            options: options,
-            reportsErrors: true
-        )
-    }
-
-    private nonisolated(nonsending) func resolveMethod<Result, each Argument>(
-        selector: String,
-        variadicFrom: Int?,
-        options: NativeMethodOptions,
-        reportsErrors: Bool
-    ) async throws -> NativeBoundObjCMethod<Result, repeat each Argument> {
-        let binding = try objcInvocationBinding(
-            selector: selector,
-            options: options,
+            selector: query.selector,
+            options: query.options,
             prepareImages: false
         )
         let plan = ObjCInvocationPlan(
@@ -341,8 +277,8 @@ public final class NativeObject {
                 return try ObjCCallSignature(
                     handle: plan.handle,
                     declaration: plan.declaration,
-                    variadicFrom: variadicFrom,
-                    reportsErrors: reportsErrors
+                    variadicFrom: query.variadicFrom,
+                    reportsErrors: query.reportsErrors
                 )
             }
         return NativeBoundObjCMethod(binding: binding, signature: prepared)
@@ -628,45 +564,5 @@ struct ObjCMethodSignature<Result, each Argument>: Sendable {
 }
 
 extension NativeObject {
-    /// Resolves a Swift property getter bound to this object.
-    ///
-    /// Search and preparation run synchronously on the caller's thread. Supply its complete zero-argument function type, including native errors and async isolation.
-    public nonisolated func resolveGetterAndWait<Signature>(
-        named name: String,
-        as signature: Signature.Type,
-        declaredAs declaredSignature: String? = nil,
-        consuming isConsuming: Bool = false
-    ) throws -> NativeBoundSwiftMethod<Signature> {
-        let method = try swiftType().resolveGetterAndWait(
-            named: name,
-            as: signature,
-            declaredAs: declaredSignature,
-            consuming: isConsuming
-        )
-        return NativeBoundSwiftMethod(method: method, receiver: receiver!)
-    }
 
-    /// Resolves a Swift getter without blocking the caller's executor.
-    ///
-    /// Lookup and preparation run on a worker. The receiver and bound handle stay in the caller's isolation domain; lookup does not invoke the member.
-    /// - Returns: A reusable getter retaining this receiver.
-    /// - Throws: The same lookup and representation errors as synchronous lookup.
-    public nonisolated(nonsending) func resolveGetter<Signature>(
-        named name: String,
-        as signature: Signature.Type,
-        declaredAs declaredSignature: String? = nil,
-        consuming isConsuming: Bool = false
-    ) async throws -> NativeBoundSwiftMethod<Signature> {
-        let objectType: AnyClass = Swift.type(of: receiver!)
-        let method = try await runtime.prepare { runtime in
-            let type = try Self.swiftType(for: objectType, in: runtime)
-            return try type.resolveGetterAndWait(
-                named: name,
-                as: signature,
-                declaredAs: declaredSignature,
-                consuming: isConsuming
-            )
-        }
-        return NativeBoundSwiftMethod(method: method, receiver: receiver!)
-    }
 }

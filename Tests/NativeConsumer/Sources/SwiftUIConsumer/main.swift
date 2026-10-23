@@ -33,16 +33,26 @@ let library = URL(fileURLWithPath: CommandLine.arguments[1])
 let runtime = ABIRuntime()
 let measurePreparation = CommandLine.arguments.dropFirst(2).contains("--measure-preparation")
 let preparationStart = ContinuousClock.now
-let echo = try runtime.resolveSwiftFunctionAndWait(
-    named: "SwiftUIPlugin.echo<A where A: SwiftUI.View>(A) -> A",
-    as: ((Text) -> Text).self, genericArguments: [.type(Text.self)], in: .path(library))
+let echo = try runtime.resolveAndWait(
+    .function(
+        "SwiftUIPlugin.echo<A where A: SwiftUI.View>(A) -> A",
+        as: ((Text) -> Text).self,
+        genericArguments: [.type(Text.self)]
+    ),
+    in: .path(library)
+)
 let firstPreparation = preparationStart.duration(to: .now)
 let echoed = try unsafe echo.unsafeInvoke(Text(verbatim: "Generic SwiftUI value"))
 if measurePreparation {
     let repeatedStart = ContinuousClock.now
-    let repeated = try runtime.resolveSwiftFunctionAndWait(
-        named: "SwiftUIPlugin.echo<A where A: SwiftUI.View>(A) -> A",
-        as: ((Text) -> Text).self, genericArguments: [.type(Text.self)], in: .path(library))
+    let repeated = try runtime.resolveAndWait(
+        .function(
+            "SwiftUIPlugin.echo<A where A: SwiftUI.View>(A) -> A",
+            as: ((Text) -> Text).self,
+            genericArguments: [.type(Text.self)]
+        ),
+        in: .path(library)
+    )
     let repeatedPreparation = repeatedStart.duration(to: .now)
     let repeatedValue = try unsafe repeated.unsafeInvoke(Text(verbatim: "Generic SwiftUI value"))
     let expected = pixels(Text(verbatim: "Generic SwiftUI value"))
@@ -53,17 +63,30 @@ if measurePreparation {
 }
 precondition(pixels(echoed) == pixels(Text(verbatim: "Generic SwiftUI value")))
 do {
-    _ = try runtime.resolveSwiftFunctionAndWait(
-        named: "SwiftUIPlugin.echo<A where A: SwiftUI.View>(A) -> A",
-        as: ((Int64) -> Int64).self, genericArguments: [.type(Int64.self)], in: .path(library))
+    _ = try runtime.resolveAndWait(
+        .function(
+            "SwiftUIPlugin.echo<A where A: SwiftUI.View>(A) -> A",
+            as: ((Int64) -> Int64).self,
+            genericArguments: [.type(Int64.self)]
+        ),
+        in: .path(library)
+    )
     fatalError("Expected the View constraint to reject Int64")
 } catch ABIResolutionError.signatureMismatch {}
-let make = try runtime.resolveSwiftFunctionAndWait(
-    named: "SwiftUIPlugin.makeView(_:_:)",
-    as: ((String, NativeSwiftClosure<(Int64) -> Int64>) -> NativeSwiftValue).self, in: .path(library))
-let host = try runtime.resolveSwiftFunctionAndWait(
-    named: "SwiftUIPlugin.makeHost(_:_:)",
-    as: ((String, NativeSwiftClosure<(Int64) -> Int64>) -> NSView).self, in: .path(library))
+let make = try runtime.resolveAndWait(
+    .function(
+        "SwiftUIPlugin.makeView(_:_:)",
+        as: ((String, NativeSwiftClosure<(Int64) -> Int64>) -> NativeSwiftValue).self
+    ),
+    in: .path(library)
+)
+let host = try runtime.resolveAndWait(
+    .function(
+        "SwiftUIPlugin.makeHost(_:_:)",
+        as: ((String, NativeSwiftClosure<(Int64) -> Int64>) -> NSView).self
+    ),
+    in: .path(library)
+)
 let title = "Unimportable SwiftUI provider"
 let expected = pixels(VStack { Text(verbatim: title); Text("Value: 42") }.padding().background(Color.yellow))
 private let destroyed = ReleaseFlag()
@@ -87,9 +110,13 @@ copiedView = nil
 precondition(observed == nil)
 destroyed.state.withLock { precondition($0) }
 
-let number = try runtime.resolveSwiftFunctionAndWait(
-    named: "SwiftUIPlugin.makeNumber()",
-    as: (() -> NativeSwiftValue).self, in: .path(library))
+let number = try runtime.resolveAndWait(
+    .function(
+        "SwiftUIPlugin.makeNumber()",
+        as: (() -> NativeSwiftValue).self
+    ),
+    in: .path(library)
+)
 let numberResult = try unsafe number.unsafeInvoke()
 do {
     _ = try NativeSwiftView(numberResult)

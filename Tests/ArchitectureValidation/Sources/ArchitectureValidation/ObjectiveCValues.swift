@@ -53,20 +53,24 @@ import UIKit
         checks.append(message)
     }
     let format = "%.1f/%d/%@" as NSString
-    let variadic = try runtime.object(NSString.self as AnyObject).resolveMethodAndWait(
-        selector: "stringWithFormat:",
-        as: ((NSString, Float, Int8, NSString) -> NSString).self,
-        variadicFrom: 1
+    let variadic = try runtime.object(NSString.self as AnyObject).resolveAndWait(
+        .message(
+            "stringWithFormat:",
+            as: ((NSString, Float, Int8, NSString) -> NSString).self,
+            variadicFrom: 1
+        )
     )
     try check(
         try unsafe variadic.unsafeInvoke(format, 1.5, -3, "device") == "1.5/-3/device",
         "Variadic Objective-C current dispatch promotes scalar and object tails with PAC"
     )
-    let capturedFormat = try runtime.resolveObjCImplementationAndWait(
+    let capturedFormat = try runtime.resolveAndWait(
+        .implementation(
+            "stringWithFormat:",
+            as: ((NSString, Float, Int8, NSString) -> NSString).self,
+            variadicFrom: 1
+        ),
         on: NSString.self,
-        selector: "stringWithFormat:",
-        as: ((NSString, Float, Int8, NSString) -> NSString).self,
-        variadicFrom: 1,
         classMethod: true
     )
     try check(
@@ -81,32 +85,42 @@ import UIKit
     )
     let ownership = ABIValidationOwnershipFixture()
     let options = NativeMethodOptions(consumedArguments: [0])
-    let consume = try runtime.object(ownership).resolveMethodAndWait(
-        selector: "consume:",
-        as: ((NSObject?) -> Int).self,
-        options: options
+    let consume = try runtime.object(ownership).resolveAndWait(
+        .message(
+            "consume:",
+            as: ((NSObject?) -> Int).self,
+            options: options
+        )
     )
-    let consumeMessage = try runtime.resolveObjCMethodAndWait(
-        on: ABIValidationOwnershipFixture.self,
-        selector: "consume:",
-        as: ((NSObject?) -> Int).self,
-        options: options
+    let consumeMessage = try runtime.resolveAndWait(
+        .message(
+            "consume:",
+            as: ((NSObject?) -> Int).self,
+            options: options
+        ),
+        on: ABIValidationOwnershipFixture.self
     )
-    let consumeCaptured = try runtime.resolveObjCImplementationAndWait(
-        on: ABIValidationOwnershipFixture.self,
-        selector: "consume:",
-        as: ((NSObject?) -> Int).self,
-        options: options
+    let consumeCaptured = try runtime.resolveAndWait(
+        .implementation(
+            "consume:",
+            as: ((NSObject?) -> Int).self,
+            options: options
+        ),
+        on: ABIValidationOwnershipFixture.self
     )
     typealias Block = @convention(block) (Int) -> Int
-    let consumeBlock = try runtime.object(ownership).resolveMethodAndWait(
-        selector: "consumeBlock:value:",
-        as: ((Block?, Int) -> Int).self,
-        options: options
+    let consumeBlock = try runtime.object(ownership).resolveAndWait(
+        .message(
+            "consumeBlock:value:",
+            as: ((Block?, Int) -> Int).self,
+            options: options
+        )
     )
-    let echoCF = try runtime.object(ownership).resolveMethodAndWait(
-        selector: "echoCFValue:",
-        as: ((Unmanaged<NSObject>?) -> Unmanaged<NSObject>?).self
+    let echoCF = try runtime.object(ownership).resolveAndWait(
+        .message(
+            "echoCFValue:",
+            as: ((Unmanaged<NSObject>?) -> Unmanaged<NSObject>?).self
+        )
     )
     weak var observedValue: NSObject?
     try autoreleasepool {
@@ -159,18 +173,22 @@ import UIKit
     )
     let receiver = TransformReceiver()
     let input = CGAffineTransform(a: 1, b: 2, c: 3, d: 4, tx: 5, ty: 6)
-    let method = try runtime.object(receiver).resolveMethodAndWait(
-        selector: "transform:",
-        as: ((CGAffineTransform) -> CGAffineTransform).self
+    let method = try runtime.object(receiver).resolveAndWait(
+        .message(
+            "transform:",
+            as: ((CGAffineTransform) -> CGAffineTransform).self
+        )
     )
     try check(
         try unsafe method.unsafeInvoke(input) == receiver.transform(input),
         "CGAffineTransform uses the Objective-C runtime aggregate layout"
     )
-    let message = try runtime.resolveObjCMethodAndWait(
-        on: TransformReceiver.self,
-        selector: "transform:",
-        as: ((CGAffineTransform) -> CGAffineTransform).self
+    let message = try runtime.resolveAndWait(
+        .message(
+            "transform:",
+            as: ((CGAffineTransform) -> CGAffineTransform).self
+        ),
+        on: TransformReceiver.self
     )
     try check(
         try unsafe message.unsafeInvoke(on: receiver, input) == receiver.transform(input),
@@ -190,10 +208,12 @@ import UIKit
     )
     bound = nil
     try check(observed == nil, "Unbound message does not prolong the released receiver")
-    let captured = try runtime.resolveObjCImplementationAndWait(
-        on: TransformReceiver.self,
-        selector: "transform:",
-        as: ((CGAffineTransform) -> CGAffineTransform).self
+    let captured = try runtime.resolveAndWait(
+        .implementation(
+            "transform:",
+            as: ((CGAffineTransform) -> CGAffineTransform).self
+        ),
+        on: TransformReceiver.self
     )
     try check(
         try unsafe captured.unsafeInvoke(on: receiver, input) == receiver.transform(input),
@@ -203,37 +223,45 @@ import UIKit
     #if canImport(UIKit)
     let insetsReceiver = InsetsReceiver()
     let insets = UIEdgeInsets(top: 1, left: 2, bottom: 3, right: 4)
-    let ordinary = try runtime.object(insetsReceiver).resolveMethodAndWait(
-        selector: "insets:",
-        as: ((UIEdgeInsets) -> UIEdgeInsets).self
+    let ordinary = try runtime.object(insetsReceiver).resolveAndWait(
+        .message(
+            "insets:",
+            as: ((UIEdgeInsets) -> UIEdgeInsets).self
+        )
     )
     try check(
         try unsafe ordinary.unsafeInvoke(insets) == insetsReceiver.insets(insets),
         "UIEdgeInsets arguments and results need no ABIBridge registration"
     )
-    let unboundInsets = try runtime.resolveObjCMethodAndWait(
-        on: InsetsReceiver.self,
-        selector: "insets:",
-        as: ((UIEdgeInsets) -> UIEdgeInsets).self
+    let unboundInsets = try runtime.resolveAndWait(
+        .message(
+            "insets:",
+            as: ((UIEdgeInsets) -> UIEdgeInsets).self
+        ),
+        on: InsetsReceiver.self
     )
     try check(
         try unsafe unboundInsets.unsafeInvoke(on: insetsReceiver, insets)
             == insetsReceiver.insets(insets),
         "Unbound UIEdgeInsets message preserves aggregate ABI"
     )
-    let implementation = try runtime.resolveObjCImplementationAndWait(
-        on: InsetsReceiver.self,
-        selector: "insets:",
-        as: ((UIEdgeInsets) -> UIEdgeInsets).self
+    let implementation = try runtime.resolveAndWait(
+        .implementation(
+            "insets:",
+            as: ((UIEdgeInsets) -> UIEdgeInsets).self
+        ),
+        on: InsetsReceiver.self
     )
     try check(
         try unsafe implementation.unsafeInvoke(on: insetsReceiver, insets)
             == insetsReceiver.insets(insets),
         "Captured UIEdgeInsets uses the native floating register classification"
     )
-    let directional = try runtime.object(insetsReceiver).resolveMethodAndWait(
-        selector: "directional:",
-        as: ((NSDirectionalEdgeInsets) -> NSDirectionalEdgeInsets).self
+    let directional = try runtime.object(insetsReceiver).resolveAndWait(
+        .message(
+            "directional:",
+            as: ((NSDirectionalEdgeInsets) -> NSDirectionalEdgeInsets).self
+        )
     )
     let value = NSDirectionalEdgeInsets(top: 1, leading: 2, bottom: 3, trailing: 4)
     let result = try unsafe directional.unsafeInvoke(value)

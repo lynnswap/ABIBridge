@@ -13,9 +13,13 @@ import Synchronization
     let provider = path("SwiftImportProvider"), caller = path("SwiftImportCallerControl")
     let name = "SwiftImportProvider.HookRenderer"
     let type = try await runtime.resolveSwiftType(named: name, in: provider)
-    let make = try await runtime.resolveSwiftFunction(
-        named: "SwiftImportProvider.makeHookRenderer(Swift.Int64) -> " + name,
-        as: ((Int64) -> AnyObject).self, in: provider)
+    let make = try await runtime.resolve(
+        .function(
+            "SwiftImportProvider.makeHookRenderer(Swift.Int64) -> " + name,
+            as: ((Int64) -> AnyObject).self
+        ),
+        in: provider
+    )
     var object: AnyObject? = try unsafe make.unsafeInvoke(10)
     weak var observed = object
     let identity = ObjectIdentifier(object!)
@@ -27,12 +31,16 @@ import Synchronization
         checks.append(message)
     }
 
-    let getter = try await type.resolveGetter(named: "count", as: (() -> Int64).self)
-    let setter = try await type.resolveSetter(named: "count", as: Int64.self)
-    let method = try await type.resolveMethod(named: "render(_:)", as: ((Int64) -> Int64).self)
-    let oracle = try await runtime.resolveSwiftFunction(
-        named: "SwiftImportCallerControl.hookRender(\(name), Swift.Int64) -> Swift.Int64",
-        as: ((AnyObject, Int64) -> Int64).self, in: caller)
+    let getter = try await type.resolve(.getter("count", as: (() -> Int64).self))
+    let setter = try await type.resolve(.setter("count", as: ((Int64) -> Void).self))
+    let method = try await type.resolve(.method("render(_:)", as: ((Int64) -> Int64).self))
+    let oracle = try await runtime.resolve(
+        .function(
+            "SwiftImportCallerControl.hookRender(\(name), Swift.Int64) -> Swift.Int64",
+            as: ((AnyObject, Int64) -> Int64).self
+        ),
+        in: caller
+    )
     let first = try await unsafe method.hookVirtualCalls(onFailure: failure) { call, value in
         let receiver = try call.receiver(as: AnyObject.self)
         guard ObjectIdentifier(receiver) == identity else { throw ArchitectureValidationFailure(description: "Receiver identity") }
@@ -52,10 +60,14 @@ import Synchronization
     second.invalidate()
     try check(try unsafe oracle.unsafeInvoke(object!, 2) == 32, "Virtual invalidation preserves callable pass-through code")
 
-    let direct = try await type.resolveMethod(named: "directRender(_:)", as: ((Int64) -> Int64).self)
-    let directOracle = try await runtime.resolveSwiftFunction(
-        named: "SwiftImportCallerControl.hookDirectRender(\(name), Swift.Int64) -> Swift.Int64",
-        as: ((AnyObject, Int64) -> Int64).self, in: caller)
+    let direct = try await type.resolve(.method("directRender(_:)", as: ((Int64) -> Int64).self))
+    let directOracle = try await runtime.resolve(
+        .function(
+            "SwiftImportCallerControl.hookDirectRender(\(name), Swift.Int64) -> Swift.Int64",
+            as: ((AnyObject, Int64) -> Int64).self
+        ),
+        in: caller
+    )
     let imported = try await unsafe direct.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call, value in
         guard ObjectIdentifier(try call.receiver(as: AnyObject.self)) == identity else {
             throw ArchitectureValidationFailure(description: "Imported receiver identity")
@@ -67,11 +79,15 @@ import Synchronization
     imported.invalidate()
     try check(try unsafe directOracle.unsafeInvoke(object!, 2) == 32, "Imported member fallback remains callable")
 
-    let textSetter = try await type.resolveSetter(named: "text", as: String.self)
-    let textGetter = try await type.resolveGetter(named: "text", as: (() -> String).self)
-    let textOracle = try await runtime.resolveSwiftFunction(
-        named: "SwiftImportCallerControl.hookSetText(\(name), Swift.String) -> Swift.String",
-        as: ((AnyObject, String) -> String).self, in: caller)
+    let textSetter = try await type.resolve(.setter("text", as: ((String) -> Void).self))
+    let textGetter = try await type.resolve(.getter("text", as: (() -> String).self))
+    let textOracle = try await runtime.resolve(
+        .function(
+            "SwiftImportCallerControl.hookSetText(\(name), Swift.String) -> Swift.String",
+            as: ((AnyObject, String) -> String).self
+        ),
+        in: caller
+    )
     let setHook = try await unsafe textSetter.hookVirtualCalls(onFailure: failure) { call, value in try call.proceed(value + " set") }
     let getHook = try await unsafe textGetter.hookVirtualCalls(onFailure: failure) { call in try call.proceed() + " get" }
     defer { setHook.invalidate(); getHook.invalidate() }
@@ -84,14 +100,20 @@ import Synchronization
     checks.append("Setter argument ownership and getter String results survive repeated virtual calls")
     setHook.invalidate(); getHook.invalidate()
 
-    let consume = try await type.resolveMethod(
-        named: "consume(_:)",
-        as: ((Int64) -> Int64).self,
-        consuming: true
+    let consume = try await type.resolve(
+        .method(
+            "consume(_:)",
+            as: ((Int64) -> Int64).self,
+            receiver: .consuming
+        )
     )
-    let consumeOracle = try await runtime.resolveSwiftFunction(
-        named: "SwiftImportCallerControl.hookConsume(\(name), Swift.Int64) -> Swift.Int64",
-        as: ((AnyObject, Int64) -> Int64).self, in: caller)
+    let consumeOracle = try await runtime.resolve(
+        .function(
+            "SwiftImportCallerControl.hookConsume(\(name), Swift.Int64) -> Swift.Int64",
+            as: ((AnyObject, Int64) -> Int64).self
+        ),
+        in: caller
+    )
     let consumed = try await unsafe consume.hookVirtualCalls(onFailure: failure) { call, value in
         if value == 0 { return 1000 }
         _ = try call.proceed(value + 1)
@@ -108,15 +130,22 @@ import Synchronization
     try check(try unsafe consumeOracle.unsafeInvoke(object!, 2) == 32, "Consuming fallback preserves the compiler ownership convention")
     let childName = "SwiftImportCallerControl.CallerOverridingRenderer"
     let childType = try await runtime.resolveSwiftType(named: childName, in: caller)
-    let makeChild = try await runtime.resolveSwiftFunction(
-        named: "SwiftImportCallerControl.makeCallerRenderer() -> " + childName,
-        as: (() -> AnyObject).self, in: caller)
+    let makeChild = try await runtime.resolve(
+        .function(
+            "SwiftImportCallerControl.makeCallerRenderer() -> " + childName,
+            as: (() -> AnyObject).self
+        ),
+        in: caller
+    )
     let child = try unsafe makeChild.unsafeInvoke()
-    let childText = try await childType.resolveMethod(named: "text(_:)", as: ((String) -> String).self)
-    let childOracle = try await runtime.resolveSwiftFunction(
-        named:
+    let childText = try await childType.resolve(.method("text(_:)", as: ((String) -> String).self))
+    let childOracle = try await runtime.resolve(
+        .function(
             "SwiftImportCallerControl.classText(SwiftImportProvider.ReplacementRenderer, Swift.String) -> Swift.String",
-        as: ((AnyObject, String) -> String).self, in: caller)
+            as: ((AnyObject, String) -> String).self
+        ),
+        in: caller
+    )
     let virtualChild = try await unsafe childText.hookVirtualCalls(onFailure: failure) { call, value in try call.proceed(value + "V") + "v" }
     defer { virtualChild.invalidate() }
     let importedChild = try await unsafe childText.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call, value in try call.proceed(value + "I") + "i" }
@@ -155,22 +184,28 @@ private func validateClassMemberHooks(
         checks.append(message)
     }
     let baseName = "SwiftImportProvider.ReplacementRenderer"
-    let kindOracle = try await runtime.resolveSwiftFunction(
-        named: "SwiftImportCallerControl.classKind(\(baseName), Swift.Int64) -> Swift.Int64",
-        as: ((AnyObject, Int64) -> Int64).self,
+    let kindOracle = try await runtime.resolve(
+        .function(
+            "SwiftImportCallerControl.classKind(\(baseName), Swift.Int64) -> Swift.Int64",
+            as: ((AnyObject, Int64) -> Int64).self
+        ),
         in: caller
     )
     // Sets the class var, then reads it, through the object's metatype.
-    let levelOracle = try await runtime.resolveSwiftFunction(
-        named: "SwiftImportCallerControl.classLevel(\(baseName), Swift.Int64) -> Swift.Int64",
-        as: ((AnyObject, Int64) -> Int64).self,
+    let levelOracle = try await runtime.resolve(
+        .function(
+            "SwiftImportCallerControl.classLevel(\(baseName), Swift.Int64) -> Swift.Int64",
+            as: ((AnyObject, Int64) -> Int64).self
+        ),
         in: caller
     )
     var objects: [AnyObject] = []
     for factory in ["makeRenderer", "makeOverridingRenderer"] {
-        let make = try await runtime.resolveSwiftFunction(
-            named: "SwiftImportProvider.\(factory)() -> " + baseName,
-            as: (() -> AnyObject).self,
+        let make = try await runtime.resolve(
+            .function(
+                "SwiftImportProvider.\(factory)() -> " + baseName,
+                as: (() -> AnyObject).self
+            ),
             in: provider
         )
         objects.append(try unsafe make.unsafeInvoke())
@@ -190,12 +225,14 @@ private func validateClassMemberHooks(
             named: "SwiftImportProvider." + name,
             in: provider
         )
-        let kind = try await type.resolveStaticMethod(
-            named: "kind(_:)",
-            as: ((Int64) -> Int64).self
+        let kind = try await type.resolve(
+            .staticMethod(
+                "kind(_:)",
+                as: ((Int64) -> Int64).self
+            )
         )
-        let getter = try await type.resolveStaticGetter(named: "level", as: (() -> Int64).self)
-        let setter = try await type.resolveStaticSetter(named: "level", as: Int64.self)
+        let getter = try await type.resolve(.staticGetter("level", as: (() -> Int64).self))
+        let setter = try await type.resolve(.staticSetter("level", as: ((Int64) -> Void).self))
         let hooks = [
             try await unsafe kind.hookVirtualCalls(onFailure: failure) { call, value in
                 try call.proceed(value + 1) + 100

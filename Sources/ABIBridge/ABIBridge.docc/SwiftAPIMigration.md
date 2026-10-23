@@ -1,29 +1,66 @@
 # Migrating resolution, Swift calls, and values
 
-Choose async or synchronous resolution explicitly, then update earlier Swift callable and value handles to complete signatures, declaration-ordered generic arguments, and the shared runtime value interface.
+Describe Swift and Objective-C declarations with requests, choose async or synchronous resolution explicitly, then update earlier Swift callable and value handles to complete signatures, declaration-ordered generic arguments, and the shared runtime value interface.
+
+## Resolve declarations from requests
+
+Swift functions and members and Objective-C messages are described by request values and prepared by one `resolve` and `resolveAndWait` pair. The per-kind functions, such as `resolveGetter`, `resolveStaticMethod`, `resolveSwiftFunction`, and `resolveObjCMethod`, are removed without compatibility aliases. A request holds no scope, so one request resolves on a ``NativeSwiftType`` or on a ``NativeObject`` with the same options:
+
+| Before | After |
+| --- | --- |
+| `runtime.resolveSwiftFunction(named: n, as: s, …, in: scope, loading: l)` | `runtime.resolve(.function(n, as: s, …), in: scope, loading: l)` |
+| `type.resolveMethod(named: n, as: s, …)` | `type.resolve(.method(n, as: s, …))` |
+| `type.resolveGetter(named: n, as: s, …)` | `type.resolve(.getter(n, as: s, …))` |
+| `type.resolveSetter(named: n, as: V.self, …)` | `type.resolve(.setter(n, as: ((V) -> Void).self, …))` |
+| `type.resolveMethod(named: "….subscript.getter : …", …)` | `type.resolve(.getter("subscript", …))`, or the same complete name |
+| `type.resolveInitializer(named: n, as: s, …)` | `type.resolve(.initializer(n, as: s, …))` |
+| `type.resolveStaticMethod`, `resolveStaticGetter`, `resolveStaticSetter` | `type.resolve(.staticMethod(…))`, `.staticGetter(…)`, `.staticSetter(…)` |
+| `object.resolveMethod(named:)`, `resolveGetter`, `resolveSetter` | `object.resolve(.method(…))`, `.getter(…)`, `.setter(…)` |
+| `mutating: true`, `consuming: true` | `receiver: .mutating`, `receiver: .consuming` |
+| `mutating: false` on a setter | `receiver: .borrowing` |
+| `runtime.resolveObjCMethod(on: c, selector: s, as: t, variadicFrom: v, classMethod: m, options: o, retaining: w)` | `runtime.resolve(.message(s, as: t, variadicFrom: v, options: o), on: c, classMethod: m, retaining: w)` |
+| `runtime.resolveObjCImplementation(on: c, selector: s, …)` | `runtime.resolve(.implementation(s, …), on: c, …)` |
+| `object.resolveMethod(selector: s, as: t, …)` | `object.resolve(.message(s, as: t, …))` |
+
+Each `…AndWait` function becomes `resolveAndWait` with the same request. The handles they return are unchanged.
+
+```swift
+// Before
+let read = try type.resolveMethodAndWait(named: "read()", as: (() -> Int64).self)
+let setText = try runtime.object(renderer).resolveSetterAndWait(named: "text", as: String.self)
+
+// After
+let read = try type.resolveAndWait(.method("read()", as: (() -> Int64).self))
+let setText = try runtime.object(renderer).resolveAndWait(
+    .setter("text", as: ((String) -> Void).self)
+)
+```
+
+What changes besides the spelling:
+
+- A setter request takes the complete function type of the call, `(Value) -> Void`, like every other member. A subscript setter takes the new value followed by the indices.
+- An object accepts `valueABIs:`, `receiverABI:`, and `receiver:` as its type does, and resolves initializer and static member requests for its own type.
+- A subscript's accessors are `getter` and `setter` requests for the member named `subscript`, selected by their index and value types, or by a complete accessor declaration as before. Getter and setter requests accept `genericArguments:` for generic subscripts.
+- ``NativeSwiftReceiverConvention`` replaces the `mutating:` and `consuming:` flags, whose combination was invalid. Without a convention, methods and getters borrow `self` and setters follow their declaration.
+- Throwing Objective-C messages and implementations also accept a `Selector`.
+
+C and C++ functions, C++ members, Swift types, images, and value conversions keep their `resolve…` names.
 
 ## Choose synchronous or async lookup
 
-Factories named `resolve…` perform search and call preparation on a worker while the caller suspends. Their synchronous `AndWait` counterparts take the same arguments and can block the caller. Both work without `prepare` and join only required preparation already in progress:
+Functions named `resolve…` perform search and call preparation on a worker while the caller suspends. Their synchronous `AndWait` counterparts take the same arguments and can block the caller. Both work without `prepare` and join only required preparation already in progress:
 
-| Operation | Async factory | Synchronous factory |
+| Operation | Async | Synchronous |
 | --- | --- | --- |
 | Raw symbol or symbol request batch | `resolve` | `resolveAndWait` |
+| Swift function, member, initializer, or static member request | `resolve` | `resolveAndWait` |
+| Objective-C message or implementation request | `resolve` | `resolveAndWait` |
 | Loaded images | `resolveImages` | `resolveImagesAndWait` |
 | Lazy-library metadata | `resolveLazyLibraries` | `resolveLazyLibrariesAndWait` |
 | C function | `resolveCFunction` | `resolveCFunctionAndWait` |
 | C++ function | `resolveCXXFunction` | `resolveCXXFunctionAndWait` |
-| Objective-C message by class | `resolveObjCMethod` | `resolveObjCMethodAndWait` |
-| Captured Objective-C implementation | `resolveObjCImplementation` | `resolveObjCImplementationAndWait` |
-| Swift function | `resolveSwiftFunction` | `resolveSwiftFunctionAndWait` |
 | Swift type | `resolveSwiftType` | `resolveSwiftTypeAndWait` |
-| Swift, Objective-C, or C++ instance method | `resolveMethod` | `resolveMethodAndWait` |
-| Swift initializer | `resolveInitializer` | `resolveInitializerAndWait` |
-| Swift static method | `resolveStaticMethod` | `resolveStaticMethodAndWait` |
-| Swift instance getter | `resolveGetter` | `resolveGetterAndWait` |
-| Swift instance setter | `resolveSetter` | `resolveSetterAndWait` |
-| Swift static getter | `resolveStaticGetter` | `resolveStaticGetterAndWait` |
-| Swift static setter | `resolveStaticSetter` | `resolveStaticSetterAndWait` |
+| C++ instance method | `resolveMethod` | `resolveMethodAndWait` |
 | C++ virtual method | `resolveVirtualMethod` | `resolveVirtualMethodAndWait` |
 | Named C++ virtual-table entry | `resolveEntry` | `resolveEntryAndWait` |
 | Swift enum payload | `resolveEnumPayload` | `resolveEnumPayloadAndWait` |
@@ -37,12 +74,12 @@ For async type and method lookup:
 
 ```swift
 let type = try await runtime.resolveSwiftType(named: "Example.Counter")
-let read = try await type.resolveMethod(named: "read()", as: (() -> Int64).self)
+let read = try await type.resolve(.method("read()", as: (() -> Int64).self))
 ```
 
-Use `AndWait` without `await` for synchronous lookup, including inside an async function. It can block during cold lookup or while joining preparation. Bound member lookup keeps the receiver in the caller's isolation domain; see <doc:SwiftFunctionInvocation> and <doc:SwiftMemberInvocation>.
+Use `resolveAndWait` without `await` for synchronous lookup, including inside an async function. It can block during cold lookup or while joining preparation. Bound member lookup keeps the receiver in the caller's isolation domain; see <doc:SwiftFunctionInvocation> and <doc:SwiftMemberInvocation>.
 
-`ABIRuntime` and `NativeSwiftType` remain actors. Replace the earlier C/C++ `cFunction` and `cxxFunction` factories with `resolveCFunction` and `resolveCXXFunction`, or their `AndWait` variants. The same rename applies to `images`, `lazyLibraries`, `objcMethod`, `objcImplementation`, C++ `method` and `virtualMethod`, Objective-C `method(selector:)`, and named vtable `entry`. Earlier synchronous raw `resolve` calls become `resolveAndWait`, or add `await` to use async resolution. The old factory names have no compatibility aliases.
+`ABIRuntime` and `NativeSwiftType` remain actors. Replace the earlier C/C++ `cFunction` and `cxxFunction` factories with `resolveCFunction` and `resolveCXXFunction`, or their `AndWait` variants. The same rename applies to `images`, `lazyLibraries`, C++ `method` and `virtualMethod`, and named vtable `entry`. Earlier `objcMethod`, `objcImplementation`, and Objective-C `method(selector:)` calls become message and implementation requests. Earlier synchronous raw `resolve` calls become `resolveAndWait`, or add `await` to use async resolution. The old factory names have no compatibility aliases.
 
 For C or C++ lookup from `MainActor`, call the async factory directly:
 
@@ -60,7 +97,7 @@ func calculate() async throws -> Int32 {
 
 Resolution suspends for search, loading, and ABI preparation. It does not change the invocation's execution requirements. Bound Objective-C resolution keeps receiver-specific dynamic resolution and forwarding-signature callbacks on the caller's executor; its image and call preparation run on the worker.
 
-Optional `prepare(_:)` remains asynchronous. Use synchronous `AndWait` factories inside its closure to prepare known requirements ahead of time:
+Optional `prepare(_:)` remains asynchronous. Use synchronous `AndWait` functions inside its closure to prepare known requirements ahead of time:
 
 ```swift
 async let prepared = runtime.prepare { runtime in
@@ -101,7 +138,7 @@ Apply this change to `NativeSwiftMethod`, `NativeBoundSwiftMethod`, `NativeSwift
 Replace a Swift getter's result metatype, such as `String.self`, with its zero-argument function metatype:
 
 ```swift
-let getter = try await type.resolveGetter(named: "text", as: (() -> String).self)
+let getter = try await type.resolve(.getter("text", as: (() -> String).self))
 ```
 
 Keep Objective-C selector lookup on its existing function-type interface. This getter change applies to Swift source declarations.
@@ -111,11 +148,11 @@ Keep Objective-C selector lookup on its existing function-type interface. This g
 Replace `substituting:` with `genericArguments:`. Each declared scalar parameter takes one `.type` argument; each declared type pack takes one `.pack` argument.
 
 ```swift
-let run = try await runtime.resolveSwiftFunction(
-    named: "Example.run(_:)",
+let run = try await runtime.resolve(.function(
+    "Example.run(_:)",
     as: ((NativeSwiftClosure<() -> String>) -> String).self,
     genericArguments: [.type(String.self)]
-)
+))
 let callback = try NativeSwiftClosure<() -> String> { "value" }
 let result = try unsafe run.unsafeInvoke(callback)
 ```
@@ -129,10 +166,10 @@ Label-only names select a declaration whose bound signature matches `as:`. Keep 
 Replace `NativeSwiftOpaqueValue` with ``NativeSwiftValue``. Its retained `type` supports identity, member lookup, and generic arguments; `type.name` gives the source name. Replace `withValue` with throwing `withCopy`, which exposes an `Any` copy and can report copy failure.
 
 ```swift
-let make = try await runtime.resolveSwiftFunction(
-    named: "Example.makeSummary(_:)",
+let make = try await runtime.resolve(.function(
+    "Example.makeSummary(_:)",
     as: ((String) -> NativeSwiftValue).self
-)
+))
 let value = try unsafe make.unsafeInvoke("title")
 let type = value.type
 print(type.name)
@@ -146,10 +183,10 @@ Assigning a runtime handle shares ownership. `copy()` creates an independent Cop
 Use ``NativeSwiftClosure`` with ``NativeSwiftBorrowedValue`` in its signature instead of `NativeSwiftBorrowingClosure`. Prepare ordinary members instead of `borrowedMethod` or `borrowedGetter`:
 
 ```swift
-let read = try await type.resolveMethod(
-    named: "read()", as: (() -> Int64).self,
+let read = try await type.resolve(.method(
+    "read()", as: (() -> Int64).self,
     receiverABI: .opaque(named: type.name)
-)
+))
 let callback = try NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Int64> { view in
     do { return try unsafe read.unsafeInvoke(on: view) }
     catch { report(error); return 0 }
@@ -167,10 +204,10 @@ Use `NativeSwiftClosure<Signature>` inside the outer signature for nested native
 Replace the earlier `inheritsCallerIsolation: false` setting with an `@concurrent` signature for a concurrent native async declaration. Use `nonisolated(nonsending)` for a caller-isolated declaration, including when the consumer's default differs from the provider's:
 
 ```swift
-let run = try await runtime.resolveSwiftFunction(
-    named: "Example.runAsync(_:)",
+let run = try await runtime.resolve(.function(
+    "Example.runAsync(_:)",
     as: (nonisolated(nonsending) (String) async throws -> String).self
-)
+))
 let result = try unsafe await run.unsafeInvoke("value")
 ```
 
@@ -181,10 +218,10 @@ Typed errors remain part of the signature, such as `(String) throws(MyError) -> 
 An owned result cannot represent a native `~Escapable` payload. Select ``NativeSwiftBorrowedValue`` as the result marker and process it in `withResult:`:
 
 ```swift
-let make = try runtime.resolveSwiftFunctionAndWait(
-    named: "Example.makeView(_:)",
+let make = try runtime.resolveAndWait(.function(
+    "Example.makeView(_:)",
     as: ((AnyObject) -> NativeSwiftBorrowedValue).self
-)
+))
 let number = try unsafe make.unsafeInvoke(owner, withResult: { view in
     try unsafe read.unsafeInvoke(on: view)
 })

@@ -28,15 +28,20 @@ struct SwiftArgumentConventionTests {
         typealias Value = (ForeignTupleWord, Int64)
         let runtime = ABIRuntime.shared
         #expect(throws: ABIResolutionError.self) {
-            _ = try runtime.resolveSwiftFunctionAndWait(
-                named:
+            _ = try runtime.resolveAndWait(
+                .function(
                     "ManagedSwiftFixtures.replaceArgumentTuple(inout (Swift.Int64, Swift.Int64)) -> ()",
-                as: ((NativeSwiftInout<Value>) -> Void).self)
+                    as: ((NativeSwiftInout<Value>) -> Void).self
+                )
+            )
         }
-        let replace = try await runtime.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.replaceRuntimeValue<A where A: ~Swift.Copyable>(inout A, __owned A) -> ()",
-            as: ((NativeSwiftInout<Value>, NativeSwiftConsuming<Value>) -> Void).self,
-            genericArguments: [.type(Value.self)])
+        let replace = try await runtime.resolve(
+            .function(
+                "ManagedSwiftFixtures.replaceRuntimeValue<A where A: ~Swift.Copyable>(inout A, __owned A) -> ()",
+                as: ((NativeSwiftInout<Value>, NativeSwiftConsuming<Value>) -> Void).self,
+                genericArguments: [.type(Value.self)]
+            )
+        )
         let original = ForeignTupleWord(41), replacement = ForeignTupleWord(42)
         let slot = NativeSwiftInout((original, Int64(1)))
         try unsafe replace.unsafeInvoke(slot, NativeSwiftConsuming((replacement, Int64(2))))
@@ -45,31 +50,49 @@ struct SwiftArgumentConventionTests {
 
     @Test func asyncEntriesAndCallbacksHandleOddStackSlotCounts() async throws {
         let runtime = ABIRuntime.shared
-        let seven = try await runtime.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.asyncSeven(_:_:_:_:_:_:_:)",
-            as: (@concurrent (Int64, Int64, Int64, Int64, Int64, Int64, Int64) async -> Int64).self)
-        let nine = try await runtime.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.asyncNine(_:_:_:_:_:_:_:_:_:)",
-            as: (@concurrent (Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64) async -> Int64).self)
+        let seven = try await runtime.resolve(
+            .function(
+                "ManagedSwiftFixtures.asyncSeven(_:_:_:_:_:_:_:)",
+                as: (@concurrent (Int64, Int64, Int64, Int64, Int64, Int64, Int64) async -> Int64)
+                    .self
+            )
+        )
+        let nine = try await runtime.resolve(
+            .function(
+                "ManagedSwiftFixtures.asyncNine(_:_:_:_:_:_:_:_:_:)",
+                as: (@concurrent (Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64)
+                    async -> Int64).self
+            )
+        )
         #expect(try unsafe await seven.unsafeInvoke(1, 2, 3, 4, 5, 6, 7) == 28)
         #expect(try unsafe await nine.unsafeInvoke(1, 2, 3, 4, 5, 6, 7, 8, 9) == 45)
 
         typealias Seven = NativeSwiftClosure<@Sendable @concurrent (Int64, Int64, Int64, Int64, Int64, Int64, Int64) async -> Int64>
         typealias Nine = NativeSwiftClosure<@Sendable @concurrent (Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64) async -> Int64>
-        let applySeven = try await runtime.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.applySeven(_:)",
-            as: (@concurrent (Seven) async -> Int64).self)
-        let applyNine = try await runtime.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.applyNine(_:)",
-            as: (@concurrent (Nine) async -> Int64).self)
+        let applySeven = try await runtime.resolve(
+            .function(
+                "ManagedSwiftFixtures.applySeven(_:)",
+                as: (@concurrent (Seven) async -> Int64).self
+            )
+        )
+        let applyNine = try await runtime.resolve(
+            .function(
+                "ManagedSwiftFixtures.applyNine(_:)",
+                as: (@concurrent (Nine) async -> Int64).self
+            )
+        )
         #expect(try unsafe await applySeven.unsafeInvoke(Seven(asyncSeven)) == 28)
         #expect(try unsafe await applyNine.unsafeInvoke(Nine(asyncNine)) == 45)
     }
 
     @Test func consumedIndirectValuesReleaseTheirReferencesExactlyOnce() async throws {
-        let call = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.consumeLargeArgument(_:_:_:)",
-            as: ((NativeSwiftConsuming<ErrorSuccessPayload>, ArgumentCounts, Bool) throws(ScalarFailure) -> Int64).self)
+        let call = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.consumeLargeArgument(_:_:_:)",
+                as: ((NativeSwiftConsuming<ErrorSuccessPayload>, ArgumentCounts, Bool)
+                    throws(ScalarFailure) -> Int64).self
+            )
+        )
         let counts = ArgumentCounts()
         for fail in [false, true] {
             weak var observed: ErrorLifetimeToken?
@@ -90,9 +113,12 @@ struct SwiftArgumentConventionTests {
     }
 
     @Test func failedArgumentEncodingLeavesInoutStorageUntouched() async throws {
-        let call = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.mutateBeforeConversionFailure(inout Swift.String, Swift.Int64) -> ()",
-            as: ((NativeSwiftInout<String>, BadArgumentEncoding) -> Void).self)
+        let call = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.mutateBeforeConversionFailure(inout Swift.String, Swift.Int64) -> ()",
+                as: ((NativeSwiftInout<String>, BadArgumentEncoding) -> Void).self
+            )
+        )
         let text = NativeSwiftInout("original")
         do { try unsafe call.unsafeInvoke(text, .init()); Issue.record("Expected argument conversion failure") }
         catch ArgumentEncodingFailure.expected {}
@@ -101,9 +127,15 @@ struct SwiftArgumentConventionTests {
 
 
     @Test func inoutValuesKeepNativeWritebackOnSuccessAndError() async throws {
-        let call = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.mutateArguments(_:_:_:_:)",
-            as: ((NativeSwiftInout<String>, NativeSwiftInout<[String]>, NativeSwiftInout<Int64>, Bool) throws(ScalarFailure) -> Void).self)
+        let call = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.mutateArguments(_:_:_:_:)",
+                as: ((
+                    NativeSwiftInout<String>, NativeSwiftInout<[String]>, NativeSwiftInout<Int64>,
+                    Bool
+                ) throws(ScalarFailure) -> Void).self
+            )
+        )
         let text = NativeSwiftInout(String(repeating: "text", count: 100))
         let values = NativeSwiftInout([String]())
         let count = NativeSwiftInout(Int64(40))
@@ -119,9 +151,15 @@ struct SwiftArgumentConventionTests {
     }
 
     @Test func consumingCopiesAreTransferredOnBothCompletionPaths() async throws {
-        let call = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.consumeArguments(_:_:_:_:)",
-            as: ((NativeSwiftConsuming<String>, NativeSwiftBorrowing<String>, NativeSwiftConsuming<ArgumentToken>, Bool) throws(ScalarFailure) -> String).self)
+        let call = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.consumeArguments(_:_:_:_:)",
+                as: ((
+                    NativeSwiftConsuming<String>, NativeSwiftBorrowing<String>,
+                    NativeSwiftConsuming<ArgumentToken>, Bool
+                ) throws(ScalarFailure) -> String).self
+            )
+        )
         let counts = ArgumentCounts()
         for fail in [false, true] {
             weak var observed: ArgumentToken?
@@ -144,9 +182,12 @@ struct SwiftArgumentConventionTests {
     }
 
     @Test func laterEncodingFailureReleasesTheUntransferredCopy() async throws {
-        let call = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.consumeBeforeConversionFailure(__owned ManagedSwiftFixtures.ArgumentToken, Swift.Int64) -> Swift.Int64",
-            as: ((NativeSwiftConsuming<ArgumentToken>, BadArgumentEncoding) -> Int64).self)
+        let call = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.consumeBeforeConversionFailure(__owned ManagedSwiftFixtures.ArgumentToken, Swift.Int64) -> Swift.Int64",
+                as: ((NativeSwiftConsuming<ArgumentToken>, BadArgumentEncoding) -> Int64).self
+            )
+        )
         let counts = ArgumentCounts()
         weak var observed: ArgumentToken?
         do {
@@ -161,9 +202,15 @@ struct SwiftArgumentConventionTests {
 
     @Test func initializersMixBorrowedAndConsumedArguments() async throws {
         let type = try await ABIRuntime.shared.resolveSwiftType(named: "ManagedSwiftFixtures.ArgumentOwner")
-        let make = try await type.resolveInitializer(
-            named: "init(_:_:_:)",
-            as: ((NativeSwiftBorrowing<String>, NativeSwiftConsuming<String>, NativeSwiftBorrowing<ArgumentToken>) -> ArgumentOwner).self)
+        let make = try await type.resolve(
+            .initializer(
+                "init(_:_:_:)",
+                as: ((
+                    NativeSwiftBorrowing<String>, NativeSwiftConsuming<String>,
+                    NativeSwiftBorrowing<ArgumentToken>
+                ) -> ArgumentOwner).self
+            )
+        )
         let counts = ArgumentCounts()
         weak var observed: ArgumentToken?
         var owner: ArgumentOwner?
@@ -182,10 +229,14 @@ struct SwiftArgumentConventionTests {
             named: "ManagedSwiftFixtures.ArgumentCounter",
             as: ArgumentCounter.self
         )
-        let update = try await type.resolveMethod(
-            named: "update(_:_:_:)",
-            as: ((NativeSwiftInout<String>, NativeSwiftConsuming<String>, Bool) throws(ScalarFailure) -> Void).self,
-            mutating: true)
+        let update = try await type.resolve(
+            .method(
+                "update(_:_:_:)",
+                as: ((NativeSwiftInout<String>, NativeSwiftConsuming<String>, Bool)
+                    throws(ScalarFailure) -> Void).self,
+                receiver: .mutating
+            )
+        )
         var receiver = ArgumentCounter(40)
         let text = NativeSwiftInout("value")
         do { try unsafe update.unsafeInvoke(on: &receiver, text, .init("!"), true); Issue.record("Expected failure") }
@@ -196,9 +247,15 @@ struct SwiftArgumentConventionTests {
     }
 
     @MainActor @Test func asyncInoutArgumentsRemainLiveThroughCancellation() async throws {
-        let call = try await ABIRuntime.shared.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.asyncArguments(_:_:_:_:_:)",
-            as: (@concurrent (AsyncGate, NativeSwiftInout<String>, NativeSwiftConsuming<String>, NativeSwiftBorrowing<String>, Bool) async throws(ScalarFailure) -> String).self)
+        let call = try await ABIRuntime.shared.resolve(
+            .function(
+                "ManagedSwiftFixtures.asyncArguments(_:_:_:_:_:)",
+                as: (@concurrent (
+                    AsyncGate, NativeSwiftInout<String>, NativeSwiftConsuming<String>,
+                    NativeSwiftBorrowing<String>, Bool
+                ) async throws(ScalarFailure) -> String).self
+            )
+        )
         for cancel in [false, true] {
             let gate = AsyncGate()
             let text = NativeSwiftInout("value")
@@ -218,9 +275,15 @@ struct SwiftArgumentConventionTests {
 
     @Test func asyncInitializersRetainBorrowedArgumentsUntilCompletion() async throws {
         let type = try await ABIRuntime.shared.resolveSwiftType(named: "ManagedSwiftFixtures.ArgumentOwner")
-        let make = try await type.resolveInitializer(
-            named: "init(_:_:_:_:_:)",
-            as: (@concurrent (NativeSwiftBorrowing<String>, NativeSwiftConsuming<String>, NativeSwiftBorrowing<ArgumentToken>, AsyncGate, Bool) async throws(ScalarFailure) -> ArgumentOwner).self)
+        let make = try await type.resolve(
+            .initializer(
+                "init(_:_:_:_:_:)",
+                as: (@concurrent (
+                    NativeSwiftBorrowing<String>, NativeSwiftConsuming<String>,
+                    NativeSwiftBorrowing<ArgumentToken>, AsyncGate, Bool
+                ) async throws(ScalarFailure) -> ArgumentOwner).self
+            )
+        )
         let counts = ArgumentCounts()
         for fail in [false, true] {
             let gate = AsyncGate()

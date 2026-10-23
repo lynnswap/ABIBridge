@@ -7,10 +7,10 @@ Describe each native Swift parameter's convention with a typed argument wrapper.
 For a native declaration `@concurrent func append(_ text: inout String, _ suffix: consuming String) async throws`:
 
 ```swift
-let append = try await ABIRuntime.shared.resolveSwiftFunction(
-    named: "Example.append(_:_:)",
+let append = try await ABIRuntime.shared.resolve(.function(
+    "Example.append(_:_:)",
     as: (@concurrent (NativeSwiftInout<String>, NativeSwiftConsuming<String>) async throws -> Void).self
-)
+))
 let text = NativeSwiftInout("Hello")
 try unsafe await append.unsafeInvoke(text, .init("!"))
 print(text.value)
@@ -37,10 +37,10 @@ For a native initializer `init(_ title: borrowing String, _ content: consuming S
 
 ```swift
 let type = try ABIRuntime.shared.resolveSwiftTypeAndWait(named: "Example.Document")
-let initialize = try type.resolveInitializerAndWait(
-    named: "init(_:_:)",
+let initialize = try type.resolveAndWait(.initializer(
+    "init(_:_:)",
     as: ((NativeSwiftBorrowing<String>, NativeSwiftConsuming<String>) -> AnyObject).self
-)
+))
 let document = try unsafe initialize.unsafeInvoke(.init("Title"), .init("Contents"))
 ```
 
@@ -56,10 +56,10 @@ For `func replaceCallback(_ callback: inout (Int64) -> Int64)`, put the closure 
 typealias Callback = NativeSwiftClosure<(Int64) -> Int64>
 let initial = try NativeSwiftClosure { (value: Int64) in value + 7 }
 let callback = NativeSwiftInout(initial)
-let replace = try ABIRuntime.shared.resolveSwiftFunctionAndWait(
-    named: "Example.replaceCallback(_:)",
+let replace = try ABIRuntime.shared.resolveAndWait(.function(
+    "Example.replaceCallback(_:)",
     as: ((NativeSwiftInout<Callback>) -> Void).self
-)
+))
 try unsafe replace.unsafeInvoke(callback)
 let result = try unsafe callback.value.unsafeInvoke(35)
 ```

@@ -66,9 +66,11 @@ struct SwiftInferredValueTests {
         sourceLocation: SourceLocation = #_sourceLocation
     ) async {
         await #expect(sourceLocation: sourceLocation) {
-            _ = try await runtime.resolveSwiftFunction(
-                named: declaration,
-                as: signature,
+            _ = try await runtime.resolve(
+                .function(
+                    declaration,
+                    as: signature
+                ),
                 in: .path(library.libraryURL)
             )
         } throws: { error in
@@ -90,14 +92,18 @@ struct SwiftInferredValueTests {
         _ describe: String,
         in library: FixtureLibrary
     ) async throws -> String {
-        let make = try await runtime.resolveSwiftFunction(
-            named: make,
-            as: (() -> NativeSwiftValue).self,
+        let make = try await runtime.resolve(
+            .function(
+                make,
+                as: (() -> NativeSwiftValue).self
+            ),
             in: .path(library.libraryURL)
         )
-        let describe = try await runtime.resolveSwiftFunction(
-            named: describe,
-            as: ((NativeSwiftValue) -> String).self,
+        let describe = try await runtime.resolve(
+            .function(
+                describe,
+                as: ((NativeSwiftValue) -> String).self
+            ),
             in: .path(library.libraryURL)
         )
         return try unsafe describe.unsafeInvoke(make.unsafeInvoke())
@@ -904,9 +910,11 @@ struct SwiftInferredValueTests {
         )
         #if DEBUG
         // Its enum case symbols make Kind resilient, so it passes by address.
-        let kindType = try await runtime.resolveSwiftFunction(
-            named: module + ".kindType()",
-            as: (() -> Any.Type).self,
+        let kindType = try await runtime.resolve(
+            .function(
+                module + ".kindType()",
+                as: (() -> Any.Type).self
+            ),
             in: .path(library.libraryURL)
         )
         let layout = try SwiftInferredValue.layout(
@@ -914,9 +922,11 @@ struct SwiftInferredValueTests {
             position: .nested
         )
         try #require(withExtendedLifetime(layout) { ABISwiftValueIsIndirect(layout.handle) })
-        let make = try await runtime.resolveSwiftFunction(
-            named: module + ".makeKind(_:)",
-            as: ((Int64) -> NativeSwiftValue).self,
+        let make = try await runtime.resolve(
+            .function(
+                module + ".makeKind(_:)",
+                as: ((Int64) -> NativeSwiftValue).self
+            ),
             in: .path(library.libraryURL)
         )
         let kinds = try [Int64(0), 1, 2].map {
@@ -974,7 +984,7 @@ struct SwiftInferredValueTests {
             "(extension in \(module)):\(module).Summer.doubled() -> Swift.Double",
         ] {
             await #expect("\(member)") {
-                _ = try await point.resolveMethod(named: member, as: (() -> Double).self)
+                _ = try await point.resolve(.method(member, as: (() -> Double).self))
             } throws: { error in
                 guard case ABIResolutionError.metadataUnavailable(let message) = error else {
                     return false
@@ -1005,26 +1015,32 @@ struct SwiftInferredValueTests {
         let valueABIs: [NativeSwiftType: NativeType] = [
             host: try .structure(named: "Pair", fields: [.double, .double])
         ]
-        let sum = try await runtime.resolveSwiftFunction(
-            named: "\(module).sum((\(module).Point, Swift.Int64)) -> Swift.Double",
-            as: (((InferredAdapterPoint, Int64)) -> Double).self,
-            valueABIs: valueABIs,
+        let sum = try await runtime.resolve(
+            .function(
+                "\(module).sum((\(module).Point, Swift.Int64)) -> Swift.Double",
+                as: (((InferredAdapterPoint, Int64)) -> Double).self,
+                valueABIs: valueABIs
+            ),
             in: .path(library.libraryURL)
         )
         #expect(try unsafe sum.unsafeInvoke((InferredAdapterPoint(x: 1.5, y: 2.5), 3)) == 7)
-        let pair = try await runtime.resolveSwiftFunction(
-            named: "\(module).pair(Swift.Int64) -> (\(module).Point, Swift.Int64)",
-            as: ((Int64) -> (InferredAdapterPoint, Int64)).self,
-            valueABIs: valueABIs,
+        let pair = try await runtime.resolve(
+            .function(
+                "\(module).pair(Swift.Int64) -> (\(module).Point, Swift.Int64)",
+                as: ((Int64) -> (InferredAdapterPoint, Int64)).self,
+                valueABIs: valueABIs
+            ),
             in: .path(library.libraryURL)
         )
         let value = try unsafe pair.unsafeInvoke(9)
         #expect(value.0.x == 1.5 && value.0.y == 2.5 && value.1 == 9)
         await #expect {
-            _ = try await runtime.resolveSwiftFunction(
-                named: "\(module).maybe(\(module).Point?) -> Swift.Double",
-                as: ((InferredAdapterPoint?) -> Double).self,
-                valueABIs: valueABIs,
+            _ = try await runtime.resolve(
+                .function(
+                    "\(module).maybe(\(module).Point?) -> Swift.Double",
+                    as: ((InferredAdapterPoint?) -> Double).self,
+                    valueABIs: valueABIs
+                ),
                 in: .path(library.libraryURL)
             )
         } throws: { error in
@@ -1057,10 +1073,12 @@ struct SwiftInferredValueTests {
         )
         let host = try await runtime.resolveSwiftType(named: "ABIBridgeTests.InferredAdapterRecord")
         let abi = try NativeType.structure(named: "Record", fields: [.uint64, .uint64, .int64])
-        let pair = try await runtime.resolveSwiftFunction(
-            named: "\(module).pair(Swift.Int64) -> (\(module).Record, Swift.Int64)",
-            as: ((Int64) -> (InferredAdapterRecord, Int64)).self,
-            valueABIs: [native: abi, host: abi],
+        let pair = try await runtime.resolve(
+            .function(
+                "\(module).pair(Swift.Int64) -> (\(module).Record, Swift.Int64)",
+                as: ((Int64) -> (InferredAdapterRecord, Int64)).self,
+                valueABIs: [native: abi, host: abi]
+            ),
             in: .path(library.libraryURL)
         )
         let value = try unsafe pair.unsafeInvoke(21)
@@ -1085,9 +1103,11 @@ struct SwiftInferredValueTests {
         defer { library.cleanup() }
         let name = "\(module).sum(\(module).Point) -> Swift.Double"
         await #expect {
-            _ = try await runtime.resolveSwiftFunction(
-                named: name,
-                as: ((CGPoint) -> Double).self,
+            _ = try await runtime.resolve(
+                .function(
+                    name,
+                    as: ((CGPoint) -> Double).self
+                ),
                 in: .path(library.libraryURL)
             )
         } throws: { error in
@@ -1101,18 +1121,22 @@ struct SwiftInferredValueTests {
             named: module + ".Point",
             in: .path(library.libraryURL)
         )
-        let sum = try await runtime.resolveSwiftFunction(
-            named: name,
-            as: ((CGPoint) -> Double).self,
-            valueABIs: [point: try .structure(named: "Point", fields: [.double, .double])],
+        let sum = try await runtime.resolve(
+            .function(
+                name,
+                as: ((CGPoint) -> Double).self,
+                valueABIs: [point: try .structure(named: "Point", fields: [.double, .double])]
+            ),
             in: .path(library.libraryURL)
         )
         #expect(try unsafe sum.unsafeInvoke(CGPoint(x: 1.5, y: 2.5)) == 4)
         do {
-            _ = try await runtime.resolveSwiftFunction(
-                named: name,
-                as: ((CGPoint) -> Double).self,
-                valueABIs: [point: try .structure(named: "Point", fields: [.int64, .int64])],
+            _ = try await runtime.resolve(
+                .function(
+                    name,
+                    as: ((CGPoint) -> Double).self,
+                    valueABIs: [point: try .structure(named: "Point", fields: [.int64, .int64])]
+                ),
                 in: .path(library.libraryURL)
             )
             Issue.record("CGPoint was accepted for integer fields")
@@ -1141,7 +1165,7 @@ struct SwiftInferredValueTests {
             in: .path(library.libraryURL)
         )
         await #expect {
-            _ = try await label.resolveMethod(named: "count()", as: (() -> Int64).self)
+            _ = try await label.resolve(.method("count()", as: (() -> Int64).self))
         } throws: { error in
             guard case ABIResolutionError.metadataUnavailable(let message) = error else {
                 return false
@@ -1627,9 +1651,11 @@ struct SwiftInferredValueTests {
         let label = try await runtime.resolveSwiftType(named: module + ".Label", in: scope)
         let labelSets = "the static value witnesses of `\(module).Label` set it"
         await expectUndecided("argument 0 of type \(module).Label", naming: labelSets) {
-            _ = try await runtime.resolveSwiftFunction(
-                named: module + ".borrowLabel(_:)",
-                as: ((NativeSwiftValue) -> NativeSwiftBorrowedValue).self,
+            _ = try await runtime.resolve(
+                .function(
+                    module + ".borrowLabel(_:)",
+                    as: ((NativeSwiftValue) -> NativeSwiftBorrowedValue).self
+                ),
                 in: scope
             )
         }
@@ -1638,9 +1664,11 @@ struct SwiftInferredValueTests {
             "argument 0 of type (\(module).Label, Swift.Int64, Swift.Int64)",
             naming: "even a tuple, whose elements ABIBridge passes separately, and " + labelSets
         ) {
-            _ = try await runtime.resolveSwiftFunction(
-                named: module + ".borrowTriple(_:)",
-                as: (((NativeSwiftValue, Int64, Int64)) -> NativeSwiftBorrowedValue).self,
+            _ = try await runtime.resolve(
+                .function(
+                    module + ".borrowTriple(_:)",
+                    as: (((NativeSwiftValue, Int64, Int64)) -> NativeSwiftBorrowedValue).self
+                ),
                 in: scope
             )
         }
@@ -1652,46 +1680,56 @@ struct SwiftInferredValueTests {
             naming:
                 "nothing shows whether it does: `\(module).Pair<Swift.Int64>` is a generic instance"
         ) {
-            _ = try await runtime.resolveSwiftFunction(
-                named: module + ".borrowPair(_:)",
-                as: ((NativeSwiftValue) -> NativeSwiftBorrowedValue).self,
+            _ = try await runtime.resolve(
+                .function(
+                    module + ".borrowPair(_:)",
+                    as: ((NativeSwiftValue) -> NativeSwiftBorrowedValue).self
+                ),
                 in: scope
             )
         }
         await expectUndecided("self of type \(module).Label", naming: labelSets) {
-            _ = try await label.resolveMethod(named: "scoped()", as: (() -> NativeSwiftBorrowedValue).self)
+            _ = try await label.resolve(
+                .method("scoped()", as: (() -> NativeSwiftBorrowedValue).self)
+            )
         }
         // A built-in representation or an explicit ABI describes how a value
         // passes without a scoped result, and nothing records whether it
         // has one.
         let stringSets = "`Swift.String` sets it"
         await expectUndecided("argument 0 of type Swift.String", naming: stringSets) {
-            _ = try await runtime.resolveSwiftFunction(
-                named: module + ".borrowString(_:)",
-                as: ((String) -> NativeSwiftBorrowedValue).self,
+            _ = try await runtime.resolve(
+                .function(
+                    module + ".borrowString(_:)",
+                    as: ((String) -> NativeSwiftBorrowedValue).self
+                ),
                 in: scope
             )
         }
         await expectUndecided("self of type Swift.String", naming: stringSets) {
             _ = try await runtime.resolveSwiftType(named: "Swift.String")
-                .resolveMethod(named: "scopedCount()", as: (() -> NativeSwiftBorrowedValue).self)
+                .resolve(.method("scopedCount()", as: (() -> NativeSwiftBorrowedValue).self))
         }
         let labelABI = try NativeType.structure(
             named: "Label",
             fields: [.uint64, .pointer, .int64]
         )
         await expectUndecided("self of type \(module).Label", naming: labelSets) {
-            _ = try await label.resolveMethod(
-                named: "scoped()",
-                as: (() -> NativeSwiftBorrowedValue).self,
-                receiverABI: labelABI
+            _ = try await label.resolve(
+                .method(
+                    "scoped()",
+                    as: (() -> NativeSwiftBorrowedValue).self,
+                    receiverABI: labelABI
+                )
             )
         }
         await expectUndecided("argument 0 of type \(module).Label", naming: labelSets) {
-            _ = try await runtime.resolveSwiftFunction(
-                named: module + ".borrowLabel(_:)",
-                as: ((NativeSwiftValue) -> NativeSwiftBorrowedValue).self,
-                valueABIs: [label: labelABI],
+            _ = try await runtime.resolve(
+                .function(
+                    module + ".borrowLabel(_:)",
+                    as: ((NativeSwiftValue) -> NativeSwiftBorrowedValue).self,
+                    valueABIs: [label: labelABI]
+                ),
                 in: scope
             )
         }
@@ -1699,40 +1737,52 @@ struct SwiftInferredValueTests {
         // A closure's function type does not record its lifetime
         // dependencies either.
         await expectUndecided("argument 0 of type Swift.String", naming: stringSets) {
-            _ = try await runtime.resolveSwiftFunction(
-                named: module + ".makeBorrower()",
-                as: (() -> NativeSwiftClosure<(String) -> NativeSwiftBorrowedValue>).self,
+            _ = try await runtime.resolve(
+                .function(
+                    module + ".makeBorrower()",
+                    as: (() -> NativeSwiftClosure<(String) -> NativeSwiftBorrowedValue>).self
+                ),
                 in: scope
             )
         }
         #endif
         // Plain's static value witnesses decide it and leave the bit clear.
-        let make = try await runtime.resolveSwiftFunction(
-            named: module + ".makePlain()",
-            as: (() -> NativeSwiftValue).self,
+        let make = try await runtime.resolve(
+            .function(
+                module + ".makePlain()",
+                as: (() -> NativeSwiftValue).self
+            ),
             in: scope
         )
-        let read = try await runtime.resolveSwiftFunction(
-            named: module + ".read(_:)",
-            as: ((NativeSwiftBorrowedValue) -> Int64).self,
+        let read = try await runtime.resolve(
+            .function(
+                module + ".read(_:)",
+                as: ((NativeSwiftBorrowedValue) -> Int64).self
+            ),
             in: scope
         )
-        let borrow = try await runtime.resolveSwiftFunction(
-            named: module + ".borrowPlain(_:)",
-            as: ((NativeSwiftValue) -> NativeSwiftBorrowedValue).self,
+        let borrow = try await runtime.resolve(
+            .function(
+                module + ".borrowPlain(_:)",
+                as: ((NativeSwiftValue) -> NativeSwiftBorrowedValue).self
+            ),
             in: scope
         )
         let plain = try unsafe make.unsafeInvoke()
         #expect(try unsafe borrow.unsafeInvoke(plain, withResult: { try unsafe read.unsafeInvoke($0) }) == 23)
         // Wide passes by address by size, as a borrowed value does.
-        let makeWide = try await runtime.resolveSwiftFunction(
-            named: module + ".makeWide()",
-            as: (() -> NativeSwiftValue).self,
+        let makeWide = try await runtime.resolve(
+            .function(
+                module + ".makeWide()",
+                as: (() -> NativeSwiftValue).self
+            ),
             in: scope
         )
-        let borrowWide = try await runtime.resolveSwiftFunction(
-            named: module + ".borrowWide(_:)",
-            as: ((NativeSwiftValue) -> NativeSwiftBorrowedValue).self,
+        let borrowWide = try await runtime.resolve(
+            .function(
+                module + ".borrowWide(_:)",
+                as: ((NativeSwiftValue) -> NativeSwiftBorrowedValue).self
+            ),
             in: scope
         )
         #expect(
@@ -1740,13 +1790,16 @@ struct SwiftInferredValueTests {
                 == 57
         )
         let scoped = try await runtime.resolveSwiftType(named: module + ".Plain", in: scope)
-            .resolveMethod(named: "scoped()", as: (() -> NativeSwiftBorrowedValue).self)
+            .resolve(.method("scoped()", as: (() -> NativeSwiftBorrowedValue).self))
         #expect(try unsafe scoped.unsafeInvoke(on: plain, withResult: { try unsafe read.unsafeInvoke($0) }) == 23)
         // Swift rejects a borrow dependency on a consuming String, and passes
         // an inout String by address either way.
-        let consuming = try await runtime.resolveSwiftFunction(
-            named: module + ".borrowPlainConsuming(_:_:)",
-            as: ((NativeSwiftValue, NativeSwiftConsuming<String>) -> NativeSwiftBorrowedValue).self,
+        let consuming = try await runtime.resolve(
+            .function(
+                module + ".borrowPlainConsuming(_:_:)",
+                as: ((NativeSwiftValue, NativeSwiftConsuming<String>) -> NativeSwiftBorrowedValue)
+                    .self
+            ),
             in: scope
         )
         let counted = try unsafe consuming.unsafeInvoke(
@@ -1755,9 +1808,11 @@ struct SwiftInferredValueTests {
             withResult: { try unsafe read.unsafeInvoke($0) }
         )
         #expect(counted == 204)
-        let mutate = try await runtime.resolveSwiftFunction(
-            named: module + ".mutateString(_:)",
-            as: ((NativeSwiftInout<String>) -> NativeSwiftBorrowedValue).self,
+        let mutate = try await runtime.resolve(
+            .function(
+                module + ".mutateString(_:)",
+                as: ((NativeSwiftInout<String>) -> NativeSwiftBorrowedValue).self
+            ),
             in: scope
         )
         let text = NativeSwiftInout("text")
@@ -1770,9 +1825,11 @@ struct SwiftInferredValueTests {
         // An imported C enum never sets the bit, whatever describes its
         // passing. The importer makes an option set a struct, which a C
         // struct or union also is, so its clear bit shows nothing.
-        let comparison = try await runtime.resolveSwiftFunction(
-            named: module + ".borrowComparison(_:)",
-            as: ((CFComparisonResult) -> NativeSwiftBorrowedValue).self,
+        let comparison = try await runtime.resolve(
+            .function(
+                module + ".borrowComparison(_:)",
+                as: ((CFComparisonResult) -> NativeSwiftBorrowedValue).self
+            ),
             in: scope
         )
         let compared = try unsafe comparison.unsafeInvoke(
@@ -1784,18 +1841,22 @@ struct SwiftInferredValueTests {
             "argument 0 of type __C.CFStringCompareFlags",
             naming: "do not show whether it imports a C struct or union"
         ) {
-            _ = try await runtime.resolveSwiftFunction(
-                named: module + ".borrowCompareFlags(_:)",
-                as: ((CFStringCompareFlags) -> NativeSwiftBorrowedValue).self,
+            _ = try await runtime.resolve(
+                .function(
+                    module + ".borrowCompareFlags(_:)",
+                    as: ((CFStringCompareFlags) -> NativeSwiftBorrowedValue).self
+                ),
                 in: scope
             )
         }
         // A pack passes its elements' addresses through one buffer, whether
         // or not the result borrows from them.
-        let pack = try await runtime.resolveSwiftFunction(
-            named: module + ".borrowPack(_:)",
-            as: (((String, Int64)) -> NativeSwiftBorrowedValue).self,
-            genericArguments: [.pack([.type(String.self)])],
+        let pack = try await runtime.resolve(
+            .function(
+                module + ".borrowPack(_:)",
+                as: (((String, Int64)) -> NativeSwiftBorrowedValue).self,
+                genericArguments: [.pack([.type(String.self)])]
+            ),
             in: scope
         )
         let summed = try unsafe pack.unsafeInvoke(

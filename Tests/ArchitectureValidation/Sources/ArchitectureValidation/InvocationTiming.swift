@@ -26,17 +26,23 @@ private final class InvocationTimingReceiver: NSObject {
         named: "ABIValidationAdvance",
         as: ((UnsafeMutablePointer<CChar>, Int) -> UnsafeMutableRawPointer).self
     )
-    let sum = try await runtime.resolveSwiftFunction(
-        named: "ArchitectureValidation.architectureSum(_:_:_:_:_:_:_:_:_:_:)",
-        as: ((Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Int).self
+    let sum = try await runtime.resolve(
+        .function(
+            "ArchitectureValidation.architectureSum(_:_:_:_:_:_:_:_:_:_:)",
+            as: ((Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Int).self
+        )
     )
-    let decorate = try await runtime.resolveSwiftFunction(
-        named: "ArchitectureValidation.architectureDecorate(_:)",
-        as: ((String) -> String).self
+    let decorate = try await runtime.resolve(
+        .function(
+            "ArchitectureValidation.architectureDecorate(_:)",
+            as: ((String) -> String).self
+        )
     )
-    let mix = try await runtime.resolveSwiftFunction(
-        named: "ArchitectureValidation.architectureTimingMix(_:_:_:_:)",
-        as: ((Int32, Double, Float, UInt64) -> Double).self
+    let mix = try await runtime.resolve(
+        .function(
+            "ArchitectureValidation.architectureTimingMix(_:_:_:_:)",
+            as: ((Int32, Double, Float, UInt64) -> Double).self
+        )
     )
     let counter = ABIValidationCreateCounter()!
     defer { ABIValidationDeleteCounter(counter) }
@@ -49,10 +55,12 @@ private final class InvocationTimingReceiver: NSObject {
         as: ((Int32) -> Int32).self
     )
     let object = runtime.object(InvocationTimingReceiver())
-    let method = try object.resolveMethodAndWait(selector: "adding:", as: ((Int32) -> Int32).self)
-    let echo = try object.resolveMethodAndWait(
-        selector: "echo:",
-        as: ((NSObject?) -> NSObject?).self
+    let method = try object.resolveAndWait(.message("adding:", as: ((Int32) -> Int32).self))
+    let echo = try object.resolveAndWait(
+        .message(
+            "echo:",
+            as: ((NSObject?) -> NSObject?).self
+        )
     )
     let value = NSObject()
     let string = String(repeating: "owned string", count: 8)

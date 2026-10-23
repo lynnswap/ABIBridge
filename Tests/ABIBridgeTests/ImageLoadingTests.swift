@@ -232,9 +232,11 @@ struct ImageLoadingTests {
         let runtime = ABIRuntime()
         let scope = ImageSelector.path(fixture.libraryURL)
         #expect(try runtime.resolveImagesAndWait(matching: scope).isEmpty)
-        let function = try await runtime.resolveSwiftFunction(
-            named: module + ".answer()",
-            as: (() -> Int).self,
+        let function = try await runtime.resolve(
+            .function(
+                module + ".answer()",
+                as: (() -> Int).self
+            ),
             in: scope
         )
         #expect(try unsafe function.unsafeInvoke() == 42)

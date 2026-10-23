@@ -31,20 +31,26 @@ private struct ImportPayload: ABIBridgeValue {
         }
         try check(result.get(), message)
     }
-    let target = try await runtime.resolveSwiftFunction(
-        named: "SwiftImportProvider.scalar(_:)",
-        as: ((Int64) -> Int64).self,
+    let target = try await runtime.resolve(
+        .function(
+            "SwiftImportProvider.scalar(_:)",
+            as: ((Int64) -> Int64).self
+        ),
         in: path("SwiftImportProvider")
     )
-    let replacement = try await runtime.resolveSwiftFunction(
-        named: "SwiftImportProvider.replacementScalar(_:)",
-        as: ((Int64) -> Int64).self,
+    let replacement = try await runtime.resolve(
+        .function(
+            "SwiftImportProvider.replacementScalar(_:)",
+            as: ((Int64) -> Int64).self
+        ),
         in: path("SwiftImportProvider")
     )
     for caller in ["SwiftImportCaller", "SwiftImportCallerControl"] {
-        let oracle = try await runtime.resolveSwiftFunction(
-            named: caller + ".importedScalar(_:)",
-            as: ((Int64) -> Int64).self,
+        let oracle = try await runtime.resolve(
+            .function(
+                caller + ".importedScalar(_:)",
+                as: ((Int64) -> Int64).self
+            ),
             in: path(caller)
         )
         let plan = try await unsafe target.prepareImportedReplacement(with: replacement, in: path(caller), using: runtime)
@@ -69,19 +75,25 @@ private struct ImportPayload: ABIBridgeValue {
         try check(try unsafe oracle.unsafeInvoke(40) == 41, "\(caller): restored scalar dispatch")
     }
     let caller = "SwiftImportCallerControl"
-    let text = try await runtime.resolveSwiftFunction(
-        named: "SwiftImportProvider.text(_:)",
-        as: ((String) -> String).self,
+    let text = try await runtime.resolve(
+        .function(
+            "SwiftImportProvider.text(_:)",
+            as: ((String) -> String).self
+        ),
         in: path("SwiftImportProvider")
     )
-    let newText = try await runtime.resolveSwiftFunction(
-        named: "SwiftImportProvider.replacementText(_:)",
-        as: ((String) -> String).self,
+    let newText = try await runtime.resolve(
+        .function(
+            "SwiftImportProvider.replacementText(_:)",
+            as: ((String) -> String).self
+        ),
         in: path("SwiftImportProvider")
     )
-    let textOracle = try await runtime.resolveSwiftFunction(
-        named: caller + ".importedText(_:)",
-        as: ((String) -> String).self,
+    let textOracle = try await runtime.resolve(
+        .function(
+            caller + ".importedText(_:)",
+            as: ((String) -> String).self
+        ),
         in: path(caller)
     )
     let textPlan = try await unsafe text.prepareImportedReplacement(with: newText, in: path(caller), using: runtime)
@@ -94,19 +106,25 @@ private struct ImportPayload: ABIBridgeValue {
     try check(try unsafe textOracle.unsafeInvoke(input) == "original:" + input, "String dispatch restored")
 
     let suffix = "(Swift.Int64) -> SwiftImportProvider.ReplacementPayload"
-    let large = try await runtime.resolveSwiftFunction(
-        named: "SwiftImportProvider.payload" + suffix,
-        as: ((Int64) -> ImportPayload).self,
+    let large = try await runtime.resolve(
+        .function(
+            "SwiftImportProvider.payload" + suffix,
+            as: ((Int64) -> ImportPayload).self
+        ),
         in: path("SwiftImportProvider")
     )
-    let newLarge = try await runtime.resolveSwiftFunction(
-        named: "SwiftImportProvider.replacementPayload" + suffix,
-        as: ((Int64) -> ImportPayload).self,
+    let newLarge = try await runtime.resolve(
+        .function(
+            "SwiftImportProvider.replacementPayload" + suffix,
+            as: ((Int64) -> ImportPayload).self
+        ),
         in: path("SwiftImportProvider")
     )
-    let largeOracle = try await runtime.resolveSwiftFunction(
-        named: caller + ".importedPayload(_:)",
-        as: ((Int64) -> Int64).self,
+    let largeOracle = try await runtime.resolve(
+        .function(
+            caller + ".importedPayload(_:)",
+            as: ((Int64) -> Int64).self
+        ),
         in: path(caller)
     )
     let largePlan = try await unsafe large.prepareImportedReplacement(with: newLarge, in: path(caller), using: runtime)
@@ -121,11 +139,15 @@ private struct ImportPayload: ABIBridgeValue {
         as: Int64.self,
         in: path("SwiftImportProvider")
     )
-    let method = try await type.resolveMethod(named: "scalar(_:)", as: ((Int64) -> Int64).self)
-    let newMethod = try await type.resolveMethod(named: "replacementScalar(_:)", as: ((Int64) -> Int64).self)
-    let methodOracle = try await runtime.resolveSwiftFunction(
-        named: caller + ".importedValueMethod(_:)",
-        as: ((Int64) -> Int64).self,
+    let method = try await type.resolve(.method("scalar(_:)", as: ((Int64) -> Int64).self))
+    let newMethod = try await type.resolve(
+        .method("replacementScalar(_:)", as: ((Int64) -> Int64).self)
+    )
+    let methodOracle = try await runtime.resolve(
+        .function(
+            caller + ".importedValueMethod(_:)",
+            as: ((Int64) -> Int64).self
+        ),
         in: path(caller)
     )
     let methodPlan = try await unsafe method.prepareImportedReplacement(with: newMethod, in: path(caller), using: runtime)

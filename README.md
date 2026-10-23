@@ -67,33 +67,33 @@ Search, image acquisition, and call preparation run on a worker while the caller
 For an already-loaded module defining `func decorate(_ value: String) -> String`:
 
 ```swift
-let decorate = try runtime.resolveSwiftFunctionAndWait(
-    named: "Example.decorate(_:)", as: ((String) -> String).self
-)
+let decorate = try runtime.resolveAndWait(.function(
+    "Example.decorate(_:)", as: ((String) -> String).self
+))
 let message = try unsafe decorate.unsafeInvoke("Hello")
 ```
 
-Use `resolveSwiftFunction` for lookup on a worker queue while the caller suspends:
+Await `resolve` for lookup on a worker queue while the caller suspends:
 
 ```swift
 @MainActor
 func makeMessage() async throws -> String {
-    let decorate = try await ABIRuntime.shared.resolveSwiftFunction(
-        named: "Example.decorate(_:)", as: ((String) -> String).self
-    )
+    let decorate = try await ABIRuntime.shared.resolve(.function(
+        "Example.decorate(_:)", as: ((String) -> String).self
+    ))
     return try unsafe decorate.unsafeInvoke("Hello")
 }
 ```
 
-The `AndWait` variant selects synchronous lookup. Invocation needs `await` only when the native signature is async; see [Swift function calls](https://lynnswap.github.io/ABIBridge/documentation/abibridge/swiftfunctioninvocation).
+`resolveAndWait` selects synchronous lookup. Invocation needs `await` only when the native signature is async; see [Swift function calls](https://lynnswap.github.io/ABIBridge/documentation/abibridge/swiftfunctioninvocation).
 
 Generic declarations use the same callable handles with explicit type arguments:
 
 ```swift
-let echo = try runtime.resolveSwiftFunctionAndWait(
-    named: "Example.echo(_:)", as: ((String) -> String).self,
+let echo = try runtime.resolveAndWait(.function(
+    "Example.echo(_:)", as: ((String) -> String).self,
     genericArguments: [.type(String.self)]
-)
+))
 let message = try unsafe echo.unsafeInvoke("Hello")
 ```
 
@@ -101,18 +101,18 @@ See [Swift generic calls](https://lynnswap.github.io/ABIBridge/documentation/abi
 
 ### Resolve a Swift type and its members without blocking MainActor
 
-Swift type and member lookup follows the same async/`AndWait` naming. For a native renderer with `func title() -> String`:
+A type resolves requests for its members with the same `resolve` and `resolveAndWait` pair. For a native renderer with `func title() -> String`:
 
 ```swift
 @MainActor
 func readTitle(from renderer: AnyObject) async throws -> String {
     let type = try await ABIRuntime.shared.resolveSwiftType(named: "Example.Renderer")
-    let title = try await type.resolveMethod(named: "title()", as: (() -> String).self)
+    let title = try await type.resolve(.method("title()", as: (() -> String).self))
     return try unsafe title.unsafeInvoke(on: renderer)
 }
 ```
 
-Bound object lookup keeps the receiver in the caller's isolation domain. See [Swift types and members](https://lynnswap.github.io/ABIBridge/documentation/abibridge/swiftmemberinvocation) for initializers, static methods, and properties.
+The same request resolves on `runtime.object(renderer)` to bind the receiver, which stays in the caller's isolation domain. See [Swift types and members](https://lynnswap.github.io/ABIBridge/documentation/abibridge/swiftmemberinvocation) for initializers, static methods, and properties.
 
 ### Call an existing Objective-C instance
 
@@ -121,15 +121,15 @@ For a `renderer` exposing `setImage:animated:`, pass ordinary Swift values:
 ```swift
 import UIKit
 
-let setImage = try runtime.object(renderer).resolveMethodAndWait(
-    selector: "setImage:animated:",
+let setImage = try runtime.object(renderer).resolveAndWait(.message(
+    "setImage:animated:",
     as: ((UIImage?, Bool) -> Void).self
-)
+))
 try unsafe setImage.unsafeInvoke(image, true)
 try unsafe setImage.unsafeInvoke(nil, false)
 ```
 
-Await `resolveMethod(selector:as:)` to prepare the image and call signature on a worker. Receiver-specific dynamic resolution and forwarding-signature callbacks remain in the caller's isolation domain. Invoke the returned handle on the thread required by the receiver.
+Await `resolve` with the same request to prepare the image and call signature on a worker. Receiver-specific dynamic resolution and forwarding-signature callbacks remain in the caller's isolation domain. Invoke the returned handle on the thread required by the receiver.
 
 ### Display a native SwiftUI view
 
@@ -138,9 +138,9 @@ For a native factory returning `some View`, add the optional `ABIBridgeSwiftUI` 
 ```swift
 import ABIBridgeSwiftUI
 
-let makePanel = try runtime.resolveSwiftFunctionAndWait(
-    named: "Example.makePanel(_:)", as: ((String) -> NativeSwiftValue).self
-)
+let makePanel = try runtime.resolveAndWait(.function(
+    "Example.makePanel(_:)", as: ((String) -> NativeSwiftValue).self
+))
 let panel = try NativeSwiftView(unsafe makePanel.unsafeInvoke("Hello"))
 ```
 
