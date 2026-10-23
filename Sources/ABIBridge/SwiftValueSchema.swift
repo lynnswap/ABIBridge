@@ -19,15 +19,17 @@ struct SwiftValueSchema: Sendable {
         case scalar
         /// A class reference, or an Optional of one.
         case reference
-        /// A struct or enum, including an Optional, whose components pass in
-        /// registers unless there are too many of them.
+        /// A struct or enum, including an Optional of a value other than a
+        /// class reference, whose components pass in registers unless there
+        /// are too many of them.
         case loadable
         /// A value that passes by address whatever its size.
         case addressOnly
-        /// An existential container. It keeps its formal identity even where
-        /// its storage passes by address.
+        /// An existential container, which Swift passes as one value however
+        /// many words it takes.
         case existential
-        /// A thin or thick metatype, or an Optional of one.
+        /// A thin or thick metatype, which Swift passes as one value however
+        /// many words it takes.
         case metatype
         /// A Swift function's entry point and context, or an Optional of one.
         case function
@@ -287,21 +289,15 @@ struct SwiftValueSchema: Sendable {
         if case .metatype(let instance) = try binding.canonicalType(of: wrapped),
             let metatype = SwiftMetatypeMetadata(wrappedType)
         {
+            // An Optional of a metatype is an enum, which passes by address
+            // once an existential metatype's witness tables make it too large.
             if try !metatype.isExistential && singletonMetatype(instance, binding: binding) {
-                return Self(
-                    type: CValueType(swiftOptionalSingleton: ()),
-                    kind: .metatype,
-                    metadata: actual
-                )
+                return Self(storage: CValueType(swiftOptionalSingleton: ()), metadata: actual)
             }
             func thick<Value>(_ type: Value.Type) throws -> CValueType {
                 try metatype.valueType(for: type, thin: false)
             }
-            return Self(
-                type: try _openExistential(actual, do: thick),
-                kind: .metatype,
-                metadata: actual
-            )
+            return Self(storage: try _openExistential(actual, do: thick), metadata: actual)
         }
         let payload = try Self(wrapped, actual: wrappedType, binding: binding, position: .nested)
         return Self(
@@ -454,10 +450,20 @@ struct SwiftValueSchema: Sendable {
                 return try Self(host: element, position: position.tupleElement).type
             }
         } else if let metatype = SwiftMetatypeMetadata(base) {
-            let type =
-                Value.self is any NativeOptionalValue.Type && metatype.isSingleton
-                ? CValueType(swiftOptionalSingleton: ()) : try metatype.valueType(for: Value.self)
-            schema = Self(type: type, kind: .metatype, metadata: Value.self)
+            // An Optional of a metatype is an enum that reuses its storage.
+            schema =
+                Value.self is any NativeOptionalValue.Type
+                ? Self(
+                    storage: metatype.isSingleton
+                        ? CValueType(swiftOptionalSingleton: ())
+                        : try metatype.valueType(for: Value.self),
+                    metadata: Value.self
+                )
+                : Self(
+                    type: try metatype.valueType(for: Value.self),
+                    kind: .metatype,
+                    metadata: Value.self
+                )
         } else if let managed {
             return Self(
                 storage: try explicitValueLayout(
