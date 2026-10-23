@@ -781,11 +781,11 @@ struct NativeSwiftClosureTests {
     /// An inferred struct hashes as `-indirect` when it passes by address,
     /// and otherwise as its declaration, both for a host value of its own
     /// type and for a declaration's closure plan. A declaration hashes
-    /// without generic arguments, and one in a constrained extension includes
-    /// the extension's generic signature, which runtime type names omit;
-    /// inference leaves such generic instances undecided, so only their names
-    /// are checked. A tuple result's element is hashed by its type unless it
-    /// is formally indirect.
+    /// without generic arguments, and one in an extension of a generic type
+    /// includes the extension's generic signature, with its marker protocols,
+    /// which the exported descriptor symbol spells; inference leaves such
+    /// generic instances undecided, so only their names are checked. A tuple
+    /// result's element is hashed by its type unless it is formally indirect.
     @Test(arguments: [false, true])
     func inferredAuthenticationMatchesNativeCompilerCalls(evolution: Bool) async throws {
         let inferred = ["AuthPoint", "AuthWide", "AuthOpen"]
@@ -798,6 +798,7 @@ struct NativeSwiftClosureTests {
                 : [
                     "AuthPair<Double>", "AuthPair<Int8>", "AuthBox<Int>.Inner",
                     "AuthBox<Int>.Inner.Deep", "AuthBox<Int>.Kind", "AuthBox<Int>.Same",
+                    "AuthBox<Int>.Mixed", "[Int].AuthForeign",
                 ])
         let types = inferred + named
         let module = "ClosureAuth_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
@@ -834,6 +835,13 @@ struct NativeSwiftClosureTests {
             }
             extension AuthBox where T == Int {
                 public struct Same { public var x: Double, y: Double }
+            }
+            // Requirement records omit Sendable, which the symbol spells.
+            extension AuthBox where T: Equatable & Sendable {
+                public struct Mixed { public var x: Double, y: Double }
+            }
+            extension Array {
+                public struct AuthForeign { public var x: Double, y: Double }
             }
             public func closureProbeType(_ index: Int64) -> Any.Type {
                 let types: [Any.Type] = [\(types.map { $0 + ".self" }.joined(separator: ", "))]
@@ -886,12 +894,6 @@ struct NativeSwiftClosureTests {
                 let hash = try swiftClosureTypeHash(type)
                 #expect(
                     swiftClosureDiscriminator(parameters: [hash], result: hash) == expected,
-                    "\(name)"
-                )
-                // The context descriptors rebuild the declaration under which
-                // the image exports the type's descriptor.
-                #expect(
-                    try rebuiltDeclaration(type) == swiftExportedTypeDeclaration(type),
                     "\(name)"
                 )
                 continue
@@ -1002,18 +1004,18 @@ struct NativeSwiftClosureTests {
         }
     }
 
-    /// A type declared in an extension hashes as its declaration. That spells
-    /// the generic signature of each constrained extension in its context,
-    /// which a runtime type name omits, so without an exported descriptor the
-    /// signature is rebuilt from the context descriptors. Those omit
-    /// conformances to marker protocols, which arm64e cannot then hash.
-    @Test func unexportedTypesInExtensionsHashAsTheirDeclarations() async throws {
+    /// A type that its image does not export hashes as its runtime name when
+    /// that spells its declaration: in an extension of a nongeneric type, or
+    /// in an unconstrained extension in its type's module, which has no
+    /// context of its own. In any other extension of a generic type, the
+    /// declaration includes a generic signature whose marker protocols the
+    /// context descriptors do not record, so it is not established.
+    @Test func unexportedTypesInGenericExtensionsHaveNoDeclaration() async throws {
         let module = "ClosureExtension_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
-        let types = [
-            "Int.Helper", "Box<Int>.Hidden", "Box<Int>.Hidden.Deep", "Box<Int>.Hidden.Further",
-            "Box<Int>.Same", "Box<Root>.Object", "Box<Root>.Sub", "Box<[Int]>.Assoc",
-            "Box<[Int]>.Concrete", "Bounded<Int>.Narrow", "Pair<Int, Int>.Equal",
-            "Outer<Int>.Mid<Int>.Leaf", "[Int].Constrained", "Box<Int>.Marked",
+        let named = ["Int.Helper", "Box<Int>.Open"]
+        let undecided = [
+            "[Int].Foreign", "[Int: Int].Entry", "Box<Int>.Hidden", "Bounded<Int>.Narrow",
+            "Box<Int>.Marked", "Box<Int>.Mixed",
         ]
         let source =
             """
@@ -1023,75 +1025,41 @@ struct NativeSwiftClosureTests {
             public protocol Base {}
             public protocol Refined: Base {}
             extension Int: Refined {}
-            public final class Root {}
             public struct Bounded<T: Base> {}
-            public struct Pair<A, B> {}
-            public enum Outer<T> { public struct Mid<U> {} }
             extension Int {
                 struct Helper { var x: Double, y: Double }
             }
+            extension Box {
+                struct Open { var x: Double, y: Double }
+            }
             extension Array {
-                struct Foreign { var a: Int64, b: Int64 }
+                struct Foreign { var x: Double, y: Double }
             }
             // Repeats Dictionary's own requirement on Key.
             extension Dictionary {
-                struct Entry { var a: Int64, b: Int64 }
-            }
-            extension Array where Element: Equatable {
-                struct Constrained { var x: Double, y: Double }
+                struct Entry { var x: Double, y: Double }
             }
             extension Box where T: Equatable {
-                struct Hidden {
-                    var x: Double, y: Double
-                    struct Deep { var x: Double, y: Double }
-                }
-            }
-            // Hashable refines the Equatable that the extended type requires.
-            extension Box.Hidden where T: Hashable {
-                struct Further { var x: Double, y: Double }
-            }
-            extension Box where T == Int {
-                struct Same { var x: Double, y: Double }
-            }
-            extension Box where T: AnyObject {
-                struct Object { var x: Double, y: Double }
-            }
-            extension Box where T: Root {
-                struct Sub { var x: Double, y: Double }
-            }
-            extension Box where T: Collection, T.Element: Hashable {
-                struct Assoc { var x: Double, y: Double }
-            }
-            extension Box where T == [Int] {
-                struct Concrete { var x: Double, y: Double }
+                struct Hidden { var x: Double, y: Double }
             }
             // As many requirements as Bounded, but a different one.
             extension Bounded where T: Refined {
                 struct Narrow { var x: Double, y: Double }
             }
-            extension Pair where A == B {
-                struct Equal { var x: Double, y: Double }
-            }
-            extension Outer.Mid where U: Equatable {
-                struct Leaf { var x: Double, y: Double }
-            }
             // Requirement records omit conformances to marker protocols.
             extension Box where T: Sendable {
                 struct Marked { var x: Double, y: Double }
             }
+            extension Box where T: Equatable & Sendable {
+                struct Mixed { var x: Double, y: Double }
+            }
             func closureProbeType(_ index: Int64) -> Any.Type {
-                let types: [Any.Type] = [\(types.map { $0 + ".self" }.joined(separator: ", "))]
+                let types: [Any.Type] = [\((named + undecided).map { $0 + ".self" }.joined(separator: ", "))]
                 return types[Int(index)]
-            }
-            @inline(never) func closureProbeForeign(_ callback: ([Int].Foreign) -> Int64) -> Int64 {
-                callback(.init(a: 3, b: 4))
-            }
-            @inline(never) func closureProbeEntry(_ callback: ([Int: Int].Entry) -> Int64) -> Int64 {
-                callback(.init(a: 5, b: 6))
             }
 
             """
-            + types.enumerated().map { index, type in
+            + named.enumerated().map { index, type in
                 "@inline(never) func closureProbe\(index)(_ callback: (\(type)) -> Double) -> Double { callback(.init(x: 1, y: 2)) }"
             }.joined(separator: "\n")
         let library = try FixtureLibrary(
@@ -1103,9 +1071,7 @@ struct NativeSwiftClosureTests {
         let found = try arm64eClosureCallDiscriminators(
             source: source,
             arguments: ["-module-name", module],
-            functions: types.indices.map { "closureProbe\($0)" } + [
-                "closureProbeForeign", "closureProbeEntry",
-            ]
+            functions: named.indices.map { "closureProbe\($0)" }
         )
         let runtime = ABIRuntime()
         let typeAt = try await runtime.resolveSwiftFunction(
@@ -1113,101 +1079,53 @@ struct NativeSwiftClosureTests {
             as: ((Int64) -> Any.Type).self,
             in: .path(library.libraryURL)
         )
-        let marked = types.count - 1
-        for (index, name) in types.enumerated() where index != marked {
-            let type = try unsafe typeAt.unsafeInvoke(Int64(index))
-            let hash = try swiftClosureTypeHash(type)
+        for (index, name) in named.enumerated() {
+            let hash = try swiftClosureTypeHash(unsafe typeAt.unsafeInvoke(Int64(index)))
             #expect(
                 swiftClosureDiscriminator(parameters: [hash], result: "$sSd") == found[index],
                 "\(name)"
             )
-        }
-        let markedType = try unsafe typeAt.unsafeInvoke(Int64(marked))
-        #expect {
-            try rebuiltDeclaration(markedType)
-        } throws: { error in
-            error.localizedDescription.contains("marker protocols")
-        }
-        if RuntimePointerAuthentication.isEnabled {
-            #expect(throws: ABIResolutionError.self) { try swiftClosureTypeHash(markedType) }
-        } else {
-            // Only arm64e hashes the declaration; elsewhere its runtime name
-            // identifies the type.
-            #expect(try swiftClosureTypeHash(markedType) == "$s" + _mangledTypeName(markedType)!)
         }
         let inferred = try await runtime.resolveSwiftFunction(
             named: module + ".closureProbe0(_:)",
             as: ((NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Double>) -> Double).self,
             in: .path(library.libraryURL)
         )
-        // Inference leaves generic structs that are not public undecided, so
-        // they take explicit layouts.
-        let hidden = try await runtime.resolveSwiftType(
-            named: module + ".Box.Hidden",
-            in: .path(library.libraryURL),
-            genericArguments: [.type(Int.self)]
-        )
-        var calls = [
-            (0, inferred.call),
-            (
-                1,
-                try await runtime.resolveSwiftFunction(
-                    named: module + ".closureProbe1(_:)",
-                    as: ((NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Double>) -> Double).self,
-                    valueABIs: [hidden: .structure(named: "Point", fields: [.double, .double])],
-                    in: .path(library.libraryURL)
-                ).call
-            ),
-        ]
-        let pair = try NativeType.structure(named: "Pair", fields: [.int64, .int64])
-        for (index, name, function, arguments) in [
-            (
-                types.count, "Array.Foreign", "closureProbeForeign(_:)",
-                [NativeSwiftGenericArgument.type(Int.self)]
-            ),
-            (
-                types.count + 1, "Dictionary.Entry", "closureProbeEntry(_:)",
-                [.type(Int.self), .type(Int.self)]
-            ),
-        ] {
-            let type = try await runtime.resolveSwiftType(
-                named: "(extension in \(module)):Swift.\(name)",
-                in: .path(library.libraryURL),
-                genericArguments: arguments
-            )
-            calls.append(
-                (
-                    index,
-                    try await runtime.resolveSwiftFunction(
-                        named: "\(module).\(function)",
-                        as: ((NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Int64>) -> Int64)
-                            .self,
-                        valueABIs: [type: pair],
-                        in: .path(library.libraryURL)
-                    ).call
-                )
-            )
+        let arguments = try #require(inferred.call.generic).parameters.arguments
+        guard case .closure(let plan, _) = arguments[0] else {
+            Issue.record("Int.Helper has no closure plan")
+            return
         }
-        for (index, call) in calls {
-            guard case .closure(let plan, _) = try #require(call.generic).parameters.arguments[0]
-            else {
-                Issue.record("probe \(index) has no closure plan")
-                continue
+        #expect(swiftClosureDiscriminator(description: plan.authentication) == found[0])
+        for (offset, name) in undecided.enumerated() {
+            let type = try unsafe typeAt.unsafeInvoke(Int64(named.count + offset))
+            let runtimeName = try #require(_mangledTypeName(type))
+            #expect {
+                try swiftNominalClosureDeclaration(type, runtimeName: runtimeName)
+            } throws: { error in
+                guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                    return false
+                }
+                return message.contains("do not record conformances to marker protocols")
             }
-            #expect(
-                swiftClosureDiscriminator(description: plan.authentication) == found[index],
-                "probe \(index)"
-            )
+            if RuntimePointerAuthentication.isEnabled {
+                #expect(throws: ABIResolutionError.self, "\(name)") {
+                    try swiftClosureTypeHash(type)
+                }
+            } else {
+                // Only arm64e hashes the declaration; elsewhere the runtime
+                // name identifies the type.
+                #expect(try swiftClosureTypeHash(type) == "$s" + runtimeName, "\(name)")
+            }
         }
     }
     #endif
 
     #if os(macOS)
-    /// A closure's discriminator hashes the declaration of each type in its
-    /// signature, which a type in a constrained extension spells with the
-    /// extension's generic signature. Its context descriptors establish
-    /// that signature unless it requires a marker protocol, and only arm64e
-    /// needs the discriminator, so other architectures prepare both.
+    /// Only arm64e signs a closure with a discriminator, which hashes the
+    /// declaration of each type in the closure's signature. Other
+    /// architectures prepare a closure over a type in a constrained extension
+    /// even when its image does not export the type's descriptor.
     @Test func closuresOverTypesInConstrainedExtensionsPrepare() async throws {
         let module =
             "ClosureConstrained_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
@@ -1251,7 +1169,7 @@ struct NativeSwiftClosureTests {
                     in: .path(library.libraryURL)
                 )
             }
-            if name == "Marked", NativePointerAuthentication.isEnabled {
+            if NativePointerAuthentication.isEnabled {
                 await #expect(throws: ABIResolutionError.self) { try await apply() }
                 continue
             }
@@ -1712,20 +1630,6 @@ private final class SavedIncomingIntegerClosure: @unchecked Sendable {
 }
 
 #if DEBUG && os(macOS)
-/// The declaration that ABIBridge rebuilds for a type from its context
-/// descriptors.
-private func rebuiltDeclaration(_ type: Any.Type) throws -> String {
-    var failure: OpaquePointer?
-    guard
-        let name = ABICopySwiftTypeDeclarationName(
-            unsafeBitCast(type, to: UnsafeRawPointer.self),
-            &failure
-        )
-    else { throw consumeNativeCallFailure(failure) }
-    defer { ABIFreeString(name) }
-    return String(cString: name)
-}
-
 /// Compiles `source` for arm64e and returns the pointer-authentication
 /// discriminator of the closure call in each of `functions`.
 private func arm64eClosureCallDiscriminators(

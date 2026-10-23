@@ -6,9 +6,10 @@ types declared in extensions rely on (#435):
 
 - a closure's discriminator hashes each type's declaration as the type's
   nominal type descriptor symbol spells it, including the generic signature
-  of a constrained extension, which runtime type names omit;
-- an unconstrained extension in the module of the type it extends has no
-  context descriptor of its own, while a constrained one has;
+  of an extension of a generic type, which runtime type names omit;
+- an extension of a nongeneric type is not a generic context, and an
+  unconstrained extension in the module of the type it extends has no context
+  descriptor of its own, so runtime names spell declarations in either;
 - an extension's requirement records omit conformances to marker protocols,
   so an extension that adds only marker protocols records no requirement.
 """
@@ -115,6 +116,9 @@ def check_extension_discriminators(directory, sdk):
                 f"{declarations[name]}: {calls[0]} != {hashed}")
     require(declarations["Open"] == "14ExtensionProbe3BoxV4OpenV",
             "arm64e: an unconstrained extension in its type's module must not add a context")
+    helper = re.search(r'^@"\$sSi14ExtensionProbeEMXE" = [^\n]*?<\{ i32 (\d+),', ir, re.M)
+    require(helper is not None and not int(helper[1]) & 0x80,
+            "arm64e: an extension of a nongeneric type must not be a generic context")
     requirements = {}
     for name in ["Inner", "Marked", "Mixed"]:
         extension = declarations[name][:-len(str(len(name)) + name + "V")]

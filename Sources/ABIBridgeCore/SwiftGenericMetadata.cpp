@@ -1,5 +1,4 @@
 #include <ABIBridge/SwiftInvocation.h>
-#include "SwiftContextDescriptors.hpp"
 #include <cstdint>
 #include <cstring>
 #include <ptrauth.h>
@@ -50,9 +49,17 @@ struct RuntimeTypeContextDescriptor;
 #endif
 extern "C" const RuntimeTypeContextDescriptor *swift_getTypeContextDescriptor(const void *);
 
-using namespace abibridge;
-
 namespace {
+template<class T> T read(const void *address) {
+    T result;
+    std::memcpy(&result, address, sizeof(result));
+    return result;
+}
+const char *relative(const void *field) {
+    auto offset = read<int32_t>(field);
+    return offset ? static_cast<const char *>(field) + offset : nullptr;
+}
+
 const void *associatedType(const void *metadata, const void *protocol,
                            std::string_view name, std::unordered_set<const void *> &visited) {
     if (!visited.insert(protocol).second) return nullptr;
@@ -220,9 +227,8 @@ const char *contextPointer(const void *slot) {
 #endif
     return static_cast<const char *>(pointer);
 }
-}
 
-const char *abibridge::parentContext(const char *descriptor) {
+const char *parentContext(const char *descriptor) {
     const char *field = descriptor + 4;
     auto offset = read<int32_t>(field);
     if (!offset) return nullptr;
@@ -230,7 +236,7 @@ const char *abibridge::parentContext(const char *descriptor) {
     return (offset & 1) ? contextPointer(target) : target;
 }
 
-const char *abibridge::nominalGenericHeader(const char *descriptor) {
+const char *nominalGenericHeader(const char *descriptor) {
     auto flags = read<uint32_t>(descriptor);
     if (!(flags & 0x80)) return nullptr;
     auto kind = flags & 0x1f;
@@ -238,7 +244,7 @@ const char *abibridge::nominalGenericHeader(const char *descriptor) {
     return descriptor + (kind == 16 ? 44 : 28) + 8;
 }
 
-size_t abibridge::symbolicNameLength(const char *name) {
+size_t symbolicNameLength(const char *name) {
     size_t length = 0;
     while (uint8_t byte = name[length]) {
         ++length;
@@ -248,12 +254,6 @@ size_t abibridge::symbolicNameLength(const char *name) {
     return length;
 }
 
-const char *abibridge::genericRequirements(const char *header) {
-    auto afterParameters = reinterpret_cast<uintptr_t>(header + 8 + read<uint16_t>(header));
-    return reinterpret_cast<const char *>((afterParameters + 3) & ~uintptr_t(3));
-}
-
-namespace {
 bool genericTypeLevels(const char *descriptor, const void *environment,
                        const void *const *arguments, std::vector<uint16_t> &counts) {
     if (!descriptor) return true;
@@ -295,6 +295,11 @@ const void *const *genericArguments(const void *metadata, const char *descriptor
         else offset = ptrdiff_t(read<uint32_t>(descriptor + 28) - read<uint32_t>(descriptor + 32)) * sizeof(void *);
     }
     return reinterpret_cast<const void *const *>(static_cast<const char *>(metadata) + offset);
+}
+
+const char *genericRequirements(const char *header) {
+    auto afterParameters = reinterpret_cast<uintptr_t>(header + 8 + read<uint16_t>(header));
+    return reinterpret_cast<const char *>((afterParameters + 3) & ~uintptr_t(3));
 }
 
 size_t shapeCount(const char *header) {
@@ -643,16 +648,16 @@ bool mentionsGenericParameter(const ABISwiftSyntaxNode *node) {
     return false;
 }
 
+const char *declaringModule(const char *descriptor) {
+    while (descriptor && (read<uint32_t>(descriptor) & 0x1f) != 0) descriptor = parentContext(descriptor);
+    return descriptor ? relative(descriptor + 8) : nullptr;
+}
+
 bool setsAddressableForDependencies(const char *descriptor) {
     std::unique_ptr<ABISwiftTypeMetadata, decltype(&ABIReleaseSwiftTypeMetadata)> metadata(
         ABICreateSwiftTypeMetadata(descriptor, nullptr, 0, nullptr), ABIReleaseSwiftTypeMetadata);
     return metadata && (ABISwiftGetValueWitnessFlags(metadata->value) & 0x02000000);
 }
-}
-
-const char *abibridge::declaringModule(const char *descriptor) {
-    while (descriptor && (read<uint32_t>(descriptor) & 0x1f) != 0) descriptor = parentContext(descriptor);
-    return descriptor ? relative(descriptor + 8) : nullptr;
 }
 
 bool ABISwiftGetValueDescriptorInfo(const void *metadata, ABISwiftValueDescriptorInfo *info) {
@@ -778,70 +783,13 @@ bool matchesNominalReference(const char *reference, const char *descriptor) {
     Syntax expected(ABICopySwiftTypeSyntax(nominal, symbolicNameLength(nominal)), ABIReleaseSwiftSyntax);
     return expected && sameTypeSyntax(ABISwiftSyntaxRoot(candidate.get()), ABISwiftSyntaxRoot(expected.get()));
 }
-
-bool sameMangledType(const char *lhs, const char *rhs) {
-    SyntaxOwner left(ABICopySwiftTypeSyntax(lhs, symbolicNameLength(lhs)), ABIReleaseSwiftSyntax);
-    SyntaxOwner right(ABICopySwiftTypeSyntax(rhs, symbolicNameLength(rhs)), ABIReleaseSwiftSyntax);
-    return left && right && sameTypeSyntax(ABISwiftSyntaxRoot(left.get()), ABISwiftSyntaxRoot(right.get()));
-}
 }
 
-// Equal generic signatures emit the same canonical requirements.
-bool abibridge::sameRequirement(const char *lhs, const char *rhs) {
-    const auto flags = read<uint32_t>(lhs);
-    const char *leftSubject = relative(lhs + 4), *rightSubject = relative(rhs + 4);
-    if (flags != read<uint32_t>(rhs) || !leftSubject || !rightSubject || !sameMangledType(leftSubject, rightSubject))
-        return false;
-    switch (flags & 0x1f) {
-    case 0: {
-        const void *objectiveC = ABISwiftProtocolRequirementObjectiveCProtocol(lhs + 8);
-        if (objectiveC || ABISwiftProtocolRequirementObjectiveCProtocol(rhs + 8))
-            return objectiveC == ABISwiftProtocolRequirementObjectiveCProtocol(rhs + 8);
-        return ABISwiftProtocolRequirementDescriptor(lhs + 8) == ABISwiftProtocolRequirementDescriptor(rhs + 8);
-    }
-    case 1: case 2: case 4: {
-        const char *left = relative(lhs + 8), *right = relative(rhs + 8);
-        return left && right && sameMangledType(left, right);
-    }
-    case 5: case 0x1f: return read<uint32_t>(lhs + 8) == read<uint32_t>(rhs + 8);
-    default: return false;
-    }
-}
-
-const char *abibridge::extendedNominal(const char *extension, const void *metadata, const char *descriptor) {
-    const char *extended = relative(extension + 8);
-    if (!extended) return nullptr;
-    if (extended[0] == 1 || extended[0] == 2) {
-        const char *target = extended + 1 + read<int32_t>(extended + 1);
-        return extended[0] == 2 ? contextPointer(target) : target;
-    }
-    if (!metadata) return nullptr;
-    const void *type = swift_getTypeByMangledNameInContext(extended, symbolicNameLength(extended), descriptor,
-        (read<uint32_t>(descriptor) & 0x80) ? genericArguments(metadata, descriptor) : nullptr);
-    return type ? typeContextDescriptor(type) : nullptr;
-}
-
-bool ABISwiftTypeIsDeclaredInConstrainedExtension(const void *metadata) {
-    const char *descriptor = typeContextDescriptor(metadata);
-    for (const char *context = descriptor; context; context = parentContext(context)) {
+bool ABISwiftTypeIsDeclaredInGenericExtension(const void *metadata) {
+    for (const char *context = typeContextDescriptor(metadata); context; context = parentContext(context)) {
+        // An extension's descriptor is generic exactly when its extended type is.
         const auto flags = read<uint32_t>(context);
-        // An extension of a nongeneric type has no generic context to constrain.
-        if ((flags & 0x1f) != 1 || !(flags & 0x80)) continue;
-        const char *header = context + 12;
-        const char *nominal = extendedNominal(context, metadata, descriptor);
-        const char *nominalHeader = nominal ? nominalGenericHeader(nominal) : nullptr;
-        if (!nominalHeader || read<uint16_t>(header) != read<uint16_t>(nominalHeader)) return true;
-        // An unconstrained extension in the module of the type it extends
-        // shares that type's context; one with its own descriptor adds
-        // requirements, even when they are marker protocols, which
-        // requirement records omit.
-        const char *module = declaringModule(context), *nominalModule = declaringModule(nominal);
-        if (!module || !nominalModule || !std::strcmp(module, nominalModule)) return true;
-        const auto count = read<uint16_t>(header + 2);
-        if (count != read<uint16_t>(nominalHeader + 2)) return true;
-        const char *requirements = genericRequirements(header), *expected = genericRequirements(nominalHeader);
-        for (size_t index = 0; index < count; ++index)
-            if (!sameRequirement(requirements + index * 12, expected + index * 12)) return true;
+        if ((flags & 0x1f) == 1 && (flags & 0x80)) return true;
     }
     return false;
 }
