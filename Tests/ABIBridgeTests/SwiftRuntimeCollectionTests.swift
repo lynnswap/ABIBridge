@@ -127,7 +127,9 @@ struct SwiftRuntimeCollectionTests {
             #expect(try unsafe countTable.unsafeInvoke(table + table) == 2)
             let keyed = try unsafe makeKeyed.unsafeInvoke(2)
             #expect(try unsafe countKeyed.unsafeInvoke(keyed) == 2)
-            #expect(CollectionRuntimeProbe.liveCount == 11)
+            withExtendedLifetime((probes, table, keyed)) {
+                #expect(CollectionRuntimeProbe.liveCount == 11)
+            }
         }
         #expect(CollectionRuntimeProbe.liveCount == 0)
     }
