@@ -8,6 +8,7 @@ task_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 task_failed=()
 for task_check in \
     check-inferred-swift-value-codegen.py \
+    check-inferred-swift-value-evidence-codegen.py \
     check-managed-swift-codegen.py \
     check-swift-closure-codegen.py \
     check-swift-optional-codegen.py \
