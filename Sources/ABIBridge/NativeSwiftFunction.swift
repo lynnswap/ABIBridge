@@ -174,6 +174,29 @@ public struct NativeSwiftFunction<Signature>: Sendable {
         try call.requireReplacement(replacement.call, declaration: replacement.declaration)
     }
 
+    /// The lookup type and its virtual-table entry of this class member,
+    /// which virtual hooks and replacements change, as for an instance
+    /// member: the entry whose code lookup selected, or else the entry that
+    /// the declaration's method descriptors name.
+    ///
+    /// Only a class's members that receive its metatype as `self`, as the
+    /// call plan says, have such an entry.
+    func virtualDispatch() throws -> (type: NativeSwiftType, dispatch: SwiftClassDispatch) {
+        guard let type = typeOwner, type.metadata is AnyClass,
+            call.generic?.receivesMetatype == true
+        else {
+            throw ABIResolutionError.unsupportedDeclaration(
+                "Virtual hooks and replacements of a function require a class member that receives its class's metatype as self, such as a class func or a class var's accessor; free functions and the static members of structs and enums have no class slot."
+            )
+        }
+        let dispatch = try entry.classDispatch(
+            in: type.metadata,
+            resolver: type.resolver,
+            asynchronous: call.isAsync
+        )
+        return (type, dispatch)
+    }
+
     /// Calls the Swift entry point using its prepared declaration-level signature.
     ///
     /// The signature must match the declaration's Swift ABI and ordinary ownership selected by lookup. Initializers transfer ordinary arguments to the callee; free/static functions borrow them. The caller satisfies actor/thread requirements. Managed object, String, and Array results transfer Swift ownership to the caller; custom native wrappers must establish their own value contract.

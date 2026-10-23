@@ -129,8 +129,97 @@ import Synchronization
 
     object = nil
     try check(observed == nil, "Published dispatchers do not retain receiver instances")
+    checks += try await validateClassMemberHooks(
+        runtime: runtime,
+        provider: provider,
+        caller: caller,
+        onFailure: failure
+    )
     checks += try await validateAsyncMethodHooks(runtime: runtime, provider: provider, caller: caller)
     try check(failures.withLock { $0.isEmpty }, "No unexpected class hook failures")
     return ArchitectureReport(mode: "swift-method-hooks", cpuType: ABIValidationCPUType(),
         cpuSubtype: ABIValidationCPUSubtype(), pacCompiled: ABIValidationPACCompiled(), checks: checks, allocationTag: nil)
+}
+
+/// Hooks a class func and a class var's accessors in a base and an
+/// overriding class, which dispatch through their metatypes' entries.
+private func validateClassMemberHooks(
+    runtime: ABIRuntime,
+    provider: ImageSelector,
+    caller: ImageSelector,
+    onFailure failure: @escaping @Sendable (any Error) -> Void
+) async throws -> [String] {
+    var checks: [String] = []
+    func check(_ result: Bool, _ message: String) throws {
+        guard result else { throw ArchitectureValidationFailure(description: message) }
+        checks.append(message)
+    }
+    let baseName = "SwiftImportProvider.ReplacementRenderer"
+    let kindOracle = try await runtime.resolveSwiftFunction(
+        named: "SwiftImportCallerControl.classKind(\(baseName), Swift.Int64) -> Swift.Int64",
+        as: ((AnyObject, Int64) -> Int64).self,
+        in: caller
+    )
+    // Sets the class var, then reads it, through the object's metatype.
+    let levelOracle = try await runtime.resolveSwiftFunction(
+        named: "SwiftImportCallerControl.classLevel(\(baseName), Swift.Int64) -> Swift.Int64",
+        as: ((AnyObject, Int64) -> Int64).self,
+        in: caller
+    )
+    var objects: [AnyObject] = []
+    for factory in ["makeRenderer", "makeOverridingRenderer"] {
+        let make = try await runtime.resolveSwiftFunction(
+            named: "SwiftImportProvider.\(factory)() -> " + baseName,
+            as: (() -> AnyObject).self,
+            in: provider
+        )
+        objects.append(try unsafe make.unsafeInvoke())
+    }
+    let names = ["ReplacementRenderer", "OverridingRenderer"]
+    // The override adds 1 to kind and 1000 to level. A hook adds 101 to
+    // kind, doubles the stored level, and adds 10_000 to the level it reads.
+    func values(_ index: Int, hooked: Bool) throws -> Bool {
+        let kind: Int64 = (index == 0 ? 46 : 47) + (hooked ? 101 : 0)
+        let level: Int64 = (index == 0 ? 0 : 1000) + (hooked ? 10_010 : 5)
+        let kindResult = try unsafe kindOracle.unsafeInvoke(objects[index], 40)
+        let levelResult = try unsafe levelOracle.unsafeInvoke(objects[index], 5)
+        return kindResult == kind && levelResult == level
+    }
+    for (index, name) in names.enumerated() {
+        let type = try await runtime.resolveSwiftType(
+            named: "SwiftImportProvider." + name,
+            in: provider
+        )
+        let kind = try await type.resolveStaticMethod(
+            named: "kind(_:)",
+            as: ((Int64) -> Int64).self
+        )
+        let getter = try await type.resolveStaticGetter(named: "level", as: (() -> Int64).self)
+        let setter = try await type.resolveStaticSetter(named: "level", as: Int64.self)
+        let hooks = [
+            try await unsafe kind.hookVirtualCalls(onFailure: failure) { call, value in
+                try call.proceed(value + 1) + 100
+            },
+            try await unsafe getter.hookVirtualCalls(onFailure: failure) { call in
+                try call.proceed() + 10_000
+            },
+            try await unsafe setter.hookVirtualCalls(onFailure: failure) { call, value in
+                try call.proceed(value * 2)
+            },
+        ]
+        defer { hooks.forEach { $0.invalidate() } }
+        for other in names.indices {
+            let state = other == index ? "hooked" : "unchanged"
+            try check(
+                try values(other, hooked: other == index),
+                "\(name) class func and class var hooks: \(names[other]) \(state)"
+            )
+        }
+        hooks.forEach { $0.invalidate() }
+        try check(
+            try values(index, hooked: false),
+            "\(name) class members pass through after invalidation"
+        )
+    }
+    return checks
 }

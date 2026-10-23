@@ -19,6 +19,16 @@ import Foundation
 @inline(never) public func classText(_ object: ReplacementRenderer, _ value: String) -> String { object.text(value) }
 @inline(never) public func classPayload(_ object: ReplacementRenderer, _ value: Int64) -> Int64 { object.payload(value).checksum }
 @inline(never) public func classFinal(_ object: ReplacementRenderer, _ value: Int64) -> Int64 { object.finalScalar(value) }
+@inline(never) public func classKind(_ object: ReplacementRenderer, _ value: Int64) -> Int64 {
+    type(of: object).kind(value)
+}
+@inline(never) public func classLevel(_ object: ReplacementRenderer, _ value: Int64) -> Int64 {
+    type(of: object).level = value
+    return type(of: object).level
+}
+@inline(never) public func classSubscript(_ object: ReplacementRenderer, _ index: Int64) -> Int64 {
+    type(of: object)[index]
+}
 @inline(never) public func coalescedValue(_ object: CoalescedParent) -> Int64 { object.value() }
 @inline(never) public func coalescedExtra(_ object: CoalescedChild) -> Int64 { object.extra() }
 @inline(never) public func coalescedFinal(_ object: CoalescedChild) -> Int64 { object.finalValue() }

@@ -91,11 +91,18 @@ struct SwiftAsyncHookTests {
                 await Task.yield()
                 return number + 1
             }
+            @inline(never) open nonisolated(nonsending) class func kind(_ number: Int64) async -> Int64 {
+                await Task.yield()
+                return number + 2
+            }
         }
         @inline(never) public func makeAsyncHookOwner() -> AsyncHookOwner { AsyncHookOwner() }
         """, callerExtra: """
         @inline(never) public nonisolated(nonsending) func importedAsyncMethod(_ object: AsyncHookOwner, _ number: Int64) async -> Int64 {
             await object.value(number)
+        }
+        @inline(never) public nonisolated(nonsending) func importedAsyncClassMethod(_ object: AsyncHookOwner, _ number: Int64) async -> Int64 {
+            await type(of: object).kind(number)
         }
         """)
         defer { fixture.cleanup() }
@@ -125,6 +132,29 @@ struct SwiftAsyncHookTests {
         #expect(try unsafe await oracle.unsafeInvoke(object, 1) == 112)
         hook.invalidate()
         #expect(try unsafe await oracle.unsafeInvoke(object, 1) == 2)
+
+        // A class method's async entry receives the metatype.
+        let classMethod = try await type.resolveStaticMethod(
+            named: "kind(_:)",
+            as: (nonisolated(nonsending) (Int64) async -> Int64).self
+        )
+        let classOracle = try await fixture.runtime.resolveSwiftFunction(
+            named: fixture.callerModule + ".importedAsyncClassMethod(" + name
+                + ", Swift.Int64) async -> Swift.Int64",
+            as: (nonisolated(nonsending) (AnyObject, Int64) async -> Int64).self,
+            in: fixture.callerScope
+        )
+        let classHook = try unsafe await classMethod.hookVirtualCalls(
+            onFailure: { Issue.record($0) }
+        ) { call, value in
+            let result = try await call.proceed(value + 10)
+            await Task.yield()
+            return result + 100
+        }
+        defer { classHook.invalidate() }
+        #expect(try unsafe await classOracle.unsafeInvoke(object, 1) == 113)
+        classHook.invalidate()
+        #expect(try unsafe await classOracle.unsafeInvoke(object, 1) == 3)
     }
 
     @Test func invalidatedAsyncDescriptorsReserveTheNativeContext() async throws {

@@ -160,6 +160,105 @@ struct SwiftVirtualReplacementTests {
         }
     }
 
+    @Test func classMembersReplaceTheirClassesVirtualEntries() async throws {
+        let fixture = try CompiledSwiftReplacementFixture(writable: false)
+        defer { fixture.cleanup() }
+        let baseName = fixture.module + ".ReplacementRenderer"
+        let base = try await fixture.runtime.resolveSwiftType(
+            named: baseName,
+            in: fixture.providerScope
+        )
+        let kindReplacement = try await base.resolveStaticMethod(
+            named: "replacementKind(_:)",
+            as: ((Int64) -> Int64).self
+        )
+        let getterReplacement = try await base.resolveStaticGetter(
+            named: "replacementLevel",
+            as: (() -> Int64).self
+        )
+        let setterReplacement = try await base.resolveStaticSetter(
+            named: "replacementLevel",
+            as: Int64.self
+        )
+        let kindOracle = try await fixture.runtime.resolveSwiftFunction(
+            named: fixture.callerModule + ".classKind(\(baseName), Swift.Int64) -> Swift.Int64",
+            as: ((AnyObject, Int64) -> Int64).self,
+            in: fixture.callerScope
+        )
+        // Sets the class var, then reads it, through the object's metatype.
+        let levelOracle = try await fixture.runtime.resolveSwiftFunction(
+            named: fixture.callerModule + ".classLevel(\(baseName), Swift.Int64) -> Swift.Int64",
+            as: ((AnyObject, Int64) -> Int64).self,
+            in: fixture.callerScope
+        )
+        var objects: [AnyObject] = []
+        for factory in ["makeRenderer", "makeInheritedRenderer", "makeOverridingRenderer"] {
+            let make = try await fixture.runtime.resolveSwiftFunction(
+                named: fixture.module + ".\(factory)() -> " + baseName,
+                as: (() -> AnyObject).self,
+                in: fixture.providerScope
+            )
+            objects.append(try unsafe make.unsafeInvoke())
+        }
+        // The inherited kind adds 16 for a subclass's metatype as self, and the
+        // overriding kind adds 7.
+        let kinds: [Int64] = [46, 56, 47]
+        for (index, name) in ["ReplacementRenderer", "InheritedRenderer", "OverridingRenderer"]
+            .enumerated()
+        {
+            let type = try await fixture.runtime.resolveSwiftType(
+                named: fixture.module + "." + name,
+                in: fixture.providerScope
+            )
+            let kind = try unsafe await type.resolveStaticMethod(
+                named: "kind(_:)",
+                as: ((Int64) -> Int64).self
+            ).prepareVirtualReplacement(with: kindReplacement)
+            let getter = try unsafe await type.resolveStaticGetter(
+                named: "level",
+                as: (() -> Int64).self
+            ).prepareVirtualReplacement(with: getterReplacement)
+            let setter = try unsafe await type.resolveStaticSetter(
+                named: "level",
+                as: Int64.self
+            ).prepareVirtualReplacement(with: setterReplacement)
+            // The predecessors receive the lookup type's metatype.
+            #expect(try unsafe kind.original.unsafeInvoke(40) == kinds[index])
+            try unsafe kind.install(); defer { try? kind.restore() }
+            try unsafe getter.install(); defer { try? getter.restore() }
+            try unsafe setter.install(); defer { try? setter.restore() }
+            for (other, object) in objects.enumerated() {
+                let replaced = other == index
+                #expect(
+                    try unsafe kindOracle.unsafeInvoke(object, 40)
+                        == (replaced ? 640 : kinds[other])
+                )
+                #expect(
+                    try unsafe levelOracle.unsafeInvoke(object, 5)
+                        == (replaced ? 775 : other == 2 ? 1005 : 5)
+                )
+            }
+            // The replaced setter stores 75, which the predecessor reads.
+            #expect(try unsafe levelOracle.unsafeInvoke(objects[index], 5) == 775)
+            #expect(try unsafe getter.original.unsafeInvoke() == (index == 2 ? 1075 : 75))
+            try kind.restore(); try getter.restore(); try setter.restore()
+            #expect(kind.status == .restored && getter.status == .restored)
+            #expect(try unsafe kindOracle.unsafeInvoke(objects[index], 40) == kinds[index])
+            #expect(
+                try unsafe levelOracle.unsafeInvoke(objects[index], 5) == (index == 2 ? 1005 : 5)
+            )
+        }
+
+        // A static member has no class slot.
+        let staticKind = try await base.resolveStaticMethod(
+            named: "staticKind(_:)",
+            as: ((Int64) -> Int64).self
+        )
+        #expect(throws: ABIResolutionError.self) {
+            try unsafe staticKind.prepareVirtualReplacementAndWait(with: kindReplacement)
+        }
+    }
+
     @Test func heapBackedArgumentsAndReturnsUseTheOriginalSwiftABI() async throws {
         let fixture = try CompiledSwiftReplacementFixture(writable: false)
         defer { fixture.cleanup() }

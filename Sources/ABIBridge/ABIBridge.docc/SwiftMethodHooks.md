@@ -29,6 +29,24 @@ Use `method.hookImportedCalls(in:using:onFailure:body:)` to intercept references
 
 Other images call a library-evolution class member through its dispatch thunk, which dispatches on the receiver's class. Import selection includes references to that thunk, whether lookup selected the member's own code or, in an image that keeps only its exports, the class's virtual-table entry; `proceed` then calls the thunk, which runs the receiver's override. A protocol requirement resolved by a protocol-qualified name is called through its dispatch thunk too. Its hook receives the calls of the lookup type's conformance, and calls of other conforming types continue to their witnesses. A conformance's witness has no importing references, and `hookVirtualCalls` changes only class virtual-table entries, so it rejects protocol requirements. Hooks intercept methods, getters, and setters, as the declaration's record says; initializers, deinitializers, and coroutines are rejected.
 
+## Hook class members
+
+A `class func`, and a `class var`'s or `class subscript`'s getter and setter, receive their class's metatype as `self` and dispatch through entries of the class's metadata, which subclasses copy and override as they do instance entries. Resolve them with `resolveStaticMethod`, `resolveStaticGetter`, or `resolveStaticSetter`, then hook the returned `NativeSwiftFunction`:
+
+```swift
+let preview = try await runtime.resolveSwiftType(named: "Rendering.PreviewRenderer")
+let scale = try await preview.resolveStaticMethod(
+    named: "scale(for:)", as: ((Double) -> Double).self
+)
+let hook = try await unsafe scale.hookVirtualCalls(
+    onFailure: { error in print(error) }
+) { call, width in
+    try call.proceed(width) * 2
+}
+```
+
+The callback receives `NativeSwiftFunctionInvocation<Signature>`, and `proceed` passes the incoming metatype on. Selection, class scope, chaining, and invalidation follow the rules for instance members below. A `static` or `final class` member has no entry, as a final method has none, so `hookVirtualCalls` throws ``ABIResolutionError/unsupportedDeclaration(_:)`` for it; free functions and the static members of structs and enums have no entry either.
+
 ## Await asynchronous methods
 
 An async method uses the same registration and `NativeSwiftMethodInvocation<Signature>`. Include its native isolation convention in the signature, and await `call.proceed(...)`. `call.receiver(as:)` remains available before and after suspension while the callback runs on the same Swift task. Native argument and receiver storage stays live until completion.
@@ -89,7 +107,7 @@ Preparation failures publish nothing. A failed virtual installation throws `Nati
 
 ## Supported boundary
 
-This interface requires initialized instances and a known Swift calling convention. Initializers, deinitializers, yielding accessors and unestablished class metadata layouts require separate support. Async function signatures select the async descriptor convention. Property getter names and ordinary getter descriptors do not encode throwing effects; supply the getter's source contract, including `declaredAs:` when generic metadata needs it.
+Instance members require initialized instances, and every member requires a known Swift calling convention. Initializers, deinitializers, yielding accessors and unestablished class metadata layouts require separate support. Async function signatures select the async descriptor convention. Property getter names and ordinary getter descriptors do not encode throwing effects; supply the getter's source contract, including `declaredAs:` when generic metadata needs it.
 
 Typed receiver reads require a class compatible with the selected method. Generic bindings, runtime values, nested callbacks, and argument ownership follow <doc:SwiftFunctionHooks>, including transfers of noncopyable inputs/results through `proceed` and publication. For separately compiled replacements, use <doc:SwiftVirtualReplacements> or <doc:SwiftImportedReplacements>.
 
