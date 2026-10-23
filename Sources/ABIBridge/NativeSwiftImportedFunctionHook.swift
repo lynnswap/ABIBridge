@@ -168,7 +168,7 @@ extension NativeSwiftFunction {
         )
     }
 
-    private func prepareHook<Result, each Argument>(
+    func prepareHook<Result, each Argument>(
         requiresMainActor: Bool,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body:
@@ -521,7 +521,7 @@ extension NativeSwiftFunction {
 }
 
 extension NativeSwiftFunction {
-    private func prepareAsyncHook<Result, each Argument>(
+    func prepareAsyncHook<Result, each Argument>(
         requiresMainActor: Bool,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body:

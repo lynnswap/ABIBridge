@@ -238,6 +238,61 @@ struct VirtualPayload: ABIBridgeValue {
         }
         try check(classScalar(objects[index], 40) == (index == 2 ? 44 : 42), "\(name) restored")
     }
+    // Class members dispatch through the metatype's entries of each class.
+    // The inherited kind adds 16 for a subclass's metatype as self, and the
+    // overriding kind adds 7.
+    let kinds: [Int64] = [46, 56, 47]
+    let kindReplacement = try await base.resolveStaticMethod(
+        named: "replacementKind(_:)",
+        as: ((Int64) -> Int64).self
+    )
+    let getterReplacement = try await base.resolveStaticGetter(
+        named: "replacementLevel",
+        as: (() -> Int64).self
+    )
+    let setterReplacement = try await base.resolveStaticSetter(
+        named: "replacementLevel",
+        as: Int64.self
+    )
+    for (index, name) in names.enumerated() {
+        let type = try await runtime.resolveSwiftType(named: module + "." + name)
+        let kind = try unsafe await type.resolveStaticMethod(
+            named: "kind(_:)",
+            as: ((Int64) -> Int64).self
+        ).prepareVirtualReplacement(with: kindReplacement)
+        let getter = try unsafe await type.resolveStaticGetter(
+            named: "level",
+            as: (() -> Int64).self
+        ).prepareVirtualReplacement(with: getterReplacement)
+        let setter = try unsafe await type.resolveStaticSetter(
+            named: "level",
+            as: Int64.self
+        ).prepareVirtualReplacement(with: setterReplacement)
+        try installed(kind) {
+            try installed(getter) {
+                try installed(setter) {
+                    for (other, object) in objects.enumerated() {
+                        let replaced = other == index
+                        try check(
+                            classKind(object, 40) == (replaced ? 640 : kinds[other])
+                                && classLevel(object, 5)
+                                    == (replaced ? 775 : other == 2 ? 1005 : 5),
+                            "\(name) class func and class var replacement scope: \(names[other])"
+                        )
+                    }
+                    try check(
+                        try unsafe kind.original.unsafeInvoke(40) == kinds[index],
+                        "\(name) class func predecessor receives the lookup type's metatype"
+                    )
+                }
+            }
+        }
+        try check(
+            classKind(objects[index], 40) == kinds[index]
+                && classLevel(objects[index], 5) == (index == 2 ? 1005 : 5),
+            "\(name) class members restored"
+        )
+    }
     let text = try await base.resolveMethod(named: "text(_:)", as: ((String) -> String).self)
     let textReplacement = try await base.resolveMethod(
         named: "replacementText(_:)",

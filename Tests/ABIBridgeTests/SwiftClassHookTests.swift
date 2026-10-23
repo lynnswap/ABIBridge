@@ -218,6 +218,115 @@ struct SwiftClassHookTests {
         }
     }
 
+    @Test func classMembersHookTheirClassesVirtualEntries() async throws {
+        let fixture = try CompiledSwiftReplacementFixture(writable: false)
+        defer { fixture.cleanup() }
+        let baseName = fixture.module + ".ReplacementRenderer"
+        let kindOracle = try await fixture.runtime.resolveSwiftFunction(
+            named: fixture.callerModule + ".classKind(\(baseName), Swift.Int64) -> Swift.Int64",
+            as: ((AnyObject, Int64) -> Int64).self,
+            in: fixture.callerScope
+        )
+        // Sets the class var, then reads it, through the object's metatype.
+        let levelOracle = try await fixture.runtime.resolveSwiftFunction(
+            named: fixture.callerModule + ".classLevel(\(baseName), Swift.Int64) -> Swift.Int64",
+            as: ((AnyObject, Int64) -> Int64).self,
+            in: fixture.callerScope
+        )
+        let subscriptOracle = try await fixture.runtime.resolveSwiftFunction(
+            named: fixture.callerModule
+                + ".classSubscript(\(baseName), Swift.Int64) -> Swift.Int64",
+            as: ((AnyObject, Int64) -> Int64).self,
+            in: fixture.callerScope
+        )
+        var objects: [AnyObject] = []
+        for factory in ["makeRenderer", "makeInheritedRenderer", "makeOverridingRenderer"] {
+            let make = try await fixture.runtime.resolveSwiftFunction(
+                named: fixture.module + ".\(factory)() -> " + baseName,
+                as: (() -> AnyObject).self,
+                in: fixture.providerScope
+            )
+            objects.append(try unsafe make.unsafeInvoke())
+        }
+        // The inherited kind adds 16 for a subclass's metatype as self, and the
+        // overriding kind adds 7.
+        let kinds: [Int64] = [46, 56, 47]
+        let failure: @Sendable (any Error) -> Void = { Issue.record("Unexpected: \($0)") }
+        for (index, name) in ["ReplacementRenderer", "InheritedRenderer", "OverridingRenderer"]
+            .enumerated()
+        {
+            let type = try await fixture.runtime.resolveSwiftType(
+                named: fixture.module + "." + name,
+                in: fixture.providerScope
+            )
+            let kind = try await type.resolveStaticMethod(
+                named: "kind(_:)",
+                as: ((Int64) -> Int64).self
+            )
+            let getter = try await type.resolveStaticGetter(named: "level", as: (() -> Int64).self)
+            let setter = try await type.resolveStaticSetter(named: "level", as: Int64.self)
+            let element = try await type.resolveStaticMethod(
+                named: "subscript.getter : (Swift.Int64) -> Swift.Int64",
+                as: ((Int64) -> Int64).self
+            )
+            let hooks = [
+                try await unsafe kind.hookVirtualCalls(onFailure: failure) { call, value in
+                    try call.proceed(value + 1) + 100
+                },
+                try await unsafe element.hookVirtualCalls(onFailure: failure) { call, index in
+                    try call.proceed(index) + 100
+                },
+                try await unsafe getter.hookVirtualCalls(onFailure: failure) { call in
+                    try call.proceed() + 10_000
+                },
+                try await unsafe setter.hookVirtualCalls(onFailure: failure) { call, value in
+                    try call.proceed(value * 2)
+                },
+            ]
+            defer { hooks.forEach { $0.invalidate() } }
+            for (other, object) in objects.enumerated() {
+                let hooked = other == index
+                #expect(
+                    try unsafe kindOracle.unsafeInvoke(object, 40)
+                        == kinds[other] + (hooked ? 101 : 0)
+                )
+                #expect(
+                    try unsafe levelOracle.unsafeInvoke(object, 5)
+                        == (other == 2 ? 1000 : 0) + (hooked ? 10_010 : 5)
+                )
+                #expect(try unsafe subscriptOracle.unsafeInvoke(object, 40) == (hooked ? 148 : 48))
+            }
+            hooks.forEach { $0.invalidate() }
+            #expect(try unsafe kindOracle.unsafeInvoke(objects[index], 40) == kinds[index])
+            #expect(
+                try unsafe levelOracle.unsafeInvoke(objects[index], 5) == (index == 2 ? 1005 : 5)
+            )
+        }
+
+        // A static member has no class slot, nor does a free function.
+        let base = try await fixture.runtime.resolveSwiftType(
+            named: baseName,
+            in: fixture.providerScope
+        )
+        let staticKind = try await base.resolveStaticMethod(
+            named: "staticKind(_:)",
+            as: ((Int64) -> Int64).self
+        )
+        let free = try await fixture.runtime.resolveSwiftFunction(
+            named: fixture.module + ".scalar(_:)",
+            as: ((Int64) -> Int64).self,
+            in: fixture.providerScope
+        )
+        for function in [staticKind, free] {
+            do {
+                _ = try await unsafe function.hookVirtualCalls(onFailure: failure) { call, value in
+                    try call.proceed(value)
+                }
+                Issue.record("\(function.declaration) has no virtual entry")
+            } catch ABIResolutionError.unsupportedDeclaration {}
+        }
+    }
+
     @Test func protocolExtensionHooksKeepSameTypeSpecializationsSeparate() async throws {
         let fixture = try CompiledSwiftReplacementFixture(
             providerExtra: """

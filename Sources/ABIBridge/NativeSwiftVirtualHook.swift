@@ -33,6 +33,43 @@ public struct NativeSwiftVirtualHookInstallationError: Error {
     public let registration: NativeSwiftVirtualHook
 }
 
+extension NativeSwiftVirtualHook {
+    /// Registers `prepared` at the entry `dispatch` selected in the metadata
+    /// of `type`.
+    ///
+    /// - Parameter owner: The handle whose declaration was hooked.
+    static func install(
+        at dispatch: SwiftClassDispatch,
+        of type: NativeSwiftType,
+        retaining owner: any Sendable,
+        prepared: (signature: SwiftHookSignature, handler: SwiftHookHandler),
+        codeOwner: (any Sendable)?
+    ) async throws -> NativeSwiftVirtualHook {
+        // A file-backed inherited entry can also be an importing reference. Use
+        // the storage type's generation so both operations share one dispatcher.
+        let reference = SwiftHookReference(
+            key: .init(address: dispatch.address, generation: type.image.identity.loadGeneration),
+            authentication: dispatch.authentication,
+            asyncDescriptor: dispatch.isAsync
+        )
+        do {
+            let registration = try await SwiftHookRegistry.shared.register(
+                references: [reference],
+                retaining: (owner, dispatch.image),
+                signature: prepared.signature,
+                handler: prepared.handler,
+                codeOwner: codeOwner
+            )
+            return NativeSwiftVirtualHook(registration)
+        } catch let error as NativeSwiftHookInstallationError {
+            throw NativeSwiftVirtualHookInstallationError(
+                underlyingError: error.underlyingError,
+                registration: NativeSwiftVirtualHook(error.registration)
+            )
+        }
+    }
+}
+
 extension NativeSwiftMethod {
     // Swift 6.3 mismanages async task allocations when a same-type requirement
     // decomposes Signature into a parameter pack. Transparent entry thunks keep
@@ -111,28 +148,13 @@ extension NativeSwiftMethod {
         let dispatch = try await NativePreparation.run { [self] in
             try virtualDispatch()
         }
-        // A file-backed inherited entry can also be an importing reference. Use
-        // the storage type's generation so both operations share one dispatcher.
-        let reference = SwiftHookReference(
-            key: .init(address: dispatch.address, generation: type.image.identity.loadGeneration),
-            authentication: dispatch.authentication,
-            asyncDescriptor: dispatch.isAsync
+        return try await NativeSwiftVirtualHook.install(
+            at: dispatch,
+            of: type,
+            retaining: self,
+            prepared: prepared,
+            codeOwner: owner
         )
-        do {
-            let registration = try await SwiftHookRegistry.shared.register(
-                references: [reference],
-                retaining: (self, dispatch.image),
-                signature: prepared.signature,
-                handler: prepared.handler,
-                codeOwner: owner
-            )
-            return NativeSwiftVirtualHook(registration)
-        } catch let error as NativeSwiftHookInstallationError {
-            throw NativeSwiftVirtualHookInstallationError(
-                underlyingError: error.underlyingError,
-                registration: NativeSwiftVirtualHook(error.registration)
-            )
-        }
     }
 
     @usableFromInline nonisolated(nonsending) func _hookVirtualCalls<Result, each Argument>(
@@ -304,6 +326,276 @@ extension NativeSwiftMethod {
     ) async throws -> NativeSwiftVirtualHook {
         let prepared = try await prepareAsyncHook(requiresMainActor: true, onFailure: onFailure) {
             (call: NativeSwiftMethodInvocation<Signature>, values: repeat each Argument) in
+            let input = ObjCReplacementIsolatedValue(value: (call, (repeat each values)))
+            let invoke:
+                @MainActor @Sendable () async throws -> ObjCReplacementIsolatedValue<Result> = {
+                    ObjCReplacementIsolatedValue(
+                        value: try await body(input.value.0, repeat each input.value.1)
+                    )
+                }
+            return try await invoke().value
+        }
+        return try await installVirtualHook(retaining: owner, prepared: prepared)
+    }
+
+}
+
+extension NativeSwiftFunction {
+    // Swift 6.3 mismanages async task allocations when a same-type requirement
+    // decomposes Signature into a parameter pack. Transparent entry thunks keep
+    // that requirement out of the implementation frame, including in Debug builds.
+
+    /// Intercepts calls of a class member through the selected class's virtual method entry.
+    ///
+    /// A `class func`, and a `class var`'s or `class subscript`'s getter or setter, receive their class's metatype as `self` and dispatch through the class's metadata, as instance members do. Declaration descriptors select the lookup type's copied slot, including inherited and overridden members. Separate superclass and sibling entries are unchanged. Saved dispatchers and later-initialized subclasses copying this entry share its chain, including future registrations. Direct, inlined, and devirtualized calls bypass the slot. Static and final members have no slot, nor do free functions and the static members of structs and enums, and preparation rejects them.
+    ///
+    /// Callbacks run on the incoming thread, and `proceed` passes the incoming metatype on. The caller establishes the native ABI, ownership, isolation, and coordination with external writers; source types alone do not establish those contracts. See <doc:SwiftMethodHooks> for scope and failure handling.
+    ///
+    /// - Parameters:
+    ///   - owner: Keeps generated predecessor code alive.
+    ///   - onFailure: Thread-safe observer of callback and conversion errors.
+    ///   - body: Synchronous typed callback with a scoped continuation.
+    /// - Throws: Preparation errors, or `NativeSwiftVirtualHookInstallationError` with partial publication and retryable rollback outcomes.
+    @_transparent
+    @unsafe
+    public nonisolated(nonsending) func hookVirtualCalls<Result, Failure: Error, each Argument>(
+        retaining owner: (any Sendable)? = nil,
+        onFailure: @escaping @Sendable (any Error) -> Void,
+        body:
+            @escaping @Sendable (NativeSwiftFunctionInvocation<Signature>, repeat each Argument)
+            throws -> Result
+    ) async throws -> NativeSwiftVirtualHook
+    where Signature == (repeat each Argument) throws(Failure) -> Result {
+        try await _hookVirtualCalls(retaining: owner, onFailure: onFailure, body: body)
+    }
+
+    @_transparent
+    @unsafe
+    public nonisolated(nonsending) func hookVirtualCalls<Result, Failure: Error, each Argument>(
+        retaining owner: (any Sendable)? = nil,
+        onFailure: @escaping @Sendable (any Error) -> Void,
+        body:
+            @escaping @Sendable (NativeSwiftFunctionInvocation<Signature>, repeat each Argument)
+            throws -> Result
+    ) async throws -> NativeSwiftVirtualHook
+    where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
+        try await _hookVirtualCalls(retaining: owner, onFailure: onFailure, body: body)
+    }
+
+    /// Installs a virtual callback for a class member with a caller-supplied MainActor contract.
+    ///
+    /// Background calls report `wrongThread` and bypass this callback before decoding arguments. No actor hop occurs; `onFailure` must remain safe on any entering thread. Other scope/lifetime rules match `hookVirtualCalls`.
+    @_transparent
+    @unsafe @MainActor public func hookMainActorVirtualCalls<Result, Failure: Error, each Argument>(
+        retaining owner: (any Sendable)? = nil,
+        onFailure: @escaping @Sendable (any Error) -> Void,
+        body:
+            @escaping @MainActor @Sendable (
+                NativeSwiftFunctionInvocation<Signature>, repeat each Argument
+            ) throws -> Result
+    ) async throws -> NativeSwiftVirtualHook
+    where Signature == (repeat each Argument) throws(Failure) -> Result {
+        try await _hookMainActorVirtualCalls(retaining: owner, onFailure: onFailure, body: body)
+    }
+
+    @_transparent
+    @unsafe @MainActor public func hookMainActorVirtualCalls<Result, Failure: Error, each Argument>(
+        retaining owner: (any Sendable)? = nil,
+        onFailure: @escaping @Sendable (any Error) -> Void,
+        body:
+            @escaping @MainActor @Sendable (
+                NativeSwiftFunctionInvocation<Signature>, repeat each Argument
+            ) throws -> Result
+    ) async throws -> NativeSwiftVirtualHook
+    where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
+        try await _hookMainActorVirtualCalls(retaining: owner, onFailure: onFailure, body: body)
+    }
+
+    private nonisolated(nonsending) func installVirtualHook(
+        retaining owner: (any Sendable)?,
+        prepared: (signature: SwiftHookSignature, handler: SwiftHookHandler)
+    ) async throws -> NativeSwiftVirtualHook {
+        let selected = try await NativePreparation.run { [self] in
+            try virtualDispatch()
+        }
+        return try await NativeSwiftVirtualHook.install(
+            at: selected.dispatch,
+            of: selected.type,
+            retaining: self,
+            prepared: prepared,
+            codeOwner: owner
+        )
+    }
+
+    @usableFromInline nonisolated(nonsending) func _hookVirtualCalls<Result, each Argument>(
+        retaining owner: (any Sendable)? = nil,
+        onFailure: @escaping @Sendable (any Error) -> Void,
+        body:
+            @escaping @Sendable (NativeSwiftFunctionInvocation<Signature>, repeat each Argument)
+            throws -> Result
+    ) async throws -> NativeSwiftVirtualHook {
+        let prepared = try await prepareHook(
+            requiresMainActor: false,
+            onFailure: onFailure,
+            body: body
+        )
+        return try await installVirtualHook(retaining: owner, prepared: prepared)
+    }
+
+    @usableFromInline @MainActor func _hookMainActorVirtualCalls<Result, each Argument>(
+        retaining owner: (any Sendable)? = nil,
+        onFailure: @escaping @Sendable (any Error) -> Void,
+        body:
+            @escaping @MainActor @Sendable (
+                NativeSwiftFunctionInvocation<Signature>, repeat each Argument
+            ) throws -> Result
+    ) async throws -> NativeSwiftVirtualHook {
+        let prepared = try await prepareHook(requiresMainActor: true, onFailure: onFailure) {
+            (call: NativeSwiftFunctionInvocation<Signature>, values: repeat each Argument) in
+            let input = ObjCReplacementIsolatedValue(value: (call, (repeat each values)))
+            return try MainActor.assumeIsolated {
+                ObjCReplacementIsolatedValue(
+                    value: try body(input.value.0, repeat each input.value.1)
+                )
+            }.value
+        }
+        return try await installVirtualHook(retaining: owner, prepared: prepared)
+    }
+
+}
+
+extension NativeSwiftFunction {
+    /// Intercepts an asynchronous class member's virtual entry on the incoming Swift task. The callback and `proceed` may suspend; cancellation and task-local values follow that task. Invalidation leaves entered snapshots alive until return. Unrepresentable failures preserve the latest native outcome, or continue with unchanged arguments when no predecessor has completed.
+    @_transparent
+    @unsafe
+    public nonisolated(nonsending) func hookVirtualCalls<Result, Failure: Error, each Argument>(
+        retaining owner: (any Sendable)? = nil,
+        onFailure: @escaping @Sendable (any Error) -> Void,
+        body:
+            @escaping @Sendable (NativeSwiftFunctionInvocation<Signature>, repeat each Argument)
+            async throws -> Result
+    ) async throws -> NativeSwiftVirtualHook
+    where Signature == (repeat each Argument) async throws(Failure) -> Result {
+        try await _hookVirtualCalls(retaining: owner, onFailure: onFailure, body: body)
+    }
+
+    @_transparent
+    @unsafe
+    public nonisolated(nonsending) func hookVirtualCalls<Result, Failure: Error, each Argument>(
+        retaining owner: (any Sendable)? = nil,
+        onFailure: @escaping @Sendable (any Error) -> Void,
+        body:
+            @escaping @Sendable (NativeSwiftFunctionInvocation<Signature>, repeat each Argument)
+            async throws -> Result
+    ) async throws -> NativeSwiftVirtualHook
+    where Signature == @Sendable (repeat each Argument) async throws(Failure) -> Result {
+        try await _hookVirtualCalls(retaining: owner, onFailure: onFailure, body: body)
+    }
+
+    @_transparent
+    @unsafe
+    public nonisolated(nonsending) func hookVirtualCalls<Result, Failure: Error, each Argument>(
+        retaining owner: (any Sendable)? = nil,
+        onFailure: @escaping @Sendable (any Error) -> Void,
+        body:
+            @escaping @Sendable (NativeSwiftFunctionInvocation<Signature>, repeat each Argument)
+            async throws -> Result
+    ) async throws -> NativeSwiftVirtualHook
+    where Signature == @concurrent (repeat each Argument) async throws(Failure) -> Result {
+        try await _hookVirtualCalls(retaining: owner, onFailure: onFailure, body: body)
+    }
+
+    @_transparent
+    @unsafe
+    public nonisolated(nonsending) func hookVirtualCalls<Result, Failure: Error, each Argument>(
+        retaining owner: (any Sendable)? = nil,
+        onFailure: @escaping @Sendable (any Error) -> Void,
+        body:
+            @escaping @Sendable (NativeSwiftFunctionInvocation<Signature>, repeat each Argument)
+            async throws -> Result
+    ) async throws -> NativeSwiftVirtualHook
+    where Signature == @Sendable @concurrent (repeat each Argument) async throws(Failure) -> Result
+    {
+        try await _hookVirtualCalls(retaining: owner, onFailure: onFailure, body: body)
+    }
+
+    @usableFromInline nonisolated(nonsending) func _hookVirtualCalls<Result, each Argument>(
+        retaining owner: (any Sendable)? = nil,
+        onFailure: @escaping @Sendable (any Error) -> Void,
+        body:
+            @escaping @Sendable (NativeSwiftFunctionInvocation<Signature>, repeat each Argument)
+            async throws -> Result
+    ) async throws -> NativeSwiftVirtualHook {
+        let prepared = try await prepareAsyncHook(requiresMainActor: false, onFailure: onFailure) {
+            (call: NativeSwiftFunctionInvocation<Signature>, values: repeat each Argument) in
+            try await body(call, repeat each values)
+        }
+        return try await installVirtualHook(retaining: owner, prepared: prepared)
+    }
+
+    @_transparent
+    @unsafe @MainActor public func hookMainActorVirtualCalls<Result, Failure: Error, each Argument>(
+        retaining owner: (any Sendable)? = nil,
+        onFailure: @escaping @Sendable (any Error) -> Void,
+        body:
+            @escaping @MainActor @Sendable (
+                NativeSwiftFunctionInvocation<Signature>, repeat each Argument
+            ) async throws -> Result
+    ) async throws -> NativeSwiftVirtualHook
+    where Signature == (repeat each Argument) async throws(Failure) -> Result {
+        try await _hookMainActorVirtualCalls(retaining: owner, onFailure: onFailure, body: body)
+    }
+
+    @_transparent
+    @unsafe @MainActor public func hookMainActorVirtualCalls<Result, Failure: Error, each Argument>(
+        retaining owner: (any Sendable)? = nil,
+        onFailure: @escaping @Sendable (any Error) -> Void,
+        body:
+            @escaping @MainActor @Sendable (
+                NativeSwiftFunctionInvocation<Signature>, repeat each Argument
+            ) async throws -> Result
+    ) async throws -> NativeSwiftVirtualHook
+    where Signature == @Sendable (repeat each Argument) async throws(Failure) -> Result {
+        try await _hookMainActorVirtualCalls(retaining: owner, onFailure: onFailure, body: body)
+    }
+
+    @_transparent
+    @unsafe @MainActor public func hookMainActorVirtualCalls<Result, Failure: Error, each Argument>(
+        retaining owner: (any Sendable)? = nil,
+        onFailure: @escaping @Sendable (any Error) -> Void,
+        body:
+            @escaping @MainActor @Sendable (
+                NativeSwiftFunctionInvocation<Signature>, repeat each Argument
+            ) async throws -> Result
+    ) async throws -> NativeSwiftVirtualHook
+    where Signature == @concurrent (repeat each Argument) async throws(Failure) -> Result {
+        try await _hookMainActorVirtualCalls(retaining: owner, onFailure: onFailure, body: body)
+    }
+
+    @_transparent
+    @unsafe @MainActor public func hookMainActorVirtualCalls<Result, Failure: Error, each Argument>(
+        retaining owner: (any Sendable)? = nil,
+        onFailure: @escaping @Sendable (any Error) -> Void,
+        body:
+            @escaping @MainActor @Sendable (
+                NativeSwiftFunctionInvocation<Signature>, repeat each Argument
+            ) async throws -> Result
+    ) async throws -> NativeSwiftVirtualHook
+    where Signature == @Sendable @concurrent (repeat each Argument) async throws(Failure) -> Result
+    {
+        try await _hookMainActorVirtualCalls(retaining: owner, onFailure: onFailure, body: body)
+    }
+
+    @usableFromInline @MainActor func _hookMainActorVirtualCalls<Result, each Argument>(
+        retaining owner: (any Sendable)? = nil,
+        onFailure: @escaping @Sendable (any Error) -> Void,
+        body:
+            @escaping @MainActor @Sendable (
+                NativeSwiftFunctionInvocation<Signature>, repeat each Argument
+            ) async throws -> Result
+    ) async throws -> NativeSwiftVirtualHook {
+        let prepared = try await prepareAsyncHook(requiresMainActor: true, onFailure: onFailure) {
+            (call: NativeSwiftFunctionInvocation<Signature>, values: repeat each Argument) in
             let input = ObjCReplacementIsolatedValue(value: (call, (repeat each values)))
             let invoke:
                 @MainActor @Sendable () async throws -> ObjCReplacementIsolatedValue<Result> = {

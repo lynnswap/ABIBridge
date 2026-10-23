@@ -133,7 +133,7 @@ package struct RuntimeClassDispatch {
             )
         }
         throw Self.unsupported(
-            "No introducing virtual method descriptor matches this declaration. Direct and final methods have no class slot; stripped or differently lowered descriptors require an adapter."
+            "No introducing virtual method descriptor matches this declaration. Direct, final, and static members have no class slot; stripped or differently lowered descriptors require an adapter."
         )
     }
 

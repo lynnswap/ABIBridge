@@ -34,7 +34,24 @@ open class ReplacementRenderer {
     @inline(never) open func payload(_ value: Int64) -> ReplacementPayload { .init(value + 2) }
     @inline(never) public func replacementPayload(_ value: Int64) -> ReplacementPayload { .init(value + 200) }
     @inline(never) public final func finalScalar(_ value: Int64) -> Int64 { value + 3 }
+    // Class members dispatch through the metatype's entries in the same table.
+    // A subclass's metatype as self makes kind add 16 instead of 6.
+    @inline(never) open class func kind(_ value: Int64) -> Int64 {
+        value + (self == ReplacementRenderer.self ? 6 : 16)
+    }
+    @inline(never) public class func replacementKind(_ value: Int64) -> Int64 { value + 600 }
+    @inline(never) public static func staticKind(_ value: Int64) -> Int64 { value + 9 }
+    open class var level: Int64 {
+        @inline(never) get { rendererLevel.withLock { $0 } }
+        @inline(never) set { rendererLevel.withLock { $0 = newValue } }
+    }
+    public class var replacementLevel: Int64 {
+        @inline(never) get { rendererLevel.withLock { $0 } + 700 }
+        @inline(never) set { rendererLevel.withLock { $0 = newValue + 70 } }
+    }
+    open class subscript(_ index: Int64) -> Int64 { @inline(never) get { index + 8 } }
 }
+private let rendererLevel = Mutex(Int64(0))
 
 @inline(never) public func makeRenderer() -> ReplacementRenderer { ReplacementRenderer() }
 @inline(never) public func knownClassScalar(_ value: Int64) -> Int64 { ReplacementRenderer().scalar(value) }
@@ -42,6 +59,11 @@ open class ReplacementRenderer {
 open class InheritedRenderer: ReplacementRenderer {}
 open class OverridingRenderer: ReplacementRenderer {
     @inline(never) public override func scalar(_ value: Int64) -> Int64 { value + 4 }
+    @inline(never) public override class func kind(_ value: Int64) -> Int64 { value + 7 }
+    public override class var level: Int64 {
+        @inline(never) get { super.level + 1000 }
+        @inline(never) set { super.level = newValue }
+    }
 }
 @inline(never) public func makeInheritedRenderer() -> ReplacementRenderer { InheritedRenderer() }
 @inline(never) public func makeOverridingRenderer() -> ReplacementRenderer { OverridingRenderer() }

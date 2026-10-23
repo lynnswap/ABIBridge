@@ -24,6 +24,8 @@ hook.invalidate()
 
 The importer selects loaded callers containing references to the code that lookup selected for the declaration, and to the dispatch thunk through which other images call a library-evolution class member, such as a `class func`, or a protocol requirement. An optional `from:` filter matches the dependency recorded in the binding, including reexports. Neither selector loads images. Direct, inlined, specialized, or previously copied code pointers that bypass those imports are unaffected. Unresolved lazy references must first be called normally, and TPRO-protected references can reject publication.
 
+A class's `class func`, `class var`, and `class subscript` members also dispatch through the class's metadata. `hookVirtualCalls` intercepts those calls at the lookup type's entry; see <doc:SwiftMethodHooks#Hook-class-members>.
+
 The closure receives ordinary Swift arguments. Reference arguments keep their identity, so mutating a property before `proceed` changes what the next callback or native implementation observes. Changes after `proceed` remain visible to the original caller. Replacing a value argument requires passing the replacement explicitly to `proceed`. The continuation accepts the function's argument pack, including zero arguments and arguments passed on the stack.
 
 `NativeSwiftFunctionInvocation<Signature>` preserves the complete signature. Its diagnostic properties identify the registration and remain usable after return; see <doc:HookArguments>.

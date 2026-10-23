@@ -70,12 +70,7 @@ public struct NativeSwiftMethod<Signature>: Sendable {
     /// hooks and replacements change: the entry whose code lookup selected,
     /// or else the entry that the declaration's method descriptors name.
     func virtualDispatch() throws -> SwiftClassDispatch {
-        if entry.record?.context == .protocolRequirement {
-            throw ABIResolutionError.unsupportedDeclaration(
-                "Conformances' witness tables dispatch a protocol requirement, and virtual hooks and replacements change only class virtual-table entries."
-            )
-        }
-        return try entry.classDispatch(
+        try entry.classDispatch(
             in: type.metadata,
             resolver: type.resolver,
             asynchronous: call.isAsync

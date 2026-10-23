@@ -224,3 +224,184 @@ extension NativeSwiftMethod {
         }
     }
 }
+
+extension NativeSwiftFunction {
+    // Swift 6.3 mismanages async task allocations when a same-type requirement
+    // decomposes Signature into a parameter pack. Transparent entry thunks keep
+    // that requirement out of the implementation frame, including in Debug builds.
+
+    /// Prepares replacement of this class member's entry in the lookup type's metadata.
+    ///
+    /// A `class func`, and a `class var`'s or `class subscript`'s getter or setter, receive their class's metatype as `self` and dispatch through the class's metadata, as instance methods do; their entries follow the same inheritance and override rules. Static and final members have no entry, nor do free functions and the static members of structs and enums, and preparation rejects them.
+    ///
+    /// Search and capture run synchronously on the caller's thread. The async counterpart prepares the same uninstalled plan on a worker.
+    ///
+    /// The replacement must accept every metatype reaching this slot and match its Swift context, ownership, lowering and isolation contract. It receives a metatype as `self` only where this member's callers pass one; a function that ignores `self` also qualifies.
+    /// - Parameters:
+    ///   - replacement: An already compiled synchronous function or class member.
+    ///   - owner: Optional additional owner of code outside loader images.
+    /// - Returns: An uninstalled plan with a typed predecessor, which `unsafeInvoke` calls with the lookup type's metatype.
+    /// - Throws: A metadata layout, declaration, capture or image error.
+    @unsafe
+    public func prepareVirtualReplacementAndWait<
+        Result,
+        Failure: Error,
+        ReplacementFailure: Error,
+        each Argument
+    >(
+        with replacement: NativeSwiftFunction<
+            (repeat each Argument) throws(ReplacementFailure) -> Result
+        >,
+        retaining owner: (any Sendable)? = nil
+    ) throws -> NativeSwiftVirtualReplacement<NativeSwiftFunctionImplementation<Signature>>
+    where Signature == (repeat each Argument) throws(Failure) -> Result {
+        try unsafe _prepareVirtualReplacementAndWait(with: replacement, retaining: owner)
+    }
+
+    /// Prepares an uninstalled class-member replacement without blocking the caller's executor.
+    ///
+    /// Descriptor lookup and predecessor capture run on a worker. ABI, receiver, ownership, and publication requirements match prepareVirtualReplacementAndWait.
+    /// - Returns: An uninstalled plan with the captured typed predecessor.
+    /// - Throws: The same lookup, layout, and capture errors as synchronous preparation.
+    @_transparent
+    @unsafe
+    public nonisolated(nonsending) func prepareVirtualReplacement<
+        Result,
+        Failure: Error,
+        ReplacementFailure: Error,
+        each Argument
+    >(
+        with replacement: NativeSwiftFunction<
+            (repeat each Argument) throws(ReplacementFailure) -> Result
+        >,
+        retaining owner: (any Sendable)? = nil
+    ) async throws -> NativeSwiftVirtualReplacement<NativeSwiftFunctionImplementation<Signature>>
+    where Signature == (repeat each Argument) throws(Failure) -> Result {
+        try await _prepareVirtualReplacement(with: replacement, retaining: owner)
+    }
+
+    @unsafe
+    public func prepareVirtualReplacementAndWait<
+        Result,
+        Failure: Error,
+        ReplacementFailure: Error,
+        each Argument
+    >(
+        with replacement: NativeSwiftFunction<
+            (repeat each Argument) throws(ReplacementFailure) -> Result
+        >,
+        retaining owner: (any Sendable)? = nil
+    ) throws -> NativeSwiftVirtualReplacement<NativeSwiftFunctionImplementation<Signature>>
+    where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
+        try unsafe _prepareVirtualReplacementAndWait(with: replacement, retaining: owner)
+    }
+
+    @_transparent
+    @unsafe
+    public nonisolated(nonsending) func prepareVirtualReplacement<
+        Result,
+        Failure: Error,
+        ReplacementFailure: Error,
+        each Argument
+    >(
+        with replacement: NativeSwiftFunction<
+            (repeat each Argument) throws(ReplacementFailure) -> Result
+        >,
+        retaining owner: (any Sendable)? = nil
+    ) async throws -> NativeSwiftVirtualReplacement<NativeSwiftFunctionImplementation<Signature>>
+    where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
+        try await _prepareVirtualReplacement(with: replacement, retaining: owner)
+    }
+
+    @unsafe
+    public func prepareVirtualReplacementAndWait<
+        Result,
+        Failure: Error,
+        ReplacementFailure: Error,
+        each Argument
+    >(
+        with replacement: NativeSwiftFunction<
+            @Sendable (repeat each Argument) throws(ReplacementFailure) -> Result
+        >,
+        retaining owner: (any Sendable)? = nil
+    ) throws -> NativeSwiftVirtualReplacement<NativeSwiftFunctionImplementation<Signature>>
+    where Signature == (repeat each Argument) throws(Failure) -> Result {
+        try unsafe _prepareVirtualReplacementAndWait(with: replacement, retaining: owner)
+    }
+
+    @_transparent
+    @unsafe
+    public nonisolated(nonsending) func prepareVirtualReplacement<
+        Result,
+        Failure: Error,
+        ReplacementFailure: Error,
+        each Argument
+    >(
+        with replacement: NativeSwiftFunction<
+            @Sendable (repeat each Argument) throws(ReplacementFailure) -> Result
+        >,
+        retaining owner: (any Sendable)? = nil
+    ) async throws -> NativeSwiftVirtualReplacement<NativeSwiftFunctionImplementation<Signature>>
+    where Signature == (repeat each Argument) throws(Failure) -> Result {
+        try await _prepareVirtualReplacement(with: replacement, retaining: owner)
+    }
+
+    @unsafe
+    public func prepareVirtualReplacementAndWait<
+        Result,
+        Failure: Error,
+        ReplacementFailure: Error,
+        each Argument
+    >(
+        with replacement: NativeSwiftFunction<
+            @Sendable (repeat each Argument) throws(ReplacementFailure) -> Result
+        >,
+        retaining owner: (any Sendable)? = nil
+    ) throws -> NativeSwiftVirtualReplacement<NativeSwiftFunctionImplementation<Signature>>
+    where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
+        try unsafe _prepareVirtualReplacementAndWait(with: replacement, retaining: owner)
+    }
+
+    @_transparent
+    @unsafe
+    public nonisolated(nonsending) func prepareVirtualReplacement<
+        Result,
+        Failure: Error,
+        ReplacementFailure: Error,
+        each Argument
+    >(
+        with replacement: NativeSwiftFunction<
+            @Sendable (repeat each Argument) throws(ReplacementFailure) -> Result
+        >,
+        retaining owner: (any Sendable)? = nil
+    ) async throws -> NativeSwiftVirtualReplacement<NativeSwiftFunctionImplementation<Signature>>
+    where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
+        try await _prepareVirtualReplacement(with: replacement, retaining: owner)
+    }
+
+    @usableFromInline nonisolated(nonsending) func _prepareVirtualReplacement<ReplacementSignature>(
+        with replacement: NativeSwiftFunction<ReplacementSignature>,
+        retaining owner: (any Sendable)? = nil
+    ) async throws -> NativeSwiftVirtualReplacement<NativeSwiftFunctionImplementation<Signature>> {
+        try await NativePreparation.run { [self] in
+            try unsafe _prepareVirtualReplacementAndWait(with: replacement, retaining: owner)
+        }
+    }
+
+    @unsafe private func _prepareVirtualReplacementAndWait<ReplacementSignature>(
+        with replacement: NativeSwiftFunction<ReplacementSignature>,
+        retaining owner: (any Sendable)? = nil
+    ) throws -> NativeSwiftVirtualReplacement<NativeSwiftFunctionImplementation<Signature>> {
+        let dispatch = try virtualDispatch().dispatch
+        try requireReplacement(replacement)
+        let storage = try SwiftReplacementStorage(
+            slots: [(dispatch.address, dispatch.authentication)],
+            replacement: replacement.entry,
+            retaining: (self, replacement, dispatch.image),
+            codeOwner: owner
+        )
+        return try NativeSwiftVirtualReplacement(storage: storage) {
+            NativeSwiftFunctionImplementation(self, $0)
+        }
+    }
+}
