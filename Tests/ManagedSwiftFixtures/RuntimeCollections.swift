@@ -28,6 +28,18 @@ public final class CollectionRuntimeLeaf: CollectionRuntimeNode {}
     records.map { $0?.summary ?? "nil" }.joined(separator: ",")
 }
 
+@inline(never) public func countOptionalCollectionRecords(_ records: [CollectionRuntimeRecord]?) -> Int64 {
+    records.map { Int64($0.count) } ?? -1
+}
+
+@inline(never) public func makeOptionalCollectionRecords(_ count: Int64) -> [CollectionRuntimeRecord]? {
+    makeCollectionRecords(count)
+}
+
+@inline(never) public func countNestedCollectionRecords(_ records: [[CollectionRuntimeRecord]]) -> Int64 {
+    Int64(records.joined().count)
+}
+
 @inline(never) public func appendCollectionRecord(_ records: inout [CollectionRuntimeRecord]) {
     records.append(CollectionRuntimeRecord(name: "appended", count: 0))
 }

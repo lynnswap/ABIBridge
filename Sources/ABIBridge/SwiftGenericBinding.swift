@@ -1525,12 +1525,17 @@ struct SwiftGenericBinding: Sendable {
         }
         let canonical = try canonicalType(of: formal)
         if case .tuple = canonical {
-            let plan = try SwiftGenericCallPlan.tuple(canonical, actual: actual, binding: self)
+            let plan = try SwiftGenericCallPlan.tuple(
+                canonical,
+                actual: actual,
+                binding: self,
+                position: .result
+            )
             try plan.validateOwnedResult()
             return plan.nativeMetadata
         }
         if try closureFunction(canonical, for: actual) != nil {
-            try validateArgument(actual, for: canonical)
+            try validateArgument(actual, for: canonical, position: .result)
             return try types(canonical)[0]
         }
         let optional = actual as? any NativeOptionalValue.Type
@@ -1624,7 +1629,7 @@ struct SwiftGenericBinding: Sendable {
                     "Tuple elements require their native Swift storage representation."
                 )
             }
-            return try SwiftValueCodec<Element>().type
+            return try SwiftValueSchema.host(Element.self, position: .nested).type
         }
         let fields = try tuple.elements.map { try _openExistential($0.type, do: field) }
         func layout<Value>(_ value: Value.Type) throws -> CValueType {
@@ -1676,6 +1681,30 @@ struct SwiftGenericBinding: Sendable {
         return try tuple.elements.contains {
             try explicitHostLayout($0.type) != nil || hasExplicitHostField($0.type)
         }
+    }
+
+    /// The native type of the closed formal type `formal` when the caller's
+    /// types include it, which establishes it without a lookup or a metadata
+    /// accessor. Nil for another type, and for a type that is spelled through
+    /// its metadata, such as a metatype or an existential.
+    func knownType(_ formal: SwiftFormalType) -> Any.Type? {
+        func isSpelledByName(_ type: SwiftFormalType) -> Bool {
+            switch type {
+            case .named(let name, let arguments):
+                (!arguments.isEmpty || self.arguments[String(name.prefix { $0 != "." })] == nil)
+                    && arguments.allSatisfy(isSpelledByName)
+            case .nominal(_, let arguments): arguments.allSatisfy(isSpelledByName)
+            case .nested(let parent, _, let arguments):
+                isSpelledByName(parent) && arguments.allSatisfy(isSpelledByName)
+            case .tuple(let fields, _): fields.allSatisfy(isSpelledByName)
+            case .objectiveCClass: true
+            default: false
+            }
+        }
+        guard isSpelledByName(formal), !dependsOnParameters(formal),
+            let key = try? Self.key(formal.spelling)
+        else { return nil }
+        return knownTypes[key]
     }
 
     func explicitValueType(_ type: Any.Type) throws -> CValueType? {
@@ -1750,7 +1779,7 @@ struct SwiftGenericBinding: Sendable {
     func validateArgument(
         _ actual: Any.Type,
         for formal: SwiftFormalType,
-        position: SwiftValuePosition = .parameter
+        position: SwiftValuePosition
     ) throws {
         if let (function, closure) = try closureFunction(formal, for: actual) {
             _ = try SwiftGenericCallPlan.closure(

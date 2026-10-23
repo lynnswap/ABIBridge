@@ -5,12 +5,16 @@ import Synchronization
 
 /// Where a value occurs in a Swift signature.
 ///
-/// Swift passes a whole parameter, result, or `self` indirectly once its
-/// loadable lowering exceeds four registers. A value whose convention is
-/// undecided but whose frozen lowering is already that large therefore has one
-/// convention either way. Elsewhere, loadable and address-only values differ.
+/// Swift passes a whole parameter, result, typed error, or `self` indirectly
+/// once its loadable lowering exceeds four registers. A value whose convention
+/// is undecided but whose frozen lowering is already that large therefore has
+/// one convention either way. Elsewhere, loadable and address-only values
+/// differ.
 enum SwiftValuePosition: Sendable, Equatable {
-    case parameter, result
+    case parameter
+    /// A whole result, or a typed error, which Swift returns as it does a
+    /// result.
+    case result
     /// `self`, which `receiverABI` describes instead of `valueABIs`.
     case receiver
     /// An Optional or enum payload, a stored field, or a tuple result element.
@@ -106,7 +110,7 @@ enum SwiftInferredValue {
         if let tuple = SwiftTupleMetadata(type) {
             return tuple.elements.contains { lowersByInference($0.type) }
         }
-        func infers<Value>(_: Value.Type) -> Bool { SwiftValueCodec<Value>.infersLayout }
+        func infers<Value>(_: Value.Type) -> Bool { SwiftValueSchema.infersLayout(Value.self) }
         return _openExistential(type, do: infers)
     }
 
@@ -417,20 +421,18 @@ enum SwiftInferredValue {
         try failing { try CValueType(scalar: ABIValuePointer) }
     }
 
-    /// Classes, existentials, and values with built-in codecs keep their
-    /// codec's storage.
+    /// Classes, existentials, and values with built-in representations keep
+    /// the storage of their own schema.
     private static func codecPart(_ type: Any.Type) throws(InferenceFailure) -> Part {
-        func storage<Value>(_: Value.Type) throws -> CValueType {
-            let codec = try SwiftValueCodec<Value>()
-            guard codec.storesSwiftValue else {
-                throw InferenceFailure(
-                    unsupported: true,
-                    detail: "\(String(reflecting: Value.self)) converts to a foreign representation"
-                )
-            }
-            return codec.type
+        let schema = try failing { try SwiftValueSchema(host: type, position: .nested) }
+        // A value that converts has a native type other than its host type.
+        guard schema.metadata == type else {
+            throw InferenceFailure(
+                unsupported: true,
+                detail: "\(String(reflecting: type)) converts to a foreign representation"
+            )
         }
-        let layout = try failing { try _openExistential(type, do: storage) }
+        let layout = schema.type
         return withExtendedLifetime(layout, { ABISwiftValueIsAddressOnly(layout.handle) })
             ? .addressOnly : .fixed(layout, nonPOD: witnessesAreNonPOD(type))
     }

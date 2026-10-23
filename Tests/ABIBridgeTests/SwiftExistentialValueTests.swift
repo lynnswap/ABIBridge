@@ -200,9 +200,9 @@ struct SwiftExistentialValueTests {
         // declaration. Preparation must reject that runtime storage mismatch.
         let nativeSize = 3 * MemoryLayout<UInt>.size
         if ABISwiftGetValueLayout(pointer).size != nativeSize {
-            #expect(throws: ABIResolutionError.self) { _ = try SwiftValueCodec<Value>() }
+            #expect(throws: ABIResolutionError.self) { _ = try SwiftValueSchema.host(Value.self, position: .parameter) }
         } else {
-            #expect(try SwiftValueCodec<Value>().type.size == nativeSize)
+            #expect(try SwiftValueSchema.host(Value.self, position: .parameter).type.size == nativeSize)
         }
     }
     #endif
@@ -349,13 +349,13 @@ struct SwiftExistentialValueTests {
         #expect(SwiftExistentialRepresentation((any ExistentialValue.Type).self) == nil)
         #expect(SwiftExistentialRepresentation((any Collection<Int>).self) != nil)
         #expect(
-            try SwiftValueCodec<any Collection<Int>>().type.size
+            try SwiftValueSchema.host((any Collection<Int>).self, position: .parameter).type.size
                 == MemoryLayout<any Collection<Int>>.size
         )
         // Swift 6.3 reports one word of generic storage for this composition,
         // while its native declaration uses object and witness pointers.
         #expect(throws: ABIResolutionError.self) {
-            _ = try SwiftValueCodec<(any Error & AnyObject)>()
+            _ = try SwiftValueSchema.host((any Error & AnyObject).self, position: .parameter)
         }
         #expect(try swiftClosureAuthType(Any.self, position: .parameter) == "-indirect")
         #expect(try swiftClosureAuthType(ManyObjectProtocols.self, position: .parameter) == "-class")

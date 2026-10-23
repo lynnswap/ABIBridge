@@ -1,16 +1,20 @@
 import ABIBridgeCore
 
 struct SwiftReceiverCodec: Sendable {
-    let type: CValueType
+    /// The schema with which `self` passes.
+    let schema: SwiftValueSchema
+    var type: CValueType { schema.type }
     let representation: ObjectIdentifier
     let encode: @Sendable (Any) throws -> NativeValueStorage
     let decode: @Sendable (NativeValueStorage, Any?) throws -> Any
     let clone: @Sendable (NativeValueStorage) throws -> NativeValueStorage
     let destroy: @Sendable (UnsafeMutableRawPointer) -> Void
 
-    init<Value>(_ valueType: Value.Type, formalType: CValueType? = nil) throws {
+    /// - Parameter formal: The declaration's schema of `self`, where it
+    ///   decides how a value of `Value` passes instead of `Value` itself.
+    init<Value>(_ valueType: Value.Type, formal: SwiftValueSchema? = nil) throws {
         let codec = try SwiftValueCodec<Value>(position: .receiver)
-        type = formalType ?? codec.type
+        schema = formal ?? codec.schema
         representation = ObjectIdentifier(Value.self)
         encode = { value in
             guard let value = value as? Value else {
@@ -25,8 +29,8 @@ struct SwiftReceiverCodec: Sendable {
         destroy = { codec.destroyNativeValue(at: $0) }
     }
 
-    init(runtimeType metadata: Any.Type, formalType: CValueType) {
-        type = formalType
+    init(runtimeType metadata: Any.Type, schema: SwiftValueSchema) {
+        self.schema = schema
         representation = ObjectIdentifier(metadata)
         encode = { value in
             func copy<Value>(_ type: Value.Type) throws -> NativeValueStorage {
@@ -64,9 +68,9 @@ struct SwiftReceiverCodec: Sendable {
         destroy = { ABISwiftDestroyValue(unsafeBitCast(metadata, to: UnsafeRawPointer.self), $0) }
     }
 
-    static func make(for type: Any.Type, formalType: CValueType? = nil) throws -> Self {
+    static func make(for type: Any.Type, formal: SwiftValueSchema? = nil) throws -> Self {
         func open<Value>(_ type: Value.Type) throws -> Self {
-            try Self(type, formalType: formalType)
+            try Self(type, formal: formal)
         }
         return try _openExistential(type, do: open)
     }

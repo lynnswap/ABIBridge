@@ -15,6 +15,13 @@ public struct InferredAdapterPoint {
     public var y: Double
 }
 
+/// A host record whose String field leaves its inferred convention
+/// undecided, so only a valueABIs entry describes it.
+public struct InferredAdapterRecord {
+    public var name: String
+    public var count: Int64
+}
+
 /// Values whose conventions inference cannot establish fail during
 /// preparation, naming the type, the missing evidence or unsupported kind, and
 /// the explicit ABI that describes them instead.
@@ -934,6 +941,38 @@ struct SwiftInferredValueTests {
             }
             return message.contains("is an adapter")
         }
+    }
+
+    /// The schema of a closed tuple that the caller's types do not include
+    /// takes its elements' layouts from the lookup's valueABIs, as the
+    /// tuple's codec does, instead of inferring an undecided element.
+    @Test func undecidedAdapterTupleElementsUseTheirValueABIs() async throws {
+        let (library, module) = try provider(
+            """
+            public struct Record {
+                public var name: String
+                public var count: Int64
+            }
+            @inline(never) public func pair(_ n: Int64) -> (Record, Int64) {
+                (Record(name: "record", count: n), n * 2)
+            }
+            """
+        )
+        defer { library.cleanup() }
+        let native = try await runtime.resolveSwiftType(
+            named: module + ".Record",
+            in: .path(library.libraryURL)
+        )
+        let host = try await runtime.resolveSwiftType(named: "ABIBridgeTests.InferredAdapterRecord")
+        let abi = try NativeType.structure(named: "Record", fields: [.uint64, .uint64, .int64])
+        let pair = try await runtime.resolveSwiftFunction(
+            named: "\(module).pair(Swift.Int64) -> (\(module).Record, Swift.Int64)",
+            as: ((Int64) -> (InferredAdapterRecord, Int64)).self,
+            valueABIs: [native: abi, host: abi],
+            in: .path(library.libraryURL)
+        )
+        let value = try unsafe pair.unsafeInvoke(21)
+        #expect(value.0.name == "record" && value.0.count == 21 && value.1 == 42)
     }
 
     /// A complete declaration compares a host type with the declared type

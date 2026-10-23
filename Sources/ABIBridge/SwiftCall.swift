@@ -20,6 +20,9 @@ final class SwiftCall: Sendable {
         values = try SwiftCallValues(signature: signature, consumesArguments: consumesArguments,
             opaqueResult: opaqueResult, arguments: parameters.arguments,
             result: generic?.result ?? closure?.result ?? .concrete)
+        #if DEBUG
+        generic?.checkClosedSchemas(signature, values: values)
+        #endif
         let logical = values.arguments.map(\.type)
         var parameters = self.parameters.types(from: logical)
         if let trailingType { parameters.append(trailingType) }

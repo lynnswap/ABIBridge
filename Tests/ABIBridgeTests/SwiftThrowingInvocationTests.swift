@@ -185,6 +185,11 @@ struct SwiftThrowingInvocationTests {
         try await check(LargeFailure.self, name: "largeErrorResult") { $0.token === $1 && $0.a == 1 && $0.d == 4 }
         try await check(ResilientFailure.self, name: "resilientErrorResult") { $0.token === $1 && $0.code == 42 }
         try await check(ReferenceFailure.self, name: "referenceErrorResult") { $0.token === $1 && $0.code == 42 }
+        // A typed error is a whole result, which passes by address once its
+        // frozen layout would, whether or not the type is resilient.
+        try await check(UndecidedFailure.self, name: "undecidedErrorResult") {
+            $0.token === $1 && $0.detail == String(repeating: "detail", count: 10)
+        }
     }
 
     @Test func zeroPayloadAndMixedResultBanksDoNotHideFailure() async throws {

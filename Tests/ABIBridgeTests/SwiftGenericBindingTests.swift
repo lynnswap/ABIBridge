@@ -1184,6 +1184,37 @@ struct SwiftGenericBindingTests {
         #expect(argumentOwner == nil)
     }
 
+    /// An Optional of an existential metatype or class existential is an
+    /// enum, which Swift passes by address once its witness tables make it
+    /// too large for registers. The values themselves keep their formal type.
+    /// The discriminators come from Swift 6.3 and 6.4 arm64e IR, which
+    /// scripts/check-swift-closure-codegen.py checks.
+    @Test func largeOptionalExistentialsHashAsPassedByAddress() throws {
+        typealias M3 = any (AuthenticationP1 & AuthenticationP2 & AuthenticationP3).Type
+        typealias M4 = any (AuthenticationP1 & AuthenticationP2 & AuthenticationP3 & AuthenticationP4).Type
+        typealias M5 = any (AuthenticationP1 & AuthenticationP2 & AuthenticationP3 & AuthenticationP4
+            & AuthenticationP5).Type
+        typealias C4 = any AuthenticationObject & AuthenticationP1 & AuthenticationP2 & AuthenticationP3
+        typealias C5 = any AuthenticationObject & AuthenticationP1 & AuthenticationP2 & AuthenticationP3
+            & AuthenticationP4
+        let signatures: [(Any.Type, UInt16)] = [
+            (((M3?) -> Int).self, 37764),
+            (((M4?) -> Int).self, 43552),
+            (((M5?) -> Int).self, 43552),
+            (((M5) -> Int).self, 8898),
+            ((() -> M4?).self, 29199),
+            ((() -> M5).self, 58834),
+            ((((M4?, Int)) -> Int).self, 31958),
+            ((() -> (M4?, Int)).self, 60811),
+            (((C4?) -> Int).self, 43552),
+            (((C5) -> Int).self, 4274),
+            ((((Int, Int, Int, Int, Int)?) -> Int).self, 43552),
+        ]
+        for (type, discriminator) in signatures {
+            #expect(try hashedDiscriminator(type) == discriminator, "\(type)")
+        }
+    }
+
     @Test func tupleClosureAuthenticationMatchesCompilerLowering() throws {
         let signature = try SwiftFunctionSignature((((String, Int8)) -> (String, Int8, Int8)).self)
         #expect(try hashedDiscriminator(signature) == 3335)
@@ -1415,3 +1446,9 @@ private func hashedDiscriminator(_ type: Any.Type) throws -> UInt16 {
 #endif
 
 private final class OptionalAuthenticationObject {}
+private protocol AuthenticationObject: AnyObject {}
+private protocol AuthenticationP1 {}
+private protocol AuthenticationP2 {}
+private protocol AuthenticationP3 {}
+private protocol AuthenticationP4 {}
+private protocol AuthenticationP5 {}
