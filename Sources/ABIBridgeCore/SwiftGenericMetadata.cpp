@@ -863,6 +863,54 @@ bool ABISwiftTypeIsDeclaredInAnonymousContext(const void *metadata) {
 }
 
 namespace {
+// The identity that the runtime compares for a type: its name, or with
+// import info, its ABI name through its symbol namespace and related entity
+// name, interior terminators included.
+// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/stdlib/public/runtime/MetadataLookup.cpp
+std::string_view typeIdentity(const char *descriptor) {
+    const char *name = relative(descriptor + 8);
+    if (!name) return {};
+    const char *start = name;
+    const char *end = name + std::strlen(name);
+    if (!(read<uint32_t>(descriptor) & (4u << 16))) return {start, size_t(end - start)};
+    for (const char *component = end + 1; *component; component += std::strlen(component) + 1) {
+        const char *componentEnd = component + std::strlen(component);
+        if (*component == 'N') {
+            start = component + 1;
+            end = componentEnd;
+        } else if (*component == 'S' || *component == 'R') {
+            end = componentEnd;
+        }
+    }
+    return {start, size_t(end - start)};
+}
+}
+
+// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/stdlib/public/runtime/Metadata.cpp
+bool ABISwiftContextDescriptorsEqual(const void *lhs, const void *rhs) {
+    auto first = static_cast<const char *>(lhs), second = static_cast<const char *>(rhs);
+    if (first == second) return true;
+    if (!first || !second) return false;
+    const auto firstFlags = read<uint32_t>(first), secondFlags = read<uint32_t>(second);
+    // No other descriptor describes the context of a unique one.
+    if ((firstFlags | secondFlags) & 0x40) return false;
+    const auto kind = firstFlags & 0x1f;
+    if (kind != (secondFlags & 0x1f)) return false;
+    if (!ABISwiftContextDescriptorsEqual(parentContext(first), parentContext(second))) return false;
+    if (kind == 0) {
+        const char *firstName = relative(first + 8), *secondName = relative(second + 8);
+        return firstName && secondName && !std::strcmp(firstName, secondName);
+    }
+    if (kind >= 16 && kind <= 31) {
+        const auto identity = typeIdentity(first);
+        return !identity.empty() && identity == typeIdentity(second);
+    }
+    // Extension and anonymous contexts are unique, and the runtime
+    // compares no other kind.
+    return false;
+}
+
+namespace {
 // The end of TrailingGenericContextObjects after a generic context header:
 // parameters padded to four bytes, requirements, then the pack shapes,
 // conditional invertible protocols, and value parameters its flags announce.

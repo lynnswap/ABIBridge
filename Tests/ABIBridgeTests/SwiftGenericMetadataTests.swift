@@ -1,4 +1,5 @@
 import ABIBridge
+import CoreGraphics
 import ManagedSwiftAdapters
 import ManagedSwiftFixtures
 import Testing
@@ -94,6 +95,19 @@ struct SwiftGenericMetadataTests {
             #expect(status == expected)
             #expect(result == metadataPointer(Int.self))
         }
+    }
+
+    // Each module of this bundle that uses CGRect defines its descriptor.
+    @Test func importedTypesThatSeveralModulesDescribeResolve() async throws {
+        let runtime = ABIRuntime()
+        let rect = try await runtime.resolveSwiftType(named: "__C.CGRect")
+        let copy = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+            as: ((CGRect) -> CGRect).self,
+            genericArguments: [.type(rect)]
+        )
+        let value = CGRect(x: 1, y: 2, width: 3, height: 4)
+        #expect(try unsafe copy.unsafeInvoke(value) == value)
     }
 
     @Test func constrainedGenericCallsPreserveManagedAndResilientValues() async throws {

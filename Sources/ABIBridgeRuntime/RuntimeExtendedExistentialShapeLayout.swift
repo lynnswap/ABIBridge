@@ -63,6 +63,18 @@ extension RuntimeExtendedExistentialShapeLayout {
     package init(nonUniqueDescriptor address: UnsafeRawPointer) {
         self.init(address.advanced(by: 4))
     }
+    /// The mangling of the existential type of the non-unique shape at
+    /// `address`. A non-unique shape spells it without symbolic references,
+    /// and the runtime uniques the shape by comparing it.
+    /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/stdlib/public/runtime/Metadata.cpp
+    package static func existentialType(
+        nonUniqueDescriptor address: UnsafeRawPointer
+    ) -> UnsafePointer<CChar>? {
+        let field = address.advanced(by: 8)
+        let offset = Int(field.loadUnaligned(as: Int32.self))
+        guard offset != 0 else { return nil }
+        return field.advanced(by: offset).assumingMemoryBound(to: CChar.self)
+    }
     package var genericParameters: [UInt8] {
         (0..<genericParameterCount).map {
             flags & 0x1000 != 0
