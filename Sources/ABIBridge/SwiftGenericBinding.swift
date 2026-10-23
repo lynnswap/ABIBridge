@@ -1821,11 +1821,6 @@ struct SwiftGenericBinding: Sendable {
         return knownTypes[key]
     }
 
-    /// Whether the lookup's `valueABIs` describe `type`.
-    func hasValueABI(_ type: Any.Type) -> Bool {
-        valueABIs[ObjectIdentifier(type)] != nil
-    }
-
     func explicitValueType(_ type: Any.Type) throws -> CValueType? {
         guard let abi = valueABIs[ObjectIdentifier(type)] else { return nil }
         // Without this entry, an Optional's storage follows its payload's.

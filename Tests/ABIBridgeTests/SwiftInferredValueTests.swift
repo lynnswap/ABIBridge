@@ -5,6 +5,7 @@ import ABIBridgeCore
 import ABIBridge
 #endif
 import ABIBridgeTestSupport
+import CoreFoundation
 import Foundation
 import Testing
 
@@ -20,6 +21,15 @@ public struct InferredAdapterPoint {
 public struct InferredAdapterRecord {
     public var name: String
     public var count: Int64
+}
+
+/// Imported C types whose passing a test states: an enum and an option set,
+/// which the importer makes a struct.
+extension CFComparisonResult: ABIBridgeSwiftValue {
+    public static var swiftABIType: NativeType { .int }
+}
+extension CFStringCompareFlags: ABIBridgeSwiftValue {
+    public static var swiftABIType: NativeType { .uint }
 }
 
 /// Values whose conventions inference cannot establish fail during
@@ -1500,15 +1510,18 @@ struct SwiftInferredValueTests {
 
     /// Swift passes an input that a result borrows from by address when its
     /// type sets the addressable-for-dependencies bit, a tuple as one
-    /// address instead of its elements, and no symbol records which input a
-    /// result borrows from. A value that only a module's records decide, and
-    /// that sets the bit, is therefore undecided in a call with a scoped
-    /// result, alone or in a tuple of any size, unless it passes by address
-    /// anyway, and so is a generic instance, which has no static summary. A
-    /// value whose static summary decides it leaves the bit clear.
-    @Test func resultsThatBorrowFromValuesLeaveAddressableValuesUndecided() async throws {
+    /// address instead of its elements, and no symbol or metadata records
+    /// which inputs a result borrows from. In a call with a scoped result, a
+    /// borrowed parameter or `self` that ABIBridge passes directly is
+    /// therefore undecided when its type sets the bit, whether inference, a
+    /// built-in representation, or an explicit ABI describes it, and when
+    /// nothing shows the bit, as for a generic instance. A type that leaves
+    /// the bit clear, a value that passes by address anyway, and consuming
+    /// and inout inputs keep their conventions.
+    @Test func resultsThatBorrowFromInputsLeaveAddressableInputsUndecided() async throws {
         let (library, module) = try provider(
             """
+            import CoreFoundation
             public struct View: ~Escapable {
                 let n: Int64
                 @_lifetime(immortal) public init(_ n: Int64) { self.n = n }
@@ -1529,8 +1542,35 @@ struct SwiftInferredValueTests {
             extension Plain {
                 @_lifetime(borrow self) @inline(never) public func scoped() -> View { View(x * 10 + y) }
             }
+            extension String {
+                @_lifetime(borrow self) @inline(never) public func scopedCount() -> View { View(Int64(utf8.count)) }
+            }
             @_lifetime(borrow v) @inline(never) public func borrowLabel(_ v: Label) -> View { View(v.n) }
             @_lifetime(borrow v) @inline(never) public func borrowPlain(_ v: Plain) -> View { View(v.x * 10 + v.y) }
+            @_lifetime(borrow s) @inline(never) public func borrowString(_ s: String) -> View { View(Int64(s.utf8.count)) }
+            @_lifetime(borrow v) @inline(never) public func borrowPlainConsuming(_ v: Plain, _ s: consuming String) -> View {
+                View(v.x * 100 + Int64(s.utf8.count))
+            }
+            @_lifetime(borrow v) @inline(never) public func borrowComparison(_ v: CFComparisonResult) -> View {
+                View(Int64(v.rawValue))
+            }
+            @_lifetime(borrow v) @inline(never) public func borrowCompareFlags(_ v: CFStringCompareFlags) -> View {
+                View(Int64(v.rawValue))
+            }
+            @_lifetime(borrow v) @inline(never) public func borrowPack<each T>(_ v: repeat (each T, Int64)) -> View {
+                var sum: Int64 = 0
+                for element in repeat each v { sum += element.1 }
+                return View(sum)
+            }
+            @_lifetime(&s) @inline(never) public func mutateString(_ s: inout String) -> View {
+                s += "!"
+                return View(Int64(s.utf8.count))
+            }
+            #if compiler(>=6.4)
+            @inline(never) public func makeBorrower() -> @_lifetime(borrow s) (_ s: String) -> View {
+                { s in View(Int64(s.utf8.count)) }
+            }
+            #endif
             public struct Wide {
                 public var text: String
                 public var a: Int64
@@ -1558,42 +1598,114 @@ struct SwiftInferredValueTests {
         )
         defer { library.cleanup() }
         let scope = ImageSelector.path(library.libraryURL)
+        func expectUndecided(
+            _ input: String,
+            naming evidence: String,
+            sourceLocation: SourceLocation = #_sourceLocation,
+            _ resolve: () async throws -> Void
+        ) async {
+            await #expect(sourceLocation: sourceLocation) {
+                try await resolve()
+            } throws: { error in
+                guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                    return false
+                }
+                return message.contains(
+                    "Cannot decide how Swift passes \(input), because the call's result can borrow from it."
+                )
+                    && message.contains(evidence)
+                    && message.contains(
+                        "No symbol or metadata records which inputs a result borrows from."
+                    )
+            }
+        }
         // Label is loadable where nothing borrows from it.
         #expect(
             try await describeMade(module + ".makeLabel()", module + ".describeLabel(_:)", in: library)
                 == "label,4"
         )
-        let borrowed = "so Swift passes it by address where the call's result borrows from it"
-        await expectFailure(
-            module + ".borrowLabel(_:)",
-            in: library,
-            as: ((NativeSwiftValue) -> NativeSwiftBorrowedValue).self,
-            naming: borrowed
-        )
+        let label = try await runtime.resolveSwiftType(named: module + ".Label", in: scope)
+        let labelSets = "the static value witnesses of `\(module).Label` set it"
+        await expectUndecided("argument 0 of type \(module).Label", naming: labelSets) {
+            _ = try await runtime.resolveSwiftFunction(
+                named: module + ".borrowLabel(_:)",
+                as: ((NativeSwiftValue) -> NativeSwiftBorrowedValue).self,
+                in: scope
+            )
+        }
         // Its elements would pass separately, the tuple as one address.
-        await expectFailure(
-            module + ".borrowTriple(_:)",
-            in: library,
-            as: (((NativeSwiftValue, Int64, Int64)) -> NativeSwiftBorrowedValue).self,
-            naming: borrowed
-        )
+        await expectUndecided(
+            "argument 0 of type (\(module).Label, Swift.Int64, Swift.Int64)",
+            naming: "even a tuple, whose elements ABIBridge passes separately, and " + labelSets
+        ) {
+            _ = try await runtime.resolveSwiftFunction(
+                named: module + ".borrowTriple(_:)",
+                as: (((NativeSwiftValue, Int64, Int64)) -> NativeSwiftBorrowedValue).self,
+                in: scope
+            )
+        }
         #expect(
             try await describeMade(module + ".makePair()", module + ".describePair(_:)", in: library) == "1,2"
         )
-        await expectFailure(
-            module + ".borrowPair(_:)",
-            in: library,
-            as: ((NativeSwiftValue) -> NativeSwiftBorrowedValue).self,
-            naming: "generic instance"
-        )
-        let label = try await runtime.resolveSwiftType(named: module + ".Label", in: scope)
-        await #expect {
-            _ = try await label.resolveMethod(named: "scoped()", as: (() -> NativeSwiftBorrowedValue).self)
-        } throws: { error in
-            guard case ABIResolutionError.metadataUnavailable(let message) = error else { return false }
-            return message.contains(borrowed)
-                && message.hasSuffix("Describe self with receiverABI or an ABIBridgeSwiftValue conformance.")
+        await expectUndecided(
+            "argument 0 of type \(module).Pair<Swift.Int64>",
+            naming:
+                "nothing shows whether it does: `\(module).Pair<Swift.Int64>` is a generic instance"
+        ) {
+            _ = try await runtime.resolveSwiftFunction(
+                named: module + ".borrowPair(_:)",
+                as: ((NativeSwiftValue) -> NativeSwiftBorrowedValue).self,
+                in: scope
+            )
         }
+        await expectUndecided("self of type \(module).Label", naming: labelSets) {
+            _ = try await label.resolveMethod(named: "scoped()", as: (() -> NativeSwiftBorrowedValue).self)
+        }
+        // A built-in representation or an explicit ABI describes how a value
+        // passes without a scoped result, and nothing records whether it
+        // has one.
+        let stringSets = "`Swift.String` sets it"
+        await expectUndecided("argument 0 of type Swift.String", naming: stringSets) {
+            _ = try await runtime.resolveSwiftFunction(
+                named: module + ".borrowString(_:)",
+                as: ((String) -> NativeSwiftBorrowedValue).self,
+                in: scope
+            )
+        }
+        await expectUndecided("self of type Swift.String", naming: stringSets) {
+            _ = try await runtime.resolveSwiftType(named: "Swift.String")
+                .resolveMethod(named: "scopedCount()", as: (() -> NativeSwiftBorrowedValue).self)
+        }
+        let labelABI = try NativeType.structure(
+            named: "Label",
+            fields: [.uint64, .pointer, .int64]
+        )
+        await expectUndecided("self of type \(module).Label", naming: labelSets) {
+            _ = try await label.resolveMethod(
+                named: "scoped()",
+                as: (() -> NativeSwiftBorrowedValue).self,
+                receiverABI: labelABI
+            )
+        }
+        await expectUndecided("argument 0 of type \(module).Label", naming: labelSets) {
+            _ = try await runtime.resolveSwiftFunction(
+                named: module + ".borrowLabel(_:)",
+                as: ((NativeSwiftValue) -> NativeSwiftBorrowedValue).self,
+                valueABIs: [label: labelABI],
+                in: scope
+            )
+        }
+        #if compiler(>=6.4)
+        // A closure's function type does not record its lifetime
+        // dependencies either.
+        await expectUndecided("argument 0 of type Swift.String", naming: stringSets) {
+            _ = try await runtime.resolveSwiftFunction(
+                named: module + ".makeBorrower()",
+                as: (() -> NativeSwiftClosure<(String) -> NativeSwiftBorrowedValue>).self,
+                in: scope
+            )
+        }
+        #endif
         // Plain's static value witnesses decide it and leave the bit clear.
         let make = try await runtime.resolveSwiftFunction(
             named: module + ".makePlain()",
@@ -1630,6 +1742,67 @@ struct SwiftInferredValueTests {
         let scoped = try await runtime.resolveSwiftType(named: module + ".Plain", in: scope)
             .resolveMethod(named: "scoped()", as: (() -> NativeSwiftBorrowedValue).self)
         #expect(try unsafe scoped.unsafeInvoke(on: plain, withResult: { try unsafe read.unsafeInvoke($0) }) == 23)
+        // Swift rejects a borrow dependency on a consuming String, and passes
+        // an inout String by address either way.
+        let consuming = try await runtime.resolveSwiftFunction(
+            named: module + ".borrowPlainConsuming(_:_:)",
+            as: ((NativeSwiftValue, NativeSwiftConsuming<String>) -> NativeSwiftBorrowedValue).self,
+            in: scope
+        )
+        let counted = try unsafe consuming.unsafeInvoke(
+            plain,
+            NativeSwiftConsuming("four"),
+            withResult: { try unsafe read.unsafeInvoke($0) }
+        )
+        #expect(counted == 204)
+        let mutate = try await runtime.resolveSwiftFunction(
+            named: module + ".mutateString(_:)",
+            as: ((NativeSwiftInout<String>) -> NativeSwiftBorrowedValue).self,
+            in: scope
+        )
+        let text = NativeSwiftInout("text")
+        let mutated = try unsafe mutate.unsafeInvoke(
+            text,
+            withResult: { try unsafe read.unsafeInvoke($0) }
+        )
+        #expect(mutated == 5)
+        #expect(text.value == "text!")
+        // An imported C enum never sets the bit, whatever describes its
+        // passing. The importer makes an option set a struct, which a C
+        // struct or union also is, so its clear bit shows nothing.
+        let comparison = try await runtime.resolveSwiftFunction(
+            named: module + ".borrowComparison(_:)",
+            as: ((CFComparisonResult) -> NativeSwiftBorrowedValue).self,
+            in: scope
+        )
+        let compared = try unsafe comparison.unsafeInvoke(
+            CFComparisonResult.compareGreaterThan,
+            withResult: { try unsafe read.unsafeInvoke($0) }
+        )
+        #expect(compared == 1)
+        await expectUndecided(
+            "argument 0 of type __C.CFStringCompareFlags",
+            naming: "do not show whether it imports a C struct or union"
+        ) {
+            _ = try await runtime.resolveSwiftFunction(
+                named: module + ".borrowCompareFlags(_:)",
+                as: ((CFStringCompareFlags) -> NativeSwiftBorrowedValue).self,
+                in: scope
+            )
+        }
+        // A pack passes its elements' addresses through one buffer, whether
+        // or not the result borrows from them.
+        let pack = try await runtime.resolveSwiftFunction(
+            named: module + ".borrowPack(_:)",
+            as: (((String, Int64)) -> NativeSwiftBorrowedValue).self,
+            genericArguments: [.pack([.type(String.self)])],
+            in: scope
+        )
+        let summed = try unsafe pack.unsafeInvoke(
+            ("seven", 7),
+            withResult: { try unsafe read.unsafeInvoke($0) }
+        )
+        #expect(summed == 7)
     }
 }
 #endif
