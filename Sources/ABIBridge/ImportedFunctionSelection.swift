@@ -24,5 +24,29 @@ final class ImportedFunctionSelection: Sendable {
         }
     }
 
+    /// The references to any of `symbols`, which name the Swift
+    /// `declaration` that a failure to find any reference names.
+    init(
+        resolver: SymbolResolver,
+        declaration: NativeDeclaration,
+        symbols: [NativeDeclaration],
+        importer: ImageSelector,
+        provider: ImageSelector?
+    ) throws {
+        do {
+            value = try withRuntimeErrors {
+                try RuntimeImportedFunctionSelection(
+                    resolver: resolver.runtime,
+                    symbols: symbols.map(\.runtimeValue),
+                    importer: importer.runtimeValue,
+                    provider: provider?.runtimeValue,
+                    language: .swift
+                )
+            }
+        } catch ABIResolutionError.declarationNotFound {
+            throw ABIResolutionError.declarationNotFound(declaration)
+        }
+    }
+
     func retainedHandle() -> OpaquePointer { value.retainedHandle() }
 }

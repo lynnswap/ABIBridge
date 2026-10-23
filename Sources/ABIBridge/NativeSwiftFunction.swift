@@ -154,6 +154,26 @@ public struct NativeSwiftFunction<Signature>: Sendable {
         return result
     }
 
+    /// Requires that `replacement`'s declaration receives the calls of this
+    /// function's declaration: its call plan, and a metatype as `self` only
+    /// where this declaration's callers pass one, as its plan says.
+    func requireReplacement<ReplacementSignature>(
+        _ replacement: NativeSwiftFunction<ReplacementSignature>
+    ) throws {
+        let passesMetatype = call.generic?.receivesMetatype == true
+        guard passesMetatype || replacement.call.generic?.receivesMetatype != true else {
+            throw ABIResolutionError.signatureMismatch(
+                .init(
+                    declaration: replacement.declaration,
+                    position: .receiver,
+                    expected: "No self, which the original's callers do not pass",
+                    found: ["A metatype as self"]
+                )
+            )
+        }
+        try call.requireReplacement(replacement.call, declaration: replacement.declaration)
+    }
+
     /// Calls the Swift entry point using its prepared declaration-level signature.
     ///
     /// The signature must match the declaration's Swift ABI and ordinary ownership selected by lookup. Initializers transfer ordinary arguments to the callee; free/static functions borrow them. The caller satisfies actor/thread requirements. Managed object, String, and Array results transfer Swift ownership to the caller; custom native wrappers must establish their own value contract.

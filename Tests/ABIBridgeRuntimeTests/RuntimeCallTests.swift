@@ -339,13 +339,17 @@ struct RuntimeCallTests {
 
     @Test func virtualDispatchFindsTheInheritedSlotAndCurrentImplementation() throws {
         let object = RuntimeDispatchChild()
-        let declaration = RuntimeDeclaration(
-            name: "ABIBridgeRuntimeTests.RuntimeDispatchBase.value(Swift.Int64) -> Swift.Int64",
-            language: .swift
+        let symbol = try CallSymbols.resolver.resolve(
+            RuntimeDeclaration(
+                name: "ABIBridgeRuntimeTests.RuntimeDispatchBase.value(Swift.Int64) -> Swift.Int64",
+                language: .swift
+            ),
+            in: .automatic,
+            loading: .loadedOnly
         )
         let dispatch = try RuntimeClassDispatch(
             metadata: RuntimeDispatchChild.self,
-            declaration: declaration,
+            declaration: try #require(RuntimeSwiftDeclaration(linkageName: symbol.linkageName)),
             resolver: CallSymbols.resolver
         )
         let storage = UnsafeRawPointer(bitPattern: dispatch.address)!

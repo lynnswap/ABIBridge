@@ -32,6 +32,20 @@ char *ABICopySwiftEntitySymbolName(const ABISwiftSyntaxNode *entity);
 /// The symbol of a protocol conformance's descriptor, from a
 /// ProtocolConformance node. Release with ABIFreeString.
 char *ABICopySwiftConformanceDescriptorSymbolName(const ABISwiftSyntaxNode *conformance);
+/// The symbol of the method descriptor of an entity of a symbol's tree,
+/// declared in the class `context`, a type tree or its nominal node, instead
+/// of its own context. Release with ABIFreeString.
+char *ABICopySwiftMethodDescriptorSymbolName(const ABISwiftSyntaxNode *entity,
+    const ABISwiftSyntaxNode *context);
+/// The symbol of the dispatch thunk of an entity of a symbol's tree, through
+/// which other images call a class member or a protocol requirement. Release
+/// with ABIFreeString.
+char *ABICopySwiftDispatchThunkSymbolName(const ABISwiftSyntaxNode *entity);
+/// The context of the declaration an entity of a symbol's tree declares,
+/// under its static and accessor wrappers, such as a class or an extension.
+const ABISwiftSyntaxNode *ABISwiftSyntaxEntityContext(const ABISwiftSyntaxNode *entity);
+/// Whether two trees are equal, apart from the type wrappers around them.
+bool ABISwiftSyntaxNodesEqual(const ABISwiftSyntaxNode *lhs, const ABISwiftSyntaxNode *rhs);
 /// The symbol of the nominal type descriptor of a struct, enum, or class
 /// declaration node, such as the context of a property symbol's Variable.
 /// Release with ABIFreeString.

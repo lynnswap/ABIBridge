@@ -206,22 +206,17 @@ extension NativeSwiftMethod {
         with replacement: NativeSwiftMethod<ReplacementSignature>,
         retaining owner: (any Sendable)? = nil
     ) throws -> NativeSwiftVirtualReplacement<NativeSwiftMethodImplementation<Signature>> {
-        try SwiftErrorPlan.validateReplacement(replacement.errorPlan, for: errorPlan)
         guard receiver.mode == .object, replacement.receiver.mode == .object else {
             throw ABIResolutionError.unsupportedDeclaration(
                 "Virtual replacement requires Swift class instance methods."
             )
         }
-        let metadata = type.metadata
-        let entry = try SwiftClassDispatch(
-            metadata: metadata,
-            declaration: self.declaration,
-            resolver: type.resolver
-        )
+        try requireReplacement(replacement)
+        let dispatch = try virtualDispatch()
         let storage = try SwiftReplacementStorage(
-            slots: [(entry.address, entry.authentication)],
+            slots: [(dispatch.address, dispatch.authentication)],
             replacement: replacement.entry,
-            retaining: (self, replacement, entry.descriptor),
+            retaining: (self, replacement, dispatch.image),
             codeOwner: owner
         )
         return try NativeSwiftVirtualReplacement(storage: storage) {

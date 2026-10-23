@@ -1272,6 +1272,60 @@ struct NativeSwiftClosureTests {
             )
         }
     }
+
+    /// A closure plan hashes an Optional closure whose function type depends
+    /// on generic parameters by that function type within `Optional<…>`,
+    /// with the declaration's abstraction, as arm64e IR does: as a closure's
+    /// parameter, as its result, and as the closure itself.
+    @Test func genericOptionalClosuresHashTheDeclarationsFunctionType() async throws {
+        let source = """
+            @inline(never) public func probeApply<Value>(_ body: ((Value) -> Value)?, _ value: Value) -> Value {
+                body?(value) ?? value
+            }
+            @inline(never) public func probePass<Value>(
+                _ value: Value, _ body: (((Value) -> Value)?, Value) -> Value
+            ) -> Value { body(nil, value) }
+            @inline(never) public func probeFactory<Value>(
+                _ make: () -> ((Value) -> Value)?, _ value: Value
+            ) -> Value { make()?(value) ?? value }
+            """
+        let found = try arm64eClosureCallDiscriminators(
+            source: source,
+            functions: ["probeApply", "probePass", "probeFactory"]
+        )
+        typealias Increment = NativeSwiftClosure<(Int64) -> Int64>
+        let runtime = ABIRuntime.shared
+        let apply = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.applyGenericOptionalClosure(_:_:)",
+            as: ((Increment?, Int64) -> Int64).self,
+            genericArguments: [.type(Int64.self)]
+        )
+        let pass = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.passGenericOptionalClosures(_:_:)",
+            as: ((Int64, NativeSwiftClosure<(Increment?, Int64) -> Int64>) -> (Int64, Int64)).self,
+            genericArguments: [.type(Int64.self)]
+        )
+        let factory = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.applyGenericOptionalClosureFactory(_:_:)",
+            as: ((NativeSwiftClosure<() -> Increment?>, Int64) -> Int64).self,
+            genericArguments: [.type(Int64.self)]
+        )
+        let plans = [
+            try #require(apply.call.generic).parameters.arguments[0],
+            try #require(pass.call.generic).parameters.arguments[1],
+            try #require(factory.call.generic).parameters.arguments[0],
+        ]
+        for (index, (argument, expected)) in zip(plans, found).enumerated() {
+            guard case .closure(let plan, _) = argument else {
+                Issue.record("Probe \(index) has no closure plan")
+                continue
+            }
+            #expect(
+                swiftClosureDiscriminator(description: plan.authentication) == expected,
+                "Probe \(index): \(plan.authentication)"
+            )
+        }
+    }
     #endif
 
     #if os(macOS)

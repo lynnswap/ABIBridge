@@ -42,6 +42,46 @@ public struct NativeSwiftMethod<Signature>: Sendable {
         return result
     }
 
+    /// Requires a member that hooks and replacements can intercept: a method,
+    /// or a property's or subscript's getter or setter, as the declaration's
+    /// record says, not an initializer, a deinitializer, or a coroutine.
+    func requireOrdinaryCalls() throws {
+        guard let record = entry.record, record.kind == .function || record.accessor != nil
+        else {
+            throw ABIResolutionError.unsupportedDeclaration(
+                "Swift member hooks and replacements require ordinary instance methods or getters/setters, not lifecycle or coroutine entries."
+            )
+        }
+    }
+
+    /// Requires that `replacement`'s declaration receives the calls of this
+    /// member's declaration: its receiver and its call plan.
+    func requireReplacement<ReplacementSignature>(
+        _ replacement: NativeSwiftMethod<ReplacementSignature>
+    ) throws {
+        try receiver.requireReplacement(
+            replacement.receiver,
+            declaration: replacement.declaration
+        )
+        try call.requireReplacement(replacement.call, declaration: replacement.declaration)
+    }
+
+    /// The lookup type's virtual-table entry of this member, which virtual
+    /// hooks and replacements change: the entry whose code lookup selected,
+    /// or else the entry that the declaration's method descriptors name.
+    func virtualDispatch() throws -> SwiftClassDispatch {
+        if entry.record?.context == .protocolRequirement {
+            throw ABIResolutionError.unsupportedDeclaration(
+                "Conformances' witness tables dispatch a protocol requirement, and virtual hooks and replacements change only class virtual-table entries."
+            )
+        }
+        return try entry.classDispatch(
+            in: type.metadata,
+            resolver: type.resolver,
+            asynchronous: call.isAsync
+        )
+    }
+
     /// Retains an object for repeated calls to this captured implementation.
     ///
     /// Binding reuses the prepared call without calling the member. Invocation validates the object representation and receiver type using the original plan, and honors its ownership and isolation contract. Value receivers use explicit invocation.

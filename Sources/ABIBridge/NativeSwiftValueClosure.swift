@@ -108,6 +108,17 @@ extension SwiftGenericClosurePlan {
                 nativeClosure: closureInStoredValue(metadata)
             )
         }
+        // A closure stands for a function, and an Optional closure for an
+        // Optional of one, which stores the function with nil as null.
+        func storedFunction(
+            _ metadata: Any.Type,
+            as closure: any SwiftClosureValue.Type
+        ) throws -> Any.Type {
+            guard let function = swiftStoredFunction(metadata),
+                (function != metadata) == closure.isOptional
+            else { throw mismatch(nativeType, hostType) }
+            return function
+        }
         func argument(
             native metadata: Any.Type,
             host representation: Any.Type,
@@ -138,7 +149,7 @@ extension SwiftGenericClosurePlan {
             if let closure = representation as? any SwiftClosureValue.Type {
                 return .closure(
                     try storedValue(
-                        metadata,
+                        storedFunction(metadata, as: closure),
                         as: closure.swiftFunctionType,
                         resolver: resolver,
                         retaining: images
@@ -167,7 +178,7 @@ extension SwiftGenericClosurePlan {
             result = .runtimeValue(try handle.apply(to: plan))
         } else if let closure = host.result as? any SwiftClosureValue.Type {
             let nested = try storedValue(
-                native.result,
+                storedFunction(native.result, as: closure),
                 as: closure.swiftFunctionType,
                 resolver: resolver,
                 retaining: images

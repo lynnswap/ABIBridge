@@ -187,6 +187,25 @@ enum SwiftCallablePlan: Sendable {
         case .asynchronous(let call, _): call.errorPlan
         }
     }
+
+    var isAsync: Bool {
+        if case .asynchronous = self { return true }
+        return false
+    }
+
+    /// Requires that `replacement`, the plan of another declaration, receives
+    /// the calls that native code makes with this plan.
+    func requireReplacement(
+        _ replacement: SwiftCallablePlan,
+        declaration: NativeDeclaration
+    ) throws {
+        guard case .synchronous(let original) = self,
+            case .synchronous(let other) = replacement
+        else {
+            preconditionFailure("Replacements have synchronous call plans.")
+        }
+        try original.requireReplacement(other, declaration: declaration)
+    }
 }
 
 /// Shares value preparation between synchronous and asynchronous transports. The containing signature establishes the types used by typed invocation.
@@ -200,6 +219,21 @@ struct SwiftCallValues: Sendable {
         /// Whether the argument passes to an async function.
         let asynchronous: Bool
         var consumes: Bool { convention == .consuming }
+
+        /// Whether the value has ownership that a convention transfers, as
+        /// a reference or a value with nontrivial copies does; plain bytes
+        /// and metatypes have none.
+        var hasOwnership: Bool {
+            let schema = conversion.schema
+            switch schema.kind {
+            case .scalar, .metatype: return false
+            default: break
+            }
+            guard let metadata = schema.metadata else { return true }
+            let nonPOD: UInt32 = 0x0001_0000
+            return ABISwiftGetValueWitnessFlags(unsafeBitCast(metadata, to: UnsafeRawPointer.self))
+                & nonPOD != 0
+        }
 
         /// How an argument of the host type `host` passes as `plan` describes
         /// it, where the declaration consumes arguments by default if

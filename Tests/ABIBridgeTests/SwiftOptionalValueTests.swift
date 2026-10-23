@@ -546,6 +546,122 @@ struct SwiftOptionalValueTests {
         #expect(try unsafe check.unsafeInvoke(make.unsafeInvoke(Int64.self)) == -1)
     }
 
+    /// A closure whose function type depends on generic parameters passes
+    /// with the declaration's abstraction, and nil as a null function, in
+    /// every position.
+    @Test func genericOptionalClosuresUseTheDeclarationsAbstraction() async throws {
+        let runtime = ABIRuntime.shared
+        typealias Increment = NativeSwiftClosure<(Int64) -> Int64>
+        let apply = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.applyGenericOptionalClosure(_:_:)",
+            as: ((Increment?, Int64) -> Int64).self,
+            genericArguments: [.type(Int64.self)]
+        )
+        #expect(try unsafe apply.unsafeInvoke(Increment { $0 * 3 }, 5) == 15)
+        #expect(try unsafe apply.unsafeInvoke(nil, 5) == 5)
+        let make = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeGenericOptionalClosure(_:)",
+            as: ((Int64?) -> Increment?).self,
+            genericArguments: [.type(Int64.self)]
+        )
+        #expect(try unsafe make.unsafeInvoke(nil) == nil)
+        let constant = try #require(try unsafe make.unsafeInvoke(9))
+        #expect(try unsafe constant.unsafeInvoke(1) == 9)
+        // Native code passes nil and a closure to the host callback.
+        let pass = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.passGenericOptionalClosures(_:_:)",
+            as: ((Int64, NativeSwiftClosure<(Increment?, Int64) -> Int64>) -> (Int64, Int64)).self,
+            genericArguments: [.type(Int64.self)]
+        )
+        let callback = try NativeSwiftClosure<(Increment?, Int64) -> Int64> { body, value in
+            guard let body else { return -value }
+            return (try? unsafe body.unsafeInvoke(value + 1)) ?? 0
+        }
+        let passed = try unsafe pass.unsafeInvoke(4, callback)
+        #expect(passed.0 == -4 && passed.1 == 5)
+        // A returned closure takes a generic Optional closure from the host,
+        // and from a concrete native consumer through a reabstraction adapter.
+        typealias Applier = NativeSwiftClosure<(Increment?, Int64) -> Int64>
+        let makeApplier = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeGenericOptionalApplier(_:)",
+            as: ((Int64.Type) -> Applier).self,
+            genericArguments: [.type(Int64.self)]
+        )
+        let applier = try unsafe makeApplier.unsafeInvoke(Int64.self)
+        #expect(try unsafe applier.unsafeInvoke(Increment { $0 + 10 }, 1) == 11)
+        #expect(try unsafe applier.unsafeInvoke(nil, 1) == 1)
+        let consume = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.applyOptionalApplier(_:)",
+            as: ((Applier) -> Int64).self
+        )
+        #expect(try unsafe consume.unsafeInvoke(applier) == 102)
+    }
+
+    /// A runtime value of an Optional closure stores the closure as Swift
+    /// stores a value of its type, and keeps nil as a null function.
+    @Test func runtimeValuesOfOptionalClosuresStoreTheirFunctions() async throws {
+        typealias Increment = (Int64) -> Int64
+        let runtime = ABIRuntime.shared
+        let make = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeOptionalClosure(_:)",
+            as: ((Bool) -> NativeSwiftValue).self
+        )
+        let some = try unsafe make.unsafeInvoke(true)
+        let none = try unsafe make.unsafeInvoke(false)
+        #expect(try some.withCopy { ($0 as? Increment?)??(5) } == 6)
+        #expect(try none.withCopy { ($0 as? Increment?).map { $0 == nil } } == true)
+        let apply = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.applyOptionalClosure(_:_:)",
+            as: ((NativeSwiftValue, Int64) -> Int64).self
+        )
+        #expect(try unsafe apply.unsafeInvoke(some, 41) == 42)
+        #expect(try unsafe apply.unsafeInvoke(none, 41) == -1)
+        // An Optional handle projects the closure as its payload.
+        let makeHandle = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeOptionalClosure(_:)",
+            as: ((Bool) -> NativeSwiftValue?).self
+        )
+        #expect(try unsafe makeHandle.unsafeInvoke(false) == nil)
+        let payload = try #require(try unsafe makeHandle.unsafeInvoke(true))
+        #expect(try payload.withCopy { ($0 as? Increment)?(5) } == 6)
+        // Native code passes nil and a closure to a host callback.
+        let pass = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.passOptionalClosures(_:)",
+            as: ((NativeSwiftClosure<(NativeSwiftValue) -> Int64>) -> Int64).self
+        )
+        let callback = try NativeSwiftClosure<(NativeSwiftValue) -> Int64> { value in
+            (try? value.withCopy { ($0 as? Increment?)??(4) ?? 7 }) ?? -2
+        }
+        #expect(try unsafe pass.unsafeInvoke(callback) == 740)
+        // A tuple element stores its Optional closure the same way.
+        let makePair = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeOptionalClosurePair(_:)",
+            as: ((Bool) -> NativeSwiftValue).self
+        )
+        let applyPair = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.applyOptionalClosurePair(_:)",
+            as: ((NativeSwiftValue) -> Int64).self
+        )
+        let pair = try unsafe makePair.unsafeInvoke(true)
+        #expect(try pair.withCopy { ($0 as? (Int64, Increment?))?.1?(1) } == 2)
+        #expect(try unsafe applyPair.unsafeInvoke(pair) == 2)
+        #expect(try unsafe applyPair.unsafeInvoke(makePair.unsafeInvoke(false)) == -1)
+        // A stored closure's Optional closure parameter is adapted too.
+        let makeConsumer = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeOptionalClosureConsumer()",
+            as: (() -> NativeSwiftValue).self
+        )
+        let consumer = try unsafe makeConsumer.unsafeInvoke()
+        let consume = try #require(try consumer.withCopy { $0 as? (Increment?) -> Int64 })
+        #expect(consume({ $0 + 41 }) == 42)
+        #expect(consume(nil) == -1)
+        let invoke = try consumer.resolveClosureAndWait(
+            as: ((NativeSwiftClosure<Increment>?) -> Int64).self
+        )
+        #expect(try unsafe invoke.unsafeInvoke(NativeSwiftClosure<Increment> { $0 + 41 }) == 42)
+        #expect(try unsafe invoke.unsafeInvoke(nil) == -1)
+    }
+
     @Test func nilClosureStorageReleasesAClosureStoredThroughInout() async throws {
         let replace = try await ABIRuntime.shared.resolveSwiftFunction(
             named: "ManagedSwiftFixtures.replaceOptionalClosure(_:_:)",
@@ -602,21 +718,6 @@ struct SwiftOptionalValueTests {
             _ = try await runtime.resolveSwiftFunction(
                 named: "ManagedSwiftFixtures.applyEscapingClosure(_:)",
                 as: ((NativeSwiftClosure<(Int64) -> Int64>?) -> Int64).self
-            )
-        }
-        // A runtime value of an Optional closure needs a stored closure plan (#427).
-        await #expect(throws: ABIResolutionError.self) {
-            _ = try await runtime.resolveSwiftFunction(
-                named: "ManagedSwiftFixtures.makeOptionalClosure(_:)",
-                as: ((Bool) -> NativeSwiftValue).self
-            )
-        }
-        // Generic closure Optionals need reabstraction that keeps nil (#408).
-        await #expect(throws: ABIResolutionError.self) {
-            _ = try await runtime.resolveSwiftFunction(
-                named: "ManagedSwiftFixtures.applyGenericOptionalClosure(_:_:)",
-                as: ((NativeSwiftClosure<(Int64) -> Int64>?, Int64) -> Int64).self,
-                genericArguments: [.type(Int64.self)]
             )
         }
     }

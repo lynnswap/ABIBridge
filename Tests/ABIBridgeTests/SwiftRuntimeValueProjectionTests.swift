@@ -774,6 +774,55 @@ struct SwiftRuntimeValueProjectionTests {
         MainActor.assertIsolated()
     }
 
+    /// An Optional closure in a payload is adapted between the case's
+    /// convention and that of owned runtime values, and nil stays nil.
+    @Test func optionalClosurePayloadsAdaptTheirFunctions() async throws {
+        typealias Increment = (Int64) -> Int64
+        let make = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeRuntimeProjectionOptionalHandler(_:labeled:)",
+            as: ((Int64?, Bool) -> NativeSwiftValue).self
+        )
+        for labeled in [false, true] {
+            let name = labeled ? "labeled" : "handler"
+            let value = try unsafe make.unsafeInvoke(1, labeled)
+            let payload = try #require(try await value.resolveEnumPayload(forCase: name))
+            let body = labeled ? try payload.copyTupleElement(at: 1) : payload
+            #expect(try body.withCopy { ($0 as? Increment?)??(41) } == 42, "\(name)")
+            let empty = try unsafe make.unsafeInvoke(nil, labeled)
+            let none = try #require(try await empty.resolveEnumPayload(forCase: name))
+            let nilBody = labeled ? try none.copyTupleElement(at: 1) : none
+            #expect(try nilBody.withCopy { ($0 as? Increment?).map { $0 == nil } } == true)
+            // A case built from the payload holds the case's convention again.
+            let rebuilt = try await value.type.makeEnumCase(named: name, payload: payload)
+            switch try rebuilt.take(as: RuntimeProjectionOptionalHandler.self) {
+            case .handler(let body): #expect(body?(41) == 42)
+            case .labeled(_, let body): #expect(body?(41) == 42)
+            }
+        }
+    }
+
+    /// An Optional C function pointer or block in a payload is a plain
+    /// pointer, which needs no adaptation and keeps its value.
+    @Test func optionalForeignFunctionPayloadsPassUnchanged() async throws {
+        let make = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeRuntimeProjectionForeignHandler(_:)",
+            as: ((Bool) -> NativeSwiftValue).self
+        )
+        let function = try unsafe make.unsafeInvoke(false)
+        let pointer = try #require(try await function.resolveEnumPayload(forCase: "function"))
+        #expect(try pointer.withCopy { ($0 as? (@convention(c) (Int64) -> Int64)?)??(41) } == 42)
+        let block = try unsafe make.unsafeInvoke(true)
+        let body = try #require(try await block.resolveEnumPayload(forCase: "block"))
+        #expect(try body.withCopy { ($0 as? (@convention(block) (Int64) -> Int64)?)??(40) } == 42)
+        let rebuilt = try await block.type.makeEnumCase(named: "block", payload: body)
+        guard case .block(let native) = try rebuilt.take(as: RuntimeProjectionForeignHandler.self)
+        else {
+            Issue.record("The rebuilt case is not the block case")
+            return
+        }
+        #expect(native?(40) == 42)
+    }
+
     @Test func plainSynchronousAndCallerIsolatedAsyncClosuresKeepTheirEffects() async throws {
         let runtime = ABIRuntime.shared
         let make = try await runtime.resolveSwiftFunction(

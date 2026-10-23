@@ -71,8 +71,10 @@ public final class NativeSwiftImportedReplacement<Implementation> {
 extension NativeSwiftImportedReplacement: @unchecked Sendable where Implementation: Sendable {}
 
 extension ABIRuntime {
+    /// Captures the importing references to the code that calls of `target`
+    /// run, to publish `replacement`'s code in their place.
     nonisolated func prepareSwiftImportReplacementAndWait(
-        target: NativeDeclaration,
+        target: SwiftEntry,
         replacement: SwiftEntry,
         importer: ImageSelector,
         provider: ImageSelector?,
@@ -80,10 +82,10 @@ extension ABIRuntime {
     ) throws -> SwiftReplacementStorage {
         let selection = try ImportedFunctionSelection(
             resolver: resolver,
-            declaration: target,
+            declaration: target.declaration,
+            symbols: target.importedSymbols,
             importer: importer,
-            provider: provider,
-            language: .swift
+            provider: provider
         )
         return try SwiftReplacementStorage(
             slots: selection.references.map { (UInt($0.address), $0.authentication!) },
@@ -336,9 +338,9 @@ extension NativeSwiftFunction {
                 "Generic imported replacement requires a polymorphic replacement contract; use direct invocation."
             )
         }
-        try SwiftErrorPlan.validateReplacement(replacement.errorPlan, for: errorPlan)
+        try requireReplacement(replacement)
         let storage = try runtime.prepareSwiftImportReplacementAndWait(
-            target: declaration,
+            target: entry,
             replacement: replacement.entry,
             importer: importer,
             provider: provider,
@@ -588,9 +590,10 @@ extension NativeSwiftMethod {
         using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil
     ) throws -> NativeSwiftImportedReplacement<NativeSwiftMethodImplementation<Signature>> {
-        try SwiftErrorPlan.validateReplacement(replacement.errorPlan, for: errorPlan)
+        try requireOrdinaryCalls()
+        try requireReplacement(replacement)
         let storage = try runtime.prepareSwiftImportReplacementAndWait(
-            target: declaration,
+            target: entry,
             replacement: replacement.entry,
             importer: importer,
             provider: provider,

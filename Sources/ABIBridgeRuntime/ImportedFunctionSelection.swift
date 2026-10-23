@@ -41,18 +41,58 @@ package final class RuntimeImportedFunctionSelection: @unchecked Sendable {
         )
     }
 
-    package init(
+    package convenience init(
         resolver: RuntimeSymbolResolver,
         declaration: RuntimeDeclaration,
         images: [RuntimeImage],
         provider: RuntimeImageSelector?,
         language: RuntimeLanguage? = nil
     ) throws {
-        try Self.validate(declaration, language: language)
+        try self.init(
+            resolver: resolver,
+            symbols: [declaration],
+            images: images,
+            provider: provider,
+            language: language
+        )
+    }
+
+    /// Selects the references to any of `symbols`, which name one
+    /// declaration, such as a Swift member's code and its dispatch thunk.
+    package convenience init(
+        resolver: RuntimeSymbolResolver,
+        symbols: [RuntimeDeclaration],
+        importer: RuntimeImageSelector,
+        provider: RuntimeImageSelector?,
+        language: RuntimeLanguage? = nil
+    ) throws {
+        for symbol in symbols { try Self.validate(symbol, language: language) }
+        let images = try resolver.images(matching: importer)
+        try self.init(
+            resolver: resolver,
+            symbols: symbols,
+            images: images,
+            provider: provider,
+            language: language
+        )
+    }
+
+    private init(
+        resolver: RuntimeSymbolResolver,
+        symbols: [RuntimeDeclaration],
+        images: [RuntimeImage],
+        provider: RuntimeImageSelector?,
+        language: RuntimeLanguage?
+    ) throws {
+        guard let declaration = symbols.first else {
+            preconditionFailure("A selection names at least one symbol.")
+        }
+        for symbol in symbols { try Self.validate(symbol, language: language) }
         guard !images.isEmpty else { throw RuntimeResolutionError.imageNotLoaded }
         var found: [RuntimeImportedReference] = []
         for image in images {
-            found += try resolver.importIndex(for: image).matches(declaration).filter { reference in
+            let index = try resolver.importIndex(for: image)
+            found += try symbols.flatMap { try index.matches($0) }.filter { reference in
                 guard let provider else { return true }
                 switch provider {
                 case .automatic: return true

@@ -20,6 +20,20 @@ import Dispatch
     enabled ? { $0 + 1 } : nil
 }
 
+@inline(never) public func makeOptionalClosurePair(
+    _ enabled: Bool
+) -> (Int64, ((Int64) -> Int64)?) {
+    (enabled ? 1 : 0, makeOptionalClosure(enabled))
+}
+
+@inline(never) public func applyOptionalClosurePair(_ pair: (Int64, ((Int64) -> Int64)?)) -> Int64 {
+    pair.1?(pair.0) ?? -1
+}
+
+@inline(never) public func makeOptionalClosureConsumer() -> (((Int64) -> Int64)?) -> Int64 {
+    { body in body?(1) ?? -1 }
+}
+
 @inline(never) public func passOptionalClosures(_ body: (((Int64) -> Int64)?) -> Int64) -> Int64 {
     body(nil) * 100 + body({ $0 * 10 })
 }
@@ -61,6 +75,38 @@ import Dispatch
 
 @inline(never) public func applyGenericOptionalClosure<Value>(_ body: ((Value) -> Value)?, _ value: Value) -> Value {
     body?(value) ?? value
+}
+
+@inline(never) public func makeGenericOptionalClosure<Value>(
+    _ replacement: Value?
+) -> ((Value) -> Value)? {
+    replacement.map { replacement in { _ in replacement } }
+}
+
+@inline(never) public func passGenericOptionalClosures<Value>(
+    _ value: Value,
+    _ body: (((Value) -> Value)?, Value) -> Value
+) -> (Value, Value) {
+    (body(nil, value), body({ $0 }, value))
+}
+
+@inline(never) public func applyGenericOptionalClosureFactory<Value>(
+    _ make: () -> ((Value) -> Value)?,
+    _ value: Value
+) -> Value {
+    make()?(value) ?? value
+}
+
+@inline(never) public func makeGenericOptionalApplier<Value>(
+    _: Value.Type
+) -> (((Value) -> Value)?, Value) -> Value {
+    { body, value in body?(value) ?? value }
+}
+
+@inline(never) public func applyOptionalApplier(
+    _ applier: (((Int64) -> Int64)?, Int64) -> Int64
+) -> Int64 {
+    applier(nil, 1) * 100 + applier({ $0 + 1 }, 1)
 }
 
 @inline(never) public func makeGenericOptionalChecker<Value>(

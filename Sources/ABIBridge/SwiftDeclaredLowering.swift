@@ -74,6 +74,19 @@ enum SwiftDeclaredLowering {
     /// How a value stored as `type` passes as an argument.
     static func lowering(of type: CValueType) -> String { description(of: type, false) }
 
+    /// How a value stored as `type` passes as a result.
+    static func lowering(ofResult type: CValueType) -> String { description(of: type, true) }
+
+    /// Whether values stored as `first` and as `second` pass alike: in the
+    /// same register components, or by address in the same role with storage
+    /// of the same size and alignment.
+    static func passAlike(_ first: CValueType, _ second: CValueType, isResult: Bool) -> Bool {
+        withExtendedLifetime((first, second)) {
+            ABISwiftValuePassesAs(first.handle, second.handle, isResult)
+                && ABISwiftValuePassesAs(second.handle, first.handle, isResult)
+        }
+    }
+
     /// The failure to establish how the declaration passes its type, naming
     /// the host type and position, or nil for another kind of error.
     static func unestablished(

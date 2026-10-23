@@ -20,6 +20,19 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
 
     package enum Accessor: Hashable, Sendable { case getter, setter }
 
+    /// The kind of declaration, which says how calls reach it.
+    package enum Kind: String, Hashable, Sendable {
+        case function = "Function"
+        /// An allocating initializer, which calls allocate the instance.
+        case allocator = "Allocator"
+        /// An initializing initializer of an allocated class instance.
+        case constructor = "Constructor"
+        case destructor = "Destructor"
+        case deallocator = "Deallocator"
+        case variable = "Variable"
+        case `subscript` = "Subscript"
+    }
+
     package enum Context: Hashable, Sendable {
         /// Declared in its nominal type, or at module scope.
         case nominal
@@ -39,6 +52,7 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
     }
 
     package let role: Role
+    package let kind: Kind
     package let accessor: Accessor?
     /// Whether a call can run the symbol's own code: a declaration's code, a
     /// protocol requirement's thunk, which selects the conformance's witness,
@@ -108,15 +122,10 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
         default:
             accessor = nil
         }
-        guard
-            [
-                "Function", "Allocator", "Constructor", "Destructor", "Deallocator", "Variable",
-                "Subscript",
-            ].contains(node.kind),
-            let owner = node.child(0)
-        else { return nil }
+        guard let kind = Kind(rawValue: node.kind), let owner = node.child(0) else { return nil }
         // A witness serves a requirement, which a protocol declares.
         if case .witness = role, owner.kind != "Protocol" { return nil }
+        self.kind = kind
         self.isStatic = isStatic
         requirement =
             owner.kind == "Protocol" ? Self.copy(ABICopySwiftEntitySymbolName(entity.pointer)) : nil
@@ -139,6 +148,17 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
         }
     }
 
+    /// The mangled name of the dispatch thunk of this declaration's own code,
+    /// through which other images call a class member, as the remangler
+    /// produces it. Nil for a thunk, a witness, or an extension member,
+    /// which have none.
+    package var dispatchThunk: String? {
+        guard role == .implementation, context == .nominal else { return nil }
+        return Self.child(of: "Global", in: identity, unwrapping: false) {
+            Self.copy(ABICopySwiftDispatchThunkSymbolName($0.pointer))
+        }
+    }
+
     /// The mangled name of the requirement that a method descriptor symbol
     /// describes, which the remangler produces from the symbol's tree.
     package static func methodDescriptorRequirement(linkageName: String) -> String? {
@@ -156,9 +176,13 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
     }
 
     /// Applies `body` to the only child of a symbol's top-level `kind` node.
+    ///
+    /// - Parameter unwrapping: Whether `kind` names the node under the
+    ///   symbol's `Global` root rather than the root itself.
     private static func child(
         of kind: String,
         in linkageName: String,
+        unwrapping: Bool = true,
         _ body: (Node) -> String?
     ) -> String? {
         let name = linkageName.hasPrefix("_") ? String(linkageName.dropFirst()) : linkageName
@@ -169,7 +193,7 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
         else { return nil }
         defer { ABIReleaseSwiftSyntax(syntax) }
         guard var node = ABISwiftSyntaxRoot(syntax).map(Node.init) else { return nil }
-        if node.kind == "Global", let child = node.child(0) { node = child }
+        if unwrapping, node.kind == "Global", let child = node.child(0) { node = child }
         guard node.kind == kind, let child = node.child(0) else { return nil }
         return body(child)
     }

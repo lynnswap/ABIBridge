@@ -63,6 +63,30 @@ public final class ClosureValueHolder {
     { $0.map { $0 + suffix } }
 }
 
+// Optional closures whose function types depend on generic parameters, and
+// an Optional closure that a runtime value holds.
+@inline(never) public func applyGenericOptionalClosureValue<Value>(
+    _ body: ((Value) -> Value)?, _ value: Value
+) -> Value { body?(value) ?? value }
+
+@inline(never) public func passGenericOptionalClosureValues<Value>(
+    _ value: Value, _ body: (((Value) -> Value)?, Value) -> Value
+) -> (Value, Value) { (body(nil, value), body({ $0 }, value)) }
+
+@inline(never) public func makeGenericOptionalApplierValue<Value>(
+    _: Value.Type
+) -> (((Value) -> Value)?, Value) -> Value {
+    { body, value in body?(value) ?? value }
+}
+
+@inline(never) public func makeOptionalClosureValue(_ enabled: Bool) -> ((Int64) -> Int64)? {
+    enabled ? { $0 + 1 } : nil
+}
+
+@inline(never) public func applyOptionalClosureValue(
+    _ body: ((Int64) -> Int64)?, _ value: Int64
+) -> Int64 { body?(value) ?? -1 }
+
 public final class ExplicitValueToken {
     public let number: Int64
     public init(_ number: Int64) { self.number = number }

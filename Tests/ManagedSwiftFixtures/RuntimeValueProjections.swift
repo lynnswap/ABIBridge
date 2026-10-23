@@ -154,6 +154,32 @@ public enum RuntimeProjectionGenericPreview<Body> {
     return body
 }
 
+public enum RuntimeProjectionOptionalHandler {
+    case handler(((Int64) -> Int64)?)
+    case labeled(bias: Int64, body: ((Int64) -> Int64)?)
+}
+@inline(never) public func makeRuntimeProjectionOptionalHandler(
+    _ bias: Int64?,
+    labeled: Bool
+) -> some Any {
+    let body = bias.map { bias in { (value: Int64) in value + bias } }
+    return labeled
+        ? RuntimeProjectionOptionalHandler.labeled(bias: bias ?? 0, body: body)
+        : RuntimeProjectionOptionalHandler.handler(body)
+}
+
+/// C function pointers and blocks are plain pointers, which payloads keep
+/// as they are.
+public enum RuntimeProjectionForeignHandler {
+    case function((@convention(c) (Int64) -> Int64)?)
+    case block((@convention(block) (Int64) -> Int64)?)
+}
+@inline(never) public func makeRuntimeProjectionForeignHandler(_ block: Bool) -> some Any {
+    block
+        ? RuntimeProjectionForeignHandler.block({ $0 + 2 })
+        : RuntimeProjectionForeignHandler.function({ $0 + 1 })
+}
+
 public typealias RuntimeProjectionPreparationSignature =
     (
         Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64,
