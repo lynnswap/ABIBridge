@@ -23,6 +23,7 @@ final class SwiftCall: Sendable {
         values = try SwiftCallValues(signature: signature, consumesArguments: consumesArguments,
             opaqueResult: opaqueResult, arguments: parameters.arguments,
             result: generic?.result ?? closure?.result)
+        try values.requireBorrowableArguments(binding: generic?.binding)
         #if DEBUG
         generic?.checkClosedSchemas(signature, values: values)
         #endif

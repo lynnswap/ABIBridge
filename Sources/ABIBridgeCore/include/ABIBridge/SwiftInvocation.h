@@ -168,6 +168,13 @@ typedef enum ABISwiftReferenceStorage {
 ABISwiftReferenceStorage ABISwiftTypeFieldReferenceStorage(const void *metadata, size_t index);
 /// Whether a field record's declared type mentions a generic parameter of its enclosing type.
 bool ABISwiftTypeFieldIsGenericDependent(const void *metadata, size_t index);
+typedef enum ABISwiftStoredProperty {
+    ABISwiftStoredPropertyNone = 0,
+    ABISwiftStoredPropertyLet = 1,
+    ABISwiftStoredPropertyVar = 2,
+} ABISwiftStoredProperty;
+/// Whether the field records of a struct or class nominal type descriptor list a stored property named `name`, and whether its record's IsVar flag marks it a `var`. None for other descriptors and for a descriptor without field records. Reads only the descriptor and its field records.
+ABISwiftStoredProperty ABISwiftDescriptorStoredProperty(const void *descriptor, const char *name);
 /// The module that declares the nominal type, borrowing its descriptor's name.
 const char *ABISwiftTypeModuleName(const void *metadata);
 /// Whether the nominal type is declared in an extension of a generic type, directly or within another type declared in one: an extension that adds requirements, or one in another module than the type it extends. Such an extension has a generic signature, which its requirement records spell without conformances to marker protocols. An unconstrained extension in the extended type's module has no descriptor of its own.

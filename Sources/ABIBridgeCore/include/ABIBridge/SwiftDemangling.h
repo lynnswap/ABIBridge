@@ -46,6 +46,10 @@ char *ABICopySwiftDispatchThunkSymbolName(const ABISwiftSyntaxNode *entity);
 const ABISwiftSyntaxNode *ABISwiftSyntaxEntityContext(const ABISwiftSyntaxNode *entity);
 /// Whether two trees are equal, apart from the type wrappers around them.
 bool ABISwiftSyntaxNodesEqual(const ABISwiftSyntaxNode *lhs, const ABISwiftSyntaxNode *rhs);
+/// The symbol of the nominal type descriptor of a struct, enum, or class
+/// declaration node, such as the context of a property symbol's Variable.
+/// Release with ABIFreeString.
+char *ABICopySwiftNominalTypeDescriptorSymbolName(const ABISwiftSyntaxNode *nominal);
 /// Copies a type tree, substituting its depth-zero generalization parameters.
 ABISwiftSyntax *ABICopySwiftSubstitutedTypeSyntax(const ABISwiftSyntaxNode *node,
     const ABISwiftSyntaxNode *const *arguments, size_t count);

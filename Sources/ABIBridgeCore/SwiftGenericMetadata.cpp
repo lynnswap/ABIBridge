@@ -761,6 +761,24 @@ bool ABISwiftTypeFieldIsGenericDependent(const void *metadata, size_t index) {
     return syntax && mentionsGenericParameter(ABISwiftSyntaxRoot(syntax.get()));
 }
 
+ABISwiftStoredProperty ABISwiftDescriptorStoredProperty(const void *descriptor, const char *name) {
+    auto context = static_cast<const char *>(descriptor);
+    if (!context || !name) return ABISwiftStoredPropertyNone;
+    // Struct and class descriptors; enum cases have no IsVar flag.
+    const auto kind = read<uint32_t>(context) & 0x1f;
+    if (kind != 16 && kind != 17) return ABISwiftStoredPropertyNone;
+    const char *fields = relative(context + 16);
+    if (!fields) return ABISwiftStoredPropertyNone;
+    for (uint32_t index = 0; index < read<uint32_t>(fields + 12); ++index) {
+        const char *record = fieldRecord(fields, index);
+        const char *field = relative(record + 8);
+        if (!field || std::strcmp(field, name)) continue;
+        // FieldRecordFlags::IsVar
+        return (read<uint32_t>(record) & 2) ? ABISwiftStoredPropertyVar : ABISwiftStoredPropertyLet;
+    }
+    return ABISwiftStoredPropertyNone;
+}
+
 const char *ABISwiftTypeModuleName(const void *metadata) {
     const char *descriptor = typeContextDescriptor(metadata);
     return descriptor ? declaringModule(descriptor) : nullptr;

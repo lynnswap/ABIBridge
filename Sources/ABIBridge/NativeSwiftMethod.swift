@@ -33,6 +33,7 @@ public struct NativeSwiftMethod<Signature>: Sendable {
         self.consumesArguments = consumesArguments
         call = try SwiftCallablePlan(signature: Signature.self, entry: entry, resolver: type.resolver,
             trailingType: receiver.trailingType, consumesArguments: consumesArguments, generic: generic)
+        if call.values.result.scoped != nil { try receiver.requireBorrowable() }
     }
 
     func capturing(_ implementation: SwiftImplementation) -> Self {
