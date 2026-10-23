@@ -132,6 +132,8 @@ ABISwiftTypeMetadata *ABICreateSwiftTypeMetadata(const void *descriptor,
     const void *const *arguments, size_t count, ABIResolutionFailure **error);
 /// Returns an authenticated raw nominal descriptor, or null for a non-nominal type.
 const void *ABISwiftTypeDescriptor(const void *metadata);
+/// Whether the Swift runtime takes the raw context descriptors `lhs` and `rhs` for one context, as `swift_compareTypeContextDescriptors` does: they are one descriptor, or neither is marked unique and they have one kind, equal parents, and one name. The name of an imported type includes the identity components of its import info.
+bool ABISwiftContextDescriptorsEqual(const void *lhs, const void *rhs);
 /// Reflection fields whose storage is inline in a struct or enum. Syntax trees preserve generic parameters and symbolic descriptor identities.
 size_t ABISwiftTypeFieldCount(const void *metadata);
 ABISwiftSyntax *ABICopySwiftTypeFieldSyntax(const void *metadata, size_t index);

@@ -241,6 +241,139 @@ struct SymbolResolutionTests {
         )
     }
 
+    // Like modules linked into one image, each object defines its own local
+    // copy of every record. Only the records named distinct differ.
+    @Test func copiesThatTheSwiftRuntimeIdentifiesResolveToOne() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString
+        )
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let distinct = [
+            (shape: "ST_px7ElementSTRts_XP", type: "ABIBridgeFirstType"),
+            (shape: "SJ_px7ElementSJRts_XP", type: "ABIBridgeOtherType"),
+        ]
+        let objects = try distinct.enumerated().map { index, distinct in
+            let source = directory.appendingPathComponent("records\(index).s")
+            let object = directory.appendingPathComponent("records\(index).o")
+            // A non-unique shape holds its cache, flags, and existential type;
+            // a context descriptor its flags, parent, and name.
+            try """
+                .section __TEXT,__const
+                .p2align 2
+            "_$slSl_px7ElementRts_XPXGMq":
+                .long 0, 0x1900, Lcollection - .
+            "_$slST_px7ElementRts_XPXGMq":
+                .long 0, 0x1900, Lsequence - .
+            Limported:
+                .long 0, 0, Limported_name - .
+            Lmodule:
+                .long 0, 0, Lmodule_name - .
+            "_$sSo20ABIBridgeUniquedTypeVMn":
+                .long 0x11, Limported - ., Luniqued_name - .
+            "_$sSo21ABIBridgeDistinctTypeVMn":
+                .long 0x11, Limported - ., Ldistinct_name - .
+            "_$s7Fixture10UniqueTypeVMn":
+                .long 0x51, Lmodule - ., Lunique_name - .
+            Lcollection:
+                .asciz "Sl_px7ElementSlRts_XP"
+            Lsequence:
+                .asciz "\(distinct.shape)"
+            Limported_name:
+                .asciz "__C"
+            Lmodule_name:
+                .asciz "Fixture"
+            Luniqued_name:
+                .asciz "ABIBridgeUniquedType"
+            Ldistinct_name:
+                .asciz "\(distinct.type)"
+            Lunique_name:
+                .asciz "UniqueType"
+
+            """.write(to: source, atomically: true, encoding: .utf8)
+            try FixtureLibrary.run([
+                "--sdk", "macosx", "clang", "-arch", "arm64", "-c", source.path, "-o", object.path,
+            ])
+            return object.path
+        }
+        let fixture = try FixtureLibrary(
+            cxxSource: "int ABIBridgeRecordFixture() { return 0; }",
+            linkArguments: objects
+        )
+        defer { fixture.cleanup() }
+        let defined = try fixture.definedSymbols()
+        for name in [
+            "_$slSl_px7ElementRts_XPXGMq", "_$slST_px7ElementRts_XPXGMq",
+            "_$sSo20ABIBridgeUniquedTypeVMn", "_$sSo21ABIBridgeDistinctTypeVMn",
+            "_$s7Fixture10UniqueTypeVMn",
+        ] {
+            #expect(defined.filter { $0 == name }.count == 2)
+        }
+        let runtime = ABIRuntime()
+        func resolve(_ declaration: NativeDeclaration) throws -> ResolvedSymbol {
+            try runtime.resolveAndWait(
+                declaration,
+                in: .path(fixture.libraryURL),
+                loading: .loadedOnly
+            )
+        }
+        func name(at field: UnsafeRawPointer) -> String {
+            String(
+                cString: field.advanced(by: Int(field.loadUnaligned(as: Int32.self)))
+                    .assumingMemoryBound(to: CChar.self)
+            )
+        }
+        let shape = try resolve(
+            .init(linkerName: "$slSl_px7ElementRts_XPXGMq", language: .swift, kind: .data)
+        )
+        #expect(unsafe shape.withUnsafeAddress { name(at: $0 + 8) } == "Sl_px7ElementSlRts_XP")
+        let type = try resolve(
+            .init(
+                name: "nominal type descriptor for __C.ABIBridgeUniquedType",
+                language: .swift,
+                kind: .data
+            )
+        )
+        #expect(unsafe type.withUnsafeAddress { name(at: $0 + 8) } == "ABIBridgeUniquedType")
+        for (declaration, identities) in [
+            (
+                NativeDeclaration(
+                    linkerName: "$slST_px7ElementRts_XPXGMq",
+                    language: .swift,
+                    kind: .data
+                ),
+                distinct.map { " (" + $0.shape + ")" }
+            ),
+            (
+                NativeDeclaration(
+                    name: "nominal type descriptor for __C.ABIBridgeDistinctType",
+                    language: .swift,
+                    kind: .data
+                ),
+                []
+            ),
+            // Unique descriptors are distinct even with one name.
+            (
+                NativeDeclaration(
+                    name: "nominal type descriptor for Fixture.UniqueType",
+                    language: .swift,
+                    kind: .data
+                ),
+                []
+            ),
+        ] {
+            do {
+                _ = try resolve(declaration)
+                Issue.record("Copies that the runtime tells apart must remain ambiguous")
+            } catch ABIResolutionError.ambiguousDeclaration(_, let candidates) {
+                #expect(candidates.count == 2)
+                for identity in identities {
+                    #expect(candidates.contains { $0.hasSuffix(identity) })
+                }
+            }
+        }
+    }
+
     @Test func batchLookupPreservesOrderFallbackAliasesAndLifetime() async throws {
         let first = try FixtureLibrary()
         let other = try FixtureLibrary()

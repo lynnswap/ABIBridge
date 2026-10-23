@@ -1350,19 +1350,23 @@ package final class SymbolIndex {
             }
         }
         guard !addresses.isEmpty else { throw RuntimeResolutionError.invalidAddress }
-        guard addresses.count == 1, let match = addresses.first?.value else {
-            throw RuntimeResolutionError.ambiguousDeclaration(
-                declaration,
-                candidates: candidates.map(\.name).sorted()
+        let definitions = addresses.sorted { $0.key < $1.key }.map { address, match in
+            RuntimeSymbol(
+                declaration: declaration,
+                image: image,
+                sectionRange: match.1.range,
+                source: match.0.source,
+                address: address,
+                linkageName: match.0.name
             )
         }
-        return RuntimeSymbol(
-            declaration: declaration,
-            image: image,
-            sectionRange: match.1.range,
-            source: match.0.source,
-            address: match.0.address,
-            linkageName: match.0.name
+        guard definitions.count > 1 else { return definitions[0] }
+        if let definition = try RuntimeUniquedRecord.representative(of: definitions) {
+            return definition
+        }
+        throw RuntimeResolutionError.ambiguousDeclaration(
+            declaration,
+            candidates: candidates.map(\.name).sorted()
         )
     }
 
