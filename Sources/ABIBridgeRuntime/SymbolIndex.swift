@@ -998,38 +998,98 @@ package final class SymbolIndex {
             } else {
                 guard addresses.insert(symbol.address).inserted else { return nil }
             }
-            return candidate(symbol, record: record, name: name, spelling: spelling, section: section)
+            return candidate(
+                symbol,
+                record: record,
+                name: name,
+                spelling: spelling,
+                section: section
+            )
         }
     }
 
     /// The witnesses that this image's symbol table holds for the
     /// conformance whose descriptor is at `descriptor`.
     package func swiftWitnesses(ofConformanceAt descriptor: UInt64) -> [RuntimeSwiftCandidate] {
-        // Swift mangles a witness with the suffix `TW` and a conformance
-        // descriptor with `Mc`.
+        guard let names = conformanceDescriptors.byAddress[descriptor] else { return [] }
+        // Swift mangles a witness with the suffix `TW`.
         let symbols = swiftSymbols { name in
             let length = strlen(name)
-            guard length > 2 else { return false }
-            let suffix = (name[length - 2], name[length - 1])
-            return suffix == (84, 87) || suffix == (77, 99)
+            return length > 2 && name[length - 2] == 84 && name[length - 1] == 87
         }
-        let names = Set(
-            symbols.lazy.filter { $0.address == descriptor && $0.name.hasSuffix("Mc") }.map {
-                $0.name.hasPrefix("_") ? String($0.name.dropFirst()) : $0.name
-            }
-        )
-        guard !names.isEmpty else { return [] }
         return symbols.compactMap { symbol in
-            guard symbol.name.hasSuffix("TW"),
-                let record = record(of: symbol),
-                case .witness(let witness) = record.role,
-                names.contains(witness.conformanceDescriptor),
+            guard let record = record(of: symbol),
+                case .witness(let conformance) = record.role,
+                names.contains(conformance),
                 let name = memberName(of: symbol),
                 let section = sections.first(where: { $0.range.contains(symbol.address) }),
                 let spelling = DeclarationKey.demangle(symbol.name, language: .swift)
             else { return nil }
-            return candidate(symbol, record: record, name: name, spelling: spelling, section: section)
+            return candidate(
+                symbol,
+                record: record,
+                name: name,
+                spelling: spelling,
+                section: section
+            )
         }
+    }
+
+    /// The address of the protocol conformance descriptor that this image
+    /// names `name`, as the remangler spells it, in its exports or symbol table.
+    package func swiftConformanceDescriptor(named name: String) -> UInt64? {
+        conformanceDescriptors.byName[name]
+    }
+
+    /// The requirements that method descriptor symbols name at `address`, in
+    /// this image's exports or symbol table, as the remangler spells them.
+    package func swiftMethodDescriptorRequirements(at address: UInt64) -> Set<String> {
+        methodDescriptors[address] ?? []
+    }
+
+    // Swift mangles a conformance descriptor with the suffix `Mc` and a method
+    // descriptor with `Tq`. Records compare the names that the remangler
+    // produces from each symbol's tree.
+    private lazy var conformanceDescriptors:
+        (byName: [String: UInt64], byAddress: [UInt64: Set<String>]) = {
+            var result: (byName: [String: UInt64], byAddress: [UInt64: Set<String>]) = ([:], [:])
+            for symbol in swiftSymbols(endingWith: (77, 99)) {
+                guard
+                    let name = RuntimeSwiftDeclaration.conformanceDescriptor(
+                        linkageName: symbol.name
+                    )
+                else { continue }
+                result.byName[name] = symbol.address
+                result.byAddress[symbol.address, default: []].insert(name)
+            }
+            return result
+        }()
+
+    private lazy var methodDescriptors: [UInt64: Set<String>] = {
+        var result: [UInt64: Set<String>] = [:]
+        for symbol in swiftSymbols(endingWith: (84, 113)) {
+            guard
+                let requirement = RuntimeSwiftDeclaration.methodDescriptorRequirement(
+                    linkageName: symbol.name
+                )
+            else { continue }
+            result[symbol.address, default: []].insert(requirement)
+        }
+        return result
+    }()
+
+    /// The Swift symbols of this image's exports and symbol table whose names
+    /// end with the two characters of `suffix`.
+    private func swiftSymbols(endingWith suffix: (CChar, CChar)) -> [IndexedSymbol] {
+        let table = swiftSymbols { name in
+            let length = strlen(name)
+            return length > 2 && name[length - 2] == suffix.0 && name[length - 1] == suffix.1
+        }
+        let exports = exportedSymbols(withPrefix: "_$s").filter {
+            $0.name.utf8.suffix(2).elementsEqual([UInt8(suffix.0), UInt8(suffix.1)])
+        }
+        var seen = Set<IndexedSymbol>()
+        return (table + exports).filter { seen.insert($0).inserted }
     }
 
     private func candidate(
@@ -1065,8 +1125,10 @@ package final class SymbolIndex {
     // witnesses. Swift mangles a dispatch thunk as its declaration followed by
     // `Tj`, and a protocol witness thunk with the suffix `TW`.
     private func memberName(of symbol: IndexedSymbol) -> String? {
-        if symbol.name.hasSuffix("TW"), case .witness(let witness)? = record(of: symbol)?.role {
-            return DeclarationKey.demangle(witness.requirement, language: .swift)
+        if symbol.name.hasSuffix("TW"), let record = record(of: symbol),
+            case .witness = record.role, let requirement = record.requirement
+        {
+            return DeclarationKey.demangle(requirement, language: .swift)
         }
         let mangled =
             symbol.name.hasSuffix("Tj") ? String(symbol.name.dropLast(2)) : symbol.name

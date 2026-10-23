@@ -626,6 +626,27 @@ package final class RuntimeSymbolResolver: Sendable {
         }
     }
 
+    /// The address of the protocol conformance descriptor that `image` names
+    /// `name`, as the remangler spells it.
+    package func swiftConformanceDescriptor(named name: String, in image: RuntimeImage) -> UInt64? {
+        let index = state.withLock { $0.index(for: image) }
+        return withExtendedLifetime(index) {
+            state.withLock { _ in index.swiftConformanceDescriptor(named: name) }
+        }
+    }
+
+    /// The requirements that method descriptor symbols of `image` name at
+    /// `address`, as the remangler spells them.
+    package func swiftMethodDescriptorRequirements(
+        at address: UInt64,
+        in image: RuntimeImage
+    ) -> Set<String> {
+        let index = state.withLock { $0.index(for: image) }
+        return withExtendedLifetime(index) {
+            state.withLock { _ in index.swiftMethodDescriptorRequirements(at: address) }
+        }
+    }
+
     /// The declaration, such as `8ProbeLib1P33_…LLV`, under which `image`
     /// names the Swift nominal type descriptor at `address`, in its exports
     /// or its symbol table. Only local symbols name the descriptor of a

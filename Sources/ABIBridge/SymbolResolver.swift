@@ -100,6 +100,23 @@ final class SymbolResolver: Sendable {
             in: image.runtimeValue
         ).map(SwiftCandidate.init)
     }
+    func swiftConformanceDescriptor(
+        named name: String,
+        in image: NativeImage
+    ) -> UnsafeRawPointer? {
+        runtime.swiftConformanceDescriptor(named: name, in: image.runtimeValue).flatMap {
+            UnsafeRawPointer(bitPattern: UInt($0))
+        }
+    }
+    func swiftMethodDescriptorRequirements(
+        at address: UnsafeRawPointer,
+        in image: NativeImage
+    ) -> Set<String> {
+        runtime.swiftMethodDescriptorRequirements(
+            at: UInt64(UInt(bitPattern: address)),
+            in: image.runtimeValue
+        )
+    }
     func removeCachedResults() { runtime.removeCachedResults() }
     func importIndex(for image: NativeImage) throws -> ImportIndex {
         try withRuntimeErrors { ImportIndex(try runtime.importIndex(for: image.runtimeValue)) }

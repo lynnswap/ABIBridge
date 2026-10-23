@@ -143,9 +143,9 @@ extension NativeSwiftType {
         -> SwiftRequirementCandidates
     {
         let thunks = Set(
-            candidates.lazy.filter {
-                $0.record.context == .protocolRequirement && $0.record.role == .dispatchThunk
-            }.map(\.record.identity)
+            candidates.lazy.filter { $0.record.role == .dispatchThunk }.compactMap(
+                \.record.requirement
+            )
         )
         let type = unsafeBitCast(metadata, to: UnsafeRawPointer.self)
         // This type's conformance descriptor for each protocol, nil when it
@@ -155,29 +155,25 @@ extension NativeSwiftType {
         var others: [(requirement: String, witness: SwiftCandidate)] = []
         var result = SwiftRequirementCandidates(candidates: [])
         for candidate in candidates {
-            guard case .witness(let witness) = candidate.record.role else {
+            guard case .witness(let conformanceName) = candidate.record.role,
+                let requirement = candidate.record.requirement
+            else {
                 result.candidates.append(candidate)
                 continue
             }
-            guard !thunks.contains(witness.requirement) else { continue }
-            let descriptor: ResolvedSymbol
-            do {
-                descriptor = try resolver.resolve(
-                    NativeDeclaration(
-                        machOName: "_" + witness.conformanceDescriptor,
-                        language: .swift,
-                        kind: .data
-                    ),
-                    in: candidate.symbol.image,
-                    loading: .loadedOnly
+            guard !thunks.contains(requirement) else { continue }
+            guard
+                let descriptor = resolver.swiftConformanceDescriptor(
+                    named: conformanceName,
+                    in: candidate.symbol.image
                 )
-            } catch ABIResolutionError.declarationNotFound {
+            else {
                 // Without its descriptor, the conformance is not established.
-                others.append((witness.requirement, candidate))
+                others.append((requirement, candidate))
                 continue
             }
-            let applies = unsafe descriptor.withUnsafeAddress { address -> Bool? in
-                result.conformances[address] = descriptor.image
+            let applies = { (address: UnsafeRawPointer) -> Bool? in
+                result.conformances[address] = candidate.symbol.image
                 // The descriptor's first field references the protocol.
                 guard let protocolDescriptor = ABISwiftProtocolRequirementDescriptor(address)
                 else { return false }
@@ -189,15 +185,15 @@ extension NativeSwiftType {
                 conformances[protocolDescriptor] = .some(conformance)
                 guard let conformance else { return nil }
                 return conformance == address
-            }
+            }(descriptor)
             switch applies {
             case true?:
-                served.insert(witness.requirement)
+                served.insert(requirement)
                 result.candidates.append(candidate)
             case false?:
-                others.append((witness.requirement, candidate))
+                others.append((requirement, candidate))
             case nil:
-                if served.insert(witness.requirement).inserted {
+                if served.insert(requirement).inserted {
                     result.candidates.append(candidate)
                 }
             }
@@ -264,12 +260,11 @@ extension NativeSwiftType {
         // The requirements of the member's kind, with their witness-table
         // slots, which follow the conformance descriptor's.
         let isStatic = request.name.hasPrefix("static ")
-        let text = isStatic ? String(request.name.dropFirst(7)) : request.name
-        let member = SwiftMemberLookup.owner(of: text).map { text.dropFirst($0.count + 1) }
+        let member = SwiftMemberLookup.member(of: request.name)
         let kind: UInt32 =
-            text.contains(".getter : ")
+            request.name.contains(".getter : ")
             ? 3
-            : text.contains(".setter : ")
+            : request.name.contains(".setter : ")
                 ? 4 : member.map { $0.hasPrefix("init(") || $0.hasPrefix("init<") } == true ? 2 : 1
         var unnamed = RuntimeProtocolLayout(protocolAddress).witnessRequirements.enumerated()
             .filter { _, requirement in
@@ -300,21 +295,14 @@ extension NativeSwiftType {
                 )
             }
         }
-        // A method descriptor names the requirement at its address.
-        let prefix = String(protocolSymbol.linkageName.dropLast(2)) + "P"
-        var descriptors: [UnsafeRawPointer: String] = [:]
-        for symbol in resolver.runtime.exportedSymbols(
-            withPrefix: prefix,
-            in: protocolSymbol.image.runtimeValue
-        ) where symbol.name.hasSuffix("Tq") {
-            if let address = UnsafeRawPointer(bitPattern: UInt(symbol.address)) {
-                descriptors[address] = String(symbol.name.dropFirst().dropLast(2))
-            }
-        }
+        // A method descriptor symbol names the requirement at its address.
         unnamed = try unnamed.filter { entry in
-            guard let requirement = descriptors[entry.requirement.address] else { return true }
-            try check(requirement, witness: nil)
-            return false
+            let requirements = resolver.swiftMethodDescriptorRequirements(
+                at: entry.requirement.address,
+                in: protocolSymbol.image
+            )
+            for requirement in requirements { try check(requirement, witness: nil) }
+            return requirements.isEmpty
         }
         guard !unnamed.isEmpty else { return }
         // A conformance's witness table names a requirement by the witness in
@@ -363,19 +351,18 @@ extension NativeSwiftType {
                     byAddress[$0, default: []].append(witness)
                 }
             }
-            var asyncAddresses: [UnsafeRawPointer: [SwiftCandidate]]?
             unnamed = try unnamed.filter { entry in
                 let isAsync = entry.requirement.isAsync
-                guard let held = ABISwiftWitnessTableEntry(table, entry.slot, isAsync) else {
-                    return true
-                }
-                if isAsync, asyncAddresses == nil {
-                    asyncAddresses = try asyncFunctionPointers(of: witnesses)
-                }
-                let named = (isAsync ? asyncAddresses?[held] : byAddress[held]) ?? []
+                // An async slot holds the witness's async function pointer.
+                guard
+                    let held = ABISwiftWitnessTableEntry(table, entry.slot, isAsync).flatMap({
+                        isAsync ? ABISwiftAsyncFunctionPointerCode($0) : $0
+                    })
+                else { return true }
+                let named = byAddress[held] ?? []
                 for witness in named {
-                    guard case .witness(let served) = witness.record.role else { continue }
-                    try check(served.requirement, witness: witness)
+                    guard let requirement = witness.record.requirement else { continue }
+                    try check(requirement, witness: witness)
                 }
                 return named.isEmpty
             }
@@ -385,31 +372,5 @@ extension NativeSwiftType {
                 "\(unnamed.count) requirements of \(protocolName) that this member could be have no method descriptor or conformance's witness in the loaded images, so whether it is one of them is not established. A conformance's witnesses are local symbols, which stripping removes."
             )
         }
-    }
-
-    /// The witnesses at the async function pointers that Swift mangles as a
-    /// witness followed by `Tu`.
-    private nonisolated func asyncFunctionPointers(
-        of witnesses: [SwiftCandidate]
-    ) throws -> [UnsafeRawPointer: [SwiftCandidate]] {
-        var result: [UnsafeRawPointer: [SwiftCandidate]] = [:]
-        for witness in witnesses {
-            let pointer: ResolvedSymbol
-            do {
-                pointer = try resolver.resolve(
-                    NativeDeclaration(
-                        machOName: witness.symbol.linkageName + "Tu",
-                        language: .swift,
-                        kind: .data
-                    ),
-                    in: witness.symbol.image,
-                    loading: .loadedOnly
-                )
-            } catch ABIResolutionError.declarationNotFound {
-                continue
-            }
-            unsafe pointer.withUnsafeAddress { result[$0, default: []].append(witness) }
-        }
-        return result
     }
 }

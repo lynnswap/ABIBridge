@@ -780,8 +780,16 @@ struct SwiftMemberInvocationTests {
                 extension Tagged {
                     @inline(never) public func tagName() -> String { "tagged" }
                 }
-                public final class Meter: Gauge, Tagged {
+                public protocol Resettable { init() }
+                extension Resettable {
+                    public init(value: Int64) { self.init() }
+                }
+                extension Equatable {
+                    @inline(never) public static func kindName() -> String { "equatable" }
+                }
+                public final class Meter: Gauge, Tagged, Resettable, Equatable {
                     public typealias Tag = Int64
+                    public static func == (lhs: Meter, rhs: Meter) -> Bool { lhs === rhs }
                     public init() {}
                     @inline(never) public func read() -> Int64 { 7 }
                 }
@@ -822,6 +830,19 @@ struct SwiftMemberInvocationTests {
             as: (() -> String).self
         )
         #expect(try unsafe tagName.unsafeInvoke(on: make.unsafeInvoke()) == "tagged")
+        // The standard library exports Equatable's method descriptors, which
+        // name its static requirement ==.
+        let kindName = try await meter.resolveStaticMethod(
+            named: "Swift.Equatable.kindName()",
+            as: (() -> String).self
+        )
+        #expect(try unsafe kindName.unsafeInvoke() == "equatable")
+        // A complete declaration of a protocol extension's initializer.
+        let reset = try await meter.resolveInitializer(
+            named: "(extension in \(module)):\(module).Resettable.init(value: Swift.Int64) -> A",
+            as: ((Int64) -> AnyObject).self
+        )
+        #expect(String(describing: type(of: try unsafe reset.unsafeInvoke(4))) == "Meter")
         // A complete extension declaration names the extension member.
         let read = try await meter.resolveMethod(
             named: "(extension in \(module)):\(module).Gauge.read() -> Swift.Int64",

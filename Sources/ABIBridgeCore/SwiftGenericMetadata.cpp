@@ -197,6 +197,11 @@ const void *ABISwiftWitnessTableEntry(const void *table, size_t index, bool asyn
     return entry;
 }
 
+const void *ABISwiftAsyncFunctionPointerCode(const void *pointer) {
+    // AsyncFunctionPointer starts with a relative reference to its function.
+    return relative(pointer);
+}
+
 size_t ABISwiftImageConformanceDescriptors(const void *address, const void *protocol,
     const void **descriptors, size_t capacity) {
     Dl_info image{};

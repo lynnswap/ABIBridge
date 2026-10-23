@@ -117,6 +117,8 @@ const void *ABISwiftConformanceDescriptor(const void *witnessTable);
 const void *ABISwiftConformanceWitnessTablePattern(const void *descriptor);
 /// The address that slot `index` of a witness table holds without pointer-authentication bits: a witness's code, or the async function pointer of an async witness. The value identifies the witness; it is not authenticated for a call.
 const void *ABISwiftWitnessTableEntry(const void *table, size_t index, bool asynchronous);
+/// The code that an async function pointer's relative function field references. The value identifies the function; it is not signed for a call.
+const void *ABISwiftAsyncFunctionPointerCode(const void *pointer);
 /// Copies up to `capacity` descriptors of the conformances to `protocol` that the conformance records of the image containing `address` list, and returns how many the image lists.
 size_t ABISwiftImageConformanceDescriptors(const void *address, const void *protocol,
     const void **descriptors, size_t capacity);

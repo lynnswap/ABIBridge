@@ -719,10 +719,8 @@ public actor NativeSwiftType: Hashable {
                         // A requirement's own symbol in a resilient protocol is
                         // its default implementation, not a conformance's witness.
                         case .protocolRequirement where candidate.record.role != .implementation:
-                            if case .witness(let witness) = candidate.record.role {
-                                considered.insert(witness.requirement)
-                            } else {
-                                considered.insert(candidate.record.identity)
+                            if let requirement = candidate.record.requirement {
+                                considered.insert(requirement)
                             }
                         case .protocolExtension: break
                         default: return nil
@@ -984,16 +982,13 @@ public actor NativeSwiftType: Hashable {
         declaredAs declaredSignature: String? = nil,
         valueABIs: [NativeSwiftType: NativeType] = [:]
     ) throws -> NativeSwiftFunction<Signature> {
-        let qualifier = SwiftMemberLookup.owner(of: name)
-        let member = qualifier.map { name.dropFirst($0.count + 1) } ?? Substring(name)
+        let isQualified = SwiftMemberLookup.isQualified(name)
+        let member = SwiftMemberLookup.member(of: name) ?? name
         guard member.hasPrefix("init(") || member.hasPrefix("init<") else {
             throw ABIResolutionError.unsupportedDeclaration(
-                "An initializer name must start with init( or init<, after any qualifier."
+                "An initializer name must start with init( or init<, after a protocol that qualifies it."
             )
         }
-        // A class's allocating initializer has its own name; a protocol's
-        // initializer requirement keeps init.
-        let allocating = metadata is AnyClass ? "__allocating_" + member : String(member)
         let initializer = try resolveMember(
             named: name,
             signature: signature,
@@ -1002,14 +997,18 @@ public actor NativeSwiftType: Hashable {
             declaredSignature: declaredSignature,
             valueABIs: valueABIs
         ) { owner in
-            guard let qualifier else {
+            // A protocol's initializer keeps its name; this type's own is
+            // named relative to it, and a class's allocates.
+            guard isQualified else {
+                let allocating = metadata is AnyClass ? "__allocating_" + name : name
                 return NativeDeclaration(name: owner + "." + allocating, language: .swift)
             }
-            let ownsMember = SwiftMemberLookup.belongs(name, to: owner)
-            return NativeDeclaration(
-                name: ownsMember ? qualifier + "." + allocating : name,
-                language: .swift
-            )
+            guard !SwiftMemberLookup.belongs(name, to: owner) else {
+                throw ABIResolutionError.unsupportedDeclaration(
+                    "Name this type's own initializer relative to the type, such as init(text:)."
+                )
+            }
+            return NativeDeclaration(name: name, language: .swift)
         }
         return try prepareFunction(
             initializer,
