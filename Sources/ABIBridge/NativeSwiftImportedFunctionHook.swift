@@ -40,6 +40,7 @@ extension ABIRuntime {
         try await NativePreparation.run {
             try ImportedFunctionSelection(
                 resolver: self.resolver,
+                declaration: entry.declaration,
                 symbols: entry.importedSymbols,
                 importer: importer,
                 provider: provider

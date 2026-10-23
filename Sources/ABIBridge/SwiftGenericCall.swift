@@ -2071,13 +2071,13 @@ struct SwiftGenericCallPlan: Sendable {
         // Swift hashes an Optional of a function by the function's own type
         // within `Optional<…>`, and that function type by its abstraction in
         // the declaration, not by the bound type's.
-        if let wrapped = formal.optionalWrapped,
-            case .function = try binding.canonicalType(of: wrapped)
+        if formal.optionalWrapped != nil,
+            let function = try storedFunction(formal, binding: binding)
         {
             let payload =
                 actual is any SwiftClosureValue.Type
-                ? actual : try binding.types(wrapped)[0]
-            return try authTypes(wrapped, actual: payload, binding: binding, position: position)
+                ? actual : try binding.types(function)[0]
+            return try authTypes(function, actual: payload, binding: binding, position: position)
                 .map { "Optional<" + $0 + ">" }
         }
         if case .function(let parameters, let result, _, let attributes) = formal {

@@ -201,7 +201,9 @@ struct SwiftHookDeclarationTests {
                     public init() {}
                     @inline(never) open func generic<T>(_ value: T) -> Int64 { 1 }
                     @inline(never) open func plain(_ value: Int64) -> Int64 { value }
+                    @inline(never) open class func scaled(_ value: Int64) -> Int64 { value * 2 }
                 }
+                @inline(never) public func identity(_ value: Int64) -> Int64 { value }
                 """,
             linkArguments: ["-O", "-swift-version", "6", "-parse-as-library"]
         )
@@ -270,6 +272,22 @@ struct SwiftHookDeclarationTests {
         }
         expectMismatch(at: .argument(0)) {
             _ = try unsafe plain.prepareImportedReplacementAndWait(with: generic, in: scope)
+        }
+        // A class method takes its metatype as self, which callers of a free
+        // function do not pass; a free function ignores the one it receives.
+        let scaled = try await renderer.resolveStaticMethod(
+            named: "scaled(_:)",
+            as: ((Int64) -> Int64).self
+        )
+        let identity = try await function("identity(_:)", as: ((Int64) -> Int64).self)
+        expectMismatch(at: .receiver) {
+            _ = try unsafe identity.prepareImportedReplacementAndWait(with: scaled, in: scope)
+        }
+        do {
+            _ = try unsafe scaled.prepareImportedReplacementAndWait(with: identity, in: scope)
+            Issue.record("The provider imports no reference to scaled(_:)")
+        } catch ABIResolutionError.declarationNotFound {
+            // Compatible: only import selection finds no reference.
         }
     }
 }

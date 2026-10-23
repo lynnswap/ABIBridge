@@ -82,6 +82,7 @@ extension ABIRuntime {
     ) throws -> SwiftReplacementStorage {
         let selection = try ImportedFunctionSelection(
             resolver: resolver,
+            declaration: target.declaration,
             symbols: target.importedSymbols,
             importer: importer,
             provider: provider
@@ -337,7 +338,7 @@ extension NativeSwiftFunction {
                 "Generic imported replacement requires a polymorphic replacement contract; use direct invocation."
             )
         }
-        try call.requireReplacement(replacement.call, declaration: replacement.declaration)
+        try requireReplacement(replacement)
         let storage = try runtime.prepareSwiftImportReplacementAndWait(
             target: entry,
             replacement: replacement.entry,

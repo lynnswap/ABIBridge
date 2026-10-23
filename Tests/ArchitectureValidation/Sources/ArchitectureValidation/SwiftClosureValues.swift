@@ -552,6 +552,52 @@ private final class ExtensionClosureCaller {
     let presentResult = try unsafe returnedOptional.unsafeInvoke("input")
     try check(absentResult == nil && presentResult == "input" + prefix,
               "Returned Optional String closure matches native pointer authentication")
+    do {
+        typealias Increment = NativeSwiftClosure<(Int64) -> Int64>
+        typealias Applier = NativeSwiftClosure<(Increment?, Int64) -> Int64>
+        let applyGeneric = try await runtime.resolveSwiftFunction(
+            named: "SwiftReplacementFixtures.applyGenericOptionalClosureValue(_:_:)",
+            as: ((Increment?, Int64) -> Int64).self,
+            genericArguments: [.type(Int64.self)])
+        let tripled = try unsafe applyGeneric.unsafeInvoke(Increment { $0 * 3 }, 5)
+        let unchanged = try unsafe applyGeneric.unsafeInvoke(nil, 5)
+        try check(tripled == 15 && unchanged == 5,
+            "Generic Optional closures pass with the declaration's abstraction, and nil as null")
+        let passGeneric = try await runtime.resolveSwiftFunction(
+            named: "SwiftReplacementFixtures.passGenericOptionalClosureValues(_:_:)",
+            as: ((Int64, Applier) -> (Int64, Int64)).self,
+            genericArguments: [.type(Int64.self)])
+        let receive = try Applier { body, value in
+            guard let body else { return -value }
+            return (try? unsafe body.unsafeInvoke(value + 1)) ?? 0
+        }
+        let passed = try unsafe passGeneric.unsafeInvoke(4, receive)
+        try check(passed.0 == -4 && passed.1 == 5,
+            "Native code passes nil and generic Optional closures to an authenticated callback")
+        let makeApplier = try await runtime.resolveSwiftFunction(
+            named: "SwiftReplacementFixtures.makeGenericOptionalApplierValue(_:)",
+            as: ((Int64.Type) -> Applier).self,
+            genericArguments: [.type(Int64.self)])
+        let applier = try unsafe makeApplier.unsafeInvoke(Int64.self)
+        let applied = try unsafe applier.unsafeInvoke(Increment { $0 + 10 }, 1)
+        let skipped = try unsafe applier.unsafeInvoke(nil, 1)
+        try check(applied == 11 && skipped == 1,
+            "A returned closure takes generic Optional closures with their discriminator")
+        let makeValue = try await runtime.resolveSwiftFunction(
+            named: "SwiftReplacementFixtures.makeOptionalClosureValue(_:)",
+            as: ((Bool) -> NativeSwiftValue).self)
+        let applyValue = try await runtime.resolveSwiftFunction(
+            named: "SwiftReplacementFixtures.applyOptionalClosureValue(_:_:)",
+            as: ((NativeSwiftValue, Int64) -> Int64).self)
+        let some = try unsafe makeValue.unsafeInvoke(true)
+        let none = try unsafe makeValue.unsafeInvoke(false)
+        try check(try some.withCopy { ($0 as? ((Int64) -> Int64)?)??(5) } == 6,
+            "A runtime value of an Optional closure stores it as Swift stores its type")
+        let incremented = try unsafe applyValue.unsafeInvoke(some, 41)
+        let absent = try unsafe applyValue.unsafeInvoke(none, 41)
+        try check(incremented == 42 && absent == -1,
+            "A runtime value of an Optional closure passes back with its declaration's signing")
+    }
     let vectorCall = try await runtime.resolveSwiftFunction(
         named: "SwiftReplacementFixtures.callExplicitVector(_:_:)",
         as: ((NativeSwiftClosure<(ExplicitVector) -> ExplicitVector>, ExplicitVector) -> ExplicitVector).self
