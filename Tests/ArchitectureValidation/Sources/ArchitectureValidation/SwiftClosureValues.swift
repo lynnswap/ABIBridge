@@ -68,6 +68,11 @@ private final class PrivateClosureCaller {
     @inline(never) @_optimize(none) func makePointReader() -> (PrivateClosurePoint) -> Double {
         { $0.x + $0.y }
     }
+    // An optimized build emits a private type's metadata only for code that
+    // uses it, and ABIBridge describes the closures' types by their metadata.
+    @inline(never) @_optimize(none) func types() -> [Any.Type] {
+        [PrivateClosurePoint.self, PrivateClosureChoice.self]
+    }
 }
 
 @MainActor func validateSwiftClosureValues() async throws -> [String] {
@@ -620,7 +625,7 @@ private final class PrivateClosureCaller {
         }
         try check(
             caller.callPoint { $0.x + $0.y } == 42 && caller.callChoice(readChoice) == 42
-                && caller.makePointReader()(caller.makePoint()) == 42,
+                && caller.makePointReader()(caller.makePoint()) == 42 && caller.types().count == 2,
             "Private closure compiler control")
         // ABIBridge infers the private types, which callers cannot name.
         typealias Callback = NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Double>
