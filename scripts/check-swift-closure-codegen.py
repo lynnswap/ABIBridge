@@ -15,6 +15,16 @@ extensions rely on (#435):
   descriptor of its own, so runtime names spell declarations in either;
 - an extension's requirement records omit conformances to marker protocols,
   so an extension that adds only marker protocols records no requirement.
+
+It also checks the facts that closure discriminators of private types rely on
+(#451):
+
+- a closure's discriminator hashes a private struct or enum's declaration with
+  its file's private discriminator, as its nominal type descriptor symbol
+  spells it;
+- in a -g -Onone build, the anonymous context that wraps a private type
+  records that declaration as its mangled name, and a type nested in a
+  private type has no anonymous context of its own.
 """
 
 import json
@@ -66,6 +76,18 @@ extension Box where T: Sendable { struct Marked { var x: Double } }
 extension Box where T: Equatable & Sendable { struct Mixed { var x: Double } }
 """ + "".join(f"@inline(never) func apply{name}(_ f: ({spelling}) -> Double) -> Double {{ f(.init(x: 1)) }}\n"
               for name, spelling in EXTENSION_TYPES.items())
+
+# Each type as its descriptor demangles, after the module.
+PRIVATE_TYPES = {"Hidden": r"\(Hidden in _\w+\)", "Choice": r"\(Choice in _\w+\)",
+                 "Nested": r"\(Wrapper in _\w+\)\.Nested"}
+PRIVATE_SOURCE = """
+private struct Hidden { var x: Double }
+private enum Choice { case real(Double), none }
+private struct Wrapper { struct Nested { var x: Double } }
+@inline(never) private func applyHidden(_ f: (Hidden) -> Double) -> Double { f(.init(x: 1)) }
+@inline(never) private func applyChoice(_ f: (Choice) -> Double) -> Double { f(.real(1)) }
+@inline(never) private func applyNested(_ f: (Wrapper.Nested) -> Double) -> Double { f(.init(x: 1)) }
+"""
 
 
 def pointer_auth_discriminator(text):
@@ -185,6 +207,49 @@ def check_extension_discriminators(directory, sdk):
     return {"declarations": declarations, "extensionRequirements": requirements}
 
 
+def check_private_discriminators(directory, sdk):
+    source = directory / "Private.swift"
+    source.write_text(PRIVATE_SOURCE)
+    ir_path = directory / "private.ll"
+    # The driver records anonymous context names for -g -Onone.
+    run("xcrun", "swiftc", "-swift-version", "6", "-parse-as-library", "-g", "-Onone",
+        "-target", "arm64e-apple-ios18.4", "-sdk", sdk, "-module-name", "PrivateProbe",
+        "-emit-ir", str(source), "-o", str(ir_path))
+    ir = ir_path.read_text()
+    # A mangled name can spell a word of the module name as a substitution,
+    # even within a private discriminator, so descriptors are found by their
+    # demangled names, which spell each private discriminator.
+    descriptors = re.findall(r'^@"\$s(\w+)Mn" =', ir, re.M)
+    demangled = subprocess.run(["xcrun", "swift-demangle", "--compact"], check=True, capture_output=True,
+                               text=True, input="".join(f"$s{name}Mn\n" for name in descriptors)).stdout
+    named = dict(zip(demangled.splitlines(), descriptors))
+    declarations = {}
+    for name, pattern in PRIVATE_TYPES.items():
+        found = [declaration for text, declaration in named.items()
+                 if re.fullmatch(r"nominal type descriptor for PrivateProbe\." + pattern, text)]
+        require(len(found) == 1, f"arm64e: missing the nominal type descriptor of {name}: {found}")
+        declarations[name] = found[0]
+        calls = re.findall(r'"ptrauth"\(i32 0, i64 (\d+)\)', function(ir, "define", f"apply{name}"))
+        require(len(calls) == 1, f"arm64e: re-evaluate the closure call in apply{name}: {calls}")
+        hashed = pointer_auth_discriminator(f"function:1:$s{found[0]}:1:$sSd:")
+        require(int(calls[0]) == hashed,
+                f"arm64e: the closure discriminator over {name} no longer hashes its declaration "
+                f"{found[0]}: {calls[0]} != {hashed}")
+    for name in ["Hidden", "Choice"]:
+        declaration = declarations[name]
+        anonymous = re.search(r'^@"\$s' + re.escape(declaration) + r'MXX" = [^\n]*?<\{ i32 (\d+),'
+                              r'[^\n]*?@"(\.str[^"]*)"', ir, re.M)
+        require(anonymous is not None and int(anonymous[1]) & 0x10000,
+                f"arm64e: the anonymous context of {name} must record its mangled name with -g -Onone")
+        recorded = re.search(r'^@"' + re.escape(anonymous[2]) + r'" = [^\n]*c"([^"]*)\\00"', ir, re.M)
+        require(recorded is not None and recorded[1] == "$s" + declaration,
+                f"arm64e: the anonymous context of {name} must record its declaration {declaration}: "
+                f"{recorded and recorded[1]}")
+    require(re.search(r'^@"\$s' + re.escape(declarations["Nested"]) + r'MXX" =', ir, re.M) is None,
+            "arm64e: a type nested in a private type must not have an anonymous context of its own")
+    return {"declarations": declarations}
+
+
 def main():
     root = Path(__file__).resolve().parent.parent
     output = root / ".build/swift-closure-codegen"
@@ -240,6 +305,7 @@ def main():
                  "genericInvocation": calls[0], "reabstractionDirections": 3}
         if target.startswith("arm64e"):
             entry["extensions"] = check_extension_discriminators(directory, sdk)
+            entry["privateTypes"] = check_private_discriminators(directory, sdk)
             entry["existentials"] = check_existential_discriminators(directory, sdk)
         reports.append(entry)
     report = {"compiler": run("xcrun", "swiftc", "--version").strip(),

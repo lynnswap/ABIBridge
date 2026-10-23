@@ -48,6 +48,33 @@ private final class NestedClosureProbeCapture: @unchecked Sendable {
     var asyncValue: NativeSwiftClosure<nonisolated(nonsending) (Int64) async -> Int64>?
 }
 
+// The compiler signs a closure over a private type with a discriminator that
+// hashes the type's declaration with this file's private discriminator.
+private struct PrivateClosurePoint { var x: Double, y: Double }
+private enum PrivateClosureChoice { case value(Double), none }
+// Unoptimized methods keep the entry points that ABIBridge resolves.
+private final class PrivateClosureCaller {
+    @inline(never) @_optimize(none)
+    func callPoint(_ callback: (PrivateClosurePoint) -> Double) -> Double {
+        callback(PrivateClosurePoint(x: 40, y: 2))
+    }
+    @inline(never) @_optimize(none)
+    func callChoice(_ callback: (PrivateClosureChoice) -> Double) -> Double {
+        callback(.value(42))
+    }
+    @inline(never) @_optimize(none) func makePoint() -> PrivateClosurePoint {
+        PrivateClosurePoint(x: 40, y: 2)
+    }
+    @inline(never) @_optimize(none) func makePointReader() -> (PrivateClosurePoint) -> Double {
+        { $0.x + $0.y }
+    }
+    // An optimized build emits a private type's metadata only for code that
+    // uses it, and ABIBridge describes the closures' types by their metadata.
+    @inline(never) @_optimize(none) func types() -> [Any.Type] {
+        [PrivateClosurePoint.self, PrivateClosureChoice.self]
+    }
+}
+
 @MainActor func validateSwiftClosureValues() async throws -> [String] {
     let runtime = ABIRuntime()
     var checks: [String] = []
@@ -589,5 +616,36 @@ private final class NestedClosureProbeCapture: @unchecked Sendable {
     let nestedBody = try NativeSwiftClosure { (value: Namespace.箱<Int64>) in Namespace.箱(value.value + 7) }
     try check(try unsafe applyNested.unsafeInvoke(nestedBody, Namespace.箱(35)).value == 42,
               "Nested Unicode generic identity matches compiler-authenticated calls")
+
+    do {
+        // Compiler calls keep the private methods and control their results.
+        let caller = PrivateClosureCaller()
+        let readChoice = { (choice: PrivateClosureChoice) -> Double in
+            if case .value(let value) = choice { value } else { 0 }
+        }
+        try check(
+            caller.callPoint { $0.x + $0.y } == 42 && caller.callChoice(readChoice) == 42
+                && caller.makePointReader()(caller.makePoint()) == 42 && caller.types().count == 2,
+            "Private closure compiler control")
+        // ABIBridge infers the private types, which callers cannot name.
+        typealias Callback = NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Double>
+        let object = runtime.object(caller)
+        let callPoint = try await object.resolveMethod(
+            named: "callPoint(_:)", as: ((Callback) -> Double).self)
+        try check(try unsafe callPoint.unsafeInvoke(Callback { _ in 42 }) == 42,
+                  "A native call authenticates a closure over a private struct")
+        let callChoice = try await object.resolveMethod(
+            named: "callChoice(_:)", as: ((Callback) -> Double).self)
+        try check(try unsafe callChoice.unsafeInvoke(Callback { _ in 42 }) == 42,
+                  "A native call authenticates a closure over a private enum")
+        let makePoint = try await object.resolveMethod(
+            named: "makePoint()", as: (() -> NativeSwiftValue).self)
+        let makePointReader = try await object.resolveMethod(
+            named: "makePointReader()",
+            as: (() -> NativeSwiftClosure<(NativeSwiftValue) -> Double>).self)
+        let pointReader = try unsafe makePointReader.unsafeInvoke()
+        try check(try unsafe pointReader.unsafeInvoke(makePoint.unsafeInvoke()) == 42,
+                  "A returned closure over a private struct authenticates with the native discriminator")
+    }
     return checks
 }

@@ -706,7 +706,16 @@ enum SwiftInferredValue {
 /// A runtime type name omits a constrained extension's generic signature,
 /// which this declaration includes.
 func swiftExportedTypeDeclaration(_ metadata: Any.Type) -> String? {
-    ModuleContext.exportedDeclaration(of: metadata)
+    ModuleContext.descriptorDeclaration(of: metadata, inSymbolTable: false)
+}
+
+/// The mangled declaration, such as `8ProbeLib1P33_…LLV`, under which the
+/// image that defines a struct or enum names the type's nominal type
+/// descriptor, in its exports or its symbol table. Only local symbols name a
+/// private or local type, whose declaration has a private or local
+/// discriminator that its runtime name omits.
+func swiftTypeDeclarationFromSymbols(_ metadata: Any.Type) -> String? {
+    ModuleContext.descriptorDeclaration(of: metadata, inSymbolTable: true)
 }
 
 /// The image and module that declare a nominal type, and what they show.
@@ -780,18 +789,19 @@ private struct ModuleContext {
     }
 
     /// The mangled declaration under which the image that defines a struct
-    /// or enum exports the type's nominal type descriptor.
-    static func exportedDeclaration(of metadata: Any.Type) -> String? {
+    /// or enum exports the type's nominal type descriptor, or with
+    /// `inSymbolTable`, also names it in its symbol table.
+    static func descriptorDeclaration(of metadata: Any.Type, inSymbolTable: Bool) -> String? {
         guard
             let descriptor = ABISwiftTypeDescriptor(
                 unsafeBitCast(metadata, to: UnsafeRawPointer.self)
             ),
             let image = image(defining: descriptor)?.image
         else { return nil }
-        return RuntimeSymbolResolver.shared.exportedSwiftTypeDeclaration(
-            at: UInt64(UInt(bitPattern: descriptor)),
-            in: image
-        )
+        let address = UInt64(UInt(bitPattern: descriptor))
+        return inSymbolTable
+            ? RuntimeSymbolResolver.shared.swiftTypeDeclaration(at: address, in: image)
+            : RuntimeSymbolResolver.shared.exportedSwiftTypeDeclaration(at: address, in: image)
     }
 
     /// The header of the image that defines `descriptor`, and the image when
