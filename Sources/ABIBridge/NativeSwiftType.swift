@@ -773,7 +773,6 @@ public actor NativeSwiftType: Hashable {
                         try checkRequirements(
                             excluding: declaration,
                             isAsync: description.isAsync,
-                            isThrowing: description.failure != Never.self,
                             considered: considered,
                             conformances: conformances
                         ) { witness in

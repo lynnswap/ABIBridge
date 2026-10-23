@@ -145,9 +145,9 @@ Lookup binds `Self` to the concrete type and requires its native conformance. A 
 Before an extension member stands in for a protocol-qualified name, lookup establishes that no requirement of the protocol is the requested member. The name refers to the protocol's own members; a requirement that the protocol inherits from another protocol has that protocol's name.
 
 - A Swift protocol's descriptor records each requirement's kind and effects but not its name, so only requirements of the member's own kind, static or not and async or not, can be the member. A method descriptor, which library evolution exports, names such a requirement, and so does the witness that a conformance's witness table holds for it. When a requirement that the member could be has no name in the loaded images, as in a module built without library evolution whose images are stripped, lookup throws ``ABIResolutionError/metadataUnavailable(_:)``.
-- An Objective-C protocol, imported or declared `@objc`, lists its requirements as Objective-C methods. A requirement is the member when its selector is one that Swift gives the member's name and effects by default, and lookup then throws ``ABIResolutionError/unsupportedDeclaration(_:)``; call the requirement as an Objective-C method. A requirement whose selector does not follow from its Swift name, such as one renamed with `@objc(…)` or `NS_SWIFT_NAME`, is not recognized.
+- An Objective-C protocol, imported or declared `@objc`, is not checked: the Objective-C runtime names its requirements only by selectors, which do not establish their Swift names. A protocol-qualified name selects the protocol's Swift extension member.
 
-Name the extension member with its complete `(extension in Module):` declaration to select it without these checks.
+Name the extension member with its complete `(extension in Module):` declaration to select it without this check.
 
 A requirement can also depend on associated types. For a concrete `builder` conforming to `Example.Builder`, whose `Request` associated type has an `Output` associated type:
 

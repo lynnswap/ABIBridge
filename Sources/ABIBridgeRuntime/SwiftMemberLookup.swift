@@ -80,14 +80,6 @@ package enum SwiftMemberLookup {
             }
         }
         if isDestructor(text) { return DeclarationKey.make(head(text)) }
-        guard let (name, labels) = labeledName(text) else { return nil }
-        return DeclarationKey.make(name + "(" + labels.map { $0 + ":" }.joined() + ")")
-    }
-
-    /// A function's qualified name without generic parameters, and its
-    /// argument labels, `_` for none, from a label-only or complete name.
-    package static func labeledName(_ declaration: String) -> (name: String, labels: [String])? {
-        let text = SymbolIndex.extensionMemberName(declaration) ?? declaration
         guard let opening = SwiftFormalSyntax.parameterOpening(in: text),
             let closing = SwiftFormalSyntax.matchingClose(in: text, opening: opening)
         else { return nil }
@@ -107,10 +99,8 @@ package enum SwiftMemberLookup {
                 } ?? "_"
             }
         }
-        var name = String(text[..<opening])
-        for group in SwiftGenericSyntax.groups(in: name).reversed() {
-            name.removeSubrange(group.range)
-        }
-        return (name, labels)
+        return DeclarationKey.make(
+            head(String(text[..<opening])) + "(" + labels.map { $0 + ":" }.joined() + ")"
+        )
     }
 }

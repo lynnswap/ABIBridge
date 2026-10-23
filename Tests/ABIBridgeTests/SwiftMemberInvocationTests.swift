@@ -830,20 +830,18 @@ struct SwiftMemberInvocationTests {
         #expect(try unsafe read.unsafeInvoke(on: make.unsafeInvoke()) == -1)
     }
 
-    @Test func objectiveCProtocolRequirementsAreMatchedBySelector() async throws {
+    @Test func objectiveCProtocolExtensionMembersResolveWithoutRequirementChecks() async throws {
         let module = "Foreign_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
-        // Objective-C protocols have no Swift protocol descriptor; their
-        // requirements are Objective-C method descriptions.
+        // Objective-C protocols have no Swift protocol descriptor, and their
+        // runtime records name requirements only by selectors.
         let library = try FixtureLibrary(
             swiftModule: module,
             swiftSource: """
                 import Foundation
                 @objc public protocol Foreign {
-                    func extra() -> Int64
-                    func store(_ value: Int64, at index: Int64)
+                    func storeValue(_ value: Int64)
                 }
                 extension Foreign {
-                    @inline(never) public func extra() -> Int64 { -1 }
                     @inline(never) public func bonus() -> Int64 { 2 }
                     @inline(never) public func store(value: Int64) -> Int64 { value }
                 }
@@ -851,8 +849,7 @@ struct SwiftMemberInvocationTests {
                     @inline(never) public func copied() -> Int64 { 3 }
                 }
                 public final class Impl: NSObject, Foreign, NSCopying {
-                    public func extra() -> Int64 { 7 }
-                    public func store(_ value: Int64, at index: Int64) {}
+                    public func storeValue(_ value: Int64) {}
                     public func copy(with zone: NSZone? = nil) -> Any { self }
                 }
                 public func makeImpl() -> AnyObject { Impl() }
@@ -869,41 +866,23 @@ struct SwiftMemberInvocationTests {
             in: scope
         )
         let object = try unsafe make.unsafeInvoke()
-        // No requirement has the selector bonus or storeWithValue:.
         let bonus = try await type.resolveMethod(
             named: module + ".Foreign.bonus()",
             as: (() -> Int64).self
         )
         #expect(try unsafe bonus.unsafeInvoke(on: object) == 2)
+        // The requirement storeValue: is another member than store(value:).
         let store = try await type.resolveMethod(
             named: module + ".Foreign.store(value:)",
             as: ((Int64) -> Int64).self
         )
         #expect(try unsafe store.unsafeInvoke(on: object, 42) == 42)
-        // An imported protocol's requirement, copyWithZone:, is not copied.
+        // An imported protocol's extension member.
         let copied = try await type.resolveMethod(
             named: "__C.NSCopying.copied()",
             as: (() -> Int64).self
         )
         #expect(try unsafe copied.unsafeInvoke(on: object) == 3)
-        // The requirement extra has the selector that extra() has, so the
-        // extension member does not stand in for it.
-        await #expect {
-            _ = try await type.resolveMethod(
-                named: module + ".Foreign.extra()",
-                as: (() -> Int64).self
-            )
-        } throws: { error in
-            guard case ABIResolutionError.unsupportedDeclaration(let message) = error else {
-                return false
-            }
-            return message.contains("Objective-C method extra")
-        }
-        let extra = try await type.resolveMethod(
-            named: "(extension in \(module)):\(module).Foreign.extra() -> Swift.Int64",
-            as: (() -> Int64).self
-        )
-        #expect(try unsafe extra.unsafeInvoke(on: object) == -1)
     }
 
     @Test func classMembersExportedOnlyThroughDispatchThunksCaptureTheSelectedEntry() async throws {

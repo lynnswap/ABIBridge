@@ -212,25 +212,21 @@ extension NativeSwiftType {
     /// Checks that no requirement of the protocol that qualifies `request`
     /// can be the requested member, before an extension member stands in.
     ///
-    /// The protocol's own records decide this for every protocol that a
-    /// Swift extension can extend; marker protocols such as `Sendable`
-    /// cannot be extended, and the requirements of a refined protocol belong
-    /// to that protocol's own qualified name.
+    /// The qualified name refers to the protocol's own members; a requirement
+    /// that the protocol inherits has the inherited protocol's name. A Swift
+    /// protocol's descriptor records each requirement's kind and effects but
+    /// not its name, so only a requirement of the member's own kind, static
+    /// or not and async or not, can be the member. Each such requirement is
+    /// named by its method descriptor, which library evolution exports, or by
+    /// the witness that a conformance's witness table holds in its slot. A
+    /// named requirement with the requested name that selection has not
+    /// considered is checked against the request with that witness. When a
+    /// requirement of the member's kind has no established name, lookup fails
+    /// instead of selecting the extension member.
     ///
-    /// - An Objective-C protocol, imported or declared `@objc`, lists its
-    ///   requirements as Objective-C method descriptions. A requirement is
-    ///   the requested member when its selector is one that Swift gives the
-    ///   member's name and effects.
-    /// - A Swift protocol's descriptor records each requirement's kind and
-    ///   effects but not its name, so only a requirement of the member's own
-    ///   kind, static or not and async or not, can be the member. Each such
-    ///   requirement is named by its method descriptor, which library
-    ///   evolution exports, or by the witness that a conformance's witness
-    ///   table holds in its slot. A named requirement with the requested
-    ///   name that selection has not considered is checked against the
-    ///   request with that witness. When a requirement of the member's kind
-    ///   has no established name, lookup fails instead of selecting the
-    ///   extension member.
+    /// An Objective-C protocol, imported or declared `@objc`, is not checked:
+    /// its runtime records name requirements only by selectors, which do not
+    /// establish their Swift names. Marker protocols cannot be extended.
     ///
     /// - Parameters:
     ///   - considered: The requirements that selection already considered.
@@ -241,7 +237,6 @@ extension NativeSwiftType {
     nonisolated func checkRequirements(
         excluding request: NativeDeclaration,
         isAsync: Bool,
-        isThrowing: Bool,
         considered: Set<String>,
         conformances: [UnsafeRawPointer: NativeImage],
         accepts: (SwiftCandidate) throws -> Bool
@@ -253,39 +248,11 @@ extension NativeSwiftType {
                     + " Name an extension member with its complete (extension in Module): declaration to select it."
             )
         }
-        let isStatic = request.name.hasPrefix("static ")
-        let text = isStatic ? String(request.name.dropFirst(7)) : request.name
         // Generic binding identifies an Objective-C protocol by this name
         // before a Swift protocol descriptor.
-        if let objectiveC = NSProtocolFromString(
+        if NSProtocolFromString(
             protocolName.hasPrefix("__C.") ? String(protocolName.dropFirst(4)) : protocolName
-        ) {
-            let selectors = Self.objectiveCSelectors(
-                of: text,
-                isAsync: isAsync,
-                isThrowing: isThrowing
-            )
-            for isRequired in [true, false] {
-                var count: UInt32 = 0
-                guard
-                    let methods = protocol_copyMethodDescriptionList(
-                        objectiveC,
-                        isRequired,
-                        !isStatic,
-                        &count
-                    )
-                else { continue }
-                defer { free(methods) }
-                for index in 0..<Int(count) {
-                    guard let selector = methods[index].name,
-                        selectors.contains(NSStringFromSelector(selector))
-                    else { continue }
-                    throw ABIResolutionError.unsupportedDeclaration(
-                        request.name
-                            + ": \(protocolName) requires the Objective-C method \(NSStringFromSelector(selector)), which this name also names, so no extension member stands in for it. Call the requirement as an Objective-C method."
-                    )
-                }
-            }
+        ) != nil {
             return
         }
         guard let protocolSymbol = try protocolDescriptor(qualifying: request) else {
@@ -296,6 +263,8 @@ extension NativeSwiftType {
         let protocolAddress = unsafe protocolSymbol.withUnsafeAddress { $0 }
         // The requirements of the member's kind, with their witness-table
         // slots, which follow the conformance descriptor's.
+        let isStatic = request.name.hasPrefix("static ")
+        let text = isStatic ? String(request.name.dropFirst(7)) : request.name
         let member = SwiftMemberLookup.owner(of: text).map { text.dropFirst($0.count + 1) }
         let kind: UInt32 =
             text.contains(".getter : ")
@@ -416,46 +385,6 @@ extension NativeSwiftType {
                 "\(unnamed.count) requirements of \(protocolName) that this member could be have no method descriptor or conformance's witness in the loaded images, so whether it is one of them is not established. A conformance's witnesses are local symbols, which stripping removes."
             )
         }
-    }
-
-    /// The selectors that Swift gives an `@objc` member with this name and
-    /// these effects by default: a getter keeps the property's name, a setter
-    /// adds `set`, a subscript uses the keyed and indexed subscript methods, and
-    /// a method or initializer joins its base name with its argument labels.
-    /// The first label follows `With` unless it or the base name's last word
-    /// is a preposition; both spellings count. A throwing member adds an
-    /// error argument, and an async member a completion handler.
-    static func objectiveCSelectors(
-        of member: String,
-        isAsync: Bool,
-        isThrowing: Bool
-    ) -> Set<String> {
-        func capitalized(_ text: some StringProtocol) -> String {
-            text.prefix(1).uppercased() + text.dropFirst()
-        }
-        for (marker, isSetter) in [(".getter : ", false), (".setter : ", true)] {
-            guard let range = member.range(of: marker) else { continue }
-            let property = member[..<range.lowerBound].split(separator: ".").last ?? ""
-            if property == "subscript" {
-                return isSetter
-                    ? ["setObject:atIndexedSubscript:", "setObject:forKeyedSubscript:"]
-                    : ["objectAtIndexedSubscript:", "objectForKeyedSubscript:"]
-            }
-            return [isSetter ? "set" + capitalized(property) + ":" : String(property)]
-        }
-        guard let (name, labels) = SwiftMemberLookup.labeledName(member) else { return [] }
-        let base = name.split(separator: ".").last.map(String.init) ?? name
-        guard let first = labels.first else {
-            return [
-                isAsync
-                    ? base + "WithCompletionHandler:" : isThrowing ? base + "AndReturnError:" : base
-            ]
-        }
-        let heads =
-            first == "_" ? [base] : [base + capitalized(first), base + "With" + capitalized(first)]
-        let rest = labels.dropFirst().map { $0 == "_" ? ":" : $0 + ":" }.joined()
-        let effect = isAsync ? "completionHandler:" : isThrowing ? "error:" : ""
-        return Set(heads.map { $0 + ":" + rest + effect })
     }
 
     /// The witnesses at the async function pointers that Swift mangles as a
