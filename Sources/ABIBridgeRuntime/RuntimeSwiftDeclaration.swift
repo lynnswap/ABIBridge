@@ -11,6 +11,11 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
         case implementation
         /// A thunk that dispatches the declaration through its owner's table.
         case dispatchThunk
+        /// A conformance's witness of a protocol requirement: a thunk that
+        /// runs the conformance's implementation with the requirement's
+        /// calling convention. `conformanceDescriptor` is the mangled name of
+        /// the descriptor of the conformance it serves.
+        case witness(conformanceDescriptor: String)
     }
 
     package enum Accessor: Hashable, Sendable { case getter, setter }
@@ -35,18 +40,28 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
 
     package let role: Role
     package let accessor: Accessor?
-    /// Whether a call can run the symbol's own code: a declaration's code,
-    /// or a protocol requirement's thunk, which selects the conformance's
-    /// witness. A class member's thunk instead redispatches on the receiver.
-    package var runsOwnCode: Bool { role == .implementation || context == .protocolRequirement }
+    /// Whether a call can run the symbol's own code: a declaration's code, a
+    /// protocol requirement's thunk, which selects the conformance's witness,
+    /// or a conformance's witness, which applies to that conformance only. A
+    /// class member's thunk instead redispatches on the receiver.
+    package var runsOwnCode: Bool {
+        switch role {
+        case .implementation, .witness: true
+        case .dispatchThunk: context == .protocolRequirement
+        }
+    }
     package let isStatic: Bool
     package let context: Context
     /// The mangled name of the declaration itself. A declaration's code and
-    /// its dispatch thunk share this identity.
+    /// its dispatch thunk share this identity; a witness is its own.
     package let identity: String
+    /// For a protocol requirement's dispatch thunk, witness, or own symbol,
+    /// the requirement's mangled name, which the remangler produces from the
+    /// symbol's tree so that every record of one requirement spells it alike.
+    package let requirement: String?
 
     /// Returns nil for names that are not Swift declarations, such as
-    /// metadata, descriptors, and witnesses.
+    /// metadata and descriptors.
     package init?(linkageName: String) {
         let name = linkageName.hasPrefix("_") ? String(linkageName.dropFirst()) : linkageName
         guard
@@ -66,10 +81,21 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
             role = .dispatchThunk
             identity = name.hasSuffix("Tj") ? String(name.dropLast(2)) : name
             node = child
+        } else if node.kind == "ProtocolWitness", let conformance = node.child(0),
+            let entity = node.child(1),
+            let descriptor = Self.copy(
+                ABICopySwiftConformanceDescriptorSymbolName(conformance.pointer)
+            )
+        {
+            role = .witness(conformanceDescriptor: descriptor)
+            identity = name
+            node = entity
         } else {
             role = .implementation
             identity = name
         }
+        // The declaration, with its static and accessor wrappers.
+        let entity = node
         if node.kind == "Static", let child = node.child(0) {
             isStatic = true
             node = child
@@ -89,7 +115,11 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
             ].contains(node.kind),
             let owner = node.child(0)
         else { return nil }
+        // A witness serves a requirement, which a protocol declares.
+        if case .witness = role, owner.kind != "Protocol" { return nil }
         self.isStatic = isStatic
+        requirement =
+            owner.kind == "Protocol" ? Self.copy(ABICopySwiftEntitySymbolName(entity.pointer)) : nil
         switch owner.kind {
         case "Protocol":
             context = .protocolRequirement
@@ -107,6 +137,47 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
         default:
             context = .nominal
         }
+    }
+
+    /// The mangled name of the requirement that a method descriptor symbol
+    /// describes, which the remangler produces from the symbol's tree.
+    package static func methodDescriptorRequirement(linkageName: String) -> String? {
+        child(of: "MethodDescriptor", in: linkageName) {
+            copy(ABICopySwiftEntitySymbolName($0.pointer))
+        }
+    }
+
+    /// The mangled name of a protocol conformance descriptor symbol, as the
+    /// remangler produces it from the symbol's tree.
+    package static func conformanceDescriptor(linkageName: String) -> String? {
+        child(of: "ProtocolConformanceDescriptor", in: linkageName) {
+            copy(ABICopySwiftConformanceDescriptorSymbolName($0.pointer))
+        }
+    }
+
+    /// Applies `body` to the only child of a symbol's top-level `kind` node.
+    private static func child(
+        of kind: String,
+        in linkageName: String,
+        _ body: (Node) -> String?
+    ) -> String? {
+        let name = linkageName.hasPrefix("_") ? String(linkageName.dropFirst()) : linkageName
+        guard
+            let syntax = name.utf8CString.withUnsafeBufferPointer({
+                ABICopySwiftSymbolSyntax($0.baseAddress, $0.count - 1)
+            })
+        else { return nil }
+        defer { ABIReleaseSwiftSyntax(syntax) }
+        guard var node = ABISwiftSyntaxRoot(syntax).map(Node.init) else { return nil }
+        if node.kind == "Global", let child = node.child(0) { node = child }
+        guard node.kind == kind, let child = node.child(0) else { return nil }
+        return body(child)
+    }
+
+    private static func copy(_ name: UnsafeMutablePointer<CChar>?) -> String? {
+        guard let name else { return nil }
+        defer { ABIFreeString(name) }
+        return String(cString: name)
     }
 
     private struct Node {

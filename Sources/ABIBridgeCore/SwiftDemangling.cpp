@@ -163,6 +163,33 @@ char *ABICopySwiftSyntaxNodeMangledName(const ABISwiftSyntaxNode *node) {
 }
 
 namespace {
+// The remangler only reads the borrowed subtree; the wrappers are new nodes.
+char *copyGlobalSymbolName(NodePointer entity, Node::Kind wrapper) {
+    if (!entity) return nullptr;
+    NodeFactory factory;
+    if (wrapper != Node::Kind::Global) {
+        auto node = factory.createNode(wrapper);
+        node->addChild(entity, factory);
+        entity = node;
+    }
+    auto global = factory.createNode(Node::Kind::Global);
+    global->addChild(entity, factory);
+    auto result = swift::Demangle::mangleNode(global);
+    return result.isSuccess() ? strdup(result.result().c_str()) : nullptr;
+}
+}
+
+char *ABICopySwiftEntitySymbolName(const ABISwiftSyntaxNode *entity) {
+    return copyGlobalSymbolName(nativeNode(entity), Node::Kind::Global);
+}
+
+char *ABICopySwiftConformanceDescriptorSymbolName(const ABISwiftSyntaxNode *conformance) {
+    auto node = nativeNode(conformance);
+    if (!node || node->getKind() != Node::Kind::ProtocolConformance) return nullptr;
+    return copyGlobalSymbolName(node, Node::Kind::ProtocolConformanceDescriptor);
+}
+
+namespace {
 NodePointer copyTypeNode(NodeFactory &factory, NodePointer source) {
     auto result = source->hasText() ? factory.createNode(source->getKind(), source->getText())
         : source->hasIndex() ? factory.createNode(source->getKind(), source->getIndex())

@@ -92,7 +92,7 @@ struct SwiftMetadataResponse: BitwiseCopyable, ABIBridgeValue {
 ///
 /// Type lookup requests complete metadata without constructing an instance. Generic arguments are validated by the Swift runtime. Member lookups reuse the image's existing symbol index. See <doc:SwiftMemberInvocation> for lookup and invocation conventions.
 ///
-/// Protocol-qualified names, such as `Module.Protocol.member()` or a complete `(extension in Module):Module.Protocol.member() -> ...` declaration, bind Self to this concrete type for methods, accessors, and static members. genericArguments supplies only the type parameters introduced by the member.
+/// Protocol-qualified names, such as `Module.Protocol.member()` or a complete `(extension in Module):Module.Protocol.member() -> ...` declaration, bind Self to this concrete type for methods, accessors, subscripts, static members, and initializers. A requirement runs through the protocol's dispatch thunk or the witness of this type's conformance, never an extension member. genericArguments supplies only the type parameters introduced by the member.
 public actor NativeSwiftType: Hashable {
     /// Type handles compare by their concrete Swift metadata identity.
     public nonisolated static func == (lhs: NativeSwiftType, rhs: NativeSwiftType) -> Bool {
@@ -316,7 +316,7 @@ public actor NativeSwiftType: Hashable {
         )
     }
 
-    private nonisolated func declarationName() throws -> String {
+    nonisolated func declarationName() throws -> String {
         if let cached = cachedDeclarationName.withLock({ $0 }) { return cached }
         // Runtime value construction retains metadata without scanning symbols.
         // A member lookup needs the declaration's uninstantiated owner name.
@@ -593,9 +593,11 @@ public actor NativeSwiftType: Hashable {
     /// A complete declaration selects the candidates it spells, and the
     /// requested types may adapt them. A label-only name selects the
     /// candidates whose native signatures accept the requested types. A name
-    /// qualified by a protocol selects its requirement, called through the
-    /// dispatch thunk so that the conformance selects the witness, or a
-    /// protocol extension member.
+    /// qualified by a protocol selects its requirement, or else a protocol
+    /// extension member. A requirement is called through its dispatch thunk,
+    /// which selects the witness of the conformance a call passes, or else
+    /// through the witness of this type's conformance. An extension member
+    /// never stands in for a requirement.
     ///
     /// - Parameters:
     ///   - name: The requested name, relative to the owner or qualified.
@@ -622,6 +624,15 @@ public actor NativeSwiftType: Hashable {
         var ownerName = try declarationName()
         var hasUnavailableImages = false
         var preparationFailure: (any Error)?
+        // Why a requirement that the request names has no witness for this
+        // type. Extension members then never stand in for it.
+        var missingWitness: (any Error)?
+        // The requirements whose records selection considered, and the
+        // conformances whose witnesses it saw.
+        var considered: Set<String> = []
+        var conformances: [UnsafeRawPointer: NativeImage] = [:]
+        // This type's conformance to the protocol qualifying a request.
+        var protocolConformance: SwiftConformance??
         while true {
             let owner: Any.Type = ownerClass ?? metadata
             let enclosing =
@@ -630,25 +641,88 @@ public actor NativeSwiftType: Hashable {
             if originalRequest == nil { originalRequest = declaration }
             let isProtocolMember = !SwiftMemberLookup.belongs(declaration.name, to: ownerName)
             let extensionModule = Self.extensionModule(of: declaration.name)
+            // Prepares a candidate whose context applies to the request.
+            func prepare(
+                _ candidate: SwiftCandidate,
+                _ entry: SwiftEntry
+            ) throws -> SwiftGenericCallPlan? {
+                if isComplete {
+                    guard Self.spells(candidate, declaration.name, exactly: isQualified)
+                    else { return nil }
+                }
+                let plan = try SwiftGenericCallPlan(
+                    entry: entry,
+                    genericArguments: genericArguments,
+                    signature: description,
+                    resolver: resolver,
+                    enclosing: enclosing,
+                    implicitSelf: isProtocolMember ? self : nil,
+                    declaredSignature: declaredSignature,
+                    valueABIs: valueABIs
+                )
+                if isComplete {
+                    try plan.checkLowerings(description)
+                } else {
+                    try plan.check(description, representations: representations)
+                }
+                return plan
+            }
             func select(
                 extensionsOnly: Bool,
                 includingSharedCache: Bool
-            ) throws -> SwiftCandidateSelection<SwiftGenericCallPlan> {
-                SwiftCandidateSelection(
-                    try resolver.swiftDeclarationCandidates(
+            ) throws -> (
+                selection: SwiftCandidateSelection<SwiftGenericCallPlan>,
+                unserved: [NativeDeclaration]
+            ) {
+                var tier = SwiftRequirementCandidates(
+                    candidates: try resolver.swiftDeclarationCandidates(
                         declaration,
                         in: isProtocolMember || extensionsOnly ? nil : ownerImage,
                         extensionsOnly: extensionsOnly,
                         includingSharedCache: includingSharedCache
-                    ),
+                    )
+                )
+                if isProtocolMember && !extensionsOnly {
+                    // A protocol that exports dispatch thunks exports one for
+                    // each requirement, so their witnesses are not searched.
+                    let dispatches = tier.candidates.contains {
+                        $0.record.context == .protocolRequirement
+                            && $0.record.role == .dispatchThunk
+                    }
+                    if !dispatches {
+                        if protocolConformance == nil {
+                            protocolConformance = try protocolDescriptor(qualifying: declaration)
+                                .flatMap { symbol in
+                                    try conformance(to: unsafe symbol.withUnsafeAddress { $0 })
+                                }
+                        }
+                        if let own = protocolConformance ?? nil {
+                            tier.candidates += try witnesses(
+                                of: declaration,
+                                through: own,
+                                excluding: tier.candidates,
+                                includingSharedCache: includingSharedCache
+                            )
+                        }
+                    }
+                    tier = try servingWitnesses(tier.candidates)
+                    conformances.merge(tier.conformances) { first, _ in first }
+                }
+                var unserved: [NativeDeclaration] = []
+                let selection = SwiftCandidateSelection(
+                    tier.candidates,
                     namesDeclaration: isComplete,
                     dispatch: { try self.dispatchedEntry($0, asynchronous: description.isAsync) }
                 ) { candidate, entry -> SwiftGenericCallPlan? in
                     if isProtocolMember {
                         switch candidate.record.context {
-                        case .protocolRequirement where candidate.record.role == .dispatchThunk,
-                            .protocolExtension:
-                            break
+                        // A requirement's own symbol in a resilient protocol is
+                        // its default implementation, not a conformance's witness.
+                        case .protocolRequirement where candidate.record.role != .implementation:
+                            if let requirement = candidate.record.requirement {
+                                considered.insert(requirement)
+                            }
+                        case .protocolExtension: break
                         default: return nil
                         }
                     }
@@ -657,37 +731,31 @@ public actor NativeSwiftType: Hashable {
                     {
                         return nil
                     }
-                    if isComplete {
-                        guard Self.spells(candidate, declaration.name, exactly: isQualified)
-                        else { return nil }
-                    }
-                    let plan = try SwiftGenericCallPlan(
-                        entry: entry,
-                        genericArguments: genericArguments,
-                        signature: description,
-                        resolver: resolver,
-                        enclosing: enclosing,
-                        implicitSelf: isProtocolMember ? self : nil,
-                        declaredSignature: declaredSignature,
-                        valueABIs: valueABIs
-                    )
-                    if isComplete {
-                        try plan.checkLowerings(description)
-                    } else {
-                        try plan.check(description, representations: representations)
+                    guard let plan = try prepare(candidate, entry) else { return nil }
+                    // Another conformance's witness only shows that the
+                    // request names a requirement without this type's witness.
+                    if tier.others.contains(candidate.record.identity) {
+                        unserved.append(candidate.declaration)
+                        return nil
                     }
                     return plan
                 }
+                return (selection, unserved)
             }
             // The members a type declares hide those its extensions declare.
-            for extensionsOnly in [false, true] where extensionsOnly || extensionModule == nil {
+            for extensionsOnly in [false, true]
+            where extensionsOnly ? missingWitness == nil : extensionModule == nil {
                 var selection: SwiftCandidateSelection<SwiftGenericCallPlan>
+                var unserved: [NativeDeclaration]
                 do {
-                    selection = try select(extensionsOnly: extensionsOnly, includingSharedCache: false)
+                    (selection, unserved) = try select(
+                        extensionsOnly: extensionsOnly,
+                        includingSharedCache: false
+                    )
                     // The images can hold other overloads while only the shared
                     // cache's local symbols describe the requested one.
                     if selection.accepted.isEmpty && selection.failure == nil {
-                        selection = try select(
+                        (selection, unserved) = try select(
                             extensionsOnly: extensionsOnly,
                             includingSharedCache: true
                         )
@@ -697,15 +765,37 @@ public actor NativeSwiftType: Hashable {
                     continue
                 }
                 if let (entry, plan) = try selection.selected(for: declaration) {
+                    // A name that does not spell the extension's module can
+                    // also name a requirement.
+                    if isProtocolMember && extensionsOnly && extensionModule == nil {
+                        try checkRequirements(
+                            excluding: declaration,
+                            isAsync: description.isAsync,
+                            considered: considered,
+                            conformances: conformances
+                        ) { witness in
+                            do {
+                                return try prepare(witness, witness.entry) != nil
+                            } catch ABIResolutionError.signatureMismatch {
+                                return false
+                            }
+                        }
+                    }
                     return (entry, isProtocolMember ? metadata : owner, plan)
                 }
                 // A member that applies but has no selectable code still hides
                 // extension and superclass members. A protocol extension
                 // member is not the requirement, so it cannot stand in for one
-                // that fails.
+                // that fails or that only other conformances serve.
                 if let unavailable = selection.unavailable { throw unavailable }
                 if isProtocolMember && !extensionsOnly, let failure = selection.failure {
                     throw failure
+                }
+                if let requirement = unserved.first {
+                    missingWitness = ABIResolutionError.metadataUnavailable(
+                        requirement.name
+                            + ": neither the protocol's dispatch thunk for this requirement nor the witness of \(self.name)'s conformance is in the loaded images. Witnesses of other conformances show that the protocol declares it, so no extension member stands in for it. A conformance's witnesses are local symbols, which stripping removes."
+                    )
                 }
                 if let failure = selection.failure ?? selection.mismatch {
                     preparationFailure = failure
@@ -714,6 +804,7 @@ public actor NativeSwiftType: Hashable {
             guard inherited, let current = ownerClass, let parent = class_getSuperclass(current)
             else {
                 if hasUnavailableImages { throw ABIResolutionError.imageUnavailable }
+                if let missingWitness { throw missingWitness }
                 if let preparationFailure { throw preparationFailure }
                 throw ABIResolutionError.declarationNotFound(originalRequest!)
             }
@@ -762,7 +853,7 @@ public actor NativeSwiftType: Hashable {
     ///
     /// The signature excludes self. Mutating value members require an explicit mutating flag because their source-level symbol does not encode it. Consuming members similarly require consuming: true. Typed receivers transfer a copy; NativeSwiftValue transfers its owned value. Borrowed views allow nonconsuming calls within their active scope; only native inout callback borrows permit mutation.
     ///
-    /// A protocol-qualified instance requirement binds Self to this concrete type and resolves its dispatch thunk. Lookup requires the native conformance and preserves the protocol's formal Self convention.
+    /// A protocol-qualified requirement, including a subscript accessor's complete declaration, binds Self to this concrete type. It runs through the protocol's dispatch thunk, or, where the protocol exports none, the witness of this type's conformance. Lookup requires the native conformance and preserves the protocol's formal Self convention.
     ///
     /// For runtime-only self, receiverABI supplies established fixed components or an opaque descriptor for formally indirect self. Without it, a struct or enum self uses the convention inferred from its metadata, and preparation fails when the evidence cannot decide it; see <doc:SwiftFunctionInvocation#Infer-struct-and-enum-conventions>.
     /// - Parameters:
@@ -874,8 +965,10 @@ public actor NativeSwiftType: Hashable {
     /// Search and preparation run synchronously on the caller's thread.
     ///
     /// Ordinary initializer arguments transfer ownership to the callee. The native metadata is supplied automatically, and the result uses the requested Swift class or fixed-layout value adapter. NativeSwiftBorrowing selects an explicitly borrowed initializer parameter.
+    ///
+    /// A protocol-qualified initializer requirement, such as Example.Shape.init(size:), constructs this type through its conformance and returns Self indirectly.
     /// - Parameters:
-    ///   - name: The relative initializer name, such as init(text:).
+    ///   - name: The relative initializer name, such as init(text:), or one qualified by a protocol.
     ///   - signature: Explicit arguments and constructed result.
     ///   - genericArguments: Type arguments introduced by the initializer.
     ///   - valueABIs: Formal ABIs for closed nominal values in this lookup, runtime-only or host types, such as structs and enums whose conventions ABIBridge cannot infer from their metadata. They take precedence over conformances and inferred conventions where the signature names their types, but inference does not consult them for the fields of a value it lowers. Inside an Optional, an entry describes only the declaration's own type, not an adapter host type, whose Optional can have another layout. An entry for an Optional itself must pass as Swift passes that Optional when ABIBridge establishes its payload's convention.
@@ -889,12 +982,13 @@ public actor NativeSwiftType: Hashable {
         declaredAs declaredSignature: String? = nil,
         valueABIs: [NativeSwiftType: NativeType] = [:]
     ) throws -> NativeSwiftFunction<Signature> {
-        guard name.hasPrefix("init(") || name.hasPrefix("init<") else {
+        let isQualified = SwiftMemberLookup.isQualified(name)
+        let member = SwiftMemberLookup.member(of: name) ?? name
+        guard member.hasPrefix("init(") || member.hasPrefix("init<") else {
             throw ABIResolutionError.unsupportedDeclaration(
-                "An initializer name must start with init( or init<."
+                "An initializer name must start with init( or init<, after a protocol that qualifies it."
             )
         }
-        let member = metadata is AnyClass ? "__allocating_" + name : name
         let initializer = try resolveMember(
             named: name,
             signature: signature,
@@ -903,7 +997,18 @@ public actor NativeSwiftType: Hashable {
             declaredSignature: declaredSignature,
             valueABIs: valueABIs
         ) { owner in
-            NativeDeclaration(name: owner + "." + member, language: .swift)
+            // A protocol's initializer keeps its name; this type's own is
+            // named relative to it, and a class's allocates.
+            guard isQualified else {
+                let allocating = metadata is AnyClass ? "__allocating_" + name : name
+                return NativeDeclaration(name: owner + "." + allocating, language: .swift)
+            }
+            guard !SwiftMemberLookup.belongs(name, to: owner) else {
+                throw ABIResolutionError.unsupportedDeclaration(
+                    "Name this type's own initializer relative to the type, such as init(text:)."
+                )
+            }
+            return NativeDeclaration(name: name, language: .swift)
         }
         return try prepareFunction(
             initializer,
@@ -939,7 +1044,7 @@ public actor NativeSwiftType: Hashable {
     ///
     /// Search and preparation run synchronously on the caller's thread.
     ///
-    /// The declaring type's metadata is supplied as the Swift context.
+    /// The declaring type's metadata is supplied as the Swift context. A protocol-qualified static requirement, such as Example.Shape.make(), receives this type's metatype as Self.
     /// - Parameters:
     ///   - name: A relative member name or a complete qualified declaration.
     ///   - signature: Explicit arguments and result.
@@ -1497,7 +1602,7 @@ extension NativeSwiftType {
     ///
     /// For a throwing generic getter, declaredAs supplies the source function type, such as "() throws(B) -> A". Getter symbols omit the formal error type; A and B refer to the enclosing declaration's generic parameters. valueABIs supplies formal ABIs for runtime-only closed nominal values. Receiver ownership and writeback follow the ordinary member contract. receiverABI can describe runtime-only fixed components or formally indirect self, as for method lookup.
     ///
-    /// A protocol-qualified requirement getter binds Self to this concrete type and resolves its dispatch thunk in loaded images. Lookup requires the type's native conformance; invocation uses that conformance's implementation and formal Self convention.
+    /// A protocol-qualified requirement getter binds Self to this concrete type. It resolves the protocol's dispatch thunk, or, where the protocol exports none, the witness of this type's conformance in loaded images. Lookup requires the type's native conformance; invocation uses that conformance's implementation and formal Self convention.
     public nonisolated func resolveGetterAndWait<Signature>(
         named name: String,
         as signature: Signature.Type,

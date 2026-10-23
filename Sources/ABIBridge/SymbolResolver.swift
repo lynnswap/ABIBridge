@@ -76,6 +76,7 @@ final class SymbolResolver: Sendable {
         _ declaration: NativeDeclaration,
         in image: NativeImage?,
         loading: ImageLoadingPolicy = .loadedOnly,
+        module: String? = nil,
         extensionsOnly: Bool = false,
         includingSharedCache: Bool = false
     ) throws -> [SwiftCandidate] {
@@ -84,10 +85,37 @@ final class SymbolResolver: Sendable {
                 declaration.runtimeValue,
                 in: image?.runtimeValue,
                 loading: loading.runtimeValue,
+                module: module,
                 extensionsOnly: extensionsOnly,
                 includingSharedCache: includingSharedCache
             ).map(SwiftCandidate.init)
         }
+    }
+    func swiftWitnesses(
+        ofConformanceAt descriptor: UnsafeRawPointer,
+        in image: NativeImage
+    ) -> [SwiftCandidate] {
+        runtime.swiftWitnesses(
+            ofConformanceAt: UInt64(UInt(bitPattern: descriptor)),
+            in: image.runtimeValue
+        ).map(SwiftCandidate.init)
+    }
+    func swiftConformanceDescriptor(
+        named name: String,
+        in image: NativeImage
+    ) -> UnsafeRawPointer? {
+        runtime.swiftConformanceDescriptor(named: name, in: image.runtimeValue).flatMap {
+            UnsafeRawPointer(bitPattern: UInt($0))
+        }
+    }
+    func swiftMethodDescriptorRequirements(
+        at address: UnsafeRawPointer,
+        in image: NativeImage
+    ) -> Set<String> {
+        runtime.swiftMethodDescriptorRequirements(
+            at: UInt64(UInt(bitPattern: address)),
+            in: image.runtimeValue
+        )
     }
     func removeCachedResults() { runtime.removeCachedResults() }
     func importIndex(for image: NativeImage) throws -> ImportIndex {

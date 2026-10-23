@@ -11,12 +11,6 @@ private func describe(_ value: some Any) -> String { String(describing: value) }
 extension ConformanceCase {
     static let all: [ConformanceCase] = functions + values + inferredValues + classes + protocols
 
-    /// Without library evolution, protocol requirements have no dispatch thunks.
-    static let witnessDispatch: @Sendable (ConformanceVariant) -> String? = {
-        $0.libraryEvolution
-            ? nil : "Requirements without dispatch thunks need witness tables (#407)"
-    }
-
     /// Class methods exported only as dispatch thunks are not selected yet.
     static let functions: [ConformanceCase] = [
         ConformanceCase(
@@ -535,6 +529,8 @@ extension ConformanceCase {
         ),
     ]
 
+    /// Without library evolution, protocol requirements have no dispatch
+    /// thunks, and calls run the witness of the receiver's conformance.
     static let protocols: [ConformanceCase] = [
         ConformanceCase(
             id: "protocol.method",
@@ -542,12 +538,31 @@ extension ConformanceCase {
                 public protocol CMArea {
                     func area() -> Double
                     var label: String { get set }
+                    init(side: Double)
+                    static func unit() -> Self
+                    static var unitName: String { get }
+                    subscript(scale: Double) -> Double { get }
+                    func asyncArea() async -> Double
                 }
                 public final class CMSquare: CMArea {
                     public var side: Double
                     public var label: String
                     public init(side: Double) { self.side = side; label = "square" }
                     @inline(never) public func area() -> Double { side * side }
+                    @inline(never) public static func unit() -> CMSquare { CMSquare(side: 1.5) }
+                    public static var unitName: String { "unit square" }
+                    public subscript(scale: Double) -> Double { side * scale }
+                    @inline(never) public func asyncArea() async -> Double { side * side * 2 }
+                }
+                public struct CMDisk: CMArea {
+                    public var radius: Double
+                    public var label: String
+                    public init(side: Double) { radius = side / 2; label = "disk" }
+                    @inline(never) public func area() -> Double { radius * radius * 3 }
+                    public static func unit() -> CMDisk { CMDisk(side: 2) }
+                    public static var unitName: String { "unit disk" }
+                    public subscript(scale: Double) -> Double { radius * scale }
+                    public func asyncArea() async -> Double { radius }
                 }
                 extension CMArea {
                     @inline(never) public func summary() -> String { "\\(label)=\\(area())" }
@@ -564,8 +579,7 @@ extension ConformanceCase {
                 return String(
                     try unsafe area.unsafeInvoke(on: f.make("cmMakeSquare", returning: "CMSquare"))
                 )
-            },
-            knownIssue: witnessDispatch
+            }
         ),
         ConformanceCase(
             id: "protocol.getter",
@@ -580,8 +594,7 @@ extension ConformanceCase {
                 return try unsafe label.unsafeInvoke(
                     on: f.make("cmMakeSquare", returning: "CMSquare")
                 )
-            },
-            knownIssue: witnessDispatch
+            }
         ),
         ConformanceCase(
             id: "protocol.setter",
@@ -598,8 +611,102 @@ extension ConformanceCase {
                 try unsafe set.unsafeInvoke(on: &object, "renamed")
                 let get = try await square.resolveGetter(named: "label", as: (() -> String).self)
                 return try unsafe get.unsafeInvoke(on: object)
-            },
-            knownIssue: witnessDispatch
+            }
+        ),
+        ConformanceCase(
+            id: "protocol.subscript",
+            provider: "",
+            oracle: "return String(cmMakeSquare()[2.5])",
+            invoke: { f in
+                let square = try await f.type("CMSquare")
+                let get = try await square.resolveMethod(
+                    named: f.module + ".CMArea.subscript.getter : (Swift.Double) -> Swift.Double",
+                    as: ((Double) -> Double).self
+                )
+                return String(
+                    try unsafe get.unsafeInvoke(
+                        on: f.make("cmMakeSquare", returning: "CMSquare"),
+                        2.5
+                    )
+                )
+            }
+        ),
+        ConformanceCase(
+            id: "protocol.async",
+            provider: "",
+            oracle: "return String(runBlocking { await cmMakeSquare().asyncArea() })",
+            invoke: { f in
+                let square = try await f.type("CMSquare")
+                let call = try await square.resolveMethod(
+                    named: f.module + ".CMArea.asyncArea()",
+                    as: (@concurrent () async -> Double).self
+                )
+                return String(
+                    try await unsafe call.unsafeInvoke(
+                        on: f.make("cmMakeSquare", returning: "CMSquare")
+                    )
+                )
+            }
+        ),
+        ConformanceCase(
+            id: "protocol.static",
+            provider: "",
+            oracle: "return CMSquare.unitName + \":\" + String(CMSquare.unit().area())",
+            invoke: { f in
+                let square = try await f.type("CMSquare")
+                let unitName = try await square.resolveStaticGetter(
+                    named: f.module + ".CMArea.unitName",
+                    as: (() -> String).self
+                )
+                let unit = try await square.resolveStaticMethod(
+                    named: f.module + ".CMArea.unit()",
+                    as: (() -> AnyObject).self
+                )
+                let area = try await square.resolveMethod(named: "area()", as: (() -> Double).self)
+                return try unsafe unitName.unsafeInvoke() + ":"
+                    + String(area.unsafeInvoke(on: unit.unsafeInvoke()))
+            }
+        ),
+        ConformanceCase(
+            id: "protocol.initializer",
+            provider: "",
+            oracle: "return String(CMSquare(side: 4).area())",
+            invoke: { f in
+                let square = try await f.type("CMSquare")
+                let make = try await square.resolveInitializer(
+                    named: f.module + ".CMArea.init(side:)",
+                    as: ((Double) -> AnyObject).self
+                )
+                let area = try await square.resolveMethod(named: "area()", as: (() -> Double).self)
+                return String(try unsafe area.unsafeInvoke(on: make.unsafeInvoke(4)))
+            }
+        ),
+        // A value conformer passes its formally indirect Self by address.
+        ConformanceCase(
+            id: "protocol.valueSelf",
+            provider: "",
+            oracle: """
+                let disk = CMDisk(side: 5)
+                return String(disk.area()) + ":" + String(disk[2])
+                """,
+            invoke: { f in
+                let disk = try await f.type("CMDisk")
+                let make = try await disk.resolveInitializer(
+                    named: f.module + ".CMArea.init(side:)",
+                    as: ((Double) -> NativeSwiftValue).self
+                )
+                let area = try await disk.resolveMethod(
+                    named: f.module + ".CMArea.area()",
+                    as: (() -> Double).self
+                )
+                let get = try await disk.resolveMethod(
+                    named: f.module + ".CMArea.subscript.getter : (Swift.Double) -> Swift.Double",
+                    as: ((Double) -> Double).self
+                )
+                let value = try unsafe make.unsafeInvoke(5)
+                return try unsafe String(area.unsafeInvoke(on: value)) + ":"
+                    + String(get.unsafeInvoke(on: value, 2))
+            }
         ),
         ConformanceCase(
             id: "protocol.extension",
