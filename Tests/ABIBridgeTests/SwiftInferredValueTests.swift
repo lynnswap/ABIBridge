@@ -513,6 +513,73 @@ struct SwiftInferredValueTests {
         }
     }
 
+    /// A @sensitive struct is address-only. Swift sets the addressable-for-
+    /// dependencies bit for a value whenever a value it stores sets it, but
+    /// not for a @sensitive struct, so a struct whose value witnesses leave
+    /// the bit clear although it stores a String is undecided, and so is a
+    /// value that stores one, whether or not the module's other types set the
+    /// bit. A @sensitive struct whose fields do not set the bit, such as one
+    /// that stores a class reference, has no such record.
+    @Test(arguments: [false, true])
+    func sensitiveStructsThatStoreAddressableValuesAreUndecided(addressableModule: Bool) async throws {
+        let (library, module) = try provider(
+            """
+            // A value that stores it fits in four registers.
+            @sensitive public struct SecretText {
+                public var text: String
+                public init() { text = "s" }
+            }
+            public struct HoldsSecretText {
+                public var secret = SecretText()
+                public var n: Int64 = 2
+                public init() {}
+            }
+            public struct MaybeSecretText {
+                public var secret: SecretText? = SecretText()
+                public var n: Int64 = 3
+                public init() {}
+            }
+            public struct LabeledSecret {
+                public var secret = SecretText()
+                public var label = "l"
+                public init() {}
+            }
+            @inline(never) public func makeSecretText() -> SecretText { SecretText() }
+            @inline(never) public func makeHoldsSecretText() -> HoldsSecretText { HoldsSecretText() }
+            @inline(never) public func makeMaybeSecretText() -> MaybeSecretText { MaybeSecretText() }
+            @inline(never) public func makeLabeledSecret() -> LabeledSecret { LabeledSecret() }
+            """ + (addressableModule ? "\npublic struct Label { public var text = \"label\"; public init() {} }" : ""),
+            arguments: ["-enable-experimental-feature", "Sensitive"]
+        )
+        defer { library.cleanup() }
+        let masked = "leave the addressable-for-dependencies bit clear although"
+        await expectFailure(
+            module + ".makeSecretText()",
+            in: library,
+            as: (() -> NativeSwiftValue).self,
+            naming: "struct `\(module).SecretText` \(masked) its field `text: Swift.String` sets it"
+        )
+        let stores = "stores a value whose value witnesses \(masked) a value it stores sets it"
+        await expectFailure(
+            module + ".makeHoldsSecretText()",
+            in: library,
+            as: (() -> NativeSwiftValue).self,
+            naming: "its field `secret: \(module).SecretText` \(stores)"
+        )
+        await expectFailure(
+            module + ".makeMaybeSecretText()",
+            in: library,
+            as: (() -> NativeSwiftValue).self,
+            naming: "its field `secret: Swift.Optional<\(module).SecretText>` \(stores)"
+        )
+        await expectFailure(
+            module + ".makeLabeledSecret()",
+            in: library,
+            as: (() -> NativeSwiftValue).self,
+            naming: "its field `secret: \(module).SecretText` \(stores)"
+        )
+    }
+
     /// A field record describes a stored property of an opaque type by its
     /// underlying type, but signatures lower the property as an opaque
     /// archetype: address-only unless it is class-bound. Only one that is not
@@ -1404,11 +1471,12 @@ struct SwiftInferredValueTests {
     }
 
     /// Swift passes an input that a result borrows from by address when its
-    /// type sets the addressable-for-dependencies bit, and no symbol records
-    /// which input a result borrows from. A value that only a module's
-    /// records decide, and that sets the bit, is therefore undecided in a
-    /// call with a scoped result, while a value whose static summary decides
-    /// it leaves the bit clear.
+    /// type sets the addressable-for-dependencies bit, a tuple as one
+    /// address instead of its elements, and no symbol records which input a
+    /// result borrows from. A value that only a module's records decide, and
+    /// that sets the bit, is therefore undecided in a call with a scoped
+    /// result, alone or in a tuple of any size, unless it passes by address
+    /// anyway. A value whose static summary decides it leaves the bit clear.
     @Test func resultsThatBorrowFromValuesLeaveAddressableValuesUndecided() async throws {
         let (library, module) = try provider(
             """
@@ -1434,6 +1502,16 @@ struct SwiftInferredValueTests {
             }
             @_lifetime(borrow v) @inline(never) public func borrowLabel(_ v: Label) -> View { View(v.n) }
             @_lifetime(borrow v) @inline(never) public func borrowPlain(_ v: Plain) -> View { View(v.x * 10 + v.y) }
+            public struct Wide {
+                public var text: String
+                public var a: Int64
+                public var b: Int64
+                public var c: Int64
+                public init() { text = "wide"; a = 5; b = 6; c = 7 }
+            }
+            @_lifetime(borrow t) @inline(never) public func borrowTriple(_ t: (Label, Int64, Int64)) -> View { View(t.1) }
+            @_lifetime(borrow w) @inline(never) public func borrowWide(_ w: Wide) -> View { View(w.a * 10 + w.c) }
+            @inline(never) public func makeWide() -> Wide { Wide() }
             @inline(never) public func makeLabel() -> Label { Label(text: "label", n: 4) }
             @inline(never) public func describeLabel(_ v: Label) -> String { "\\(v.text),\\(v.n)" }
             @inline(never) public func makePlain() -> Plain { Plain(x: 2, y: 3) }
@@ -1453,6 +1531,13 @@ struct SwiftInferredValueTests {
             module + ".borrowLabel(_:)",
             in: library,
             as: ((NativeSwiftValue) -> NativeSwiftBorrowedValue).self,
+            naming: borrowed
+        )
+        // Its elements would pass separately, the tuple as one address.
+        await expectFailure(
+            module + ".borrowTriple(_:)",
+            in: library,
+            as: (((NativeSwiftValue, Int64, Int64)) -> NativeSwiftBorrowedValue).self,
             naming: borrowed
         )
         let label = try await runtime.resolveSwiftType(named: module + ".Label", in: scope)
@@ -1481,6 +1566,21 @@ struct SwiftInferredValueTests {
         )
         let plain = try unsafe make.unsafeInvoke()
         #expect(try unsafe borrow.unsafeInvoke(plain, withResult: { try unsafe read.unsafeInvoke($0) }) == 23)
+        // Wide passes by address by size, as a borrowed value does.
+        let makeWide = try await runtime.resolveSwiftFunction(
+            named: module + ".makeWide()",
+            as: (() -> NativeSwiftValue).self,
+            in: scope
+        )
+        let borrowWide = try await runtime.resolveSwiftFunction(
+            named: module + ".borrowWide(_:)",
+            as: ((NativeSwiftValue) -> NativeSwiftBorrowedValue).self,
+            in: scope
+        )
+        #expect(
+            try unsafe borrowWide.unsafeInvoke(makeWide.unsafeInvoke(), withResult: { try unsafe read.unsafeInvoke($0) })
+                == 57
+        )
         let scoped = try await runtime.resolveSwiftType(named: module + ".Plain", in: scope)
             .resolveMethod(named: "scoped()", as: (() -> NativeSwiftBorrowedValue).self)
         #expect(try unsafe scoped.unsafeInvoke(on: plain, withResult: { try unsafe read.unsafeInvoke($0) }) == 23)

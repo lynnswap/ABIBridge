@@ -297,7 +297,7 @@ struct SwiftCallValues: Sendable {
 
     /// Checks that each argument passes as the compiler passes it when the
     /// call's result can borrow from it; see
-    /// ``SwiftInferredValue/requireBorrowable(_:layout:position:explicit:)``.
+    /// ``SwiftInferredValue/requireBorrowable(_:passedByAddress:position:explicit:)``.
     ///
     /// - Parameter binding: The lookup whose `valueABIs` describe values
     ///   that then do not lower by inference.
@@ -305,9 +305,14 @@ struct SwiftCallValues: Sendable {
         guard result.scoped != nil else { return }
         for argument in arguments where argument.convention != .inoutValue {
             guard let native = try? argument.conversion.nativeType() else { continue }
+            // A tuple argument passes its elements separately, while Swift
+            // passes a tuple that sets the bit as one address.
+            let byAddress =
+                argument.conversion.tuple == nil
+                && withExtendedLifetime(argument.type) { ABISwiftValueIsIndirect(argument.type.handle) }
             try SwiftInferredValue.requireBorrowable(
                 native,
-                layout: argument.type,
+                passedByAddress: byAddress,
                 position: .parameter
             ) { binding?.hasValueABI($0) ?? false }
         }

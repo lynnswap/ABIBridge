@@ -65,12 +65,16 @@ struct SwiftReceiverPlan: Sendable {
 
     /// Checks that `self` passes as the compiler passes it when the call's
     /// result can borrow from it; see
-    /// ``SwiftInferredValue/requireBorrowable(_:layout:position:explicit:)``.
+    /// ``SwiftInferredValue/requireBorrowable(_:passedByAddress:position:explicit:)``.
     func requireBorrowable() throws {
         // A representation other than the type itself states its own
-        // convention.
+        // convention, and an indirect self passes by address.
         guard mode == .value, !isExplicit, conversion.host == metadata else { return }
-        try SwiftInferredValue.requireBorrowable(metadata, layout: type, position: .receiver)
+        try SwiftInferredValue.requireBorrowable(
+            metadata,
+            passedByAddress: false,
+            position: .receiver
+        )
     }
 
     /// Storage that passes the host value `receiver` as `self`.

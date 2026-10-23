@@ -57,6 +57,9 @@ enum SwiftValuePosition: Sendable, Equatable {
 ///   witnesses are POD is loadable when it is not resilient, no stored
 ///   property has an opaque type, and every field is loadable on its own
 ///   (``nonEvolutionGap(of:storedBy:)``).
+/// - Neither applies to a value that is, or stores, a value whose static
+///   value witnesses leave the bit clear although a value it stores sets it.
+///   Swift ORs the bit over stored values except for a `@sensitive` struct.
 ///
 /// Missing symbols, the runtime-built value witnesses of a generic instance,
 /// and class reference counting are not evidence: each made a resilient or
@@ -154,6 +157,12 @@ enum SwiftInferredValue {
         /// Whether its static value witnesses set the addressable-for-
         /// dependencies bit.
         var setsAddressableForDependencies = false
+        /// Whether it, or a value it stores, has static value witnesses that
+        /// leave the addressable-for-dependencies bit clear although a value
+        /// it stores sets the bit. Swift sets the bit for a value whenever a
+        /// value it stores sets it, except for a `@sensitive` struct, which is
+        /// address-only.
+        var masksAddressability = false
     }
 
     private static let classifications = Mutex<
@@ -198,9 +207,10 @@ enum SwiftInferredValue {
     private enum Part {
         case addressOnly
         /// The field's lowering if every value in it is frozen, nil for a
-        /// field with no bytes such as a thin metatype, and whether a value in
-        /// it is not POD.
-        case fixed(CValueType?, nonPOD: Bool)
+        /// field with no bytes such as a thin metatype, whether a value in it
+        /// is not POD, and whether a value in it masks the addressable-for-
+        /// dependencies bit (``Classification/masksAddressability``).
+        case fixed(CValueType?, nonPOD: Bool, masksAddressability: Bool = false)
     }
 
     // Value-witness flags (MetadataValues.h).
@@ -239,6 +249,7 @@ enum SwiftInferredValue {
         let fields = try readFields(of: metadata, info: info)
         var parts: [CValueType?] = []
         var storesNonPOD = false
+        var masking: Field?
         for field in fields {
             let part: Part
             do throws(InferenceFailure) {
@@ -251,11 +262,18 @@ enum SwiftInferredValue {
             }
             switch part {
             case .addressOnly: return addressOnly
-            case .fixed(let layout, let nonPOD):
+            case .fixed(let layout, let nonPOD, let masks):
                 parts.append(layout)
                 storesNonPOD = storesNonPOD || nonPOD
+                if masks, masking == nil { masking = field }
             }
         }
+        // Swift sets the addressable-for-dependencies bit for a value whenever
+        // a value it stores sets it, except for a @sensitive struct, which is
+        // address-only. Only static value witnesses show the bit.
+        let masked =
+            nonEvolution && flags & addressableForDependencies == 0
+            ? fields.first { $0.type.map(addressability) == .yes } : nil
         let decision = decide(
             metadata,
             info: info,
@@ -270,6 +288,22 @@ enum SwiftInferredValue {
         let convention: Convention
         switch decision {
         case .addressOnly: return addressOnly
+        case _ where masked != nil || masking != nil:
+            let kind = info.isEnum ? "enum" : "struct"
+            let detail =
+                masked.map {
+                    "the value witnesses of \(kind) `\(String(reflecting: metadata))` leave the addressable-for-dependencies bit clear although its field \($0.description) sets it, as a @sensitive struct's do, which is address-only"
+                }
+                ?? "its field \(masking!.description) stores a value whose value witnesses leave the addressable-for-dependencies bit clear although a value it stores sets it, as a @sensitive struct's do, which is address-only"
+            var classification = Classification(
+                convention: .undecided(
+                    frozen: try layout(of: metadata, info: info, fields: fields, parts: parts),
+                    missing: detail
+                ),
+                storesNonPOD: storesNonPOD
+            )
+            classification.masksAddressability = true
+            return classification
         case .loadable:
             convention = try .loadable(layout(of: metadata, info: info, fields: fields, parts: parts))
         case .undecided(let missing):
@@ -360,7 +394,7 @@ enum SwiftInferredValue {
             return .addressOnly
         case ABISwiftReferenceStorageUnmanaged:
             // unowned(unsafe) stores its referent's bits without counting them.
-            guard case .fixed(let layout, _) = try part(of: type) else { return .addressOnly }
+            guard case .fixed(let layout, _, _) = try part(of: type) else { return .addressOnly }
             return .fixed(layout, nonPOD: false)
         default:
             // An unowned reference is loadable when its referent uses native
@@ -382,7 +416,7 @@ enum SwiftInferredValue {
         case .optional:
             let wrapped = (type as! any NativeOptionalValue.Type).wrappedType
             let part = try self.part(of: wrapped, genericDependent: genericDependent)
-            guard case .fixed(let payload, let nonPOD) = part else { return .addressOnly }
+            guard case .fixed(let payload, let nonPOD, let masks) = part else { return .addressOnly }
             let layout = try failing {
                 try SwiftValueSchema.optionalStorage(
                     of: type,
@@ -391,7 +425,7 @@ enum SwiftInferredValue {
                     wrappedType: wrapped
                 )
             }
-            return .fixed(layout, nonPOD: nonPOD)
+            return .fixed(layout, nonPOD: nonPOD, masksAddressability: masks)
         case .tuple:
             return try tuplePart(type)
         case .metatype, .existentialMetatype, .extendedExistential:
@@ -412,7 +446,11 @@ enum SwiftInferredValue {
             case .addressOnly:
                 return .addressOnly
             case .loadable(let layout), .undecided(let layout, _):
-                return .fixed(layout, nonPOD: classification.storesNonPOD)
+                return .fixed(
+                    layout,
+                    nonPOD: classification.storesNonPOD,
+                    masksAddressability: classification.masksAddressability
+                )
             }
         default:
             return try codecPart(type)
@@ -511,12 +549,13 @@ enum SwiftInferredValue {
         }
         var layouts: [CValueType?] = []
         var storesNonPOD = false
+        var masksAddressability = false
         for element in tuple.elements {
-            guard case .fixed(let layout, let nonPOD) = try part(of: element.type) else {
-                return .addressOnly
-            }
+            guard case .fixed(let layout, let nonPOD, let masks) = try part(of: element.type)
+            else { return .addressOnly }
             layouts.append(layout)
             storesNonPOD = storesNonPOD || nonPOD
+            masksAddressability = masksAddressability || masks
         }
         let layout = ABISwiftGetValueLayout(unsafeBitCast(type, to: UnsafeRawPointer.self))
         let aggregate = try aggregate(
@@ -526,7 +565,7 @@ enum SwiftInferredValue {
             alignment: layout.alignment,
             of: type
         )
-        return .fixed(aggregate, nonPOD: storesNonPOD)
+        return .fixed(aggregate, nonPOD: storesNonPOD, masksAddressability: masksAddressability)
     }
 
     private static func aggregate(
@@ -865,30 +904,32 @@ enum SwiftInferredValue {
 
     // MARK: Results that borrow from values
 
-    /// Checks that a value of `type`, passed as `layout` at `position` of a
-    /// call whose result can borrow from it, passes as the compiler passes
-    /// it there.
+    /// Checks that a value of `type` at `position` of a call whose result
+    /// can borrow from it passes as the compiler passes it there.
     ///
-    /// Swift passes an input that a result has a scoped dependency on by
-    /// address when its type sets the addressable-for-dependencies bit, and
-    /// no symbol records which input a result borrows from. A value that
-    /// only the records of a module built without library evolution make
-    /// loadable can set the bit, so it is undecided there, unless its
-    /// layout passes by address anyway. Values that a static summary makes
-    /// loadable leave the bit clear.
+    /// Swift passes an input that a result has a scoped dependency on as one
+    /// address when its type sets the addressable-for-dependencies bit, even
+    /// a tuple, whose elements it otherwise passes separately. No symbol
+    /// records which input a result borrows from. A value that only the
+    /// records of a module built without library evolution make loadable can
+    /// set the bit, so it is undecided there, unless the call already passes
+    /// it by address. Values that a static summary makes loadable leave the
+    /// bit clear.
     /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/SIL/IR/SILFunctionType.cpp
     ///
-    /// - Parameter explicit: Whether a lookup's `valueABIs` entry describes
-    ///   a type, which then does not lower by inference.
+    /// - Parameters:
+    ///   - passedByAddress: Whether the call passes the whole value as one
+    ///     address, as it does for a value whose lowering is indirect by
+    ///     size, but not for a tuple, whose elements it passes separately.
+    ///   - explicit: Whether a lookup's `valueABIs` entry describes a type,
+    ///     which then does not lower by inference.
     static func requireBorrowable(
         _ type: Any.Type,
-        layout: CValueType,
+        passedByAddress: Bool,
         position: SwiftValuePosition,
         explicit: @escaping (Any.Type) -> Bool = { _ in false }
     ) throws {
-        guard !withExtendedLifetime(layout, { ABISwiftValueIsIndirect(layout.handle) }) else {
-            return
-        }
+        guard !passedByAddress else { return }
         func addressable(_ type: Any.Type) -> Any.Type? {
             if explicit(type) { return nil }
             switch runtimeMetadataKind(type) {
