@@ -392,10 +392,13 @@ package final class RuntimeSymbolResolver: Sendable {
         )
     }
 
+    /// - Parameter module: The module whose symbols are read instead of the
+    ///   declaration's own, such as a conforming type's module for its witnesses.
     package func swiftDeclarationCandidates(
         _ declaration: RuntimeDeclaration,
         in image: RuntimeImage?,
         loading: RuntimeImageLoadingPolicy = .loadedOnly,
+        module: String? = nil,
         extensionsOnly: Bool = false,
         includingSharedCache: Bool = false
     ) throws -> [RuntimeSwiftCandidate] {
@@ -406,6 +409,7 @@ package final class RuntimeSymbolResolver: Sendable {
         return try swiftDeclarationCandidates(
             declaration,
             in: scope,
+            module: module,
             extensionsOnly: extensionsOnly,
             includingSharedCache: includingSharedCache
         )
@@ -414,10 +418,11 @@ package final class RuntimeSymbolResolver: Sendable {
     private func swiftDeclarationCandidates(
         _ declaration: RuntimeDeclaration,
         in scope: SearchScope,
+        module: String? = nil,
         extensionsOnly: Bool,
         includingSharedCache: Bool
     ) throws -> [RuntimeSwiftCandidate] {
-        let query = SymbolQuery(declaration)
+        let query = SymbolQuery(declaration, module: module)
         let indexes = state.withLock { state in scope.images.map { state.index(for: $0) } }
         func matches(
             _ source: RuntimeSymbol.Source,

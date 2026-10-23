@@ -1,7 +1,8 @@
 import Foundation
 
 package enum SwiftMemberLookup {
-    private static func owner(of declaration: String) -> String? {
+    /// The owner that qualifies a declaration, such as a type or a protocol.
+    package static func owner(of declaration: String) -> String? {
         var text = SymbolIndex.extensionMemberName(declaration) ?? declaration
         text = SymbolIndex.operatorAlias(text) ?? text
         if text.hasPrefix("static ") { text = String(text.dropFirst(7)) }

@@ -11,6 +11,18 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
         case implementation
         /// A thunk that dispatches the declaration through its owner's table.
         case dispatchThunk
+        /// A conformance's witness of a protocol requirement: a thunk that
+        /// runs the conformance's implementation with the requirement's
+        /// calling convention.
+        case witness(Witness)
+    }
+
+    /// The requirement and the conformance that a protocol witness serves.
+    package struct Witness: Hashable, Sendable {
+        /// The mangled name of the protocol requirement.
+        package let requirement: String
+        /// The mangled name of the conformance's descriptor.
+        package let conformanceDescriptor: String
     }
 
     package enum Accessor: Hashable, Sendable { case getter, setter }
@@ -35,18 +47,24 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
 
     package let role: Role
     package let accessor: Accessor?
-    /// Whether a call can run the symbol's own code: a declaration's code,
-    /// or a protocol requirement's thunk, which selects the conformance's
-    /// witness. A class member's thunk instead redispatches on the receiver.
-    package var runsOwnCode: Bool { role == .implementation || context == .protocolRequirement }
+    /// Whether a call can run the symbol's own code: a declaration's code, a
+    /// protocol requirement's thunk, which selects the conformance's witness,
+    /// or a conformance's witness, which applies to that conformance only. A
+    /// class member's thunk instead redispatches on the receiver.
+    package var runsOwnCode: Bool {
+        switch role {
+        case .implementation, .witness: true
+        case .dispatchThunk: context == .protocolRequirement
+        }
+    }
     package let isStatic: Bool
     package let context: Context
     /// The mangled name of the declaration itself. A declaration's code and
-    /// its dispatch thunk share this identity.
+    /// its dispatch thunk share this identity; a witness is its own.
     package let identity: String
 
     /// Returns nil for names that are not Swift declarations, such as
-    /// metadata, descriptors, and witnesses.
+    /// metadata and descriptors.
     package init?(linkageName: String) {
         let name = linkageName.hasPrefix("_") ? String(linkageName.dropFirst()) : linkageName
         guard
@@ -66,6 +84,16 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
             role = .dispatchThunk
             identity = name.hasSuffix("Tj") ? String(name.dropLast(2)) : name
             node = child
+        } else if node.kind == "ProtocolWitness", let conformance = node.child(0),
+            let entity = node.child(1),
+            let requirement = Self.copy(ABICopySwiftEntitySymbolName(entity.pointer)),
+            let descriptor = Self.copy(
+                ABICopySwiftConformanceDescriptorSymbolName(conformance.pointer)
+            )
+        {
+            role = .witness(.init(requirement: requirement, conformanceDescriptor: descriptor))
+            identity = name
+            node = entity
         } else {
             role = .implementation
             identity = name
@@ -89,6 +117,8 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
             ].contains(node.kind),
             let owner = node.child(0)
         else { return nil }
+        // A witness serves a requirement, which a protocol declares.
+        if case .witness = role, owner.kind != "Protocol" { return nil }
         self.isStatic = isStatic
         switch owner.kind {
         case "Protocol":
@@ -107,6 +137,12 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
         default:
             context = .nominal
         }
+    }
+
+    private static func copy(_ name: UnsafeMutablePointer<CChar>?) -> String? {
+        guard let name else { return nil }
+        defer { ABIFreeString(name) }
+        return String(cString: name)
     }
 
     private struct Node {

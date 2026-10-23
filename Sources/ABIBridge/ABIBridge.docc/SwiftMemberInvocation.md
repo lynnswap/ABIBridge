@@ -116,11 +116,33 @@ let text = try unsafe summary.unsafeInvoke(on: renderer)
 
 Lookup binds `Self` to the whole concrete type represented by `type`, including a specialization such as `Renderer<String>`, and checks its protocol conformance and extension constraints. Supply `genericArguments:` only for type parameters introduced by the method.
 
-Getters, setters, and static members use the same rule with their corresponding lookup factories. A protocol-qualified name without `(extension in Example):` selects the protocol's requirement when it declares one, and otherwise its extension member; the name can also be label-only, such as `Example.Renderable.summary()`.
+Getters, setters, and static members use the same rule with their corresponding lookup factories. A protocol-qualified name without `(extension in Example):` selects the protocol's requirement when it declares one, and otherwise its extension member; the name can also be label-only, such as `Example.Renderable.summary()`. An extension member never stands in for a requirement, as described in the next section.
 
-## Call an instance protocol requirement
+## Call a protocol requirement
 
-Use the complete protocol declaration with `resolveMethod` to call an instance method requirement. For a concrete `builder` conforming to `Example.Builder`, whose `Request` associated type has an `Output` associated type:
+A name qualified by the protocol, label-only or complete, selects a requirement of any kind: methods, getters and setters, subscript accessors, static members, and initializers. Use the factory for the member's kind:
+
+```swift
+let type = try runtime.resolveSwiftTypeAndWait(named: "Example.Tile")
+let make = try type.resolveInitializerAndWait(
+    named: "Example.Shape.init(size:)", as: ((Int64) -> AnyObject).self
+)
+let unit = try type.resolveStaticMethodAndWait(
+    named: "Example.Shape.unit()", as: (() -> AnyObject).self
+)
+let cell = try type.resolveMethodAndWait(
+    named: "Example.Shape.subscript.getter : (Swift.Int64) -> Swift.Int64",
+    as: ((Int64) -> Int64).self
+)
+let tile = try unsafe make.unsafeInvoke(4)
+let value = try unsafe cell.unsafeInvoke(on: tile, 2)
+```
+
+Here `Example.Tile` is a class conforming to `Example.Shape`. A requirement returning `Self` returns it indirectly, so a value conformer can use `NativeSwiftValue` for the result. Static requirements and initializers receive the type's metatype as `self`.
+
+Lookup binds `Self` to the concrete type and requires its native conformance. A library-evolution module exports each requirement's dispatch thunk, which selects the witness of the conformance that a call passes. A module built without library evolution exports no thunks; lookup then runs the witness of the type's conformance, which the Swift runtime finds for the type, including a conformance inherited from a superclass. Each witness is a local symbol of the conformance's image, which stripping removes. When other conformances' witnesses show that the protocol declares the requirement but neither its thunk nor this type's witness is available, lookup throws ``ABIResolutionError/metadataUnavailable(_:)`` instead of selecting an extension member with the same name.
+
+A requirement can also depend on associated types. For a concrete `builder` conforming to `Example.Builder`, whose `Request` associated type has an `Output` associated type:
 
 ```swift
 let build = try await builder.type.resolveMethod(
@@ -148,7 +170,7 @@ let payload = try unsafe getter.unsafeInvoke(on: receiver)
 
 This example assumes the native synchronous getter returns a resilient `Payload` through indirect result storage. The returned value owns its contents; see <doc:SwiftOpaqueResults> for runtime values and formal value ABIs.
 
-Method and getter lookup resolve the protocol's dispatch thunk in loaded images. They check the native conformance before invocation and retain the protocol and conformance implementation images. The native thunk selects the implementation from that conformance. A non-class-bound protocol keeps its formally indirect `Self` convention even when the concrete receiver is a class.
+Lookup checks the native conformance before invocation and retains the protocol and conformance implementation images. A non-class-bound protocol keeps its formally indirect `Self` convention even when the concrete receiver is a class.
 
 ## Await type and member preparation
 

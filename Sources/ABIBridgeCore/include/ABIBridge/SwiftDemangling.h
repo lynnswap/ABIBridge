@@ -26,6 +26,12 @@ bool ABISwiftSyntaxNodeHasIndex(const ABISwiftSyntaxNode *node);
 uint64_t ABISwiftSyntaxNodeIndex(const ABISwiftSyntaxNode *node);
 /// Remangles a subtree without symbolic references. Release with ABIFreeString.
 char *ABICopySwiftSyntaxNodeMangledName(const ABISwiftSyntaxNode *node);
+/// The symbol that names an entity of a symbol's tree on its own, such as the
+/// requirement a protocol witness thunk witnesses. Release with ABIFreeString.
+char *ABICopySwiftEntitySymbolName(const ABISwiftSyntaxNode *entity);
+/// The symbol of a protocol conformance's descriptor, from a
+/// ProtocolConformance node. Release with ABIFreeString.
+char *ABICopySwiftConformanceDescriptorSymbolName(const ABISwiftSyntaxNode *conformance);
 /// Copies a type tree, substituting its depth-zero generalization parameters.
 ABISwiftSyntax *ABICopySwiftSubstitutedTypeSyntax(const ABISwiftSyntaxNode *node,
     const ABISwiftSyntaxNode *const *arguments, size_t count);

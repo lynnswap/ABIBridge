@@ -96,7 +96,8 @@ struct SwiftCandidate: Sendable {
     }
 
     /// The entry a call through this candidate uses. A protocol requirement
-    /// is called through its dispatch thunk, which selects the witness; other
+    /// is called through its dispatch thunk, which selects the witness, or
+    /// through a conformance's witness; either symbol names itself. Other
     /// candidates name the declaration they define or dispatch.
     var entry: SwiftEntry {
         SwiftEntry(

@@ -76,6 +76,7 @@ final class SymbolResolver: Sendable {
         _ declaration: NativeDeclaration,
         in image: NativeImage?,
         loading: ImageLoadingPolicy = .loadedOnly,
+        module: String? = nil,
         extensionsOnly: Bool = false,
         includingSharedCache: Bool = false
     ) throws -> [SwiftCandidate] {
@@ -84,6 +85,7 @@ final class SymbolResolver: Sendable {
                 declaration.runtimeValue,
                 in: image?.runtimeValue,
                 loading: loading.runtimeValue,
+                module: module,
                 extensionsOnly: extensionsOnly,
                 includingSharedCache: includingSharedCache
             ).map(SwiftCandidate.init)

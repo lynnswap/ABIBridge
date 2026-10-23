@@ -530,6 +530,153 @@ struct SwiftMemberInvocationTests {
         #expect(!receiver.isConsumed && !input.isConsumed && !owner.isConsumed)
     }
 
+    @Test func protocolRequirementsWithoutDispatchThunksRunTheConformancesWitness() async throws {
+        let suffix = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let base = "Witnessed_" + suffix
+        let other = "Conformers_" + suffix
+        let last = "Stripped_" + suffix
+        let protocols = try FixtureLibrary(
+            swiftModule: base,
+            swiftSource: """
+                public protocol Shape { func area() -> Int64 }
+                extension Shape {
+                    @inline(never) public func area() -> Int64 { -1 }
+                }
+                public final class Square: Shape {
+                    let size: Int64
+                    public init(_ size: Int64) { self.size = size }
+                    @inline(never) public func area() -> Int64 { size * size }
+                }
+                public final class Twin: Shape {
+                    let size: Int64
+                    public init(_ size: Int64) { self.size = size }
+                    @inline(never) public func area() -> Int64 { size * size }
+                }
+                public final class Crate<Element> { public init() {} }
+                extension Crate: Shape where Element: Equatable {
+                    @inline(never) public func area() -> Int64 { 21 }
+                }
+                public func makeSquare() -> AnyObject { Square(3) }
+                public func makeTwin() -> AnyObject { Twin(4) }
+                public func makeCrate() -> AnyObject { Crate<Int64>() }
+                """,
+            linkArguments: ["-O", "-emit-module"]
+        )
+        defer { protocols.cleanup() }
+        // Another module's conformance mangles its witnesses in that module.
+        let conformers = try FixtureLibrary(
+            swiftModule: other,
+            swiftSource: """
+                import \(base)
+                open class Plate: Shape {
+                    public init() {}
+                    @inline(never) public func area() -> Int64 { 11 }
+                }
+                public func makePlate() -> AnyObject { Plate() }
+                """,
+            linkArguments: [
+                "-O", "-emit-module", "-I", protocols.directory.path, protocols.libraryURL.path,
+            ]
+        )
+        defer { conformers.cleanup() }
+        // Stripping removes the local witness symbols of Hidden's conformance.
+        // Saucer inherits Plate's conformance from another module.
+        let stripped = try FixtureLibrary(
+            swiftModule: last,
+            swiftSource: """
+                import \(base)
+                import \(other)
+                public final class Hidden: Shape {
+                    public init() {}
+                    @inline(never) public func area() -> Int64 { 5 }
+                }
+                public final class Saucer: Plate {}
+                public func makeHidden() -> AnyObject { Hidden() }
+                public func makeSaucer() -> AnyObject { Saucer() }
+                """,
+            stripped: true,
+            linkArguments: [
+                "-O", "-I", protocols.directory.path, "-I", conformers.directory.path,
+                protocols.libraryURL.path, conformers.libraryURL.path,
+            ]
+        )
+        defer { stripped.cleanup() }
+        let runtime = ABIRuntime()
+        let libraries = [base: protocols, other: conformers, last: stripped]
+
+        // The linker folds Square's and Twin's identical witnesses into one
+        // address; each still serves only its own conformance.
+        let witnesses = try ["6SquareC", "4TwinC"].map { owner in
+            let symbol = try runtime.resolveAndWait(
+                NativeDeclaration(
+                    machOName: "_$s\(base.utf8.count)\(base)\(owner)AA5ShapeA2aDP4areas5Int64VyFTW",
+                    language: .swift
+                ),
+                in: .path(protocols.libraryURL)
+            )
+            return unsafe symbol.withUnsafeAddress { UInt(bitPattern: $0) }
+        }
+        try #require(witnesses[0] == witnesses[1])
+        func area(
+            _ module: String,
+            _ type: String,
+            _ arguments: [NativeSwiftGenericArgument] = []
+        ) async throws -> Int64 {
+            let scope = ImageSelector.path(libraries[module]!.libraryURL)
+            let make = try await runtime.resolveSwiftFunction(
+                named: module + ".make" + type + "()",
+                as: (() -> AnyObject).self,
+                in: scope
+            )
+            let owner = try await runtime.resolveSwiftType(
+                named: module + "." + type,
+                in: scope,
+                genericArguments: arguments
+            )
+            let area = try await owner.resolveMethod(
+                named: base + ".Shape.area()",
+                as: (() -> Int64).self
+            )
+            #expect(area.symbol.declaration.name.hasPrefix("protocol witness for "))
+            return try unsafe area.unsafeInvoke(on: make.unsafeInvoke())
+        }
+        #expect(try await area(base, "Square") == 9)
+        #expect(try await area(base, "Twin") == 16)
+        // A conditional conformance's witness table is instantiated for the type.
+        #expect(try await area(base, "Crate", [.type(Int64.self)]) == 21)
+        #expect(try await area(other, "Plate") == 11)
+        // A subclass finds its superclass's conformance in the superclass's module.
+        #expect(try await area(last, "Saucer") == 11)
+
+        // Other conformances' witnesses show that Shape declares area(), so
+        // its default implementation does not stand in for Hidden's witness.
+        let hidden = try await runtime.resolveSwiftType(
+            named: last + ".Hidden",
+            in: .path(stripped.libraryURL)
+        )
+        await #expect {
+            _ = try await hidden.resolveMethod(
+                named: base + ".Shape.area()",
+                as: (() -> Int64).self
+            )
+        } throws: { error in
+            guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                return false
+            }
+            return message.contains("witness of \(last).Hidden's conformance")
+        }
+        let makeHidden = try await runtime.resolveSwiftFunction(
+            named: last + ".makeHidden()",
+            as: (() -> AnyObject).self,
+            in: .path(stripped.libraryURL)
+        )
+        let defaultArea = try await hidden.resolveMethod(
+            named: "(extension in \(base)):\(base).Shape.area() -> Swift.Int64",
+            as: (() -> Int64).self
+        )
+        #expect(try unsafe defaultArea.unsafeInvoke(on: makeHidden.unsafeInvoke()) == -1)
+    }
+
     @Test func classMembersExportedOnlyThroughDispatchThunksCaptureTheSelectedEntry() async throws {
         let module = "ThunkOnly_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
         let prefix = "_$s\(module.utf8.count)\(module)"
