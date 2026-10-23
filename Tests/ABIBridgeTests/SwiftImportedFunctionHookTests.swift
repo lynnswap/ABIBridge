@@ -28,6 +28,8 @@ struct SwiftImportedFunctionHookTests {
         )
         defer { fixture.cleanup() }
         defer { SwiftPreparationValue.preparationThreads.withLock { $0.removeAll() } }
+        // Resolution prepares the conversions that the hook reuses.
+        SwiftPreparationValue.preparationThreads.withLock { $0.removeAll() }
         if asynchronous {
             let function = try await fixture.runtime.resolveSwiftFunction(
                 named: fixture.module + ".preparationAsync(Swift.Int64) async -> Swift.Int64",
@@ -40,7 +42,6 @@ struct SwiftImportedFunctionHookTests {
                 in: fixture.callerScope
             )
             #expect(try unsafe await caller.unsafeInvoke(40) == 41)
-            SwiftPreparationValue.preparationThreads.withLock { $0.removeAll() }
             let hook = try unsafe await function.hookMainActorImportedCalls(
                 in: fixture.callerScope,
                 using: fixture.runtime,
@@ -69,7 +70,6 @@ struct SwiftImportedFunctionHookTests {
                 in: fixture.callerScope
             )
             #expect(try unsafe caller.unsafeInvoke(40) == 41)
-            SwiftPreparationValue.preparationThreads.withLock { $0.removeAll() }
             let hook = try unsafe await function.hookMainActorImportedCalls(
                 in: fixture.callerScope,
                 using: fixture.runtime,

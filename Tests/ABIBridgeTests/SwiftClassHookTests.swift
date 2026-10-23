@@ -21,6 +21,9 @@ struct SwiftClassHookTests {
         let memberName = imported ? "finalScalar" : "scalar"
         let callerName = imported ? "classFinal" : "classScalar"
         let originalResult: Int64 = imported ? 43 : 42
+        // Resolution prepares the conversions that the hook reuses.
+        SwiftPreparationValue.preparationThreads.withLock { $0.removeAll() }
+        defer { SwiftPreparationValue.preparationThreads.withLock { $0.removeAll() } }
         let method = try await type.resolveMethod(
             named: memberName + "(Swift.Int64) -> Swift.Int64",
             as: ((Int64) -> SwiftPreparationValue).self
@@ -39,8 +42,6 @@ struct SwiftClassHookTests {
         let object = try unsafe make.unsafeInvoke()
         let identity = ObjectIdentifier(object)
         #expect(try unsafe caller.unsafeInvoke(object, 40) == originalResult)
-        SwiftPreparationValue.preparationThreads.withLock { $0.removeAll() }
-        defer { SwiftPreparationValue.preparationThreads.withLock { $0.removeAll() } }
         let body:
             @MainActor @Sendable (
                 NativeSwiftMethodInvocation<(Int64) -> SwiftPreparationValue>, Int64
