@@ -171,6 +171,27 @@ private final class WeakNativeValue {
     init(_ value: NativeValue) { self.value = value }
 }
 
+// Declarations spell a private type with this file's private discriminator,
+// while its runtime name spells the anonymous context that declares it.
+private struct SwiftPrivateMemberPoint { var x: Double, y: Double }
+// Unoptimized methods keep the entry points that ABIBridge resolves.
+private final class SwiftPrivateMemberCaller {
+    @inline(never) @_optimize(none)
+    func apply(_ callback: (SwiftPrivateMemberPoint) -> Double) -> Double {
+        callback(SwiftPrivateMemberPoint(x: 40, y: 2))
+    }
+    @inline(never) @_optimize(none) func make() -> SwiftPrivateMemberPoint {
+        SwiftPrivateMemberPoint(x: 40, y: 2)
+    }
+    @inline(never) @_optimize(none)
+    func sum(
+        _ pairs: [(SwiftPrivateMemberPoint, SwiftPrivateMemberPoint)?],
+        _ pair: (SwiftPrivateMemberPoint, Int)
+    ) -> Double {
+        pairs.reduce(pair.0.x + pair.0.y) { $0 + ($1.map { $0.0.x + $0.1.y } ?? 0) }
+    }
+}
+
 extension NSObject {
     @inline(never) public func bridgeImportedExtension(_ value: Int) -> Int { value + 1 }
 }
@@ -1233,6 +1254,56 @@ struct SwiftMemberInvocationTests {
         runtime.removeCachedResults()
         try unsafe setter.unsafeInvoke(42)
         #expect(try unsafe getter.unsafeInvoke() == 42)
+    }
+
+    /// A signature that names a private type matches its declaration: as a
+    /// closure's parameter, a result, a tuple element, and twice within a
+    /// generic argument.
+    @MainActor @Test func privateHostTypesMatchTheirDeclarations() async throws {
+        let caller = SwiftPrivateMemberCaller()
+        // Compiler calls keep the private methods and control their results.
+        #expect(caller.apply { $0.x + $0.y } == 42)
+        #expect(caller.sum([(caller.make(), caller.make()), nil], (caller.make(), 1)) == 84)
+        let object = ABIRuntime().object(caller)
+        typealias Callback = NativeSwiftClosure<(SwiftPrivateMemberPoint) -> Double>
+        let apply = try await object.resolveMethod(
+            named: "apply(_:)",
+            as: ((Callback) -> Double).self
+        )
+        #expect(try unsafe apply.unsafeInvoke(Callback { $0.x + $0.y }) == 42)
+        let make = try await object.resolveMethod(
+            named: "make()",
+            as: (() -> SwiftPrivateMemberPoint).self
+        )
+        typealias Pair = (SwiftPrivateMemberPoint, SwiftPrivateMemberPoint)
+        let sum = try await object.resolveMethod(
+            named: "sum(_:_:)",
+            as: (([Pair?], (SwiftPrivateMemberPoint, Int)) -> Double).self
+        )
+        let point = try unsafe make.unsafeInvoke()
+        #expect(try unsafe sum.unsafeInvoke([(point, point), nil], (point, 1)) == 84)
+    }
+
+    /// A private generic argument matches wherever a container names it,
+    /// including a tuple with an Objective-C superclass existential, which has
+    /// no runtime mangled name.
+    @Test func privateGenericArgumentsMatchInContainers() async throws {
+        typealias Pair = (SwiftPrivateMemberPoint, any NSObject & NSCopying)
+        let echo = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.echoGeneric(_:)",
+            as: ((Pair) -> Pair).self,
+            genericArguments: [.type(Pair.self)]
+        )
+        let text = NSString(string: "copy")
+        let pair = (SwiftPrivateMemberPoint(x: 40, y: 2), text)
+        let result = try unsafe echo.unsafeInvoke(pair)
+        #expect(result.0.x + result.0.y == 42 && result.1 === text)
+        let count = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.countNSObjectCopyingPairs(_:)",
+            as: (([Pair]) -> Int64).self,
+            genericArguments: [.type(SwiftPrivateMemberPoint.self)]
+        )
+        #expect(try unsafe count.unsafeInvoke([pair, pair]) == 2)
     }
 
     @MainActor @Test func missingMembersPreserveRequestedOwner() async throws {
