@@ -9,6 +9,7 @@ task_failed=()
 for task_check in \
     check-inferred-swift-value-codegen.py \
     check-inferred-swift-value-evidence-codegen.py \
+    check-swift-borrowed-input-codegen.py \
     check-managed-swift-codegen.py \
     check-swift-closure-codegen.py \
     check-swift-optional-codegen.py \

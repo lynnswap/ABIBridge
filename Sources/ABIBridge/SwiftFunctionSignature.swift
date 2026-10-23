@@ -329,26 +329,37 @@ struct SwiftCallValues: Sendable {
         result = Result(conversion: conversion, scoped: scoped)
     }
 
-    /// Checks that each argument passes as the compiler passes it when the
-    /// call's result can borrow from it; see
-    /// ``SwiftInferredValue/requireBorrowable(_:passedByAddress:position:explicit:)``.
+    /// Checks that each argument passes as Swift passes it where the call's
+    /// result borrows from it; see ``SwiftBorrowedInputs``.
     ///
-    /// - Parameter binding: The lookup whose `valueABIs` describe values
-    ///   that then do not lower by inference.
-    func requireBorrowableArguments(binding: SwiftGenericBinding?) throws {
+    /// - Parameter declaration: The selected declaration's plan, whose
+    ///   formal parameter types name the native types behind adapters.
+    func requireBorrowableArguments(declaration: SwiftGenericCallPlan?) throws {
         guard result.scoped != nil else { return }
-        for argument in arguments where argument.convention != .inoutValue {
-            guard let native = try? argument.conversion.nativeType() else { continue }
-            // A tuple argument passes its elements separately, while Swift
-            // passes a tuple that sets the bit as one address.
-            let byAddress =
-                argument.conversion.tuple == nil
-                && withExtendedLifetime(argument.type) { ABISwiftValueIsIndirect(argument.type.handle) }
-            try SwiftInferredValue.requireBorrowable(
-                native,
-                passedByAddress: byAddress,
-                position: .parameter
-            ) { binding?.hasValueABI($0) ?? false }
+        // Packs pass their elements through one buffer, by address.
+        var formals: [Int: SwiftFormalType] = [:]
+        if let declaration {
+            for (formal, group) in zip(
+                declaration.binding.declaration.arguments,
+                declaration.parameters.groups
+            ) {
+                if case .value(let index) = group { formals[index] = formal }
+            }
+        }
+        // Swift rejects a borrow dependency on a consuming argument and
+        // passes an inout argument by address.
+        for (index, argument) in arguments.enumerated() where argument.convention == .borrowing {
+            let indirect = withExtendedLifetime(argument.type) {
+                ABISwiftValueIsIndirect(argument.type.handle)
+            }
+            // A tuple passes its elements separately.
+            if indirect, argument.conversion.tuple == nil { continue }
+            try SwiftBorrowedInputs.requireArgument(
+                index,
+                conversion: argument.conversion,
+                formal: formals[index],
+                binding: declaration?.binding
+            )
         }
     }
 

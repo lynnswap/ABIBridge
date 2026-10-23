@@ -16,8 +16,6 @@ struct SwiftReceiverPlan: Sendable {
     let isConsuming: Bool
     let expectedClass: AnyClass?
     let metadata: Any.Type
-    /// Whether `receiverABI` states the convention of `self`.
-    var isExplicit = false
 
     /// - Parameter schema: The declaration's schema of `self`, where it
     ///   decides how the host value passes instead of `conversion`.
@@ -101,17 +99,19 @@ struct SwiftReceiverPlan: Sendable {
         return passing + (isMutating ? ", mutating" : "") + (isConsuming ? ", consuming" : "")
     }
 
-    /// Checks that `self` passes as the compiler passes it when the call's
-    /// result can borrow from it; see
-    /// ``SwiftInferredValue/requireBorrowable(_:passedByAddress:position:explicit:)``.
+    /// Checks that `self` passes as Swift passes it where the call's result
+    /// borrows from it; see ``SwiftBorrowedInputs``. The declaration's
+    /// `self` type decides, whatever represents it.
     func requireBorrowable() throws {
-        // A representation other than the type itself states its own
-        // convention, and an indirect self passes by address.
-        guard mode == .value, !isExplicit, conversion.host == metadata else { return }
-        try SwiftInferredValue.requireBorrowable(
-            metadata,
-            passedByAddress: false,
-            position: .receiver
+        // Swift rejects a borrow dependency on a consuming self, and a class
+        // instance, a mutating self, or an indirect self passes as one
+        // pointer either way.
+        guard mode == .value, !isConsuming else { return }
+        try SwiftBorrowedInputs.require(
+            SwiftInferredValue.addressability(of: metadata),
+            of: metadata,
+            input: .receiver,
+            tuple: false
         )
     }
 

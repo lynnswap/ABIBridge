@@ -158,11 +158,6 @@ enum SwiftInferredValue {
         /// decide the value: it is nongeneric, and its fields explain whether
         /// its value witnesses are POD.
         var followsNonEvolutionRules = false
-        /// Whether Swift can pass it by address where a result borrows from
-        /// it: its static value witnesses set the addressable-for-
-        /// dependencies bit, or it is a generic instance, which has no static
-        /// summary.
-        var isAddressableWhereBorrowed = false
         /// Whether it, or a value it stores, has static value witnesses that
         /// leave the addressable-for-dependencies bit clear although a value
         /// it stores sets the bit. Swift sets the bit for a value whenever a
@@ -294,7 +289,7 @@ enum SwiftInferredValue {
         // address-only. Only static value witnesses show the bit.
         let masked =
             hasStaticWitnesses && flags & addressableForDependencies == 0
-            ? fields.first { $0.type.map(addressability) == .yes } : nil
+            ? fields.first { $0.type.map(addressability)?.isSet == true } : nil
         let kind = info.isEnum ? "enum" : "struct"
         let decision =
             hasStaticWitnesses
@@ -352,8 +347,6 @@ enum SwiftInferredValue {
         }
         var classification = Classification(convention: convention, storesNonPOD: storesNonPOD)
         classification.followsNonEvolutionRules = followsNonEvolutionRules
-        classification.isAddressableWhereBorrowed =
-            !hasStaticWitnesses || flags & addressableForDependencies != 0
         return classification
     }
 
@@ -711,8 +704,19 @@ enum SwiftInferredValue {
         case undecided(String)
     }
 
-    private enum Addressability {
-        case no, yes, unknown
+    /// Whether Swift's lowering of a type sets the addressable-for-
+    /// dependencies bit, as the records that ABIBridge reads show.
+    enum Addressability: Sendable, Equatable {
+        case clear
+        /// The bit is set; the clause names the type that sets it and how.
+        case sets(String)
+        /// Nothing shows whether the bit is set; the clause says why.
+        case unknown(String)
+
+        var isSet: Bool {
+            if case .sets = self { return true }
+            return false
+        }
     }
 
     /// What the value's own static value witnesses and its module's exports
@@ -767,8 +771,8 @@ enum SwiftInferredValue {
         if isSelfAddressable(metadata) {
             return "its own @_addressableForDependencies attribute explains"
         }
-        let explained = fields.map { ($0, $0.type.map(addressability) ?? .no) }
-        if let field = explained.first(where: { if case .yes = $0.1 { true } else { false } }) {
+        let explained = fields.map { ($0, $0.type.map(addressability) ?? .clear) }
+        if let field = explained.first(where: { $0.1.isSet }) {
             return "its field \(field.0.description) explains"
         }
         if let field = explained.first(where: { if case .unknown = $0.1 { true } else { false } }) {
@@ -777,44 +781,73 @@ enum SwiftInferredValue {
         return nil
     }
 
-    /// Whether a field explains its parent's addressable-for-dependencies bit.
-    private static func addressability(of type: Any.Type) -> Addressability {
+    /// Whether Swift's lowering of `type` sets the addressable-for-
+    /// dependencies bit: a field with the bit explains its parent's bit, and
+    /// Swift passes an input with it by address where a result borrows from
+    /// the input.
+    ///
+    /// Only static value witnesses from a module that sets the bit for some
+    /// type show it; the runtime builds a generic instance's. Swift sets it
+    /// for `String`, for `@_addressableForDependencies` declarations, and for
+    /// imported C structs and unions, and never for references, closures,
+    /// existentials, metatypes, pointers, or collections, which store their
+    /// values out of line.
+    /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/SIL/IR/TypeLowering.cpp
+    static func addressability(of type: Any.Type) -> Addressability {
         switch runtimeMetadataKind(type) {
         case .optional:
             return addressability(of: (type as! any NativeOptionalValue.Type).wrappedType)
         case .tuple:
             let elements = SwiftTupleMetadata(type)!.elements.map { addressability(of: $0.type) }
-            if elements.contains(where: { if case .yes = $0 { true } else { false } }) {
-                return .yes
-            }
-            if elements.contains(where: { if case .unknown = $0 { true } else { false } }) {
-                return .unknown
-            }
-            return .no
+            return elements.first(where: \.isSet) ?? elements.first { $0 != .clear } ?? .clear
         case .structure, .enumeration:
             break
         default:
             // References, closures, existentials, metatypes, and builtins.
-            return .no
+            return .clear
         }
-        if type == String.self { return .yes }
-        if isSelfAddressable(type) { return .yes }
+        let name = "`\(String(reflecting: type))`"
+        if type == String.self { return .sets("\(name) sets it") }
+        if isSelfAddressable(type) {
+            return .sets("\(name) sets it through its @_addressableForDependencies attribute")
+        }
         if type is any SwiftCollectionValue.Type || type is any NativePointerValue.Type
             || type == Bool.self
         {
-            return .no
+            return .clear
         }
         func scalar<Value>(_: Value.Type) -> Bool { CValueCodec<Value>.isScalar }
-        if _openExistential(type, do: scalar) { return .no }
+        if _openExistential(type, do: scalar) { return .clear }
         let pointer = unsafeBitCast(type, to: UnsafeRawPointer.self)
         var info = ABISwiftValueDescriptorInfo()
-        guard ABISwiftGetValueDescriptorInfo(pointer, &info) else { return .unknown }
-        if info.metadataInitialization == 2 { return .yes }
+        guard ABISwiftGetValueDescriptorInfo(pointer, &info) else {
+            return .unknown("ABIBridge cannot read the nominal type descriptor of \(name)")
+        }
+        if info.metadataInitialization == 2 {
+            return .sets(
+                "\(name) is an imported C type, which sets it when it imports a C struct or union"
+            )
+        }
+        if info.isGeneric {
+            return .unknown(
+                "\(name) is a generic instance, whose value witnesses the runtime builds, so they do not show the bit"
+            )
+        }
+        if info.metadataInitialization != 0 {
+            return .unknown(
+                "the runtime initializes the metadata of \(name), so its value witnesses do not show the bit"
+            )
+        }
         // Only static metadata from a module known to set the bit carries it.
-        guard !info.isGeneric, info.metadataInitialization == 0,
-            ModuleContext(type).setsAddressableForDependencies
-        else { return .unknown }
-        return ABISwiftGetValueWitnessFlags(pointer) & addressableForDependencies != 0 ? .yes : .no
+        let module = ModuleContext(type)
+        guard module.setsAddressableForDependencies else {
+            let moduleName = module.name.map { "module `\($0)`" } ?? "its module"
+            return .unknown(
+                "\(moduleName) never sets the bit, as Swift 6.1 and earlier compilers do not, so the clear bit of \(name) does not show it"
+            )
+        }
+        return ABISwiftGetValueWitnessFlags(pointer) & addressableForDependencies != 0
+            ? .sets("the static value witnesses of \(name) set it") : .clear
     }
 
     /// `@frozen @_addressableForDependencies` declarations set the bit for
@@ -969,72 +1002,6 @@ enum SwiftInferredValue {
         default:
             return nil
         }
-    }
-
-    // MARK: Results that borrow from values
-
-    /// Checks that a value of `type` at `position` of a call whose result
-    /// can borrow from it passes as the compiler passes it there.
-    ///
-    /// Swift passes an input that a result has a scoped dependency on as one
-    /// address when its type sets the addressable-for-dependencies bit, even
-    /// a tuple, whose elements it otherwise passes separately. No symbol
-    /// records which input a result borrows from. A value that only the
-    /// records of a module built without library evolution make loadable can
-    /// set the bit, as its static value witnesses show, and nothing shows
-    /// whether a generic instance sets it, so such a value is undecided
-    /// there, unless the call already passes it by address. Values that a
-    /// static summary makes loadable leave the bit clear.
-    /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/SIL/IR/SILFunctionType.cpp
-    ///
-    /// - Parameters:
-    ///   - passedByAddress: Whether the call passes the whole value as one
-    ///     address, as it does for a value whose lowering is indirect by
-    ///     size, but not for a tuple, whose elements it passes separately.
-    ///   - explicit: Whether a lookup's `valueABIs` entry describes a type,
-    ///     which then does not lower by inference.
-    static func requireBorrowable(
-        _ type: Any.Type,
-        passedByAddress: Bool,
-        position: SwiftValuePosition,
-        explicit: @escaping (Any.Type) -> Bool = { _ in false }
-    ) throws {
-        guard !passedByAddress else { return }
-        func addressable(_ type: Any.Type) -> Any.Type? {
-            if explicit(type) { return nil }
-            switch runtimeMetadataKind(type) {
-            case .optional:
-                return addressable((type as! any NativeOptionalValue.Type).wrappedType)
-            case .tuple:
-                return SwiftTupleMetadata(type)!.elements.lazy.compactMap {
-                    addressable($0.type)
-                }.first
-            case .structure, .enumeration:
-                guard lowersByInference(type),
-                    let classification = try? classification(of: type),
-                    case .loadable = classification.convention,
-                    classification.isAddressableWhereBorrowed
-                else { return nil }
-                return type
-            default:
-                return nil
-            }
-        }
-        guard let value = addressable(type) else { return }
-        var info = ABISwiftValueDescriptorInfo()
-        let summary =
-            ABISwiftGetValueDescriptorInfo(unsafeBitCast(value, to: UnsafeRawPointer.self), &info)
-                && info.isGeneric
-            ? "it is a generic instance, whose value witnesses do not show whether it sets the addressable-for-dependencies bit, so Swift can pass it by address"
-            : "its value witnesses set the addressable-for-dependencies bit, so Swift passes it by address"
-        throw ABIResolutionError.metadataUnavailable(
-            message(
-                for: value,
-                summary
-                    + " where the call's result borrows from it, and no symbol records which input a result borrows from",
-                at: position
-            )
-        )
     }
 }
 
