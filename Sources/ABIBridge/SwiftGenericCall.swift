@@ -119,7 +119,11 @@ final class SwiftGenericClosurePlan: Sendable {
     }
     let transport: Transport
     let parameters: SwiftGenericParameters
+    /// The discriminator that signs this function's values, or zero where
+    /// function pointers are not authenticated.
     let discriminator: UInt16
+    /// The formal types that arm64e hashes into `discriminator`. Plans also
+    /// compare it as part of their native ABI on every architecture.
     let authentication: String
     let isEscaping: Bool
     let resultConstants: SwiftValueConstants
@@ -135,7 +139,6 @@ final class SwiftGenericClosurePlan: Sendable {
     init(
         transport: Transport,
         parameters: SwiftGenericParameters,
-        discriminator: UInt16,
         authentication: String,
         isEscaping: Bool,
         resultConstants: SwiftValueConstants,
@@ -148,7 +151,8 @@ final class SwiftGenericClosurePlan: Sendable {
         nativeArgumentClosures: [SwiftGenericClosurePlan?]? = nil,
         nativeResultClosure: SwiftGenericClosurePlan? = nil
     ) {
-        self.transport = transport; self.parameters = parameters; self.discriminator = discriminator
+        self.transport = transport; self.parameters = parameters
+        discriminator = RuntimePointerAuthentication.swiftClosureDiscriminator(authentication)
         self.authentication = authentication; self.isEscaping = isEscaping;
         self.resultConstants = resultConstants
         self.errorPlan = errorPlan; self.runtimeArguments = runtimeArguments; self.result = result;
@@ -248,7 +252,6 @@ final class SwiftGenericClosurePlan: Sendable {
         return SwiftGenericClosurePlan(
             transport: transport,
             parameters: parameterPlan,
-            discriminator: try signature.closureDiscriminator(),
             authentication: try signature.closureAuthDescription(),
             isEscaping: false,
             resultConstants: SwiftValueConstants(nativeResult),
@@ -326,10 +329,6 @@ final class SwiftGenericClosurePlan: Sendable {
         return SwiftGenericClosurePlan(
             transport: transport,
             parameters: SwiftGenericParameters(actual: signature.parameters, arguments: arguments),
-            discriminator: swiftClosureDiscriminator(
-                parameters: authentication,
-                results: ["-indirect"]
-            ),
             authentication: swiftClosureAuthDescription(
                 parameters: authentication,
                 results: ["-indirect"]
@@ -2017,10 +2016,6 @@ struct SwiftGenericCallPlan: Sendable {
         return SwiftGenericClosurePlan(
             transport: transport,
             parameters: parameterPlan,
-            discriminator: swiftClosureDiscriminator(
-                parameters: authentication,
-                results: resultAuthentication
-            ),
             authentication: swiftClosureAuthDescription(
                 parameters: authentication,
                 results: resultAuthentication

@@ -161,8 +161,8 @@ ABISwiftReferenceStorage ABISwiftTypeFieldReferenceStorage(const void *metadata,
 bool ABISwiftTypeFieldIsGenericDependent(const void *metadata, size_t index);
 /// The module that declares the nominal type, borrowing its descriptor's name.
 const char *ABISwiftTypeModuleName(const void *metadata);
-/// Whether the nominal type is declared in an extension whose generic signature adds requirements to its extended type's, directly or within another type declared in one. True when an extension's requirements cannot be compared.
-bool ABISwiftTypeIsDeclaredInConstrainedExtension(const void *metadata);
+/// Whether the nominal type is declared in an extension of a generic type, directly or within another type declared in one: an extension that adds requirements, or one in another module than the type it extends. Such an extension has a generic signature, which its requirement records spell without conformances to marker protocols. An unconstrained extension in the extended type's module has no descriptor of its own.
+bool ABISwiftTypeIsDeclaredInGenericExtension(const void *metadata);
 /// Whether the image declaring the type has a nongeneric, statically initialized struct or enum of the same module whose value witnesses set the addressable-for-dependencies bit. Swift 6.1 and earlier never set it.
 bool ABISwiftModuleSetsAddressableForDependencies(const void *metadata);
 /// The shape's generalized type expression, preserving symbolic references.

@@ -7,8 +7,15 @@ package func swiftClosureDiscriminator(parameters: [String], result: String?) ->
 }
 
 package func swiftClosureDiscriminator(parameters: [String], results: [String]) -> UInt16 {
-    let description = swiftClosureAuthDescription(parameters: parameters, results: results)
-    return swiftClosureDiscriminators.withLock { cache in
+    swiftClosureDiscriminator(
+        description: swiftClosureAuthDescription(parameters: parameters, results: results)
+    )
+}
+
+/// Swift's discriminator for a function type with `description`, with which
+/// arm64e signs the function pointers of its values.
+package func swiftClosureDiscriminator(description: String) -> UInt16 {
+    swiftClosureDiscriminators.withLock { cache in
         if let value = cache[description] { return value }
         let value = swiftPointerAuthHash(description)
         if cache.count == 128 { cache.removeAll(keepingCapacity: true) }

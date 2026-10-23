@@ -92,22 +92,22 @@ struct SwiftFunctionSignature: Sendable {
         return try SwiftErrorPlan.make(error, genericType: genericType)
     }
 
+    /// The discriminator that signs this function's values. Describing the
+    /// function's formal types also rejects values that closure signatures
+    /// do not support, on every architecture.
     func closureDiscriminator() throws -> UInt16 {
-        let (parameters, results) = try closureAuthTypes()
-        return swiftClosureDiscriminator(parameters: parameters, results: results)
+        RuntimePointerAuthentication.swiftClosureDiscriminator(try closureAuthDescription())
     }
 
     func closureAuthDescription() throws -> String {
-        let (parameters, results) = try closureAuthTypes()
-        return swiftClosureAuthDescription(parameters: parameters, results: results)
-    }
-
-    private func closureAuthTypes() throws -> ([String], [String]) {
         var parameters = isAsync && inheritsCallerIsolation ? ["-class"] : []
         for type in self.parameters {
             parameters.append(contentsOf: try swiftClosureAuthTypes(type, position: .parameter))
         }
-        return (parameters, try swiftClosureAuthTypes(result, position: .result))
+        return swiftClosureAuthDescription(
+            parameters: parameters,
+            results: try swiftClosureAuthTypes(result, position: .result)
+        )
     }
 }
 
