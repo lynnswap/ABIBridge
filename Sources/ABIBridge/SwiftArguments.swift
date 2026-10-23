@@ -59,11 +59,11 @@ private func swiftOwnershipConversion<Wrapper, Value>(
                 )
             }
         },
-        callbackDecoder: { _ in
-            let decode = try SwiftCallbackValues.decoder(
-                for: Value.self,
-                generic: generic,
-                consuming: consumes
+        callbackDecoder: { failure in
+            let decode = try argument.conversion.callbackDecoder(
+                convention: argument.convention,
+                asynchronous: argument.asynchronous,
+                failure: failure
             )
             return { wrap(try decode($0, $1) as! Value) }
         }
@@ -386,9 +386,16 @@ extension NativeSwiftInout: SwiftConventionArgument {
             if case .tuple(let plan, _, _) = generic {
                 tuple = plan
             } else {
-                tuple = try SwiftGenericCallPlan.concreteTuple(Value.self, position: .nested)
+                tuple = try SwiftTupleValuePlan(host: Value.self, position: .nested)
             }
             if let tuple {
+                // A buffer holds the host tuple, which an adapter's
+                // representation cannot be written back to.
+                guard !tuple.hasAdapters else {
+                    throw ABIResolutionError.unsupportedDeclaration(
+                        "Inout buffers require actual Swift value storage, not a converted foreign representation."
+                    )
+                }
                 let value = try SwiftHostConversion(
                     host: Value.self,
                     argument: .tuple(tuple),

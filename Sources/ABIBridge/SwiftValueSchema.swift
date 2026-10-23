@@ -404,7 +404,7 @@ struct SwiftValueSchema: Sendable {
         }
         func prepare<Value>(_: Value.Type) throws -> Self {
             try Self.hostTuple(Value.self, elements: tuple.elements) { element in
-                try Self(host: element, binding: binding, position: position.tupleElement).type
+                try Self(host: element, binding: binding, position: position.tupleElement)
             }
         }
         self = try _openExistential(type, do: prepare)
@@ -441,13 +441,7 @@ struct SwiftValueSchema: Sendable {
         let schema: Self
         if let tuple = SwiftTupleMetadata(Value.self) {
             return try hostTuple(Value.self, elements: tuple.elements) { element in
-                guard !(element is any ABIBridgeValue.Type) || element is any ABIBridgeSwiftValue.Type
-                else {
-                    throw ABIResolutionError.unsupportedDeclaration(
-                        "Tuple elements require their native Swift storage representation."
-                    )
-                }
-                return try Self(host: element, position: position.tupleElement).type
+                try Self(host: element, position: position.tupleElement)
             }
         } else if let metatype = SwiftMetatypeMetadata(base) {
             // An Optional of a metatype is an enum that reuses its storage.
@@ -533,28 +527,33 @@ struct SwiftValueSchema: Sendable {
     }
 
     /// The schema of a host tuple: each element's storage, which `field`
-    /// gives, at the element's offset in the native tuple, which stores a
-    /// native function where the host tuple stores a closure.
+    /// gives, placed as Swift places tuple elements of those sizes and
+    /// alignments. A closure's element stores a native function and an
+    /// adapter's its representation, so such a tuple has no native type of
+    /// its own.
     private static func hostTuple<Value>(
         _: Value.Type,
         elements: [SwiftTupleMetadata.Element],
-        field: (Any.Type) throws -> CValueType
+        field: (Any.Type) throws -> Self
     ) throws -> Self {
         let fields = try elements.map { try field($0.type) }
-        let native = try SwiftGenericCallPlan.concreteNativeMetadata(Value.self)
-        guard let nativeTuple = SwiftTupleMetadata(native) else {
-            preconditionFailure("The native type of a tuple is a tuple.")
+        var offsets: [Int] = [], size = 0, alignment = 1
+        for field in fields {
+            let offset = (size + field.type.alignment - 1) / field.type.alignment * field.type.alignment
+            offsets.append(offset)
+            size = offset + field.type.size
+            alignment = max(alignment, field.type.alignment)
         }
-        let layout = ABISwiftGetValueLayout(unsafeBitCast(native, to: UnsafeRawPointer.self))
+        let native = zip(fields, elements).allSatisfy { $0.0.metadata == $0.1.type }
         return Self(
             type: try CValueType(
-                swiftTuple: fields,
-                offsets: nativeTuple.elements.map(\.offset),
-                size: layout.size,
-                alignment: layout.alignment
+                swiftTuple: fields.map(\.type),
+                offsets: offsets,
+                size: size,
+                alignment: alignment
             ),
             kind: .tuple,
-            metadata: native
+            metadata: native ? Value.self : nil
         )
     }
 

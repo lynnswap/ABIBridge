@@ -63,8 +63,8 @@ struct SwiftGenericParameters: Sendable {
         try signature.parameters.map { type in
             if let convention = type as? any SwiftConventionArgument.Type {
                 let nested: SwiftGenericArgument
-                if let tuple = try SwiftGenericCallPlan.concreteTuple(
-                    convention.wrappedType,
+                if let tuple = try SwiftTupleValuePlan(
+                    host: convention.wrappedType,
                     position: .parameter
                 ) {
                     nested = .tuple(tuple, consuming: convention.convention == .consuming, asynchronous: signature.isAsync)
@@ -73,7 +73,7 @@ struct SwiftGenericParameters: Sendable {
                 } else { nested = .concrete }
                 return .convention(try convention.makeConversion(generic: nested))
             }
-            if let tuple = try SwiftGenericCallPlan.concreteTuple(type, position: .parameter) {
+            if let tuple = try SwiftTupleValuePlan(host: type, position: .parameter) {
                 return .tuple(tuple, consuming: defaultConsuming, asynchronous: signature.isAsync)
             }
             return .concrete

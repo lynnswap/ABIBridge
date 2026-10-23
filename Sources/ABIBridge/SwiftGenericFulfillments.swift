@@ -68,7 +68,13 @@ extension SwiftGenericBinding {
             }
         }
         func consider(_ type: SwiftFormalType) throws {
+            // A closed type holds no archetype, so its metadata fulfills
+            // none. Its native type need not be established either, which
+            // only a lookup could do for a type the caller does not pass,
+            // and an optimized image cannot for a function-local type.
+            guard dependsOnParameters(type) else { return }
             let type = try canonicalType(of: type)
+            guard dependsOnParameters(type) else { return }
             switch type {
             case .inoutValue, .pack: return
             case .borrowing(let value), .consuming(let value): try consider(value)

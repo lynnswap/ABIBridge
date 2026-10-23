@@ -264,6 +264,18 @@ struct SwiftSignatureCompatibilityTests {
         #expect(try unsafe name.unsafeInvoke(value) == value.name())
     }
 
+    /// A tuple element converts through its adapter's representation, as a
+    /// whole argument or result does.
+    @Test func tupleElementsConvertThroughAdapters() async throws {
+        let count = "ManagedSwiftFixtures.CompatibilityCount"
+        let pair = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.compatibilityCountPair((\(count), Swift.Int64)) -> (\(count), Swift.Int64)",
+            as: (((HostCount, Int64)) -> (HostCount, Int64)).self
+        )
+        let result = try unsafe pair.unsafeInvoke((HostCount(value: 40), 2))
+        #expect(result.0.value == 42 && result.1 == 2)
+    }
+
     @Test func completeDeclarationsLowerLocalTypesThroughHostRepresentations() async throws {
         let outer = "ManagedSwiftFixtures.compatibilityLocalCount(Swift.Int64) -> Swift.Int64"
         let count = "Count #1 in " + outer

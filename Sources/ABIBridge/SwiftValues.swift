@@ -45,7 +45,7 @@ struct SwiftValueCodec<Value>: Sendable {
     ///   undecided inferred value is passed. Optional payloads are nested;
     ///   tuple elements take the tuple's element position.
     init(position: SwiftValuePosition) throws {
-        let preparedTuple = try SwiftGenericCallPlan.concreteTuple(Value.self, position: position)
+        let preparedTuple = try SwiftTupleValuePlan(host: Value.self, position: position)
         tuple = preparedTuple?.needsConversion == true ? preparedTuple : nil
         if let tuple {
             schema = SwiftValueSchema(type: tuple.type, kind: .tuple, metadata: tuple.nativeMetadata)

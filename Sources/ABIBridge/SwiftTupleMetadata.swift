@@ -79,12 +79,14 @@ extension RuntimeTupleMetadata {
 
 struct SwiftTupleValuePlan: Sendable {
     struct Field: Sendable {
-        let hostType: Any.Type
+        /// How the field's host value converts.
+        let conversion: SwiftHostConversion
+        /// How the field passes as an element of the tuple's arguments.
+        let argument: SwiftGenericArgument
+        var hostType: Any.Type { conversion.host }
         let nativeType: Any.Type
         let hostOffset: Int
         let nativeOffset: Int
-        let argument: SwiftGenericArgument
-        let result: SwiftGenericResult
         let nativeClosure: SwiftGenericClosurePlan?
         let tuple: SwiftTupleValuePlan?
         fileprivate let leaves: [Leaf]
@@ -98,31 +100,55 @@ struct SwiftTupleValuePlan: Sendable {
             hostOffset: Int,
             nativeOffset: Int,
             argument: SwiftGenericArgument,
-            result: SwiftGenericResult,
             tuple: SwiftTupleValuePlan? = nil,
             nativeClosure: SwiftGenericClosurePlan? = nil,
             position: SwiftValuePosition
         ) throws {
-            self.hostType = hostType; self.nativeType = nativeType
+            try self.init(
+                input: SwiftCallValues.Argument(
+                    host: hostType,
+                    plan: argument,
+                    defaultConsuming: false,
+                    asynchronous: false,
+                    position: position
+                ),
+                argument: argument,
+                nativeType: nativeType,
+                hostOffset: hostOffset,
+                nativeOffset: nativeOffset,
+                tuple: tuple,
+                nativeClosure: nativeClosure
+            )
+        }
+
+        fileprivate init(
+            input: SwiftCallValues.Argument,
+            argument: SwiftGenericArgument,
+            nativeType: Any.Type,
+            hostOffset: Int,
+            nativeOffset: Int,
+            tuple: SwiftTupleValuePlan?,
+            nativeClosure: SwiftGenericClosurePlan?
+        ) throws {
+            conversion = input.conversion
+            self.argument = argument; self.nativeType = nativeType
             self.hostOffset = hostOffset; self.nativeOffset = nativeOffset
-            self.argument = argument; self.result = result; self.tuple = tuple;
-            self.nativeClosure = nativeClosure
+            self.tuple = tuple; self.nativeClosure = nativeClosure
+            // A field converts in both directions, so a closure prepares the
+            // codec that wraps native functions for the host.
+            if case .closure(let closure) = conversion.kind { _ = try closure.codec() }
             if let tuple {
                 leaves = tuple.leaves.map { $0.rebased(host: hostOffset, native: nativeOffset) }
             } else {
-                func prepare<Value>(_ type: Value.Type) throws -> Leaf {
-                    try Leaf(
-                        hostType: type,
+                leaves = [
+                    Leaf(
+                        input: input,
                         nativeType: nativeType,
                         hostOffset: hostOffset,
                         nativeOffset: nativeOffset,
-                        argument: argument,
-                        result: result,
-                        nativeClosure: nativeClosure,
-                        position: position
+                        nativeClosure: nativeClosure
                     )
-                }
-                leaves = [try _openExistential(hostType, do: prepare)]
+                ]
             }
         }
     }
@@ -131,247 +157,146 @@ struct SwiftTupleValuePlan: Sendable {
         @Sendable (UnsafeMutableRawPointer, SwiftCallbackScope, UnsafeMutableRawPointer) throws ->
         Void
 
+    /// A field that is not itself a tuple, at its offsets in the outermost
+    /// host and native tuples.
     struct Leaf: Sendable {
-        let hostType: Any.Type
+        /// How the leaf's host value converts.
+        let conversion: SwiftHostConversion
+        var hostType: Any.Type { conversion.host }
         let nativeType: Any.Type
         private(set) var hostOffset: Int
         private(set) var nativeOffset: Int
+        /// The storage with which the leaf passes as an argument.
         let type: CValueType
-        let argument: SwiftGenericArgument
-        let result: SwiftGenericResult
         let nativeClosure: SwiftGenericClosurePlan?
         let nativeSize: Int
+        /// Whether a runtime value leaf passes to an async function.
+        private let asynchronous: Bool
         fileprivate let constants: SwiftValueConstants
         fileprivate let codeLifetime: SwiftValueCodeLifetime?
-        fileprivate let encodeArgument:
-            @Sendable (UnsafeRawPointer, Bool, Bool, Any?) throws -> NativeValueStorage
-        fileprivate let encodeResult:
-            @Sendable (UnsafeRawPointer, Any?) throws -> NativeValueStorage
-        fileprivate let encodeCopy:
-            @Sendable (UnsafeRawPointer, Any?) throws -> (NativeValueStorage, Bool)
-        fileprivate let decodeResult:
-            @Sendable (NativeValueStorage, Any?, Any?, UnsafeMutableRawPointer) throws -> Void
-        fileprivate let copyNative:
-            @Sendable (
-                UnsafeRawPointer, Any?, SwiftValueCodeLifetime?, SwiftCallbackScope?,
-                UnsafeMutableRawPointer
-            ) throws -> Void
-        fileprivate let callback: @Sendable (Bool) throws -> HostDecoder
-        fileprivate let validateOwnedResult: @Sendable () throws -> Void
-        fileprivate let destroyHost: @Sendable (UnsafeMutableRawPointer) -> Void
 
-        fileprivate init<Value>(
-            hostType: Value.Type,
+        fileprivate init(
+            input: SwiftCallValues.Argument,
             nativeType: Any.Type,
             hostOffset: Int,
             nativeOffset: Int,
-            argument: SwiftGenericArgument,
-            result: SwiftGenericResult,
-            nativeClosure: SwiftGenericClosurePlan?,
-            position: SwiftValuePosition
-        ) throws {
-            if case .concrete = argument {
-                let base = (Value.self as? any NativeOptionalValue.Type)?.wrappedType ?? Value.self
-                guard !(base is any ABIBridgeValue.Type) || base is any ABIBridgeSwiftValue.Type
-                else {
-                    throw ABIResolutionError.unsupportedDeclaration(
-                        "Tuple elements require native Swift storage; foreign value conversions need a compiled adapter."
-                    )
-                }
-            }
-            self.hostType = hostType; self.nativeType = nativeType
+            nativeClosure: SwiftGenericClosurePlan?
+        ) {
+            conversion = input.conversion
+            self.nativeType = nativeType
             self.hostOffset = hostOffset; self.nativeOffset = nativeOffset
-            self.argument = argument; self.result = result; self.nativeClosure = nativeClosure
-            let metadata = unsafeBitCast(nativeType, to: UnsafeRawPointer.self)
-            let layout = ABISwiftGetValueLayout(metadata)
-            nativeSize = layout.size
-            let inputRuntime = argument.runtimeValue
-            let outputRuntime: SwiftRuntimeValuePlan?
-            if case .runtimeValue(let plan) = result {
-                outputRuntime = plan
-            } else {
-                outputRuntime = nil
-            }
-            let fieldLifetime =
-                outputRuntime?.valueType.codeLifetime ?? inputRuntime?.valueType.codeLifetime
-            codeLifetime = fieldLifetime
-
-            let input = try SwiftCallValues.Argument(
-                host: Value.self,
-                plan: argument,
-                defaultConsuming: false,
-                asynchronous: false,
-                position: position
-            )
             type = input.type
+            asynchronous = input.asynchronous
+            self.nativeClosure = nativeClosure
+            nativeSize = ABISwiftGetValueLayout(unsafeBitCast(nativeType, to: UnsafeRawPointer.self)).size
             constants = SwiftValueConstants(
                 ABISwiftValueIsIndirect(input.type.handle) ? Void.self : nativeType
             )
-            encodeArgument = { address, consuming, asynchronous, owner in
-                try input.conversion.encode(
-                    address,
-                    convention: consuming ? .consuming : .borrowing,
-                    asynchronous: asynchronous,
-                    retainingCode: owner
-                )
-            }
+            codeLifetime = conversion.runtimeValue?.valueType.codeLifetime
+        }
 
-            let outputClosure: SwiftClosureCodec?
-            if case .closure(let codec) = result {
-                outputClosure = codec
-            } else if case .concrete = result,
-                let closure = Value.self as? any SwiftClosureValue.Type
-            {
-                outputClosure = try closure.makeClosureCodec()
-            } else {
-                outputClosure = nil
-            }
-            let ordinary: SwiftValueCodec<Value>?
-            if case .concrete = result, outputClosure == nil {
-                ordinary = try SwiftValueCodec<Value>(position: position)
-            } else {
-                ordinary = nil
-            }
-            let hostConstants = SwiftValueConstants(Value.self)
-            let encode: @Sendable (UnsafeRawPointer, Any?) throws -> NativeValueStorage = {
+        fileprivate func encodeArgument(
+            _ address: UnsafeRawPointer,
+            consuming: Bool,
+            asynchronous: Bool,
+            retainingCode owner: Any?
+        ) throws -> NativeValueStorage {
+            try conversion.encode(
                 address,
-                owner in
-                let value = address.load(as: Value.self)
-                if let outputRuntime {
-                    return try outputRuntime.encode(
-                        value,
-                        convention: .consuming,
-                        asynchronous: false
+                convention: consuming ? .consuming : .borrowing,
+                asynchronous: asynchronous,
+                retainingCode: owner
+            )
+        }
+
+        fileprivate func encodeResult(
+            _ address: UnsafeRawPointer,
+            retainingCode owner: Any?
+        ) throws -> NativeValueStorage {
+            try conversion.encodeResult(address, retainingCode: owner)
+        }
+
+        fileprivate func encodeCopy(
+            _ address: UnsafeRawPointer,
+            retainingCode owner: Any?
+        ) throws -> (storage: NativeValueStorage, copying: Bool) {
+            try conversion.encodeCopy(address, retainingCode: owner)
+        }
+
+        fileprivate func decodeResult(
+            _ storage: NativeValueStorage,
+            retaining owner: Any?,
+            retainingCode codeOwner: Any?,
+            into output: UnsafeMutableRawPointer
+        ) throws {
+            try conversion.decode(storage, retaining: owner, retainingCode: codeOwner, into: output)
+        }
+
+        /// Copies the native value at `source` into a host value at `output`.
+        fileprivate func copyNative(
+            _ source: UnsafeRawPointer,
+            retainingCode codeOwner: Any?,
+            codeLifetime: SwiftValueCodeLifetime?,
+            scope: SwiftCallbackScope?,
+            into output: UnsafeMutableRawPointer
+        ) throws {
+            let runtime = conversion.runtimeValue
+            if let runtime {
+                guard SwiftCopyability.accepts(runtime.valueType.metadata) else {
+                    throw NativeSwiftValueError.noncopyableType
+                }
+            }
+            let lifetime = SwiftValueCodeLifetime.connect(
+                [codeLifetime, self.codeLifetime, SwiftValueCodeLifetime.current].compactMap { $0 },
+                retaining: []
+            )
+            let metadata = unsafeBitCast(nativeType, to: UnsafeRawPointer.self)
+            let layout = ABISwiftGetValueLayout(metadata)
+            let storage = NativeValueStorage(
+                size: layout.stride,
+                alignment: layout.alignment,
+                codeLifetime: lifetime
+            )
+            ABISwiftCopyValue(metadata, storage.address, source)
+            storage.assumeInitialized { ABISwiftDestroyValue(metadata, $0) }
+            if hostType == NativeSwiftBorrowedValue.self, let runtime {
+                guard let scope else {
+                    throw ABIResolutionError.unsupportedDeclaration(
+                        "A scoped runtime tuple field requires its callback borrow scope."
                     )
                 }
-                if let outputClosure {
-                    return try outputClosure.encodeValue?(value, owner)
-                        ?? (value as! any SwiftClosureValue).encodeClosureResult()
-                }
-                if let ordinary { return try ordinary.encode(value, consuming: true) }
-                let storage = NativeValueStorage(
-                    size: MemoryLayout<Value>.stride,
-                    alignment: MemoryLayout<Value>.alignment
+                let retained = runtime.valueType.retainingCode(
+                    lifetime ?? runtime.valueType.codeLifetime
                 )
-                storage.initialize(value)
-                return storage
-            }
-            encodeResult = encode
-            encodeCopy = { address, owner in
-                if let runtime = outputRuntime ?? inputRuntime {
-                    guard SwiftCopyability.accepts(runtime.valueType.metadata) else {
-                        throw NativeSwiftValueError.noncopyableType
-                    }
-                    return (
-                        try runtime.encode(
-                            address.load(as: Value.self),
-                            convention: .borrowing,
-                            asynchronous: false
-                        ), true
-                    )
-                }
-                return (try encode(address, owner), false)
-            }
-            validateOwnedResult = {
-                if let outputRuntime {
-                    try outputRuntime.requireOwnedValue(as: Value.self)
-                }
-            }
-            let decode:
-                @Sendable (NativeValueStorage, Any?, Any?, UnsafeMutableRawPointer) throws -> Void =
-                    { storage, owner, codeOwner, output in
-                        let value: Value
-                        if let outputRuntime {
-                            guard SwiftGenericCallPlan.runtimeHandle(Value.self)?.type != NativeSwiftBorrowedValue.self
-                            else {
-                                throw ABIResolutionError.unsupportedDeclaration(
-                                    "A scoped runtime tuple field requires its callback borrow scope."
-                                )
-                            }
-                            value = try outputRuntime.hostValue(outputRuntime.decode(storage)) as! Value
-                        } else if let outputClosure {
-                            // Closure adoption consumes its +1 even when entry preparation fails.
-                            storage.relinquishValue()
-                            value =
-                                try outputClosure.makeValue(
-                                    storage.address.load(as: ABISwiftClosureValue.self),
-                                    codeOwner,
-                                    true,
-                                    storage.codeLifetime
-                                ) as! Value
-                        } else if let ordinary {
-                            value = try ordinary.decode(
-                                storage,
-                                retaining: owner,
-                                retainingCode: codeOwner
-                            )
-                        } else {
-                            hostConstants.initialize(at: storage.address)
-                            value = storage.take(as: Value.self)
-                        }
-                        output.initializeMemory(as: Value.self, repeating: value, count: 1)
-                    }
-            decodeResult = decode
-            copyNative = { source, codeOwner, lifetime, scope, output in
-                if let runtime = outputRuntime ?? inputRuntime {
-                    guard SwiftCopyability.accepts(runtime.valueType.metadata) else {
-                        throw NativeSwiftValueError.noncopyableType
-                    }
-                }
-                let lifetime = SwiftValueCodeLifetime.connect(
-                    [lifetime, fieldLifetime, SwiftValueCodeLifetime.current].compactMap { $0 },
-                    retaining: []
-                )
-                let storage = NativeValueStorage(
-                    size: layout.stride,
-                    alignment: layout.alignment,
-                    codeLifetime: lifetime
-                )
-                ABISwiftCopyValue(
-                    unsafeBitCast(nativeType, to: UnsafeRawPointer.self),
-                    storage.address,
-                    source
-                )
-                storage.assumeInitialized {
-                    ABISwiftDestroyValue(unsafeBitCast(nativeType, to: UnsafeRawPointer.self), $0)
-                }
-                if Value.self == NativeSwiftBorrowedValue.self,
-                    let runtime = outputRuntime ?? inputRuntime
-                {
-                    guard let scope else {
-                        throw ABIResolutionError.unsupportedDeclaration(
-                            "A scoped runtime tuple field requires its callback borrow scope."
-                        )
-                    }
-                    let retained = runtime.valueType.retainingCode(
-                        lifetime ?? runtime.valueType.codeLifetime
-                    )
-                    let value = NativeSwiftBorrowedValue(
+                output.initializeMemory(
+                    as: NativeSwiftBorrowedValue.self,
+                    repeating: NativeSwiftBorrowedValue(
                         type: retained,
                         borrow: scope.borrow(storage.address, retaining: storage)
-                    )
-                    output.initializeMemory(as: Value.self, repeating: value as! Value, count: 1)
-                } else {
-                    try decode(storage, nil, codeOwner, output)
-                }
-            }
-            callback = { consuming in
-                if consuming, Value.self == NativeSwiftBorrowedValue.self, inputRuntime != nil {
-                    throw ABIResolutionError.unsupportedDeclaration(
-                        "A borrowed runtime value cannot be consumed."
-                    )
-                }
-                let decoder = try SwiftCallbackValues.decoder(
-                    for: Value.self,
-                    generic: argument,
-                    consuming: consuming
+                    ),
+                    count: 1
                 )
-                return { source, scope, output in
-                    let value = try decoder(source, scope) as! Value
-                    output.initializeMemory(as: Value.self, repeating: value, count: 1)
-                }
+            } else {
+                try decodeResult(storage, retaining: nil, retainingCode: codeOwner, into: output)
             }
-            destroyHost = { $0.assumingMemoryBound(to: Value.self).deinitialize(count: 1) }
+        }
+
+        fileprivate func callback(consuming: Bool) throws -> HostDecoder {
+            let decoder = try conversion.callbackDecoder(
+                convention: consuming ? .consuming : .borrowing,
+                asynchronous: asynchronous,
+                failure: (any Error).self
+            )
+            let initialize = conversion.initializeHost
+            return { source, scope, output in
+                initialize(try decoder(source, scope), output)
+            }
+        }
+
+        fileprivate func validateOwnedResult() throws { try conversion.validateOwnedResult() }
+
+        fileprivate func destroyHost(_ address: UnsafeMutableRawPointer) {
+            conversion.destroyHost(at: address)
         }
 
         fileprivate func rebased(host: Int, native: Int) -> Self {
@@ -394,19 +319,23 @@ struct SwiftTupleValuePlan: Sendable {
     let parameters: SwiftGenericParameters
     let argumentTypes: [CValueType]
     let nativeProjections: [NativeProjection]
+    /// Whether a leaf's host value differs from its native value.
     var needsConversion: Bool {
         leaves.contains { leaf in
-            if leaf.argument.runtimeValue != nil || leaf.argument.closure != nil { return true }
-            switch leaf.result {
-            case .runtimeValue, .closure: return true;
-            default: return false
+            switch leaf.conversion.kind {
+            case .runtimeValue, .closure, .adapter: true
+            default: leaf.conversion.runtimeValue != nil || leaf.conversion.closure != nil
             }
         }
     }
+    /// Whether a leaf passes its value through an adapter's representation.
+    var hasAdapters: Bool {
+        leaves.contains { if case .adapter = $0.conversion.kind { true } else { false } }
+    }
     var hasNestedClosures: Bool {
         leaves.contains { leaf in
-            if leaf.argument.closure != nil || leaf.nativeClosure != nil { return true }
-            if case .closure = leaf.result { return true }
+            if leaf.conversion.closure != nil || leaf.nativeClosure != nil { return true }
+            if case .closure = leaf.conversion.kind { return true }
             return false
         }
     }
@@ -485,9 +414,9 @@ struct SwiftTupleValuePlan: Sendable {
         let values = try leaves.map {
             try $0.encodeArgument(
                 source.advanced(by: $0.hostOffset),
-                consuming,
-                asynchronous,
-                owner
+                consuming: consuming,
+                asynchronous: asynchronous,
+                retainingCode: owner
             )
         }
         let lifetime = SwiftValueCodeLifetime.connect(
@@ -637,7 +566,7 @@ struct SwiftTupleValuePlan: Sendable {
     }
 
     func callbackDecoder(consuming: Bool) throws -> SwiftCallbackDecoder {
-        let decoders = try leaves.map { try $0.callback(consuming) }
+        let decoders = try leaves.map { try $0.callback(consuming: consuming) }
         return { vector, scope in
             let addresses = vector.assumingMemoryBound(to: UnsafeMutableRawPointer?.self)
             var next = 0
@@ -706,7 +635,12 @@ struct SwiftTupleValuePlan: Sendable {
         var index = 0
         let host = try makeHostStorage(codeLifetime: lifetime) { leaf, output in
             defer { index += 1 }
-            try leaf.decodeResult(nativeFields[index], owner, codeOwner, output)
+            try leaf.decodeResult(
+                nativeFields[index],
+                retaining: owner,
+                retainingCode: codeOwner,
+                into: output
+            )
         }
         return host.take(as: Value.self)
     }
@@ -722,10 +656,10 @@ struct SwiftTupleValuePlan: Sendable {
         let host = try makeHostStorage(codeLifetime: codeLifetime) { leaf, output in
             try leaf.copyNative(
                 source.advanced(by: leaf.nativeOffset),
-                owner,
-                codeLifetime,
-                scope,
-                output
+                retainingCode: owner,
+                codeLifetime: codeLifetime,
+                scope: scope,
+                into: output
             )
         }
         return host.take(as: Value.self)
@@ -737,7 +671,7 @@ struct SwiftTupleValuePlan: Sendable {
     ) throws -> (UnsafeMutableRawPointer) -> Void {
         try validateOwnedResult()
         let values = try leaves.map {
-            try $0.encodeResult(source.advanced(by: $0.hostOffset), owner)
+            try $0.encodeResult(source.advanced(by: $0.hostOffset), retainingCode: owner)
         }
         SwiftValueCodeLifetime.connect(
             values.compactMap(\.codeLifetime) + leaves.compactMap(\.codeLifetime)
@@ -760,7 +694,9 @@ struct SwiftTupleValuePlan: Sendable {
         fromHost source: UnsafeRawPointer,
         retainingCode owner: Any? = nil
     ) throws -> (UnsafeMutableRawPointer) -> Void {
-        let values = try leaves.map { try $0.encodeCopy(source.advanced(by: $0.hostOffset), owner) }
+        let values = try leaves.map {
+            try $0.encodeCopy(source.advanced(by: $0.hostOffset), retainingCode: owner)
+        }
         SwiftValueCodeLifetime.connect(
             values.compactMap { $0.0.codeLifetime } + leaves.compactMap(\.codeLifetime)
                 + [SwiftValueCodeLifetime.current].compactMap { $0 },
@@ -842,4 +778,112 @@ private final class SwiftTupleArgumentOwner {
     private let values: [NativeValueStorage]
     init(_ values: [NativeValueStorage]) { self.values = values }
     func relinquish() { for value in values { value.relinquishValue() } }
+}
+
+extension SwiftTupleValuePlan {
+    /// The plan of a closed host tuple whose elements convert as their own
+    /// host types do, or nil when `host` is not a tuple.
+    ///
+    /// An element's conversion gives its native type: a closure's native
+    /// function, an adapter's representation, a nested tuple's native tuple,
+    /// or the element's own type. The native tuple of those types places the
+    /// elements.
+    ///
+    /// - Parameters:
+    ///   - explicitLayout: The `valueABIs` layout of an element's host type,
+    ///     if any.
+    ///   - position: The tuple's own position. Elements of a parameter are
+    ///     whole parameters; elements of a result are nested.
+    init?(
+        host: Any.Type,
+        explicitLayout: (Any.Type) throws -> CValueType? = { _ in nil },
+        position: SwiftValuePosition
+    ) throws {
+        guard let tuple = SwiftTupleMetadata(host) else { return nil }
+        var inputs: [(SwiftCallValues.Argument, SwiftGenericArgument, SwiftTupleValuePlan?)] = []
+        for element in tuple.elements {
+            let nested = try Self(
+                host: element.type,
+                explicitLayout: explicitLayout,
+                position: position.tupleElement
+            )
+            let argument: SwiftGenericArgument
+            if let nested {
+                argument = .tuple(nested)
+            } else if let closure = element.type as? any SwiftClosureValue.Type {
+                argument = .closure(try SwiftGenericClosurePlan.concrete(closure.swiftFunctionType))
+            } else if let explicit = try explicitLayout(element.type) {
+                argument = .value(explicit, consuming: false)
+            } else {
+                argument = .concrete
+            }
+            let input = try SwiftCallValues.Argument(
+                host: element.type,
+                plan: argument,
+                defaultConsuming: false,
+                asynchronous: false,
+                position: position.tupleElement
+            )
+            inputs.append((input, argument, nested))
+        }
+        let nativeTypes = try inputs.map { try $0.0.conversion.nativeType() }
+        let native = try Self.tupleMetadata(
+            nativeTypes,
+            labels: tuple.labels,
+            replacing: host,
+            elements: tuple.elements
+        )
+        let nativeElements = SwiftTupleMetadata(native)!.elements
+        let fields = try zip(inputs, zip(tuple.elements, nativeElements)).map {
+            input,
+            elements in
+            try Field(
+                input: input.0,
+                argument: input.1,
+                nativeType: elements.1.type,
+                hostOffset: elements.0.offset,
+                nativeOffset: elements.1.offset,
+                tuple: input.2,
+                nativeClosure: nil
+            )
+        }
+        let layout = ABISwiftGetValueLayout(unsafeBitCast(native, to: UnsafeRawPointer.self))
+        try self.init(
+            hostMetadata: host,
+            nativeMetadata: native,
+            type: CValueType(
+                swiftTuple: fields.map(\.type),
+                offsets: fields.map(\.nativeOffset),
+                size: layout.size,
+                alignment: layout.alignment
+            ),
+            fields: fields
+        )
+    }
+
+    /// The tuple metadata of `elements` with `labels`, or `host` when its
+    /// elements are those types.
+    static func tupleMetadata(
+        _ types: [Any.Type],
+        labels: [String],
+        replacing host: Any.Type,
+        elements: [SwiftTupleMetadata.Element]
+    ) throws -> Any.Type {
+        if zip(types, elements).allSatisfy({ $0.0 == $0.1.type }) { return host }
+        let pointers = types.map { Optional(unsafeBitCast($0, to: UnsafeRawPointer.self)) }
+        let value = pointers.withUnsafeBufferPointer { pointers in
+            if labels.allSatisfy(\.isEmpty) {
+                return ABISwiftTupleTypeMetadata(pointers.baseAddress, pointers.count, nil)
+            }
+            return (labels.joined(separator: " ") + " ").withCString {
+                ABISwiftTupleTypeMetadata(pointers.baseAddress, pointers.count, $0)
+            }
+        }
+        guard let value else {
+            throw ABIResolutionError.metadataUnavailable(
+                "The tuple exceeds Swift's metadata element count."
+            )
+        }
+        return unsafeBitCast(value, to: Any.Type.self)
+    }
 }

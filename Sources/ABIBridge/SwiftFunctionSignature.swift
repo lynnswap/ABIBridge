@@ -425,7 +425,9 @@ struct SwiftCallbackValues: Sendable {
             if case .value = argument { return SwiftValueConstants(Void.self) }
             return SwiftValueConstants(type)
         }
-        decoders = try signature.parameters.enumerated().map { index, type in
+        decoders = try signature.parameters.enumerated().map {
+            index,
+            type -> SwiftCallbackDecoder? in
             let argument: SwiftGenericArgument = arguments.isEmpty ? .concrete : arguments[index]
             if case .value = argument {
                 guard consuming[index] else { return nil }
@@ -452,7 +454,8 @@ struct SwiftCallbackValues: Sendable {
                     conversion = try convention.makeConversion(generic: argument)
                 }
                 return try conversion.callbackDecoder(
-                    consuming: conversion.ownership == .consuming,
+                    convention: conversion.ownership!,
+                    asynchronous: signature.isAsync,
                     failure: signature.failure
                 )
             }
@@ -580,146 +583,25 @@ struct SwiftCallbackValues: Sendable {
         generic: SwiftGenericArgument,
         consuming: Bool
     ) throws -> SwiftCallbackDecoder {
-        if case .tuple(let tuple, _, _) = generic {
-            return try tuple.callbackDecoder(consuming: consuming)
+        let conversion = try SwiftHostConversion(
+            host: Value.self,
+            argument: generic,
+            position: .parameter
+        )
+        let convention: SwiftArgumentConvention
+        let asynchronous: Bool
+        if case .runtimeValue(_, let planned, let plannedAsynchronous) = generic {
+            convention = planned == .inoutValue ? .inoutValue : consuming ? .consuming : .borrowing
+            asynchronous = plannedAsynchronous
+        } else {
+            convention = consuming ? .consuming : .borrowing
+            asynchronous = false
         }
-        if case .runtimeValue(let plan, let convention, let asynchronous) = generic {
-            // `NativeSwiftValue?` and `NativeSwiftBorrowedValue?` receive the
-            // Optional's payload or nil.
-            let borrowed = SwiftGenericCallPlan.runtimeHandle(Value.self)?.type == NativeSwiftBorrowedValue.self
-            if !borrowed {
-                try plan.requireOwnedValue()
-                if !consuming, !SwiftCopyability.accepts(plan.valueType.metadata) {
-                    throw NativeSwiftValueError.noncopyableType
-                }
-            }
-            let decode: SwiftCallbackDecoder = { address, scope in
-                if consuming, let value = scope.runtimeInput(at: address) { return value }
-                let lifetime = SwiftValueCodeLifetime.current ?? plan.valueType.codeLifetime
-                SwiftValueCodeLifetime.connect(
-                    [lifetime, plan.valueType.codeLifetime],
-                    retaining: []
-                )
-                let nativeType = plan.valueType
-                if let tuple = plan.nativeTuple, convention != .inoutValue {
-                    let materialized = tuple.materializeArgument(
-                        from: address,
-                        consuming: consuming
-                    )
-                    if consuming {
-                        let value = plan.takeCallbackArgument(
-                            from: materialized.address,
-                            type: nativeType
-                        )
-                        materialized.relinquishValue()
-                        return value
-                    }
-                    plan.normalizeCallbackArgument(materialized)
-                    if borrowed {
-                        return NativeSwiftBorrowedValue(
-                            type: nativeType,
-                            borrow: scope.borrow(
-                                materialized.address,
-                                retaining: materialized,
-                                allowsSuspension: asynchronous
-                            )
-                        )
-                    }
-                    return NativeSwiftValue(storage: materialized, type: nativeType)
-                }
-                if consuming { return plan.takeCallbackArgument(from: address, type: nativeType) }
-                let restored =
-                    convention == .inoutValue ? nil : plan.restoredCallbackArgument(from: address)
-                let source =
-                    convention == .inoutValue
-                    ? address.load(as: UnsafeMutableRawPointer.self) : restored?.address ?? address
-                if borrowed {
-                    if plan.hasClosureConversions {
-                        let canonical = plan.copyCallbackStorage(from: source, type: nativeType)
-                        if convention == .inoutValue {
-                            scope.prepareWriteback {
-                                plan.prepareCallbackWriteback(from: canonical, to: source)
-                            }
-                        }
-                        return NativeSwiftBorrowedValue(
-                            type: nativeType,
-                            borrow: scope.borrow(
-                                canonical.address,
-                                retaining: canonical,
-                                allowsSuspension: asynchronous,
-                                allowsMutation: convention == .inoutValue
-                            )
-                        )
-                    }
-                    return NativeSwiftBorrowedValue(
-                        type: nativeType,
-                        borrow: scope.borrow(
-                            source,
-                            retaining: restored,
-                            allowsSuspension: asynchronous,
-                            allowsMutation: convention == .inoutValue
-                        )
-                    )
-                }
-                return plan.copyCallbackArgument(from: source, type: nativeType)
-            }
-            guard plan.projection != nil else { return decode }
-            return { address, scope in
-                let value = try decode(address, scope)
-                if let owned = value as? NativeSwiftValue {
-                    // A consumed input can be the canonical handle a hook keeps
-                    // for recovery, so its payload comes from a copy.
-                    return try plan.hostValue(consuming ? owned.copy() : owned)
-                }
-                return try plan.hostValue(value as! NativeSwiftBorrowedValue)
-            }
-        }
-        let usesSwiftStorage = if case .value = generic { true } else { false }
-        if !usesSwiftStorage, let closure = Value.self as? any SwiftClosureValue.Type {
-            let codec: SwiftClosureCodec
-            if case .closure(let plan, _) = generic {
-                codec = try closure.makeGenericClosureCodec(plan: plan)
-            } else {
-                codec = try closure.makeClosureCodec()
-            }
-            if consuming {
-                guard let take = codec.takeValue else {
-                    throw ABIResolutionError.unsupportedDeclaration(
-                        "This closure representation cannot own native callback inputs."
-                    )
-                }
-                return { address, _ in
-                    take(
-                        address.load(as: ABISwiftClosureValue.self),
-                        SwiftValueCodeLifetime.current
-                    )
-                }
-            }
-            guard let borrow = codec.borrowValue else {
-                throw ABIResolutionError.unsupportedDeclaration(
-                    "This closure representation cannot borrow native callback inputs."
-                )
-            }
-            return { borrow($1.borrow($0), SwiftValueCodeLifetime.current) }
-        }
-        let base = (Value.self as? any NativeOptionalValue.Type)?.wrappedType ?? Value.self
-        if !usesSwiftStorage, base is any ABIBridgeValue.Type,
-            !(base is any ABIBridgeSwiftValue.Type)
-        {
-            let codec = try SwiftValueCodec<Value>(position: .parameter)
-            return { address, scope in
-                let storage = NativeValueStorage(borrowing: address, owner: scope)
-                return try codec.copy(from: storage, retaining: storage)
-            }
-        }
-        let constants = SwiftValueConstants(usesSwiftStorage ? Void.self : Value.self)
-        return { address, _ in
-            if consuming {
-                constants.initialize(at: address)
-                return address.assumingMemoryBound(to: Value.self).move()
-            }
-            return constants.load(from: address, as: Value.self)
-        }
+        return try conversion.callbackDecoder(
+            convention: convention,
+            asynchronous: asynchronous,
+            failure: (any Error).self
+        )
     }
 
     func makeScope(
@@ -759,7 +641,7 @@ struct SwiftCallbackResult<Value>: Sendable {
         if case .tuple(let tuple) = generic {
             self.tuple = tuple
         } else if case .concrete = generic {
-            tuple = try SwiftGenericCallPlan.concreteTuple(Value.self, position: .result)
+            tuple = try SwiftTupleValuePlan(host: Value.self, position: .result)
         } else {
             tuple = nil
         }

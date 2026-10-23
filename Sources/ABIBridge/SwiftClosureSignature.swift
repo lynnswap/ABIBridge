@@ -569,11 +569,9 @@ final class SwiftNativeClosureAdapter: Sendable {
             return storage
         }
 
-        func closure(at offset: Int, result: Bool) throws -> SwiftGenericClosurePlan {
+        func closure(at offset: Int) throws -> SwiftGenericClosurePlan {
             for leaf in expanded?.leaves ?? [] where leaf.nativeOffset == offset {
-                if let closure = leaf.nativeClosure { return closure }
-                if result, case .closure(let codec) = leaf.result { return codec.nativePlan! }
-                if !result, let closure = leaf.argument.closure { return closure }
+                if let closure = leaf.nativeClosure ?? leaf.conversion.closure { return closure }
             }
             let projection = projections.first {
                 $0.offset == offset
@@ -583,12 +581,9 @@ final class SwiftNativeClosureAdapter: Sendable {
             return try SwiftGenericClosurePlan.nativeValue(projection.metadata)
         }
 
-        func closureOffsets(result: Bool) -> [Int] {
+        func closureOffsets() -> [Int] {
             expanded?.leaves.compactMap { leaf in
-                if leaf.nativeClosure != nil { return leaf.nativeOffset }
-                if result, case .closure = leaf.result { return leaf.nativeOffset }
-                if !result, leaf.argument.closure != nil { return leaf.nativeOffset }
-                return nil
+                leaf.nativeClosure != nil || leaf.conversion.closure != nil ? leaf.nativeOffset : nil
             } ?? []
         }
     }
@@ -791,11 +786,11 @@ final class SwiftNativeClosureAdapter: Sendable {
         mutable: Bool
     ) throws -> [Field] {
         let offsets = Set(
-            source.closureOffsets(result: false) + target.closureOffsets(result: false)
+            source.closureOffsets() + target.closureOffsets()
         ).sorted()
         return try offsets.map { offset in
-            let incoming = try source.closure(at: offset, result: false)
-            let expected = try target.closure(at: offset, result: false)
+            let incoming = try source.closure(at: offset)
+            let expected = try target.closure(at: offset)
             return Field(
                 offset: offset,
                 adapter: try SwiftNativeClosureAdapter(source: incoming, target: expected),
@@ -809,14 +804,14 @@ final class SwiftNativeClosureAdapter: Sendable {
         source: TupleRepresentation,
         target: TupleRepresentation
     ) throws -> [Field] {
-        let offsets = Set(source.closureOffsets(result: true) + target.closureOffsets(result: true))
+        let offsets = Set(source.closureOffsets() + target.closureOffsets())
             .sorted()
         return try offsets.map { offset in
             Field(
                 offset: offset,
                 adapter: try SwiftNativeClosureAdapter(
-                    source: source.closure(at: offset, result: true),
-                    target: target.closure(at: offset, result: true)
+                    source: source.closure(at: offset),
+                    target: target.closure(at: offset)
                 ),
                 reverse: nil
             )
