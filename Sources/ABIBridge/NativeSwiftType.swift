@@ -851,26 +851,18 @@ public actor NativeSwiftType: Hashable {
         mutating isMutating: Bool = false,
         consuming isConsuming: Bool = false
     ) throws -> NativeSwiftMethod<Signature> {
-        let member = try resolveMember(
-            named: name,
-            signature: signature,
-            genericArguments: genericArguments,
-            declaredSignature: declaredSignature,
-            valueABIs: valueABIs
-        ) { owner in
-            NativeDeclaration(
-                name: try SwiftMemberLookup.qualifiedName(name, owner: owner),
-                language: .swift
+        try resolveAndWait(
+            NativeSwiftInstanceMemberRequest<Signature>(
+                .method,
+                name: name,
+                options: .init(
+                    genericArguments: genericArguments,
+                    declaredSignature: declaredSignature,
+                    valueABIs: valueABIs
+                ),
+                receiver: .init(isMutating: isMutating, isConsuming: isConsuming, abi: receiverABI)
             )
-        }
-        let generic = member.generic
-        let receiver = try receiverPlan(
-            mutating: isMutating,
-            consuming: isConsuming,
-            generic: generic,
-            receiverABI: receiverABI
         )
-        return try prepareMethod(member, receiver: receiver)
     }
 
     /// Resolves and prepares a method without blocking the caller's executor.
@@ -888,20 +880,208 @@ public actor NativeSwiftType: Hashable {
         mutating isMutating: Bool = false,
         consuming isConsuming: Bool = false
     ) async throws -> NativeSwiftMethod<Signature> {
-        try await NativePreparation.run {
-            try self.resolveMethodAndWait(
-                named: name,
-                as: signature,
-                genericArguments: genericArguments,
-                declaredAs: declaredSignature,
-                valueABIs: valueABIs,
-                receiverABI: receiverABI,
-                mutating: isMutating,
-                consuming: isConsuming
+        try await resolve(
+            NativeSwiftInstanceMemberRequest<Signature>(
+                .method,
+                name: name,
+                options: .init(
+                    genericArguments: genericArguments,
+                    declaredSignature: declaredSignature,
+                    valueABIs: valueABIs
+                ),
+                receiver: .init(isMutating: isMutating, isConsuming: isConsuming, abi: receiverABI)
+            )
+        )
+    }
+
+    /// Resolves an instance member: a method, or a property's or subscript's
+    /// getter or setter.
+    ///
+    /// Search and preparation run synchronously on the caller's thread.
+    ///
+    /// The handle calls the implementation selected during lookup, without
+    /// virtual redispatch. Typed receivers transfer a copy to consuming
+    /// members; ``NativeSwiftValue`` transfers its owned value. Borrowed views
+    /// allow nonconsuming calls within their active scope; only native inout
+    /// callback borrows permit mutation.
+    ///
+    /// A protocol-qualified requirement, including a subscript accessor's,
+    /// binds `Self` to this concrete type. It runs through the protocol's
+    /// dispatch thunk, or, where the protocol exports none, the witness of
+    /// this type's conformance. Lookup requires the native conformance and
+    /// preserves the protocol's formal `Self` convention.
+    ///
+    /// For runtime-only `self`, the request's `receiverABI` supplies
+    /// established fixed components or an opaque descriptor for formally
+    /// indirect `self`. Without it, a struct or enum `self` uses the
+    /// convention inferred from its metadata, and preparation fails when the
+    /// evidence cannot decide it; see
+    /// <doc:SwiftFunctionInvocation#Infer-struct-and-enum-conventions>.
+    ///
+    /// - Parameter request: The member and its lookup options.
+    /// - Returns: A reusable method with an explicit receiver, retaining this
+    ///   type and the member's implementation images.
+    /// - Throws: A lookup, representation, or preparation error.
+    public nonisolated func resolveAndWait<Signature>(
+        _ request: NativeSwiftInstanceMemberRequest<Signature>
+    ) throws -> NativeSwiftMethod<Signature> {
+        let member = try resolveMember(request.member, signature: Signature.self)
+        let receiver = try receiverPlan(
+            mutating: request.receiver.isMutating,
+            consuming: request.receiver.isConsuming,
+            generic: member.generic,
+            receiverABI: request.receiver.abi
+        )
+        return try prepareMethod(
+            member,
+            receiver: receiver,
+            consumesArguments: request.member.role == .setter
+        )
+    }
+
+    /// Resolves an instance member without blocking the caller's executor.
+    ///
+    /// Lookup and preparation run on a worker. Receivers remain with the
+    /// caller, and lookup does not invoke the member.
+    ///
+    /// - Parameter request: The member and its lookup options.
+    /// - Returns: A reusable method with an explicit receiver.
+    /// - Throws: The same lookup, representation, and preparation errors as
+    ///   synchronous resolution.
+    public nonisolated func resolve<Signature>(
+        _ request: NativeSwiftInstanceMemberRequest<Signature>
+    ) async throws -> NativeSwiftMethod<Signature> {
+        try await NativePreparation.run { try self.resolveAndWait(request) }
+    }
+
+    /// Resolves an initializer, or a static or class member, called on this
+    /// type.
+    ///
+    /// Search and preparation run synchronously on the caller's thread.
+    ///
+    /// This type's metadata is supplied as the member's `self`. A class
+    /// member exported only through its dispatch thunk runs this type's
+    /// virtual-table entry, so a subclass's override runs when the subclass
+    /// is this type. A protocol-qualified static requirement receives this
+    /// type's metatype as `Self`, and a protocol-qualified initializer
+    /// constructs this type through its conformance.
+    ///
+    /// - Parameter request: The member and its lookup options.
+    /// - Returns: A reusable function retaining this type and the member's
+    ///   implementation images.
+    /// - Throws: A lookup, representation, or preparation error.
+    public nonisolated func resolveAndWait<Signature>(
+        _ request: NativeSwiftTypeMemberRequest<Signature>
+    ) throws -> NativeSwiftFunction<Signature> {
+        let member = try resolveMember(request.member, signature: Signature.self)
+        switch request.member.role {
+        case .initializer:
+            return try prepareFunction(
+                member,
+                consumesArguments: true,
+                classReceiver: metadata is AnyClass
+            )
+        case .method, .getter, .setter:
+            return try prepareFunction(
+                member,
+                consumesArguments: request.member.role == .setter,
+                classReceiver: member.metadata is AnyClass
             )
         }
     }
 
+    /// Resolves an initializer, or a static or class member, without blocking
+    /// the caller's executor.
+    ///
+    /// Lookup and preparation run on a worker; native invocation is a
+    /// separate operation.
+    ///
+    /// - Parameter request: The member and its lookup options.
+    /// - Returns: A reusable function retaining this type and the member's
+    ///   implementation images.
+    /// - Throws: The same lookup, representation, and preparation errors as
+    ///   synchronous resolution.
+    public nonisolated func resolve<Signature>(
+        _ request: NativeSwiftTypeMemberRequest<Signature>
+    ) async throws -> NativeSwiftFunction<Signature> {
+        try await NativePreparation.run { try self.resolveAndWait(request) }
+    }
+
+    /// Selects the member that `request` names and prepares its call plan.
+    ///
+    /// The request's role and static-ness decide the declaration that
+    /// candidate lookup searches for.
+    private nonisolated func resolveMember(
+        _ request: SwiftMemberRequest,
+        signature: Any.Type
+    ) throws -> ResolvedMember {
+        let name = request.name
+        let isStatic = request.isStatic
+        let isQualified = SwiftMemberLookup.isQualified(name)
+        switch request.role {
+        case .getter where !Self.namesSubscript(name):
+            try validateGetterSignature(signature)
+        case .initializer:
+            let member = SwiftMemberLookup.member(of: name) ?? name
+            guard member.hasPrefix("init(") || member.hasPrefix("init<") else {
+                throw ABIResolutionError.unsupportedDeclaration(
+                    "An initializer name must start with init( or init<, after a protocol that qualifies it."
+                )
+            }
+        case .method, .getter, .setter:
+            break
+        }
+        return try resolveMember(
+            named: name,
+            signature: signature,
+            genericArguments: request.options.genericArguments,
+            inherited: request.role != .initializer,
+            declaredSignature: request.options.declaredSignature,
+            valueABIs: request.options.valueABIs
+        ) { owner in
+            switch request.role {
+            case .method:
+                return NativeDeclaration(
+                    name: try SwiftMemberLookup.qualifiedName(
+                        name,
+                        owner: owner,
+                        isStatic: isStatic
+                    ),
+                    language: .swift
+                )
+            case .getter, .setter:
+                return try accessorDeclaration(
+                    named: name,
+                    ownerName: owner,
+                    setter: request.role == .setter,
+                    isStatic: isStatic
+                )
+            case .initializer:
+                // A protocol's initializer keeps its name; this type's own is
+                // named relative to it, and a class's allocates.
+                guard isQualified else {
+                    let allocating = metadata is AnyClass ? "__allocating_" + name : name
+                    return NativeDeclaration(name: owner + "." + allocating, language: .swift)
+                }
+                guard !SwiftMemberLookup.belongs(name, to: owner) else {
+                    throw ABIResolutionError.unsupportedDeclaration(
+                        "Name this type's own initializer relative to the type, such as init(text:)."
+                    )
+                }
+                return NativeDeclaration(name: name, language: .swift)
+            }
+        }
+    }
+
+    /// Whether a getter's name names a subscript, whose getter takes the
+    /// subscript's indices.
+    private static func namesSubscript(_ name: String) -> Bool {
+        var member = Substring(SwiftMemberLookup.member(of: name) ?? name)
+        if member.hasPrefix("static ") { member = member.dropFirst(7) }
+        guard member.hasPrefix("subscript") else { return false }
+        let rest = member.dropFirst("subscript".count)
+        return rest.isEmpty || rest.first == "." || rest.first == "(" || rest.first == "<"
+    }
 
     private nonisolated func prepareMethod<Signature>(
         _ member: ResolvedMember,
@@ -956,38 +1136,16 @@ public actor NativeSwiftType: Hashable {
         declaredAs declaredSignature: String? = nil,
         valueABIs: [NativeSwiftType: NativeType] = [:]
     ) throws -> NativeSwiftFunction<Signature> {
-        let isQualified = SwiftMemberLookup.isQualified(name)
-        let member = SwiftMemberLookup.member(of: name) ?? name
-        guard member.hasPrefix("init(") || member.hasPrefix("init<") else {
-            throw ABIResolutionError.unsupportedDeclaration(
-                "An initializer name must start with init( or init<, after a protocol that qualifies it."
-            )
-        }
-        let initializer = try resolveMember(
-            named: name,
-            signature: signature,
-            genericArguments: genericArguments,
-            inherited: false,
-            declaredSignature: declaredSignature,
-            valueABIs: valueABIs
-        ) { owner in
-            // A protocol's initializer keeps its name; this type's own is
-            // named relative to it, and a class's allocates.
-            guard isQualified else {
-                let allocating = metadata is AnyClass ? "__allocating_" + name : name
-                return NativeDeclaration(name: owner + "." + allocating, language: .swift)
-            }
-            guard !SwiftMemberLookup.belongs(name, to: owner) else {
-                throw ABIResolutionError.unsupportedDeclaration(
-                    "Name this type's own initializer relative to the type, such as init(text:)."
+        try resolveAndWait(
+            NativeSwiftTypeMemberRequest<Signature>(
+                .initializer,
+                name: name,
+                options: .init(
+                    genericArguments: genericArguments,
+                    declaredSignature: declaredSignature,
+                    valueABIs: valueABIs
                 )
-            }
-            return NativeDeclaration(name: name, language: .swift)
-        }
-        return try prepareFunction(
-            initializer,
-            consumesArguments: true,
-            classReceiver: metadata is AnyClass
+            )
         )
     }
 
@@ -1003,15 +1161,17 @@ public actor NativeSwiftType: Hashable {
         declaredAs declaredSignature: String? = nil,
         valueABIs: [NativeSwiftType: NativeType] = [:]
     ) async throws -> NativeSwiftFunction<Signature> {
-        try await NativePreparation.run {
-            try self.resolveInitializerAndWait(
-                named: name,
-                as: signature,
-                genericArguments: genericArguments,
-                declaredAs: declaredSignature,
-                valueABIs: valueABIs
+        try await resolve(
+            NativeSwiftTypeMemberRequest<Signature>(
+                .initializer,
+                name: name,
+                options: .init(
+                    genericArguments: genericArguments,
+                    declaredSignature: declaredSignature,
+                    valueABIs: valueABIs
+                )
             )
-        }
+        )
     }
 
     /// Resolves a concrete static or class implementation.
@@ -1034,19 +1194,17 @@ public actor NativeSwiftType: Hashable {
         declaredAs declaredSignature: String? = nil,
         valueABIs: [NativeSwiftType: NativeType] = [:]
     ) throws -> NativeSwiftFunction<Signature> {
-        let member = try resolveMember(
-            named: name,
-            signature: signature,
-            genericArguments: genericArguments,
-            declaredSignature: declaredSignature,
-            valueABIs: valueABIs
-        ) { owner in
-            NativeDeclaration(
-                name: try SwiftMemberLookup.qualifiedName(name, owner: owner, isStatic: true),
-                language: .swift
+        try resolveAndWait(
+            NativeSwiftTypeMemberRequest<Signature>(
+                .method,
+                name: name,
+                options: .init(
+                    genericArguments: genericArguments,
+                    declaredSignature: declaredSignature,
+                    valueABIs: valueABIs
+                )
             )
-        }
-        return try prepareFunction(member, classReceiver: member.metadata is AnyClass)
+        )
     }
 
     /// Resolves and prepares a static or class method without blocking the caller's executor.
@@ -1061,15 +1219,17 @@ public actor NativeSwiftType: Hashable {
         declaredAs declaredSignature: String? = nil,
         valueABIs: [NativeSwiftType: NativeType] = [:]
     ) async throws -> NativeSwiftFunction<Signature> {
-        try await NativePreparation.run {
-            try self.resolveStaticMethodAndWait(
-                named: name,
-                as: signature,
-                genericArguments: genericArguments,
-                declaredAs: declaredSignature,
-                valueABIs: valueABIs
+        try await resolve(
+            NativeSwiftTypeMemberRequest<Signature>(
+                .method,
+                name: name,
+                options: .init(
+                    genericArguments: genericArguments,
+                    declaredSignature: declaredSignature,
+                    valueABIs: valueABIs
+                )
             )
-        }
+        )
     }
 
     private nonisolated func accessorDeclaration(
@@ -1111,27 +1271,14 @@ public actor NativeSwiftType: Hashable {
         mutating isMutating: Bool? = nil,
         consuming isConsuming: Bool = false
     ) throws -> NativeSwiftMethod<(Value) -> Void> {
-        let member = try resolveMember(
-            named: name,
-            signature: ((Value) -> Void).self,
-            declaredSignature: declaredSignature,
-            valueABIs: valueABIs
-        ) { owner in
-            try accessorDeclaration(
-                named: name,
-                ownerName: owner,
-                setter: true,
-                isStatic: false
+        try resolveAndWait(
+            NativeSwiftInstanceMemberRequest<(Value) -> Void>(
+                .setter,
+                name: name,
+                options: .init(declaredSignature: declaredSignature, valueABIs: valueABIs),
+                receiver: .init(isMutating: isMutating, isConsuming: isConsuming, abi: receiverABI)
             )
-        }
-        let generic = member.generic
-        let receiver = try receiverPlan(
-            mutating: isMutating,
-            consuming: isConsuming,
-            generic: generic,
-            receiverABI: receiverABI
         )
-        return try prepareMethod(member, receiver: receiver, consumesArguments: true)
     }
 
     /// Resolves and prepares a property setter without blocking the caller's executor.
@@ -1148,17 +1295,14 @@ public actor NativeSwiftType: Hashable {
         mutating isMutating: Bool? = nil,
         consuming isConsuming: Bool = false
     ) async throws -> NativeSwiftMethod<(Value) -> Void> {
-        try await NativePreparation.run {
-            try self.resolveSetterAndWait(
-                named: name,
-                as: valueType,
-                declaredAs: declaredSignature,
-                valueABIs: valueABIs,
-                receiverABI: receiverABI,
-                mutating: isMutating,
-                consuming: isConsuming
+        try await resolve(
+            NativeSwiftInstanceMemberRequest<(Value) -> Void>(
+                .setter,
+                name: name,
+                options: .init(declaredSignature: declaredSignature, valueABIs: valueABIs),
+                receiver: .init(isMutating: isMutating, isConsuming: isConsuming, abi: receiverABI)
             )
-        }
+        )
     }
 
     /// Resolves a static property setter that consumes its incoming value.
@@ -1178,23 +1322,12 @@ public actor NativeSwiftType: Hashable {
         declaredAs declaredSignature: String? = nil,
         valueABIs: [NativeSwiftType: NativeType] = [:]
     ) throws -> NativeSwiftFunction<(Value) -> Void> {
-        let member = try resolveMember(
-            named: name,
-            signature: ((Value) -> Void).self,
-            declaredSignature: declaredSignature,
-            valueABIs: valueABIs
-        ) { owner in
-            try accessorDeclaration(
-                named: name,
-                ownerName: owner,
-                setter: true,
-                isStatic: true
+        try resolveAndWait(
+            NativeSwiftTypeMemberRequest<(Value) -> Void>(
+                .setter,
+                name: name,
+                options: .init(declaredSignature: declaredSignature, valueABIs: valueABIs)
             )
-        }
-        return try prepareFunction(
-            member,
-            consumesArguments: true,
-            classReceiver: member.metadata is AnyClass
         )
     }
 
@@ -1209,14 +1342,13 @@ public actor NativeSwiftType: Hashable {
         declaredAs declaredSignature: String? = nil,
         valueABIs: [NativeSwiftType: NativeType] = [:]
     ) async throws -> NativeSwiftFunction<(Value) -> Void> {
-        try await NativePreparation.run {
-            try self.resolveStaticSetterAndWait(
-                named: name,
-                as: valueType,
-                declaredAs: declaredSignature,
-                valueABIs: valueABIs
+        try await resolve(
+            NativeSwiftTypeMemberRequest<(Value) -> Void>(
+                .setter,
+                name: name,
+                options: .init(declaredSignature: declaredSignature, valueABIs: valueABIs)
             )
-        }
+        )
     }
 
 }
@@ -1586,28 +1718,14 @@ extension NativeSwiftType {
         mutating isMutating: Bool = false,
         consuming isConsuming: Bool = false
     ) throws -> NativeSwiftMethod<Signature> {
-        try validateGetterSignature(signature)
-        let member = try resolveMember(
-            named: name,
-            signature: signature,
-            declaredSignature: declaredSignature,
-            valueABIs: valueABIs
-        ) { owner in
-            try accessorDeclaration(
-                named: name,
-                ownerName: owner,
-                setter: false,
-                isStatic: false
+        try resolveAndWait(
+            NativeSwiftInstanceMemberRequest<Signature>(
+                .getter,
+                name: name,
+                options: .init(declaredSignature: declaredSignature, valueABIs: valueABIs),
+                receiver: .init(isMutating: isMutating, isConsuming: isConsuming, abi: receiverABI)
             )
-        }
-        let generic = member.generic
-        let receiver = try receiverPlan(
-            mutating: isMutating,
-            consuming: isConsuming,
-            generic: generic,
-            receiverABI: receiverABI
         )
-        return try prepareMethod(member, receiver: receiver)
     }
 
     /// Resolves and prepares a getter without blocking the caller's executor.
@@ -1624,17 +1742,14 @@ extension NativeSwiftType {
         mutating isMutating: Bool = false,
         consuming isConsuming: Bool = false
     ) async throws -> NativeSwiftMethod<Signature> {
-        try await NativePreparation.run {
-            try self.resolveGetterAndWait(
-                named: name,
-                as: signature,
-                declaredAs: declaredSignature,
-                valueABIs: valueABIs,
-                receiverABI: receiverABI,
-                mutating: isMutating,
-                consuming: isConsuming
+        try await resolve(
+            NativeSwiftInstanceMemberRequest<Signature>(
+                .getter,
+                name: name,
+                options: .init(declaredSignature: declaredSignature, valueABIs: valueABIs),
+                receiver: .init(isMutating: isMutating, isConsuming: isConsuming, abi: receiverABI)
             )
-        }
+        )
     }
 
     /// Resolves a static getter using its complete zero-argument function type.
@@ -1646,21 +1761,13 @@ extension NativeSwiftType {
         declaredAs declaredSignature: String? = nil,
         valueABIs: [NativeSwiftType: NativeType] = [:]
     ) throws -> NativeSwiftFunction<Signature> {
-        try validateGetterSignature(signature)
-        let member = try resolveMember(
-            named: name,
-            signature: signature,
-            declaredSignature: declaredSignature,
-            valueABIs: valueABIs
-        ) { owner in
-            try accessorDeclaration(
-                named: name,
-                ownerName: owner,
-                setter: false,
-                isStatic: true
+        try resolveAndWait(
+            NativeSwiftTypeMemberRequest<Signature>(
+                .getter,
+                name: name,
+                options: .init(declaredSignature: declaredSignature, valueABIs: valueABIs)
             )
-        }
-        return try prepareFunction(member, classReceiver: member.metadata is AnyClass)
+        )
     }
 
     /// Resolves and prepares a static or class property getter without blocking the caller's executor.
@@ -1674,14 +1781,13 @@ extension NativeSwiftType {
         declaredAs declaredSignature: String? = nil,
         valueABIs: [NativeSwiftType: NativeType] = [:]
     ) async throws -> NativeSwiftFunction<Signature> {
-        try await NativePreparation.run {
-            try self.resolveStaticGetterAndWait(
-                named: name,
-                as: signature,
-                declaredAs: declaredSignature,
-                valueABIs: valueABIs
+        try await resolve(
+            NativeSwiftTypeMemberRequest<Signature>(
+                .getter,
+                name: name,
+                options: .init(declaredSignature: declaredSignature, valueABIs: valueABIs)
             )
-        }
+        )
     }
 
     private nonisolated func validateGetterSignature(_ signature: Any.Type) throws {

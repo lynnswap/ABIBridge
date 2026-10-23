@@ -83,20 +83,10 @@ extension ABIRuntime {
         options: NativeMethodOptions = .init(),
         retaining owner: Any? = nil
     ) throws -> NativeObjCImplementation<Result, repeat each Argument> {
-        let prepared:
-            (ObjCInvocationPlan, ObjCCallSignature<Result, repeat each Argument>, CCallInterface) =
-                try prepareObjCImplementation(
-                    on: type,
-                    selector: selector,
-                    variadicFrom: variadicFrom,
-                    classMethod: classMethod,
-                    options: options,
-                    reportsErrors: false
-                )
-        return NativeObjCImplementation(
-            binding: ObjCInvocationBinding(plan: prepared.0),
-            signature: prepared.1,
-            interface: prepared.2,
+        try resolveAndWait(
+            .implementation(selector, as: signature, variadicFrom: variadicFrom, options: options),
+            on: type,
+            classMethod: classMethod,
             retaining: owner
         )
     }
@@ -112,20 +102,10 @@ extension ABIRuntime {
         options: NativeMethodOptions = .init(),
         retaining owner: Any? = nil
     ) throws -> NativeObjCImplementation<Result, repeat each Argument> {
-        let prepared:
-            (ObjCInvocationPlan, ObjCCallSignature<Result, repeat each Argument>, CCallInterface) =
-                try prepareObjCImplementation(
-                    on: type,
-                    selector: selector,
-                    variadicFrom: nil,
-                    classMethod: classMethod,
-                    options: options,
-                    reportsErrors: true
-                )
-        return NativeObjCImplementation(
-            binding: ObjCInvocationBinding(plan: prepared.0),
-            signature: prepared.1,
-            interface: prepared.2,
+        try resolveAndWait(
+            .implementation(selector, as: signature, options: options),
+            on: type,
+            classMethod: classMethod,
             retaining: owner
         )
     }
@@ -142,22 +122,10 @@ extension ABIRuntime {
         options: NativeMethodOptions = .init(),
         retaining owner: Any? = nil
     ) async throws -> NativeObjCImplementation<Result, repeat each Argument> {
-        let prepared:
-            (ObjCInvocationPlan, ObjCCallSignature<Result, repeat each Argument>, CCallInterface) =
-                try await NativePreparation.run {
-                    try self.prepareObjCImplementation(
-                        on: type,
-                        selector: selector,
-                        variadicFrom: variadicFrom,
-                        classMethod: classMethod,
-                        options: options,
-                        reportsErrors: false
-                    )
-                }
-        return NativeObjCImplementation(
-            binding: ObjCInvocationBinding(plan: prepared.0),
-            signature: prepared.1,
-            interface: prepared.2,
+        try await resolve(
+            .implementation(selector, as: signature, variadicFrom: variadicFrom, options: options),
+            on: type,
+            classMethod: classMethod,
             retaining: owner
         )
     }
@@ -171,17 +139,79 @@ extension ABIRuntime {
         options: NativeMethodOptions = .init(),
         retaining owner: Any? = nil
     ) async throws -> NativeObjCImplementation<Result, repeat each Argument> {
+        try await resolve(
+            .implementation(selector, as: signature, options: options),
+            on: type,
+            classMethod: classMethod,
+            retaining: owner
+        )
+    }
+
+    /// Captures an Objective-C implementation from a class without binding an
+    /// instance.
+    ///
+    /// Lookup and preparation run synchronously on the caller's thread and
+    /// join any shared call-interface preparation already in progress. The
+    /// signature describes explicit arguments only. Dynamic method resolution
+    /// may run during lookup, but forwarding-only selectors cannot be
+    /// captured. Later method replacement does not change the handle.
+    ///
+    /// - Parameters:
+    ///   - request: The implementation and its ownership options.
+    ///   - type: The class whose instance or class method is captured.
+    ///   - classMethod: Whether to capture a class method.
+    ///   - owner: An optional owner keeping generated code or a dynamic class
+    ///     valid.
+    /// - Returns: A reusable implementation with no retained receiver
+    ///   instance.
+    /// - Throws: A lookup, signature, unsupported-implementation, or image
+    ///   error.
+    public nonisolated func resolveAndWait<Result, each Argument>(
+        _ request: NativeObjCImplementationRequest<Result, repeat each Argument>,
+        on type: AnyClass,
+        classMethod: Bool = false,
+        retaining owner: Any? = nil
+    ) throws -> NativeObjCImplementation<Result, repeat each Argument> {
+        let prepared:
+            (ObjCInvocationPlan, ObjCCallSignature<Result, repeat each Argument>, CCallInterface) =
+                try prepareObjCImplementation(request.query, on: type, classMethod: classMethod)
+        return NativeObjCImplementation(
+            binding: ObjCInvocationBinding(plan: prepared.0),
+            signature: prepared.1,
+            interface: prepared.2,
+            retaining: owner
+        )
+    }
+
+    /// Captures an Objective-C implementation from a class without blocking
+    /// the caller's executor.
+    ///
+    /// Class lookup, dynamic resolution, image acquisition, and
+    /// call-interface preparation run on a worker, joining shared ABI
+    /// preparation already in progress. The optional code owner remains in
+    /// the caller's isolation domain. No instance is retained, and invocation
+    /// stays on the caller's executor.
+    ///
+    /// - Parameters:
+    ///   - request: The implementation and its ownership options.
+    ///   - type: The class whose instance or class method is captured.
+    ///   - classMethod: Whether to capture a class method.
+    ///   - owner: An optional owner keeping generated code or a dynamic class
+    ///     valid.
+    /// - Returns: A reusable implementation with no retained receiver
+    ///   instance.
+    /// - Throws: The same errors as synchronous resolution.
+    public nonisolated(nonsending) func resolve<Result, each Argument>(
+        _ request: NativeObjCImplementationRequest<Result, repeat each Argument>,
+        on type: AnyClass,
+        classMethod: Bool = false,
+        retaining owner: Any? = nil
+    ) async throws -> NativeObjCImplementation<Result, repeat each Argument> {
+        let query = request.query
         let prepared:
             (ObjCInvocationPlan, ObjCCallSignature<Result, repeat each Argument>, CCallInterface) =
                 try await NativePreparation.run {
-                    try self.prepareObjCImplementation(
-                        on: type,
-                        selector: selector,
-                        variadicFrom: nil,
-                        classMethod: classMethod,
-                        options: options,
-                        reportsErrors: true
-                    )
+                    try self.prepareObjCImplementation(query, on: type, classMethod: classMethod)
                 }
         return NativeObjCImplementation(
             binding: ObjCInvocationBinding(plan: prepared.0),
@@ -192,15 +222,14 @@ extension ABIRuntime {
     }
 
     private nonisolated func prepareObjCImplementation<Result, each Argument>(
+        _ query: ObjCMessageQuery,
         on type: AnyClass,
-        selector: String,
-        variadicFrom: Int?,
-        classMethod: Bool,
-        options: NativeMethodOptions,
-        reportsErrors: Bool
+        classMethod: Bool
     ) throws -> (
         ObjCInvocationPlan, ObjCCallSignature<Result, repeat each Argument>, CCallInterface
     ) {
+        let selector = query.selector
+        let options = query.options
         let declaration = objcMethodDeclaration(
             on: type,
             selector: selector,
@@ -226,8 +255,8 @@ extension ABIRuntime {
         let prepared = try ObjCCallSignature<Result, repeat each Argument>(
             handle: handle,
             declaration: declaration,
-            variadicFrom: variadicFrom,
-            reportsErrors: reportsErrors
+            variadicFrom: query.variadicFrom,
+            reportsErrors: query.reportsErrors
         )
         return (plan, prepared, try prepared.callInterface())
     }
