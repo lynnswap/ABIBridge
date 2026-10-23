@@ -181,7 +181,6 @@ extension SwiftGenericClosurePlan {
             transport: source.transport,
             parameters: SwiftGenericParameters(actual: host.parameters, arguments: arguments)
                 .usingStorageConvention(),
-            discriminator: source.discriminator,
             authentication: source.authentication,
             isEscaping: source.isEscaping,
             resultConstants: source.resultConstants,

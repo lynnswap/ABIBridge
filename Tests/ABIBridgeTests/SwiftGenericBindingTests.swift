@@ -1186,7 +1186,7 @@ struct SwiftGenericBindingTests {
 
     @Test func tupleClosureAuthenticationMatchesCompilerLowering() throws {
         let signature = try SwiftFunctionSignature((((String, Int8)) -> (String, Int8, Int8)).self)
-        #expect(try signature.closureDiscriminator() == 3335)
+        #expect(try hashedDiscriminator(signature) == 3335)
         #expect(
             swiftClosureDiscriminator(
                 parameters: ["-indirect", "$ss4Int8V"],
@@ -1209,17 +1209,11 @@ struct SwiftGenericBindingTests {
         }
         let optional = try swiftClosureAuthType((any CustomStringConvertible.Type)?.self, position: .parameter)
         #expect(swiftClosureDiscriminator(parameters: [optional], results: [optional]) == 53055)
-        #expect(
-            try SwiftFunctionSignature(((LargeManagedValue) -> LargeManagedValue).self)
-                .closureDiscriminator() == 55683
-        )
-        #expect(
-            try SwiftFunctionSignature((([String: Int64]) -> Set<Int64>).self)
-                .closureDiscriminator() == 63592
-        )
+        #expect(try hashedDiscriminator(((LargeManagedValue) -> LargeManagedValue).self) == 55683)
+        #expect(try hashedDiscriminator((([String: Int64]) -> Set<Int64>).self) == 63592)
         typealias Increment = NativeSwiftClosure<(Int64) -> Int64>
-        #expect(try SwiftFunctionSignature(((Increment?) -> Int64).self).closureDiscriminator() == 16285)
-        #expect(try SwiftFunctionSignature((() -> Increment?).self).closureDiscriminator() == 63771)
+        #expect(try hashedDiscriminator(((Increment?) -> Int64).self) == 16285)
+        #expect(try hashedDiscriminator((() -> Increment?).self) == 63771)
         // Swift 6.3 arm64e IR for callbacks taking each Optional, the last two
         // from ManagedSwiftFixtures (scripts/check-swift-optional-codegen.py).
         let optionals: [(Any.Type, UInt16)] = [
@@ -1233,7 +1227,7 @@ struct SwiftGenericBindingTests {
             (((UInt32?) -> Void).self, 7278),
         ]
         for (type, discriminator) in optionals {
-            #expect(try SwiftFunctionSignature(type).closureDiscriminator() == discriminator, "\(type)")
+            #expect(try hashedDiscriminator(type) == discriminator, "\(type)")
         }
     }
 
@@ -1406,6 +1400,16 @@ struct SwiftGenericBindingTests {
         }
         #expect(missing == nil)
     }
+}
+
+/// The discriminator that arm64e computes for a function's values, which
+/// other architectures do not compute.
+private func hashedDiscriminator(_ signature: SwiftFunctionSignature) throws -> UInt16 {
+    swiftClosureDiscriminator(description: try signature.closureAuthDescription())
+}
+
+private func hashedDiscriminator(_ type: Any.Type) throws -> UInt16 {
+    try hashedDiscriminator(SwiftFunctionSignature(type))
 }
 
 #endif

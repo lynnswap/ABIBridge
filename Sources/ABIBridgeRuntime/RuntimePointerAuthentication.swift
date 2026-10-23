@@ -13,6 +13,13 @@ package enum RuntimePointerAuthentication: Sendable, Hashable {
 
     package static var isEnabled: Bool { ABIUsesPointerAuthentication() }
 
+    /// The discriminator with which a Swift function value whose type has
+    /// `description` is signed: Swift's hash of `description` where function
+    /// pointers are authenticated, and zero elsewhere.
+    package static func swiftClosureDiscriminator(_ description: String) -> UInt16 {
+        isEnabled ? ABIBridgeRuntime.swiftClosureDiscriminator(description: description) : 0
+    }
+
     package static func cxxVTablePointer(discriminator: UInt) -> Self {
         .signed(key: .dataA, discriminator: discriminator, addressDiversity: true)
     }
