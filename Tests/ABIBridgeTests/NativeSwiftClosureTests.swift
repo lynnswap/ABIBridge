@@ -1250,12 +1250,13 @@ struct NativeSwiftClosureTests {
         }
         guard evidence == .localSymbols else { return }
         // A closure plan of a private function hashes the same declaration.
-        let symbols = try library.definedSymbols()
+        let declarations = try library.definedSymbols().compactMap {
+            DeclarationKey.demangle($0, language: .swift)
+        }
         for index in 0..<2 {
-            let symbol = try #require(symbols.first { $0.contains("13closureProbe\(index)33_") })
             let probe = try await runtime.resolveSwiftFunction(
                 named: try #require(
-                    DeclarationKey.demangle(String(symbol.dropFirst()), language: .swift)
+                    declarations.first { swiftDeclaration($0, declares: "closureProbe\(index)") }
                 ),
                 as: ((NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Double>) -> Double).self,
                 in: .path(library.libraryURL)
@@ -1827,16 +1828,24 @@ private func arm64eClosureCallDiscriminators(
         ] + arguments + [sourceURL.path, "-o", ir.path]
     )
     let text = try String(contentsOf: ir, encoding: .utf8)
+    // Mangled names can spell a word of the module name as a substitution,
+    // even within a private discriminator, so definitions are found by their
+    // demangled declarations.
+    let definitions = try NSRegularExpression(
+        pattern: #"(?ms)^define[^\n]*?@"(\$s[^"]+)"\([^\n]*\{(.*?)^\}"#
+    )
+    let bodies = definitions.matches(in: text, range: NSRange(text.startIndex..., in: text))
+        .compactMap { match -> (declaration: String, body: Substring)? in
+            guard let symbol = Range(match.range(at: 1), in: text),
+                let body = Range(match.range(at: 2), in: text),
+                let declaration = DeclarationKey.demangle(String(text[symbol]), language: .swift)
+            else { return nil }
+            return (declaration, text[body])
+        }
     return try functions.map { function in
-        // A private function's name is followed by its private discriminator.
-        let pattern =
-            #"(?ms)^define[^\n]*"# + function + #"(?:33_[0-9A-F]{32}LL)?[y_][^\n]*\{(.*?)^\}"#
-        let expression = try NSRegularExpression(pattern: pattern)
-        let match = try #require(
-            expression.firstMatch(in: text, range: NSRange(text.startIndex..., in: text))
-        )
-        let range = try #require(Range(match.range(at: 1), in: text))
-        let body = String(text[range])
+        let matches = bodies.filter { swiftDeclaration($0.declaration, declares: function) }
+        try #require(matches.count == 1, "\(function): \(matches.map(\.declaration))")
+        let body = matches[0].body
         let call = try #require(
             body.split(separator: "\n").first {
                 $0.contains("call swiftcc") && $0.contains("swiftself")
@@ -1852,6 +1861,16 @@ private func arm64eClosureCallDiscriminators(
         )
         let digits = try #require(Range(auth.range(at: 1), in: line))
         return try #require(UInt16(line[digits]))
+    }
+}
+
+/// Whether a demangled declaration is the free function named `function`
+/// itself, not a closure or thunk in it. A private function's name carries
+/// its file's private discriminator.
+private func swiftDeclaration(_ declaration: String, declares function: String) -> Bool {
+    [".\(function)(", ".\(function)<", ".(\(function) in "].contains { marker in
+        declaration.range(of: marker).map { !declaration[..<$0.lowerBound].contains(" ") }
+            ?? false
     }
 }
 #endif

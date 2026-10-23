@@ -81,7 +81,9 @@ extension Box where T: Equatable & Sendable { struct Mixed { var x: Double } }
 """ + "".join(f"@inline(never) func apply{name}(_ f: ({spelling}) -> Double) -> Double {{ f(.init(x: 1)) }}\n"
               for name, spelling in EXTENSION_TYPES.items())
 
-PRIVATE_TYPES = {"Hidden": "Hidden", "Choice": "Choice", "Nested": "Wrapper.Nested"}
+# Each type as its descriptor demangles, after the module.
+PRIVATE_TYPES = {"Hidden": r"\(Hidden in _\w+\)", "Choice": r"\(Choice in _\w+\)",
+                 "Nested": r"\(Wrapper in _\w+\)\.Nested"}
 PRIVATE_SOURCE = """
 private struct Hidden { var x: Double }
 private enum Choice { case real(Double), none }
@@ -235,18 +237,24 @@ def check_private_discriminators(directory, sdk):
         "-target", "arm64e-apple-ios18.4", "-sdk", sdk, "-module-name", "PrivateProbe",
         "-emit-ir", str(source), "-o", str(ir_path))
     ir = ir_path.read_text()
+    # A mangled name can spell a word of the module name as a substitution,
+    # even within a private discriminator, so descriptors are found by their
+    # demangled names, which spell each private discriminator.
+    descriptors = re.findall(r'^@"\$s(\w+)Mn" =', ir, re.M)
+    demangled = subprocess.run(["xcrun", "swift-demangle", "--compact"], check=True, capture_output=True,
+                               text=True, input="".join(f"$s{name}Mn\n" for name in descriptors)).stdout
+    named = dict(zip(demangled.splitlines(), descriptors))
     declarations = {}
-    for name, spelling in PRIVATE_TYPES.items():
-        found = re.findall(r'^@"\$s(\w+' + str(len(name)) + name + r'(?:33_[0-9A-F]{32}LL)?[VO])Mn" =',
-                           ir, re.M)
-        require(len(found) == 1, f"arm64e: missing the nominal type descriptor of {spelling}: {found}")
+    for name, pattern in PRIVATE_TYPES.items():
+        found = [declaration for text, declaration in named.items()
+                 if re.fullmatch(r"nominal type descriptor for PrivateProbe\." + pattern, text)]
+        require(len(found) == 1, f"arm64e: missing the nominal type descriptor of {name}: {found}")
         declarations[name] = found[0]
-        require("33_" in found[0], f"arm64e: {spelling} is declared without a private discriminator: {found[0]}")
         calls = re.findall(r'"ptrauth"\(i32 0, i64 (\d+)\)', function(ir, "define", f"apply{name}"))
         require(len(calls) == 1, f"arm64e: re-evaluate the closure call in apply{name}: {calls}")
         hashed = pointer_auth_discriminator(f"function:1:$s{found[0]}:1:$sSd:")
         require(int(calls[0]) == hashed,
-                f"arm64e: the closure discriminator over {spelling} no longer hashes its declaration "
+                f"arm64e: the closure discriminator over {name} no longer hashes its declaration "
                 f"{found[0]}: {calls[0]} != {hashed}")
     for name in ["Hidden", "Choice"]:
         declaration = declarations[name]
