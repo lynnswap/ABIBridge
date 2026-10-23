@@ -600,12 +600,9 @@ final class SwiftNativeClosureAdapter: Sendable {
             for leaf in expanded?.leaves ?? [] where leaf.nativeOffset == offset {
                 if let closure = leaf.nativeClosure ?? leaf.conversion.closure { return closure }
             }
-            let projection = projections.first {
-                $0.offset == offset
-                    && unsafeBitCast($0.metadata, to: UnsafeRawPointer.self).load(as: UInt.self)
-                        == 0x302
-            }!
-            return try SwiftGenericClosurePlan.nativeValue(projection.metadata)
+            let function = projections.lazy.filter { $0.offset == offset }
+                .compactMap { swiftStoredFunction($0.metadata) }.first!
+            return try SwiftGenericClosurePlan.nativeValue(function)
         }
 
         func closureOffsets() -> [Int] {
@@ -1198,6 +1195,8 @@ struct SwiftRuntimeClosureConversions: Sendable {
     private let fields: [Field]
     var isEmpty: Bool { fields.isEmpty }
 
+    /// - Parameter closure: The plan of the function that `metadata` stores,
+    ///   itself or as an Optional's payload.
     init(metadata: Any.Type, tuple: SwiftTupleValuePlan?, closure: SwiftGenericClosurePlan?) throws
     {
         var functions: [(Int, Any.Type, SwiftGenericClosurePlan)] = []
@@ -1212,7 +1211,9 @@ struct SwiftRuntimeClosureConversions: Sendable {
 
     init(functions: [(Int, Any.Type, SwiftGenericClosurePlan)]) throws {
         fields = try functions.compactMap { offset, metadata, native in
-            let storage = try SwiftGenericClosurePlan.nativeValue(metadata)
+            let storage = try SwiftGenericClosurePlan.nativeValue(
+                swiftStoredFunction(metadata) ?? metadata
+            )
             guard !native.hasSameNativeABI(as: storage) else { return nil }
             return Field(
                 offset: offset,
@@ -1231,6 +1232,9 @@ struct SwiftRuntimeClosureConversions: Sendable {
     ) {
         for field in fields {
             let location = storage.address.advanced(by: field.offset)
+            // A nil Optional closure has nothing to adapt, and its context
+            // word is unspecified.
+            guard location.load(as: ABISwiftClosureValue.self).function != nil else { continue }
             let adapter = native ? field.toNative : field.toStorage
             let replacement = adapter.encode(
                 location.load(as: ABISwiftClosureValue.self),
@@ -1279,6 +1283,21 @@ private final class SwiftNativeClosureContext {
         withExtendedLifetime((codeOwner, valueOwner)) {
             if ownsContext { ABIReleaseSwiftClosureContext(value.context) }
         }
+    }
+}
+
+/// The function type whose values a value of `metadata` stores in its own
+/// storage: a function type itself, or an Optional's payload function, which
+/// Swift stores in the function's storage with nil as a null function pointer.
+func swiftStoredFunction(_ metadata: Any.Type) -> Any.Type? {
+    switch runtimeMetadataKind(metadata) {
+    case .function: return metadata
+    case .optional:
+        let optional = unsafeBitCast(metadata, to: UnsafeRawPointer.self)
+        guard let payload = ABISwiftEnumCasePayloadMetadata(optional, 0) else { return nil }
+        let wrapped = unsafeBitCast(payload, to: Any.Type.self)
+        return runtimeMetadataKind(wrapped) == .function ? wrapped : nil
+    default: return nil
     }
 }
 

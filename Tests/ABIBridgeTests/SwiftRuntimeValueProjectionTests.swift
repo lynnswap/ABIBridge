@@ -774,6 +774,33 @@ struct SwiftRuntimeValueProjectionTests {
         MainActor.assertIsolated()
     }
 
+    /// An Optional closure in a payload is adapted between the case's
+    /// convention and that of owned runtime values, and nil stays nil.
+    @Test func optionalClosurePayloadsAdaptTheirFunctions() async throws {
+        typealias Increment = (Int64) -> Int64
+        let make = try await ABIRuntime.shared.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.makeRuntimeProjectionOptionalHandler(_:labeled:)",
+            as: ((Int64?, Bool) -> NativeSwiftValue).self
+        )
+        for labeled in [false, true] {
+            let name = labeled ? "labeled" : "handler"
+            let value = try unsafe make.unsafeInvoke(1, labeled)
+            let payload = try #require(try await value.resolveEnumPayload(forCase: name))
+            let body = labeled ? try payload.copyTupleElement(at: 1) : payload
+            #expect(try body.withCopy { ($0 as? Increment?)??(41) } == 42, "\(name)")
+            let empty = try unsafe make.unsafeInvoke(nil, labeled)
+            let none = try #require(try await empty.resolveEnumPayload(forCase: name))
+            let nilBody = labeled ? try none.copyTupleElement(at: 1) : none
+            #expect(try nilBody.withCopy { ($0 as? Increment?).map { $0 == nil } } == true)
+            // A case built from the payload holds the case's convention again.
+            let rebuilt = try await value.type.makeEnumCase(named: name, payload: payload)
+            switch try rebuilt.take(as: RuntimeProjectionOptionalHandler.self) {
+            case .handler(let body): #expect(body?(41) == 42)
+            case .labeled(_, let body): #expect(body?(41) == 42)
+            }
+        }
+    }
+
     @Test func plainSynchronousAndCallerIsolatedAsyncClosuresKeepTheirEffects() async throws {
         let runtime = ABIRuntime.shared
         let make = try await runtime.resolveSwiftFunction(

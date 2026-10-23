@@ -154,6 +154,20 @@ public enum RuntimeProjectionGenericPreview<Body> {
     return body
 }
 
+public enum RuntimeProjectionOptionalHandler {
+    case handler(((Int64) -> Int64)?)
+    case labeled(bias: Int64, body: ((Int64) -> Int64)?)
+}
+@inline(never) public func makeRuntimeProjectionOptionalHandler(
+    _ bias: Int64?,
+    labeled: Bool
+) -> some Any {
+    let body = bias.map { bias in { (value: Int64) in value + bias } }
+    return labeled
+        ? RuntimeProjectionOptionalHandler.labeled(bias: bias ?? 0, body: body)
+        : RuntimeProjectionOptionalHandler.handler(body)
+}
+
 public typealias RuntimeProjectionPreparationSignature =
     (
         Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64,

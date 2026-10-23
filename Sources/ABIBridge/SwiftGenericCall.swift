@@ -274,8 +274,8 @@ final class SwiftGenericClosurePlan: Sendable {
     // Copying opaque generic data does not require the bridge to invoke it.
     // A callable plan is optional until a function boundary needs reabstraction.
     static func closureInStoredValue(_ type: Any.Type) -> SwiftGenericClosurePlan? {
-        guard runtimeMetadataKind(type) == .function else { return nil }
-        return try? nativeValue(type)
+        guard let function = swiftStoredFunction(type) else { return nil }
+        return try? nativeValue(function)
     }
 
     // A function stored inside an erased native value has the maximally
@@ -1478,13 +1478,6 @@ struct SwiftGenericCallPlan: Sendable {
         position: SwiftValuePosition
     ) throws -> SwiftRuntimeValuePlan {
         let canonical = try binding.canonicalType(of: formal)
-        // A stored closure needs its closure plan, which runtime values do not
-        // yet derive through an Optional (#427).
-        if let wrapped = canonical.optionalWrapped, case .function = try binding.canonicalType(of: wrapped) {
-            throw ABIResolutionError.unsupportedDeclaration(
-                "A runtime value of an Optional closure is unsupported: \(canonical.spelling)."
-            )
-        }
         let nativeTuple: SwiftTupleValuePlan?
         if case .tuple = canonical {
             nativeTuple = try tuple(
@@ -1499,8 +1492,8 @@ struct SwiftGenericCallPlan: Sendable {
             nativeTuple = nil
         }
         let nativeClosure: SwiftGenericClosurePlan?
-        if case .function = canonical {
-            nativeClosure = try nativeClosurePlan(canonical, binding: binding)
+        if let function = try storedFunction(canonical, binding: binding) {
+            nativeClosure = try nativeClosurePlan(function, binding: binding)
         } else if nativeTuple == nil {
             nativeClosure = SwiftGenericClosurePlan.closureInStoredValue(metadata)
         } else {
@@ -1513,6 +1506,20 @@ struct SwiftGenericCallPlan: Sendable {
             nativeClosure: nativeClosure
         )
         return try handle.apply(to: plan)
+    }
+
+    /// The function type of a value that stores a function: the value's own,
+    /// or that of an Optional's payload, which shares the function's storage
+    /// with nil as a null function pointer.
+    static func storedFunction(
+        _ canonical: SwiftFormalType,
+        binding: SwiftGenericBinding
+    ) throws -> SwiftFormalType? {
+        if case .function = canonical { return canonical }
+        guard let wrapped = canonical.optionalWrapped else { return nil }
+        let function = try binding.canonicalType(of: wrapped)
+        guard case .function = function else { return nil }
+        return function
     }
 
     static func nativeClosurePlan(
@@ -1600,14 +1607,8 @@ struct SwiftGenericCallPlan: Sendable {
                 )
             }
             let nativeClosure: SwiftGenericClosurePlan?
-            if nativeStorage, case .function = canonical {
-                nativeClosure = try Self.closure(
-                    canonical,
-                    signature: SwiftFunctionSignature(
-                        nativeClosureSignature(canonical, binding: binding)
-                    ),
-                    binding: binding
-                )
+            if nativeStorage, let function = try storedFunction(canonical, binding: binding) {
+                nativeClosure = try nativeClosurePlan(function, binding: binding)
             } else {
                 nativeClosure = nil
             }
@@ -2066,6 +2067,18 @@ struct SwiftGenericCallPlan: Sendable {
                     position: position.tupleElement
                 )
             }
+        }
+        // Swift hashes an Optional of a function by the function's own type
+        // within `Optional<…>`, and that function type by its abstraction in
+        // the declaration, not by the bound type's.
+        if let wrapped = formal.optionalWrapped,
+            case .function = try binding.canonicalType(of: wrapped)
+        {
+            let payload =
+                actual is any SwiftClosureValue.Type
+                ? actual : try binding.types(wrapped)[0]
+            return try authTypes(wrapped, actual: payload, binding: binding, position: position)
+                .map { "Optional<" + $0 + ">" }
         }
         if case .function(let parameters, let result, _, let attributes) = formal {
             if let closure = actual as? any SwiftClosureValue.Type {

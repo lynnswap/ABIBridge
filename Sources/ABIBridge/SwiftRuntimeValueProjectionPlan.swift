@@ -56,11 +56,11 @@ struct SwiftRuntimeValueProjectionPlan: Sendable {
             binding: SwiftGenericBinding
         ) throws {
             let canonical = try binding.canonicalType(of: formal)
-            if case .function = canonical {
+            if let function = try SwiftGenericCallPlan.storedFunction(canonical, binding: binding) {
                 functions.append(
                     (
                         offset, metadata,
-                        try SwiftGenericCallPlan.nativeClosurePlan(canonical, binding: binding)
+                        try SwiftGenericCallPlan.nativeClosurePlan(function, binding: binding)
                     )
                 )
             } else if case .tuple(let fields, _) = canonical {
@@ -118,14 +118,14 @@ struct SwiftRuntimeValueProjectionPlan: Sendable {
     }
 
     private static func containsFunction(_ metadata: Any.Type) -> Bool {
-        if runtimeMetadataKind(metadata) == .function { return true }
+        if swiftStoredFunction(metadata) != nil { return true }
         return RuntimeTupleMetadata(metadata)?.elements.contains { containsFunction($0.type) }
             ?? false
     }
 
     private static func validateFunctionStorage(_ metadata: Any.Type) throws {
-        if runtimeMetadataKind(metadata) == .function {
-            let signature = try SwiftFunctionSignature(metadata, nativeConventions: true)
+        if let function = swiftStoredFunction(metadata) {
+            let signature = try SwiftFunctionSignature(function, nativeConventions: true)
             for parameter in signature.parameters {
                 try validateSwiftRuntimeValueStorage(parameter)
                 try validateFunctionStorage(parameter)
