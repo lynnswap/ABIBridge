@@ -53,4 +53,30 @@ package struct RuntimeProtocolLayout {
         let count = Int(address.loadUnaligned(fromByteOffset: 12, as: UInt32.self))
         return (0..<count).map { RuntimeGenericRequirement(address.advanced(by: 24 + $0 * 12)) }
     }
+    /// The descriptors of the requirements that witness tables hold, in
+    /// their order after the slot of the conformance descriptor.
+    package var witnessRequirements: [RuntimeProtocolRequirement] {
+        let signature = Int(address.loadUnaligned(fromByteOffset: 12, as: UInt32.self))
+        let count = Int(address.loadUnaligned(fromByteOffset: 16, as: UInt32.self))
+        let start = address.advanced(by: 24 + signature * 12)
+        return (0..<count).map { RuntimeProtocolRequirement(start.advanced(by: $0 * 8)) }
+    }
+}
+
+/// A protocol requirement descriptor, which records a requirement's kind and
+/// effects but not its name.
+/// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/ABI/MetadataValues.h
+package struct RuntimeProtocolRequirement {
+    package let address: UnsafeRawPointer
+    package init(_ address: UnsafeRawPointer) { self.address = address }
+    package var flags: UInt32 { address.loadUnaligned(as: UInt32.self) }
+    /// 1 method, 2 initializer, 3 getter, 4 setter, 5 read and 6 modify
+    /// coroutines; 0, 7, and 8 are base protocols, associated types, and
+    /// associated conformances.
+    package var kind: UInt32 { flags & 0x0f }
+    package var isInstance: Bool { flags & 0x10 != 0 }
+    package var isAsync: Bool { flags & 0x20 != 0 }
+    /// Whether a conformance implements the requirement with code, which a
+    /// witness thunk provides.
+    package var isCode: Bool { ![0, 7, 8].contains(kind) }
 }

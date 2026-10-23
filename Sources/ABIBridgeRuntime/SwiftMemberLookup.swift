@@ -1,7 +1,8 @@
 import Foundation
 
 package enum SwiftMemberLookup {
-    private static func owner(of declaration: String) -> String? {
+    /// The owner that qualifies a declaration, such as a type or a protocol.
+    package static func owner(of declaration: String) -> String? {
         var text = SymbolIndex.extensionMemberName(declaration) ?? declaration
         text = SymbolIndex.operatorAlias(text) ?? text
         if text.hasPrefix("static ") { text = String(text.dropFirst(7)) }
@@ -21,6 +22,31 @@ package enum SwiftMemberLookup {
     }
 
     package static func isQualified(_ declaration: String) -> Bool { owner(of: declaration) != nil }
+
+    /// The member that a qualified declaration names after its owner, with
+    /// its generic parameters and signature, read from the declaration without
+    /// an extension's module or `static`. Nil when no owner qualifies it.
+    package static func member(of declaration: String) -> String? {
+        var text = SymbolIndex.extensionMemberName(declaration) ?? declaration
+        if text.hasPrefix("static ") { text = String(text.dropFirst(7)) }
+        guard owner(of: text) != nil else { return nil }
+        let accessor = [".getter : ", ".setter : "].compactMap { text.range(of: $0)?.lowerBound }
+            .first
+        let opening = accessor ?? SwiftFormalSyntax.parameterOpening(in: text) ?? text.endIndex
+        // The owner ends at the last dot outside generic clauses.
+        let groups = SwiftGenericSyntax.groups(in: text).map(\.range)
+        var separator: String.Index?
+        var index = text.startIndex
+        while index < opening {
+            if let group = groups.first(where: { $0.lowerBound == index }) {
+                index = group.upperBound
+                continue
+            }
+            if text[index] == "." { separator = index }
+            index = text.index(after: index)
+        }
+        return separator.map { String(text[text.index(after: $0)...]) }
+    }
 
     /// Whether a declaration spells everything that selects it: a function
     /// type, an accessor's value type, or a destructor, which has no parameters.

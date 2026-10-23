@@ -181,6 +181,50 @@ const void *ABISwiftConformanceDescriptor(const void *witnessTable) {
     return descriptor;
 }
 
+const void *ABISwiftConformanceWitnessTablePattern(const void *descriptor) {
+    // The protocol and the conforming type's reference precede the pattern.
+    return relative(static_cast<const char *>(descriptor) + 8);
+}
+
+const void *ABISwiftWitnessTableEntry(const void *table, size_t index, bool asynchronous) {
+    const void *entry = read<const void *>(static_cast<const char *>(table) + index * sizeof(void *));
+#if __has_feature(ptrauth_calls)
+    if (entry) {
+        entry = asynchronous ? ptrauth_strip(entry, ptrauth_key_process_independent_data)
+                             : ptrauth_strip(entry, ptrauth_key_process_independent_code);
+    }
+#endif
+    return entry;
+}
+
+const void *ABISwiftAsyncFunctionPointerCode(const void *pointer) {
+    // AsyncFunctionPointer starts with a relative reference to its function.
+    return relative(pointer);
+}
+
+size_t ABISwiftImageConformanceDescriptors(const void *address, const void *protocol,
+    const void **descriptors, size_t capacity) {
+    Dl_info image{};
+    if (!dladdr(address, &image)) return 0;
+    unsigned long size = 0;
+#if __LP64__
+    auto header = static_cast<const mach_header_64 *>(image.dli_fbase);
+#else
+    auto header = static_cast<const mach_header *>(image.dli_fbase);
+#endif
+    auto section = reinterpret_cast<const char *>(getsectiondata(header, "__TEXT", "__swift5_proto", &size));
+    size_t count = 0;
+    // Each record is a direct relative reference to a conformance descriptor,
+    // whose first field references its protocol.
+    for (unsigned long offset = 0; section && offset + 4 <= size; offset += 4) {
+        const char *descriptor = relative(section + offset);
+        if (!descriptor || ABISwiftProtocolRequirementDescriptor(descriptor) != protocol) continue;
+        if (count < capacity) descriptors[count] = descriptor;
+        ++count;
+    }
+    return count;
+}
+
 const void *ABISwiftAssociatedType(const void *metadata, const void *protocol, const char *name) {
     std::unordered_set<const void *> visited;
     return associatedType(metadata, protocol, name, visited);

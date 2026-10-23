@@ -169,10 +169,18 @@ package struct SymbolQuery {
     private let prefixes: [[CChar]]
 
     package init(_ declaration: RuntimeDeclaration) {
+        self.init(declaration, module: nil)
+    }
+
+    /// - Parameter module: The module whose symbols a Swift source-name query
+    ///   reads instead of the declaration's own, such as the module of a
+    ///   conforming type, whose name starts the mangling of its witnesses.
+    package init(_ declaration: RuntimeDeclaration, module: String?) {
         self.declaration = declaration
         swiftModule =
             declaration.language == .swift && declaration.nameForm == .source
-            ? SwiftModuleFilter(declaration.name) : nil
+            ? module.flatMap(SwiftModuleFilter.init(module:)) ?? SwiftModuleFilter(declaration.name)
+            : nil
         if declaration.nameForm != .source || declaration.language == .c {
             let name = declaration.nameForm == .machO ? declaration.name : "_" + declaration.name
             exactName = name
@@ -288,7 +296,10 @@ package struct SwiftModuleFilter {
         // An extension's mangling starts with the extended type's module.
         name = SymbolIndex.extensionMemberName(name) ?? name
         guard let dot = name.firstIndex(of: ".") else { return nil }
-        let module = String(name[..<dot])
+        self.init(module: String(name[..<dot]))
+    }
+
+    package init?(module: String) {
         guard module.range(of: "^[A-Za-z_][A-Za-z0-9_]*$", options: .regularExpression) != nil
         else { return nil }
         self.module = module
@@ -934,7 +945,8 @@ package final class SymbolIndex {
     }
 
     // A dispatch thunk is keyed by the member it dispatches, so one query
-    // returns a declaration's code and its thunk together.
+    // returns a declaration's code and its thunk together. A conformance's
+    // witness is keyed by the requirement it serves.
     package func swiftDeclarationCandidates(
         _ query: SymbolQuery,
         source: RuntimeSymbol.Source,
@@ -954,7 +966,7 @@ package final class SymbolIndex {
             if swiftMembers[scope] == nil {
                 var members: [Int: [IndexedSymbol]] = [:]
                 for symbol in self.symbols(for: query, swiftBucket: bucket) {
-                    guard let name = Self.memberName(of: symbol) else { continue }
+                    guard let name = memberName(of: symbol) else { continue }
                     for name in [name, Self.operatorAlias(name)].compactMap({ $0 }) {
                         guard let key = SwiftMemberLookup.key(name) else { continue }
                         members[DeclarationKey.fingerprint(key), default: []].append(symbol)
@@ -965,33 +977,141 @@ package final class SymbolIndex {
             symbols += swiftMembers[scope]?[DeclarationKey.fingerprint(key)] ?? []
         }
         var addresses: Set<UInt64> = []
+        var witnesses: Set<IndexedSymbol> = []
         return symbols.compactMap { symbol in
             guard symbol.source == source,
                 let record = record(of: symbol),
                 extensionsOnly == record.context.isExtension,
-                let name = Self.memberName(of: symbol),
+                let name = memberName(of: symbol),
                 [name, Self.operatorAlias(name)].compactMap({ $0 }).contains(where: {
                     SwiftMemberLookup.key($0) == key
                 }),
                 let section = sections.first(where: { $0.range.contains(symbol.address) }),
                 section.accepts(query.declaration.kind),
-                let spelling = DeclarationKey.demangle(symbol.name, language: .swift),
-                addresses.insert(symbol.address).inserted
+                let spelling = DeclarationKey.demangle(symbol.name, language: .swift)
             else { return nil }
-            return RuntimeSwiftCandidate(
-                symbol: RuntimeSymbol(
-                    declaration: .init(name: spelling, language: .swift),
-                    image: image,
-                    sectionRange: section.range,
-                    source: source,
-                    address: symbol.address,
-                    linkageName: symbol.name
-                ),
+            // A linker folds identical witness thunks of different
+            // conformances into one address. Each still serves its own
+            // conformance, which selection compares.
+            if case .witness = record.role {
+                guard witnesses.insert(symbol).inserted else { return nil }
+            } else {
+                guard addresses.insert(symbol.address).inserted else { return nil }
+            }
+            return candidate(
+                symbol,
                 record: record,
-                declaration: .init(name: name, language: .swift),
-                memberName: Self.extensionMemberName(name) ?? name
+                name: name,
+                spelling: spelling,
+                section: section
             )
         }
+    }
+
+    /// The witnesses that this image's symbol table holds for the
+    /// conformance whose descriptor is at `descriptor`.
+    package func swiftWitnesses(ofConformanceAt descriptor: UInt64) -> [RuntimeSwiftCandidate] {
+        guard let names = conformanceDescriptors.byAddress[descriptor] else { return [] }
+        // Swift mangles a witness with the suffix `TW`.
+        let symbols = swiftSymbols { name in
+            let length = strlen(name)
+            return length > 2 && name[length - 2] == 84 && name[length - 1] == 87
+        }
+        return symbols.compactMap { symbol in
+            guard let record = record(of: symbol),
+                case .witness(let conformance) = record.role,
+                names.contains(conformance),
+                let name = memberName(of: symbol),
+                let section = sections.first(where: { $0.range.contains(symbol.address) }),
+                let spelling = DeclarationKey.demangle(symbol.name, language: .swift)
+            else { return nil }
+            return candidate(
+                symbol,
+                record: record,
+                name: name,
+                spelling: spelling,
+                section: section
+            )
+        }
+    }
+
+    /// The address of the protocol conformance descriptor that this image
+    /// names `name`, as the remangler spells it, in its exports or symbol table.
+    package func swiftConformanceDescriptor(named name: String) -> UInt64? {
+        conformanceDescriptors.byName[name]
+    }
+
+    /// The requirements that method descriptor symbols name at `address`, in
+    /// this image's exports or symbol table, as the remangler spells them.
+    package func swiftMethodDescriptorRequirements(at address: UInt64) -> Set<String> {
+        methodDescriptors[address] ?? []
+    }
+
+    // Swift mangles a conformance descriptor with the suffix `Mc` and a method
+    // descriptor with `Tq`. Records compare the names that the remangler
+    // produces from each symbol's tree.
+    private lazy var conformanceDescriptors:
+        (byName: [String: UInt64], byAddress: [UInt64: Set<String>]) = {
+            var result: (byName: [String: UInt64], byAddress: [UInt64: Set<String>]) = ([:], [:])
+            for symbol in swiftSymbols(endingWith: (77, 99)) {
+                guard
+                    let name = RuntimeSwiftDeclaration.conformanceDescriptor(
+                        linkageName: symbol.name
+                    )
+                else { continue }
+                result.byName[name] = symbol.address
+                result.byAddress[symbol.address, default: []].insert(name)
+            }
+            return result
+        }()
+
+    private lazy var methodDescriptors: [UInt64: Set<String>] = {
+        var result: [UInt64: Set<String>] = [:]
+        for symbol in swiftSymbols(endingWith: (84, 113)) {
+            guard
+                let requirement = RuntimeSwiftDeclaration.methodDescriptorRequirement(
+                    linkageName: symbol.name
+                )
+            else { continue }
+            result[symbol.address, default: []].insert(requirement)
+        }
+        return result
+    }()
+
+    /// The Swift symbols of this image's exports and symbol table whose names
+    /// end with the two characters of `suffix`.
+    private func swiftSymbols(endingWith suffix: (CChar, CChar)) -> [IndexedSymbol] {
+        let table = swiftSymbols { name in
+            let length = strlen(name)
+            return length > 2 && name[length - 2] == suffix.0 && name[length - 1] == suffix.1
+        }
+        let exports = exportedSymbols(withPrefix: "_$s").filter {
+            $0.name.utf8.suffix(2).elementsEqual([UInt8(suffix.0), UInt8(suffix.1)])
+        }
+        var seen = Set<IndexedSymbol>()
+        return (table + exports).filter { seen.insert($0).inserted }
+    }
+
+    private func candidate(
+        _ symbol: IndexedSymbol,
+        record: RuntimeSwiftDeclaration,
+        name: String,
+        spelling: String,
+        section: SymbolSection
+    ) -> RuntimeSwiftCandidate {
+        RuntimeSwiftCandidate(
+            symbol: RuntimeSymbol(
+                declaration: .init(name: spelling, language: .swift),
+                image: image,
+                sectionRange: section.range,
+                source: symbol.source,
+                address: symbol.address,
+                linkageName: symbol.name
+            ),
+            record: record,
+            declaration: .init(name: name, language: .swift),
+            memberName: Self.extensionMemberName(name) ?? name
+        )
     }
 
     private func record(of symbol: IndexedSymbol) -> RuntimeSwiftDeclaration? {
@@ -1001,9 +1121,15 @@ package final class SymbolIndex {
         return record
     }
 
-    // The source name of the declaration a symbol defines or dispatches. Swift
-    // mangles a dispatch thunk as its declaration followed by `Tj`.
-    private static func memberName(of symbol: IndexedSymbol) -> String? {
+    // The source name of the declaration a symbol defines, dispatches, or
+    // witnesses. Swift mangles a dispatch thunk as its declaration followed by
+    // `Tj`, and a protocol witness thunk with the suffix `TW`.
+    private func memberName(of symbol: IndexedSymbol) -> String? {
+        if symbol.name.hasSuffix("TW"), let record = record(of: symbol),
+            case .witness = record.role, let requirement = record.requirement
+        {
+            return DeclarationKey.demangle(requirement, language: .swift)
+        }
         let mangled =
             symbol.name.hasSuffix("Tj") ? String(symbol.name.dropLast(2)) : symbol.name
         return DeclarationKey.demangle(mangled, language: .swift)

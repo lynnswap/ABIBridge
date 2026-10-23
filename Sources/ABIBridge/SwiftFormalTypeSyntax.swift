@@ -2,33 +2,32 @@ import ABIBridgeCore
 import Foundation
 
 extension SwiftGenericDeclaration {
+    /// The declaration a symbol defines or reaches, its accessor, and the
+    /// protocol that declares it as a requirement.
+    ///
+    /// A requirement is reached through the protocol's dispatch thunk or a
+    /// conformance's witness thunk. Both take the requirement's convention,
+    /// which passes Self's metadata and witness table after the arguments.
     static func callable(
         in syntax: SwiftSyntax
     ) throws -> (
         declaration: SwiftSyntax.Node, accessor: String?, protocolRequirement: SwiftSyntax.Node?
     ) {
         var entry = syntax.root
-        while ["Global", "Static"].contains(entry.kind) {
+        while ["Global", "Static", "DispatchThunk", "ProtocolWitness"].contains(entry.kind) {
+            let children = entry.children()
+            // A witness names its conformance before the requirement it serves.
+            guard let child = entry.kind == "ProtocolWitness" ? children.last : children.first
+            else { return (entry, nil, nil) }
+            entry = child
+        }
+        var accessor: String?
+        if ["Getter", "Setter"].contains(entry.kind) {
+            accessor = entry.kind
             entry = try entry.requiredChild()
         }
-        if entry.kind == "DispatchThunk",
-            let function = entry.child(kind: "Function"),
-            let owner = function.child(kind: "Protocol")
-        {
-            return (function, nil, owner)
-        }
-        var protocolRequirement: SwiftSyntax.Node?
-        if entry.kind == "DispatchThunk",
-            let accessor = entry.child(kind: "Getter") ?? entry.child(kind: "Setter"),
-            let owner = accessor.child(kind: "Variable")?.child(kind: "Protocol")
-        {
-            protocolRequirement = owner
-            entry = accessor
-        }
-        if ["Getter", "Setter"].contains(entry.kind) {
-            return (try entry.requiredChild(), entry.kind, protocolRequirement)
-        }
-        return (entry, nil, nil)
+        let owner = entry.children().first
+        return (entry, accessor, owner?.kind == "Protocol" ? owner : nil)
     }
 
     init(

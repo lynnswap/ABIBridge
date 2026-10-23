@@ -346,6 +346,39 @@ struct SwiftSymbolIndexTests {
         }
     }
 
+    // Standard protocols are mangled with substitutions such as SQ for
+    // Equatable, so their method descriptors do not share a spelled prefix
+    // with the protocol descriptor.
+    @Test func methodDescriptorsNameStandardLibraryRequirements() throws {
+        let resolver = RuntimeSymbolResolver()
+        for (protocolName, expected) in [
+            ("Swift.Equatable", "$sSQ2eeoiySbx_xtFZ"),
+            ("Swift.Hashable", "$sSH4hash4intoys6HasherVz_tF"),
+        ] {
+            let descriptor = try resolver.resolve(
+                RuntimeDeclaration(
+                    name: "protocol descriptor for " + protocolName,
+                    language: .swift,
+                    kind: .data
+                ),
+                loading: .loadedOnly
+            )
+            let layout = RuntimeProtocolLayout(
+                try #require(UnsafeRawPointer(bitPattern: UInt(descriptor.address)))
+            )
+            var names: Set<String> = []
+            for requirement in layout.witnessRequirements where requirement.isCode {
+                let requirements = resolver.swiftMethodDescriptorRequirements(
+                    at: UInt64(UInt(bitPattern: requirement.address)),
+                    in: descriptor.image
+                )
+                #expect(requirements.count == 1)
+                names.formUnion(requirements)
+            }
+            #expect(names.contains(expected))
+        }
+    }
+
     @Test func dispatchThunksBringMemberCodeFromSharedCacheLocals() async throws {
         let module = "ThunkFixture"
         // Library evolution exports an open member's dispatch thunk; stripping
