@@ -196,40 +196,24 @@ struct SwiftTupleValuePlan: Sendable {
                 outputRuntime?.valueType.codeLifetime ?? inputRuntime?.valueType.codeLifetime
             codeLifetime = fieldLifetime
 
-            let borrowed = try SwiftArgumentCodec<Value>(
+            let input = try SwiftCallValues.Argument(
+                host: Value.self,
+                plan: argument,
                 defaultConsuming: false,
-                generic: argument,
+                asynchronous: false,
                 position: position
             )
-            let consumed = try SwiftArgumentCodec<Value>(
-                defaultConsuming: true,
-                generic: argument,
-                position: position
-            )
-            type = borrowed.type
+            type = input.type
             constants = SwiftValueConstants(
-                ABISwiftValueIsIndirect(borrowed.type.handle) ? Void.self : nativeType
+                ABISwiftValueIsIndirect(input.type.handle) ? Void.self : nativeType
             )
             encodeArgument = { address, consuming, asynchronous, owner in
-                let value = address.load(as: Value.self)
-                if let inputRuntime {
-                    return try inputRuntime.encode(
-                        value,
-                        convention: consuming ? .consuming : .borrowing,
-                        asynchronous: asynchronous
-                    )
-                }
-                if case .closure(let plan, _) = argument {
-                    return try (value as! any SwiftClosureValue).encodeGenericClosure(
-                        plan: plan,
-                        retainingCode: owner,
-                        asynchronous: asynchronous,
-                        consuming: consuming
-                    )
-                }
-                return try consuming
-                    ? consumed.encode(value, retainingCode: owner)
-                    : borrowed.encode(value, retainingCode: owner)
+                try input.conversion.encode(
+                    address,
+                    convention: consuming ? .consuming : .borrowing,
+                    asynchronous: asynchronous,
+                    retainingCode: owner
+                )
             }
 
             let outputClosure: SwiftClosureCodec?

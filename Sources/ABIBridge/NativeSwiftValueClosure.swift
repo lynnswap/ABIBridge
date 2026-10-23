@@ -124,7 +124,7 @@ extension SwiftGenericClosurePlan {
                     convention: convention,
                     wrapped: true
                 )
-                return .convention(try wrapper.makeArgumentCodec(generic: nested))
+                return .convention(try wrapper.makeConversion(generic: nested))
             }
             guard convention == .borrowing || wrapped else { throw mismatch(nativeType, hostType) }
             if let handle = SwiftGenericCallPlan.runtimeHandle(representation) {

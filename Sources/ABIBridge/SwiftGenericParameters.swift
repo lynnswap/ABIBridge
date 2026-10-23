@@ -39,11 +39,24 @@ struct SwiftGenericParameters: Sendable {
         case .runtimeValue(let plan, let convention, _):
             return SwiftValueConstants(convention == .inoutValue || ABISwiftValueIsIndirect(plan.type.handle)
                 ? Void.self : plan.valueType.metadata)
-        case .convention(let codec):
-            if codec.convention == .inoutValue { return SwiftValueConstants(Void.self) }
-            return constants(for: (type as! any SwiftConventionArgument.Type).wrappedType, argument: codec.argument)
+        case .convention(let conversion):
+            guard case .ownership(let convention, let value) = conversion.kind, convention != .inoutValue
+            else { return SwiftValueConstants(Void.self) }
+            return constants(of: value)
         default: return SwiftValueConstants(type)
         }
+    }
+
+    /// The constants to restore in a native value that `conversion`
+    /// receives directly, which a borrowing or consuming wrapper passes.
+    private static func constants(of conversion: SwiftHostConversion) -> SwiftValueConstants {
+        // A tuple's elements arrive separately.
+        if conversion.tuple != nil { return SwiftValueConstants(Void.self) }
+        if case .ownership(let convention, let value) = conversion.kind {
+            return convention == .inoutValue ? SwiftValueConstants(Void.self) : constants(of: value)
+        }
+        let metadata = conversion.runtimeValue?.valueType.metadata ?? conversion.host
+        return SwiftValueConstants(ABISwiftValueIsIndirect(conversion.type.handle) ? Void.self : metadata)
     }
 
     static func concreteArguments(signature: SwiftFunctionSignature, defaultConsuming: Bool = false) throws -> [SwiftGenericArgument] {
@@ -58,7 +71,7 @@ struct SwiftGenericParameters: Sendable {
                 } else if signature.isAsync, let closure = convention.wrappedType as? any SwiftClosureValue.Type {
                     nested = .closure(try SwiftGenericClosurePlan.concrete(closure.swiftFunctionType), asynchronous: true)
                 } else { nested = .concrete }
-                return .convention(try convention.makeArgumentCodec(generic: nested))
+                return .convention(try convention.makeConversion(generic: nested))
             }
             if let tuple = try SwiftGenericCallPlan.concreteTuple(type, position: .parameter) {
                 return .tuple(tuple, consuming: defaultConsuming, asynchronous: signature.isAsync)

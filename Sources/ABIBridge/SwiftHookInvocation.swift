@@ -77,7 +77,7 @@ final class SwiftHookFrame {
         _ values: repeat each Argument
     ) throws -> Result {
         try use { operation in
-            let storage =
+            let transfer =
                 try recovery.map { scope in
                     try scope.withTransfer {
                         try prepared.encode(repeat each values, retainingCode: nil)
@@ -86,16 +86,16 @@ final class SwiftHookFrame {
                 ?? prepared.encode(repeat each values, retainingCode: nil)
             let outcome = Swift.Result<Result, any Error> {
                 let result: NativeValueStorage
-                do { result = try operation(storage) } catch let completed
+                do { result = try operation(transfer.storage) } catch let completed
                     as SwiftHookCompletedResultError
                 {
-                    prepared.finishCopiedTransfers(storage)
+                    transfer.finishCopiedTransfers()
                     throw completed.underlying
                 }
-                prepared.finishCopiedTransfers(storage)
+                transfer.finishCopiedTransfers()
                 return try prepared.decode(result, retaining: result, retainingCode: nil)
             }
-            return try prepared.finishInvocation(outcome, storage: storage)
+            return try transfer.finish(outcome)
         }
     }
 
@@ -104,7 +104,7 @@ final class SwiftHookFrame {
         _ values: repeat each Argument
     ) async throws -> Result {
         try await useAsync { operation in
-            let storage =
+            let transfer =
                 try recovery.map { scope in
                     try scope.withTransfer {
                         try prepared.encode(repeat each values, retainingCode: nil)
@@ -114,18 +114,18 @@ final class SwiftHookFrame {
             let outcome: Swift.Result<Result, any Error>
             do {
                 let result: NativeValueStorage
-                do { result = try await operation(storage) } catch let completed
+                do { result = try await operation(transfer.storage) } catch let completed
                     as SwiftHookCompletedResultError
                 {
-                    prepared.finishCopiedTransfers(storage)
+                    transfer.finishCopiedTransfers()
                     throw completed.underlying
                 }
-                prepared.finishCopiedTransfers(storage)
+                transfer.finishCopiedTransfers()
                 outcome = .success(
                     try prepared.decode(result, retaining: result, retainingCode: nil)
                 )
             } catch { outcome = .failure(error) }
-            return try prepared.finishInvocation(outcome, storage: storage)
+            return try transfer.finish(outcome)
         }
     }
 
@@ -332,16 +332,85 @@ struct SwiftHookValueOperations: Sendable {
     }
 
     init(host: Any.Type, argument: SwiftGenericArgument, type: CValueType) throws {
-        if case .convention(let codec) = argument {
-            try self.init(
-                host: (host as! any SwiftConventionArgument.Type).wrappedType,
-                argument: codec.argument,
-                type: type
-            )
+        if case .convention(let conversion) = argument {
+            guard case .ownership(let convention, let value) = conversion.kind else {
+                preconditionFailure("A convention argument converts its wrapper's ownership.")
+            }
+            try self.init(value, expandsTuples: convention != .inoutValue, type: type)
             return
         }
         if let tuple = SwiftGenericParameters.expandedTuple(argument) {
+            self.init(expanded: tuple)
+            return
+        }
+        if let runtime = argument.runtimeValue {
             self.init(
+                metadata: runtime.valueType.metadata,
+                type: type,
+                makeStorage: { runtime.makeStorage() }
+            )
+            return
+        }
+        if argument.closure != nil || host is any SwiftClosureValue.Type {
+            self.init(closure: ())
+            return
+        }
+        let result: SwiftGenericResult =
+            if case .value = argument { .value(type) } else { .concrete }
+        func prepare<Value>(_ value: Value.Type) throws -> Self {
+            try Self(value, result: result, type: type)
+        }
+        self = try _openExistential(host, do: prepare)
+    }
+
+    /// The operations on the native value that `conversion` passes as `type`.
+    private init(_ conversion: SwiftHostConversion, expandsTuples: Bool, type: CValueType) throws {
+        switch conversion.kind {
+        case .ownership(let convention, let value):
+            try self.init(value, expandsTuples: convention != .inoutValue, type: type)
+        case .tuple(let tuple) where expandsTuples:
+            self.init(expanded: tuple)
+        case .runtimeValue(let runtime):
+            if expandsTuples, let tuple = runtime.nativeTuple {
+                self.init(expanded: tuple)
+            } else {
+                self.init(
+                    metadata: runtime.valueType.metadata,
+                    type: type,
+                    makeStorage: { runtime.makeStorage() }
+                )
+            }
+        case .closure:
+            self.init(closure: ())
+        case .identity:
+            func prepare<Value>(_ value: Value.Type) throws -> Self {
+                try Self(value, result: .value(type), type: type)
+            }
+            self = try _openExistential(conversion.host, do: prepare)
+        case .tuple, .adapter:
+            func prepare<Value>(_ value: Value.Type) throws -> Self {
+                try Self(value, result: .concrete, type: type)
+            }
+            self = try _openExistential(conversion.host, do: prepare)
+        }
+    }
+
+    private init(closure: Void) {
+        self.init(
+            copy: {
+                SwiftClosureStorage.copy(
+                    $0.address.load(as: ABISwiftClosureValue.self),
+                    retaining: $0,
+                    codeLifetime: $0.codeLifetime
+                )
+            },
+            destroy: { SwiftClosureStorage.destroy($0) }
+        )
+    }
+
+    /// Operations on a tuple argument that passes as its elements' addresses.
+    private init(expanded tuple: SwiftTupleValuePlan) {
+        self.init(
                 copy: { source in
                     guard SwiftCopyability.accepts(tuple.nativeMetadata) else {
                         throw NativeSwiftValueError.noncopyableType
@@ -379,35 +448,6 @@ struct SwiftHookValueOperations: Sendable {
                     }
                 }
             )
-            return
-        }
-        if let runtime = argument.runtimeValue {
-            self.init(
-                metadata: runtime.valueType.metadata,
-                type: type,
-                makeStorage: { runtime.makeStorage() }
-            )
-            return
-        }
-        if argument.closure != nil || host is any SwiftClosureValue.Type {
-            self.init(
-                copy: {
-                    SwiftClosureStorage.copy(
-                        $0.address.load(as: ABISwiftClosureValue.self),
-                        retaining: $0,
-                        codeLifetime: $0.codeLifetime
-                    )
-                },
-                destroy: { SwiftClosureStorage.destroy($0) }
-            )
-            return
-        }
-        let result: SwiftGenericResult =
-            if case .value = argument { .value(type) } else { .concrete }
-        func prepare<Value>(_ value: Value.Type) throws -> Self {
-            try Self(value, result: result, type: type)
-        }
-        self = try _openExistential(host, do: prepare)
     }
 }
 

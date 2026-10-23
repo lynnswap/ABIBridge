@@ -287,19 +287,18 @@ final class SwiftAsyncCall: Sendable {
         processingResult: (NativeValueStorage, Any?, Any?) async throws -> Result
     ) async throws -> Result {
         precondition(hasTrailingValue == (trailingValue != nil))
-        let logicalStorage = try self.values.encode(
+        let transfer = try self.values.encode(
             repeat each values,
             retainingCode: (codeOwner, generic, closure)
         )
-        let logicalAddresses: [UnsafeMutableRawPointer?] = logicalStorage.map(\.address)
-        let encoded = parameters.encode(logicalAddresses, retaining: logicalStorage)
+        let encoded = parameters.encode(transfer.addresses, retaining: transfer.storage)
         var addresses = encoded.addresses
         if let trailingValue { addresses.append(trailingValue.address) }
         if let generic { addresses.append(contentsOf: generic.metadata.addresses) }
         let output = self.values.result.makeStorage()
         let lifetimes =
-            (logicalStorage + [trailingValue, receiverStorage, output].compactMap { $0 })
-            .compactMap(\.codeLifetime)
+            transfer.codeLifetimes
+            + [trailingValue, receiverStorage, output].compactMap { $0?.codeLifetime }
             + [SwiftValueCodeLifetime.current].compactMap { $0 }
         let lifetime = SwiftValueCodeLifetime.connect(
             lifetimes,
@@ -327,7 +326,7 @@ final class SwiftAsyncCall: Sendable {
         defer {
             withExtendedLifetime(
                 (
-                    self, entry, logicalStorage, encoded, output, nativeError, trailingValue,
+                    self, entry, transfer, encoded, output, nativeError, trailingValue,
                     receiverStorage, owner, codeOwners
                 )
             ) {
@@ -336,7 +335,7 @@ final class SwiftAsyncCall: Sendable {
         }
         await SwiftValueCodeLifetime.withCurrent(lifetime) { await invokeSwiftAsync(invocation) }
         encoded.finishInvocation()
-        self.values.relinquishConsumed(logicalStorage)
+        transfer.relinquishConsumed()
         didInvoke?()
         let outcome: Swift.Result<Result, any Error>
         do {
@@ -345,6 +344,6 @@ final class SwiftAsyncCall: Sendable {
             }
             outcome = .success(try await processingResult(output, owner, codeOwners))
         } catch { outcome = .failure(error) }
-        return try self.values.finishInvocation(outcome, storage: logicalStorage)
+        return try transfer.finish(outcome)
     }
 }

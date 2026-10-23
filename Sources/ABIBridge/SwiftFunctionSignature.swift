@@ -185,16 +185,64 @@ enum SwiftCallablePlan: Sendable {
 /// Shares value preparation between synchronous and asynchronous transports. The containing signature establishes the types used by typed invocation.
 struct SwiftCallValues: Sendable {
     struct Argument: Sendable {
+        let conversion: SwiftHostConversion
+        /// The storage with which the argument passes.
         let type: CValueType
-        let consumes: Bool
-        let encode: @Sendable (UnsafeRawPointer, Any?) throws -> NativeValueStorage
+        /// How native code receives the argument.
+        let convention: SwiftArgumentConvention
+        /// Whether the argument passes to an async function.
+        let asynchronous: Bool
+        var consumes: Bool { convention == .consuming }
+
+        /// How an argument of the host type `host` passes as `plan` describes
+        /// it, where the declaration consumes arguments by default if
+        /// `defaultConsuming`.
+        ///
+        /// - Parameter position: `.parameter` for a whole parameter, or the
+        ///   position of a tuple element; it decides how an undecided
+        ///   inferred host value is passed.
+        init(
+            host: Any.Type,
+            plan: SwiftGenericArgument,
+            defaultConsuming: Bool,
+            asynchronous: Bool,
+            position: SwiftValuePosition = .parameter
+        ) throws {
+            conversion = try SwiftHostConversion(
+                host: host,
+                argument: plan,
+                asynchronous: asynchronous,
+                position: position
+            )
+            switch plan {
+            case .value(let native, let consuming):
+                type = native
+                convention = consuming || defaultConsuming ? .consuming : .borrowing
+                self.asynchronous = asynchronous
+            case .closure(_, let planned):
+                type = conversion.type
+                convention = defaultConsuming ? .consuming : .borrowing
+                self.asynchronous = planned
+            case .runtimeValue(let runtime, let planned, let plannedAsynchronous):
+                type = planned == .inoutValue ? try CValueType(scalar: ABIValuePointer) : runtime.type
+                convention = planned
+                self.asynchronous = plannedAsynchronous
+            case .tuple(let tuple, let consuming, let planned):
+                type = tuple.type
+                convention = consuming || defaultConsuming ? .consuming : .borrowing
+                self.asynchronous = planned
+            case .convention, .concrete:
+                type = conversion.type
+                convention = conversion.ownership ?? (defaultConsuming ? .consuming : .borrowing)
+                self.asynchronous = asynchronous
+            }
+        }
     }
     struct Result: Sendable {
+        let conversion: SwiftHostConversion
         let scoped: SwiftRuntimeValuePlan?
-        let type: CValueType
-        let makeStorage: @Sendable () -> NativeValueStorage
-        let initialize:
-            @Sendable (NativeValueStorage, Any?, Any?, UnsafeMutableRawPointer) throws -> Void
+        var type: CValueType { conversion.type }
+        func makeStorage() -> NativeValueStorage { conversion.makeStorage() }
     }
     let arguments: [Argument]
     let result: Result
@@ -207,47 +255,34 @@ struct SwiftCallValues: Sendable {
         result resultPlan: SwiftGenericResult = .concrete
     ) throws {
         arguments = try signature.parameters.enumerated().map { index, type in
-            func prepare<Value>(_ type: Value.Type) throws -> Argument {
-                let argument = argumentPlans.isEmpty ? .concrete : argumentPlans[index]
-                let consuming: Bool
-                // Initializers consume escaping closure arguments, but their
-                // nonescaping closure parameters are guaranteed borrows.
-                if case .closure(let plan, _) = argument {
-                    consuming = consumesArguments && plan.isEscaping
-                } else {
-                    consuming = consumesArguments
-                }
-                let codec = try SwiftArgumentCodec<Value>(
-                    defaultConsuming: consuming,
-                    generic: argument,
-                    asynchronous: signature.isAsync,
-                    position: .parameter
-                )
-                return Argument(
-                    type: codec.type,
-                    consumes: codec.consumes,
-                    encode: { try codec.encode($0.load(as: Value.self), retainingCode: $1) }
-                )
+            let argument = argumentPlans.isEmpty ? .concrete : argumentPlans[index]
+            let consuming: Bool
+            // Initializers consume escaping closure arguments, but their
+            // nonescaping closure parameters are guaranteed borrows.
+            if case .closure(let plan, _) = argument {
+                consuming = consumesArguments && plan.isEscaping
+            } else {
+                consuming = consumesArguments
             }
-            return try _openExistential(type, do: prepare)
-        }
-        func prepareResult<Value>(_ type: Value.Type) throws -> Result {
-            let codec = try SwiftResultCodec<Value>(opaque: opaqueResult, generic: resultPlan)
-            return Result(
-                scoped: codec.scoped,
-                type: codec.type,
-                makeStorage: { codec.makeStorage() },
-                initialize: { storage, owner, codeOwner, output in
-                    let value = try codec.decode(
-                        storage,
-                        retaining: owner,
-                        retainingCode: codeOwner
-                    )
-                    output.initializeMemory(as: Value.self, repeating: value, count: 1)
-                }
+            return try Argument(
+                host: type,
+                plan: argument,
+                defaultConsuming: consuming,
+                asynchronous: signature.isAsync
             )
         }
-        result = try _openExistential(signature.result, do: prepareResult)
+        let conversion = try SwiftHostConversion(
+            host: signature.result,
+            result: resultPlan,
+            opaque: resultPlan.type == nil ? opaqueResult : nil
+        )
+        let scoped: SwiftRuntimeValuePlan?
+        if signature.result == NativeSwiftBorrowedValue.self {
+            scoped = conversion.runtimeValue
+        } else {
+            scoped = nil
+        }
+        result = Result(conversion: conversion, scoped: scoped)
     }
 
     func requireIndependentResult() throws {
@@ -267,29 +302,29 @@ struct SwiftCallValues: Sendable {
         return scoped
     }
 
+    /// Prepares the native values of an invocation's arguments.
     func encode<each Argument>(
         _ values: repeat each Argument,
         retainingCode owner: Any?
-    ) throws -> [NativeValueStorage] {
+    ) throws -> SwiftValueTransfer {
         var storage: [NativeValueStorage] = []
         storage.reserveCapacity(arguments.count)
         var index = 0
         for value in repeat each values {
+            let argument = arguments[index]
             storage.append(
-                try withUnsafePointer(to: value) { try arguments[index].encode($0, owner) }
+                try withUnsafePointer(to: value) {
+                    try argument.conversion.encode(
+                        $0,
+                        convention: argument.convention,
+                        asynchronous: argument.asynchronous,
+                        retainingCode: owner
+                    )
+                }
             )
             index += 1
         }
-        return storage
-    }
-
-    func finishCopiedTransfers(_ storage: [NativeValueStorage]) {
-        for (value, argument) in zip(storage, arguments)
-        where argument.consumes && value.transfersOwnership {
-            guard let destroy = value.destroyTransferredCopy else { continue }
-            destroy()
-            value.relinquishValue()
-        }
+        return SwiftValueTransfer(storage: storage, consumes: arguments.map(\.consumes))
     }
 
     func decode<Output>(
@@ -297,26 +332,12 @@ struct SwiftCallValues: Sendable {
         retaining owner: Any?,
         retainingCode codeOwner: Any?
     ) throws -> Output {
-        try withUnsafeTemporaryAllocation(of: Output.self, capacity: 1) { buffer in
-            try result.initialize(storage, owner, codeOwner, buffer.baseAddress!)
-            return buffer.baseAddress!.move()
-        }
-    }
-
-    func relinquishConsumed(_ storage: [NativeValueStorage]) {
-        for (argument, value) in zip(arguments, storage) where argument.consumes {
-            value.relinquishValue()
-        }
-    }
-
-    func finishInvocation<Output: ~Copyable>(
-        _ outcome: consuming Swift.Result<Output, any Error>,
-        storage: [NativeValueStorage]
-    ) throws -> Output {
-        try finishSwiftInvocation(outcome) {
-            let commits = try storage.compactMap(\.prepareWriteback).map { try $0() }
-            for commit in commits { commit() }
-        }
+        try result.conversion.decode(
+            storage,
+            retaining: owner,
+            retainingCode: codeOwner,
+            as: Output.self
+        )
     }
 }
 
@@ -424,13 +445,16 @@ struct SwiftCallbackValues: Sendable {
                 return try _openExistential(type, do: prepare)
             }
             if let convention = type as? any SwiftConventionArgument.Type {
-                let codec: SwiftConventionCodec
+                let conversion: SwiftHostConversion
                 if case .convention(let prepared) = argument {
-                    codec = prepared
+                    conversion = prepared
                 } else {
-                    codec = try convention.makeArgumentCodec(generic: argument)
+                    conversion = try convention.makeConversion(generic: argument)
                 }
-                return try codec.prepareCallback(signature.failure)
+                return try conversion.callbackDecoder(
+                    consuming: conversion.ownership == .consuming,
+                    failure: signature.failure
+                )
             }
             if let closure = type as? any SwiftClosureValue.Type {
                 let codec: SwiftClosureCodec
@@ -485,24 +509,11 @@ struct SwiftCallbackValues: Sendable {
         _ host: Any.Type,
         argument: SwiftGenericArgument
     ) -> @Sendable (UnsafeMutableRawPointer) -> Void {
-        if case .convention(let codec) = argument {
-            return inputDestructor(
-                (host as! any SwiftConventionArgument.Type).wrappedType,
-                argument: codec.argument
-            )
+        if case .convention(let conversion) = argument {
+            return inputDestructor(conversion)
         }
         if let tuple = argument.tuple {
-            let fields = tuple.leaves.map { ($0.nativeType, SwiftValueConstants($0.nativeType)) }
-            return { vector in
-                let addresses = vector.assumingMemoryBound(to: UnsafeMutableRawPointer?.self)
-                for (index, field) in fields.enumerated() {
-                    field.1.initialize(at: addresses[index]!)
-                    ABISwiftDestroyValue(
-                        unsafeBitCast(field.0, to: UnsafeRawPointer.self),
-                        addresses[index]!
-                    )
-                }
-            }
+            return inputDestructor(tuple)
         }
         let nativeClosure: Bool
         if case .value = argument {
@@ -510,10 +521,53 @@ struct SwiftCallbackValues: Sendable {
         } else {
             nativeClosure = argument.closure != nil || host is any SwiftClosureValue.Type
         }
+        return inputDestructor(
+            argument.runtimeValue?.valueType.metadata ?? host,
+            nativeClosure: nativeClosure
+        )
+    }
+
+    /// Destroys a consumed callback input that `conversion` receives.
+    private static func inputDestructor(
+        _ conversion: SwiftHostConversion
+    ) -> @Sendable (UnsafeMutableRawPointer) -> Void {
+        if case .ownership(_, let value) = conversion.kind { return inputDestructor(value) }
+        if let tuple = conversion.tuple { return inputDestructor(tuple) }
+        let nativeClosure: Bool
+        switch conversion.kind {
+        case .closure: nativeClosure = true
+        case .runtimeValue(let plan): nativeClosure = plan.nativeClosure != nil
+        default: nativeClosure = false
+        }
+        return inputDestructor(
+            conversion.runtimeValue?.valueType.metadata ?? conversion.host,
+            nativeClosure: nativeClosure
+        )
+    }
+
+    private static func inputDestructor(
+        _ tuple: SwiftTupleValuePlan
+    ) -> @Sendable (UnsafeMutableRawPointer) -> Void {
+        let fields = tuple.leaves.map { ($0.nativeType, SwiftValueConstants($0.nativeType)) }
+        return { vector in
+            let addresses = vector.assumingMemoryBound(to: UnsafeMutableRawPointer?.self)
+            for (index, field) in fields.enumerated() {
+                field.1.initialize(at: addresses[index]!)
+                ABISwiftDestroyValue(
+                    unsafeBitCast(field.0, to: UnsafeRawPointer.self),
+                    addresses[index]!
+                )
+            }
+        }
+    }
+
+    private static func inputDestructor(
+        _ metadata: Any.Type,
+        nativeClosure: Bool
+    ) -> @Sendable (UnsafeMutableRawPointer) -> Void {
         if nativeClosure {
             return { ABIReleaseSwiftClosureContext($0.load(as: ABISwiftClosureValue.self).ownedContext) }
         }
-        let metadata = argument.runtimeValue?.valueType.metadata ?? host
         let constants = SwiftValueConstants(metadata)
         return {
             constants.initialize(at: $0)
