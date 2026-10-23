@@ -36,6 +36,8 @@ public struct OwnedOpaque { public var text: String = "c"; public var x: some CP
 public struct HoldsSecretText { public var secret = SecretText(); public var n: Int64 = 2; public init() {} }
 // A known limit: nothing records that this struct is @sensitive.
 @sensitive public struct RefSecret { public var object: NC = NC(); public var n: Int64 = 1; public init() {} }
+// A known limit: a generic instance's value witnesses are never read.
+@sensitive public struct GSecret<T> { public var t: T; public var n: Int64 = 2; public init(t: T) { self.t = t } }
 @_addressableForDependencies public struct SelfAddressable { public var a: Int64 = 1; public var b: Int64 = 2; public init() {} }
 
 // Property descriptor kinds. Library evolution gives some `let`s and
@@ -94,6 +96,7 @@ public enum Either<L, R> { case left(L), right(R) }
 @inline(never) public func takeSecretText(_ v: SecretText) -> Int64 { v.n }
 @inline(never) public func takeHoldsSecretText(_ v: HoldsSecretText) -> Int64 { v.n }
 @inline(never) public func takeRefSecret(_ v: RefSecret) -> Int64 { v.n }
+@inline(never) public func takeGSecretInt64(_ v: GSecret<Int64>) -> Int64 { v.n }
 @inline(never) public func takeSelfAddressable(_ v: SelfAddressable) -> Int64 { v.a }
 @inline(never) public func takeTagged(_ v: Tagged) -> Int64 { 1 }
 @inline(never) public func takeFrozenTagged(_ v: FrozenTagged) -> Int64 { 1 }
@@ -124,6 +127,7 @@ public enum Either<L, R> { case left(L), right(R) }
 @inline(never) public func makeSecretText() -> SecretText { SecretText() }
 @inline(never) public func makeHoldsSecretText() -> HoldsSecretText { HoldsSecretText() }
 @inline(never) public func makeRefSecret() -> RefSecret { RefSecret() }
+@inline(never) public func makeGSecretInt64() -> GSecret<Int64> { GSecret(t: 1) }
 @inline(never) public func makeSelfAddressable() -> SelfAddressable { SelfAddressable() }
 @inline(never) public func makeTagged() -> Tagged { .none }
 @inline(never) public func makeFrozenTagged() -> FrozenTagged { .none }
