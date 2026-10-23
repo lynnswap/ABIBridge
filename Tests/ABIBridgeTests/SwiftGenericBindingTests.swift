@@ -210,7 +210,7 @@ struct SwiftGenericBindingTests {
             retaining: [type.image]
         )
         #expect(throws: ABIResolutionError.self) {
-            _ = try SwiftResultCodec<NativeSwiftValue>(generic: .runtimeValue(plan))
+            _ = try SwiftHostConversion(host: NativeSwiftValue.self, result: .runtimeValue(plan))
         }
     }
 

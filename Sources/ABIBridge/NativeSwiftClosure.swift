@@ -136,7 +136,7 @@ public struct NativeSwiftClosure<Signature> {
                 let inputs = try SwiftCallbackValues(signature, arguments: parameters.arguments)
                 let result = try SwiftCallbackResult<Result>(
                     failure: Failure.self,
-                    generic: plan?.result ?? .concrete
+                    generic: plan?.result
                 )
                 return SwiftThrowingClosureBody(
                     retainingCode: owner,
@@ -367,7 +367,7 @@ extension NativeSwiftClosure: SwiftClosureValue {
                         codeLifetime: original.codeLifetime,
                         initializeResult: swiftResultInitializer(
                             nativeMetadata: generic?.nativeResult ?? signature.result,
-                            generic: generic?.result ?? .concrete
+                            generic: generic?.result
                         )
                     ) { arguments, result, failure in
                         var didThrow = false

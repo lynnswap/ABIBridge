@@ -282,7 +282,7 @@ public actor NativeSwiftType: Hashable {
     nonisolated var genericArguments: [NativeSwiftGenericArgument] {
         genericMetadata?.arguments ?? []
     }
-    private nonisolated let cachedReceiver = Mutex<SwiftReceiverCodec?>(nil)
+    private nonisolated let cachedReceiver = Mutex<SwiftHostConversion?>(nil)
     private nonisolated let cachedDeclarationName = Mutex<String?>(nil)
 
     init(
@@ -339,16 +339,16 @@ public actor NativeSwiftType: Hashable {
         generic: SwiftGenericCallPlan? = nil,
         receiverABI: NativeType? = nil
     ) throws -> SwiftReceiverPlan {
-        let (plan, codec) = try prepareReceiverPlan(
+        let (plan, conversion) = try prepareReceiverPlan(
             mutating: isMutating,
             consuming: isConsuming,
             generic: generic,
             receiverABI: receiverABI,
             cachedReceiver: cachedReceiver.withLock { $0 }
         )
-        if let codec {
+        if let conversion {
             cachedReceiver.withLock { cached in
-                if cached == nil { cached = codec }
+                if cached == nil { cached = conversion }
             }
         }
         return plan
@@ -359,8 +359,8 @@ public actor NativeSwiftType: Hashable {
         consuming isConsuming: Bool,
         generic: SwiftGenericCallPlan?,
         receiverABI: NativeType?,
-        cachedReceiver: SwiftReceiverCodec?
-    ) throws -> (SwiftReceiverPlan, SwiftReceiverCodec?) {
+        cachedReceiver: SwiftHostConversion?
+    ) throws -> (SwiftReceiverPlan, SwiftHostConversion?) {
         let protocolSelf = try generic.flatMap { plan in
             try plan.binding.declaration.protocolSelf.map { try plan.binding.canonicalType(of: $0) }
         }
@@ -373,8 +373,8 @@ public actor NativeSwiftType: Hashable {
                 "ABIBridge infers the Swift calling convention of self only from \(name); its representation \(String(reflecting: representation)) is an adapter. Describe it with receiverABI or an ABIBridgeSwiftValue conformance."
             )
         }
-        let codec: SwiftReceiverCodec
-        let cachedCodec: SwiftReceiverCodec?
+        let conversion: SwiftHostConversion
+        let cachedConversion: SwiftHostConversion?
         // The declaration's formal self, when its convention applies to a
         // representation's value.
         var formalSelf: SwiftValueSchema?
@@ -383,21 +383,23 @@ public actor NativeSwiftType: Hashable {
                 storage: try SwiftValueSchema.explicitLayout(of: metadata, abi: receiverABI),
                 metadata: metadata
             )
-            codec = SwiftReceiverCodec(runtimeType: metadata, schema: schema)
-            cachedCodec = nil
+            conversion = SwiftHostConversion(native: metadata, schema: schema)
+            cachedConversion = nil
         } else if (representation == nil || representation == metadata || protocolSelf != nil),
             let formal = try generic?.receiverSchema()
         {
             if let representation, representation != metadata {
-                codec = try SwiftReceiverCodec.make(for: representation, formal: formal)
+                conversion = try SwiftHostConversion(host: representation, position: .receiver)
                 formalSelf = formal
             } else {
-                codec = SwiftReceiverCodec(runtimeType: metadata, schema: formal)
+                conversion = SwiftHostConversion(native: metadata, schema: formal)
             }
-            cachedCodec = nil
+            cachedConversion = nil
         } else {
-            codec = try cachedReceiver ?? SwiftReceiverCodec.make(for: representation ?? metadata)
-            cachedCodec = codec
+            conversion =
+                try cachedReceiver
+                ?? SwiftHostConversion(host: representation ?? metadata, position: .receiver)
+            cachedConversion = conversion
         }
         if receiverABI == nil, let representation, representation != metadata,
             !(metadata is AnyClass)
@@ -405,7 +407,8 @@ public actor NativeSwiftType: Hashable {
             try checkReceiverRepresentation(representation, formalSelf: formalSelf)
         }
         let plan = try SwiftReceiverPlan(
-            codec: codec,
+            conversion: conversion,
+            schema: formalSelf,
             metadata: metadata,
             isMutating: isMutating,
             isConsuming: isConsuming,
@@ -421,7 +424,7 @@ public actor NativeSwiftType: Hashable {
                 protocolSelf: protocolSelf
             )
         }
-        return (plan, cachedCodec)
+        return (plan, cachedConversion)
     }
 
     /// Checks that `plan`, which passes an Optional self as receiverABI
@@ -453,7 +456,7 @@ public actor NativeSwiftType: Hashable {
                 })
         else { return }
         let declared = try SwiftReceiverPlan(
-            codec: SwiftReceiverCodec(runtimeType: metadata, schema: schema),
+            conversion: SwiftHostConversion(native: metadata, schema: schema),
             metadata: metadata,
             isMutating: isMutating,
             isConsuming: isConsuming,
@@ -461,13 +464,13 @@ public actor NativeSwiftType: Hashable {
             validateClass: false
         )
         func passing(_ plan: SwiftReceiverPlan) -> String {
-            plan.mode == .value ? SwiftDeclaredLowering.lowering(of: plan.codec.type) : "by address"
+            plan.mode == .value ? SwiftDeclaredLowering.lowering(of: plan.type) : "by address"
         }
         let passes =
             plan.mode == declared.mode
             && (plan.mode != .value
-                || withExtendedLifetime((plan.codec.type, declared.codec.type)) {
-                    ABISwiftValuePassesAs(plan.codec.type.handle, declared.codec.type.handle, false)
+                || withExtendedLifetime((plan.type, declared.type)) {
+                    ABISwiftValuePassesAs(plan.type.handle, declared.type.handle, false)
                 })
         guard !passes else { return }
         throw SwiftDeclaredLowering.explicitMismatch(

@@ -264,6 +264,37 @@ struct SwiftSignatureCompatibilityTests {
         #expect(try unsafe name.unsafeInvoke(value) == value.name())
     }
 
+    /// A tuple element converts through its adapter's representation, as a
+    /// whole argument or result does.
+    @Test func tupleElementsConvertThroughAdapters() async throws {
+        let count = "ManagedSwiftFixtures.CompatibilityCount"
+        let pair = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.compatibilityCountPair"
+                + "((\(count), Swift.Int64)) -> (\(count), Swift.Int64)",
+            as: (((HostCount, Int64)) -> (HostCount, Int64)).self
+        )
+        let result = try unsafe pair.unsafeInvoke((HostCount(value: 40), 2))
+        #expect(result.0.value == 42 && result.1 == 2)
+    }
+
+    /// A `Bool` that stands for a declared `UInt8` reads any nonzero byte as
+    /// `true`, as a result and as an inout buffer.
+    @Test func booleansReadNonzeroBytesAsTrue() async throws {
+        let byte = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.compatibilityByte() -> Swift.UInt8",
+            as: (() -> Bool).self
+        )
+        let value = try unsafe byte.unsafeInvoke()
+        #expect(value == true)
+        let store = try await runtime.resolveSwiftFunction(
+            named: "ManagedSwiftFixtures.compatibilityStoreByte(inout Swift.UInt8) -> ()",
+            as: ((NativeSwiftInout<Bool>) -> Void).self
+        )
+        let buffer = NativeSwiftInout(false)
+        try unsafe store.unsafeInvoke(buffer)
+        #expect(buffer.value == true)
+    }
+
     @Test func completeDeclarationsLowerLocalTypesThroughHostRepresentations() async throws {
         let outer = "ManagedSwiftFixtures.compatibilityLocalCount(Swift.Int64) -> Swift.Int64"
         let count = "Count #1 in " + outer

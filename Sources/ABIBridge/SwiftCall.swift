@@ -19,7 +19,7 @@ final class SwiftCall: Sendable {
             arguments: SwiftGenericParameters.concreteArguments(signature: signature, defaultConsuming: consumesArguments))
         values = try SwiftCallValues(signature: signature, consumesArguments: consumesArguments,
             opaqueResult: opaqueResult, arguments: parameters.arguments,
-            result: generic?.result ?? closure?.result ?? .concrete)
+            result: generic?.result ?? closure?.result)
         #if DEBUG
         generic?.checkClosedSchemas(signature, values: values)
         #endif
@@ -124,17 +124,13 @@ final class SwiftCall: Sendable {
         processingResult: (NativeValueStorage, Any?, Any?) throws -> Result
     ) throws -> Result {
         precondition(hasTrailingValue == (trailingValue != nil))
-        let logicalStorage = try self.values.encode(repeat each values, retainingCode: (codeOwner, generic, closure))
-        let logicalAddresses: [UnsafeMutableRawPointer?] = logicalStorage.map(\.address)
-        let encoded = parameters.encode(logicalAddresses, retaining: logicalStorage)
+        let transfer = try self.values.encode(repeat each values, retainingCode: (codeOwner, generic, closure))
+        let encoded = parameters.encode(transfer.addresses, retaining: transfer.storage)
         var addresses = encoded.addresses
         if let trailingValue { addresses.append(trailingValue.address) }
         if let generic { addresses.append(contentsOf: generic.metadata.addresses) }
         let output = self.values.result.makeStorage()
-        var lifetimes: [SwiftValueCodeLifetime] = []
-        for value in logicalStorage {
-            if let lifetime = value.codeLifetime { lifetimes.append(lifetime) }
-        }
+        var lifetimes = transfer.codeLifetimes
         if let lifetime = trailingValue?.codeLifetime { lifetimes.append(lifetime) }
         if let lifetime = receiverStorage?.codeLifetime { lifetimes.append(lifetime) }
         if let lifetime = output.codeLifetime { lifetimes.append(lifetime) }
@@ -144,7 +140,7 @@ final class SwiftCall: Sendable {
         let codeOwners: Any = (codeOwner, generic, closure, lifetime)
         let nativeError = errorPlan?.makeStorage()
         var didThrow = false
-        return try withExtendedLifetime((logicalStorage, encoded, trailingValue, receiverStorage, owner, generic)) {
+        return try withExtendedLifetime((transfer, encoded, trailingValue, receiverStorage, owner, generic)) {
             var failure: OpaquePointer?
             let success = SwiftValueCodeLifetime.withCurrent(lifetime) {
                 addresses.withUnsafeBufferPointer { addresses in
@@ -163,7 +159,7 @@ final class SwiftCall: Sendable {
                 throw consumeNativeCallFailure(failure, domain: "ABIBridge.SwiftInvocation")
             }
             encoded.finishInvocation()
-            self.values.relinquishConsumed(logicalStorage)
+            transfer.relinquishConsumed()
             didInvoke?()
             let outcome = Swift.Result<Result, any Error> {
                 if didThrow, let errorPlan, let nativeError {
@@ -171,7 +167,7 @@ final class SwiftCall: Sendable {
                 }
                 return try processingResult(output, owner, codeOwners)
             }
-            return try self.values.finishInvocation(outcome, storage: logicalStorage)
+            return try transfer.finish(outcome)
         }
     }
 }

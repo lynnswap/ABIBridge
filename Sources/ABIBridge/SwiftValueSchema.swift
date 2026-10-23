@@ -390,7 +390,7 @@ struct SwiftValueSchema: Sendable {
     /// The schema of a value that the host type `type` passes by itself at
     /// `position` in a call that `binding` prepares.
     ///
-    /// As the call's codecs do, the lookup's `valueABIs` entry for the type,
+    /// As the call's conversions do, the lookup's `valueABIs` entry for the type,
     /// for an Optional's payload, or for a tuple's element takes precedence
     /// over the type's own representation.
     init(host type: Any.Type, binding: SwiftGenericBinding, position: SwiftValuePosition) throws {
@@ -404,7 +404,7 @@ struct SwiftValueSchema: Sendable {
         }
         func prepare<Value>(_: Value.Type) throws -> Self {
             try Self.hostTuple(Value.self, elements: tuple.elements) { element in
-                try Self(host: element, binding: binding, position: position.tupleElement).type
+                try Self(host: element, binding: binding, position: position.tupleElement)
             }
         }
         self = try _openExistential(type, do: prepare)
@@ -441,13 +441,7 @@ struct SwiftValueSchema: Sendable {
         let schema: Self
         if let tuple = SwiftTupleMetadata(Value.self) {
             return try hostTuple(Value.self, elements: tuple.elements) { element in
-                guard !(element is any ABIBridgeValue.Type) || element is any ABIBridgeSwiftValue.Type
-                else {
-                    throw ABIResolutionError.unsupportedDeclaration(
-                        "Tuple elements require their native Swift storage representation."
-                    )
-                }
-                return try Self(host: element, position: position.tupleElement).type
+                try Self(host: element, position: position.tupleElement)
             }
         } else if let metatype = SwiftMetatypeMetadata(base) {
             // An Optional of a metatype is an enum that reuses its storage.
@@ -514,7 +508,8 @@ struct SwiftValueSchema: Sendable {
                 metadata: Value.self
             )
         } else if infersLayout(Value.self) {
-            // Explicit ABIs and built-in codecs take precedence over inference.
+            // Explicit ABIs and built-in representations take precedence over
+            // inference.
             schema = Self(
                 storage: try SwiftInferredValue.layout(of: Value.self, position: position),
                 metadata: Value.self
@@ -533,28 +528,34 @@ struct SwiftValueSchema: Sendable {
     }
 
     /// The schema of a host tuple: each element's storage, which `field`
-    /// gives, at the element's offset in the native tuple, which stores a
-    /// native function where the host tuple stores a closure.
+    /// gives, placed as Swift places tuple elements of those sizes and
+    /// alignments. A closure's element stores a native function and an
+    /// adapter's its representation, so such a tuple has no native type of
+    /// its own.
     private static func hostTuple<Value>(
         _: Value.Type,
         elements: [SwiftTupleMetadata.Element],
-        field: (Any.Type) throws -> CValueType
+        field: (Any.Type) throws -> Self
     ) throws -> Self {
         let fields = try elements.map { try field($0.type) }
-        let native = try SwiftGenericCallPlan.concreteNativeMetadata(Value.self)
-        guard let nativeTuple = SwiftTupleMetadata(native) else {
-            preconditionFailure("The native type of a tuple is a tuple.")
+        var offsets: [Int] = [], size = 0, tupleAlignment = 1
+        for field in fields {
+            let alignment = field.type.alignment
+            let offset = (size + alignment - 1) / alignment * alignment
+            offsets.append(offset)
+            size = offset + field.type.size
+            tupleAlignment = max(tupleAlignment, alignment)
         }
-        let layout = ABISwiftGetValueLayout(unsafeBitCast(native, to: UnsafeRawPointer.self))
+        let native = zip(fields, elements).allSatisfy { $0.0.metadata == $0.1.type }
         return Self(
             type: try CValueType(
-                swiftTuple: fields,
-                offsets: nativeTuple.elements.map(\.offset),
-                size: layout.size,
-                alignment: layout.alignment
+                swiftTuple: fields.map(\.type),
+                offsets: offsets,
+                size: size,
+                alignment: tupleAlignment
             ),
             kind: .tuple,
-            metadata: native
+            metadata: native ? Value.self : nil
         )
     }
 

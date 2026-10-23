@@ -77,7 +77,7 @@ final class SwiftHookFrame {
         _ values: repeat each Argument
     ) throws -> Result {
         try use { operation in
-            let storage =
+            let transfer =
                 try recovery.map { scope in
                     try scope.withTransfer {
                         try prepared.encode(repeat each values, retainingCode: nil)
@@ -86,16 +86,16 @@ final class SwiftHookFrame {
                 ?? prepared.encode(repeat each values, retainingCode: nil)
             let outcome = Swift.Result<Result, any Error> {
                 let result: NativeValueStorage
-                do { result = try operation(storage) } catch let completed
+                do { result = try operation(transfer.storage) } catch let completed
                     as SwiftHookCompletedResultError
                 {
-                    prepared.finishCopiedTransfers(storage)
+                    transfer.finishCopiedTransfers()
                     throw completed.underlying
                 }
-                prepared.finishCopiedTransfers(storage)
+                transfer.finishCopiedTransfers()
                 return try prepared.decode(result, retaining: result, retainingCode: nil)
             }
-            return try prepared.finishInvocation(outcome, storage: storage)
+            return try transfer.finish(outcome)
         }
     }
 
@@ -104,7 +104,7 @@ final class SwiftHookFrame {
         _ values: repeat each Argument
     ) async throws -> Result {
         try await useAsync { operation in
-            let storage =
+            let transfer =
                 try recovery.map { scope in
                     try scope.withTransfer {
                         try prepared.encode(repeat each values, retainingCode: nil)
@@ -114,18 +114,18 @@ final class SwiftHookFrame {
             let outcome: Swift.Result<Result, any Error>
             do {
                 let result: NativeValueStorage
-                do { result = try await operation(storage) } catch let completed
+                do { result = try await operation(transfer.storage) } catch let completed
                     as SwiftHookCompletedResultError
                 {
-                    prepared.finishCopiedTransfers(storage)
+                    transfer.finishCopiedTransfers()
                     throw completed.underlying
                 }
-                prepared.finishCopiedTransfers(storage)
+                transfer.finishCopiedTransfers()
                 outcome = .success(
                     try prepared.decode(result, retaining: result, retainingCode: nil)
                 )
             } catch { outcome = .failure(error) }
-            return try prepared.finishInvocation(outcome, storage: storage)
+            return try transfer.finish(outcome)
         }
     }
 
@@ -260,154 +260,62 @@ final class SwiftHookIncomingOwner {
     init(_ signature: SwiftHookSignature) { self.signature = signature }
 }
 
+/// Copies and destroys the native values a hook receives and returns.
 struct SwiftHookValueOperations: Sendable {
     let copy: @Sendable (NativeValueStorage) throws -> NativeValueStorage
     let destroy: @Sendable (UnsafeMutableRawPointer) -> Void
 
-    private init(
-        copy: @escaping @Sendable (NativeValueStorage) throws -> NativeValueStorage,
-        destroy: @escaping @Sendable (UnsafeMutableRawPointer) -> Void
-    ) {
-        self.copy = copy; self.destroy = destroy
+    /// The operations on the native result that `conversion` decodes.
+    init(result conversion: SwiftHostConversion) {
+        copy = { try conversion.copyNative($0) }
+        destroy = { conversion.destroyNative(at: $0) }
     }
 
-    init<Value>(_ host: Value.Type, result: SwiftGenericResult, type: CValueType) throws {
-        switch result {
-        case .runtimeValue(let plan):
-            self.init(
-                metadata: plan.valueType.metadata,
-                type: type,
-                makeStorage: { plan.makeStorage() }
-            )
-        case .tuple(let tuple):
-            self.init(
-                metadata: tuple.nativeMetadata,
-                type: type,
-                makeStorage: { tuple.makeResultStorage() }
-            )
-        default:
-            let codec: SwiftValueCodec<Value>
-            switch result {
-            case .value: codec = SwiftValueCodec(nativeStorage: type)
-            case .closure(let closure): codec = SwiftValueCodec(closure: closure)
-            default: codec = try SwiftValueCodec(position: .result)
-            }
-            self.init(
-                copy: { try codec.copyNativeStorage($0) },
-                destroy: { codec.destroyNativeValue(at: $0) }
-            )
+    /// The operations on a native argument that `argument` passes. A tuple
+    /// argument passes as its elements' addresses.
+    init(argument: SwiftCallValues.Argument) {
+        guard argument.convention != .inoutValue, let tuple = argument.conversion.tuple else {
+            let conversion = argument.conversion
+            copy = { try conversion.copyNative($0) }
+            destroy = { conversion.destroyNative(at: $0) }
+            return
         }
-    }
-
-    private init(
-        metadata: Any.Type,
-        type: CValueType,
-        makeStorage: @escaping @Sendable () -> NativeValueStorage
-    ) {
-        let constants = SwiftValueConstants(
-            ABISwiftValueIsIndirect(type.handle) ? Void.self : metadata
-        )
         copy = { source in
-            guard SwiftCopyability.accepts(metadata) else { return source }
-            let restored = constants.isEmpty ? nil : constants.copyStorage(from: source.address)
-            let result = makeStorage()
-            SwiftValueCodeLifetime.connect(
-                [source.codeLifetime, result.codeLifetime].compactMap { $0 },
-                retaining: []
-            )
-            ABISwiftCopyValue(
-                unsafeBitCast(metadata, to: UnsafeRawPointer.self),
-                result.address,
-                restored?.address ?? source.address
-            )
-            result.assumeInitialized {
-                ABISwiftDestroyValue(unsafeBitCast(metadata, to: UnsafeRawPointer.self), $0)
+            guard SwiftCopyability.accepts(tuple.nativeMetadata) else {
+                throw NativeSwiftValueError.noncopyableType
             }
-            return result
-        }
-        destroy = { address in
-            constants.initialize(at: address)
-            ABISwiftDestroyValue(unsafeBitCast(metadata, to: UnsafeRawPointer.self), address)
-        }
-    }
-
-    init(host: Any.Type, argument: SwiftGenericArgument, type: CValueType) throws {
-        if case .convention(let codec) = argument {
-            try self.init(
-                host: (host as! any SwiftConventionArgument.Type).wrappedType,
-                argument: codec.argument,
-                type: type
+            let value = tuple.materializeArgument(
+                from: source.address,
+                consuming: false,
+                retaining: source
             )
-            return
-        }
-        if let tuple = SwiftGenericParameters.expandedTuple(argument) {
-            self.init(
-                copy: { source in
-                    guard SwiftCopyability.accepts(tuple.nativeMetadata) else {
-                        throw NativeSwiftValueError.noncopyableType
-                    }
-                    let value = tuple.materializeArgument(
-                        from: source.address,
-                        consuming: false,
-                        retaining: source
-                    )
-                    let addresses = tuple.nativeArgumentAddresses(value.address)
-                    let vector = NativeValueStorage(
-                        size: addresses.count * MemoryLayout<UnsafeMutableRawPointer?>.stride,
-                        alignment: MemoryLayout<UnsafeMutableRawPointer?>.alignment,
-                        owner: value,
-                        codeLifetime: value.codeLifetime,
-                        didRelinquish: { value.relinquishValue() }
-                    )
-                    for (index, address) in addresses.enumerated() {
-                        vector.address.storeBytes(
-                            of: address,
-                            toByteOffset: index * MemoryLayout<UnsafeMutableRawPointer?>.stride,
-                            as: UnsafeMutableRawPointer?.self
-                        )
-                    }
-                    return vector
-                },
-                destroy: { source in
-                    let addresses = source.assumingMemoryBound(to: UnsafeMutableRawPointer?.self)
-                    for (index, leaf) in tuple.leaves.enumerated() {
-                        SwiftValueConstants(leaf.nativeType).initialize(at: addresses[index]!)
-                        ABISwiftDestroyValue(
-                            unsafeBitCast(leaf.nativeType, to: UnsafeRawPointer.self),
-                            addresses[index]!
-                        )
-                    }
-                }
+            let addresses = tuple.nativeArgumentAddresses(value.address)
+            let vector = NativeValueStorage(
+                size: addresses.count * MemoryLayout<UnsafeMutableRawPointer?>.stride,
+                alignment: MemoryLayout<UnsafeMutableRawPointer?>.alignment,
+                owner: value,
+                codeLifetime: value.codeLifetime,
+                didRelinquish: { value.relinquishValue() }
             )
-            return
+            for (index, address) in addresses.enumerated() {
+                vector.address.storeBytes(
+                    of: address,
+                    toByteOffset: index * MemoryLayout<UnsafeMutableRawPointer?>.stride,
+                    as: UnsafeMutableRawPointer?.self
+                )
+            }
+            return vector
         }
-        if let runtime = argument.runtimeValue {
-            self.init(
-                metadata: runtime.valueType.metadata,
-                type: type,
-                makeStorage: { runtime.makeStorage() }
-            )
-            return
+        destroy = { source in
+            let addresses = source.assumingMemoryBound(to: UnsafeMutableRawPointer?.self)
+            for (index, leaf) in tuple.leaves.enumerated() {
+                SwiftValueConstants(leaf.nativeType).initialize(at: addresses[index]!)
+                ABISwiftDestroyValue(
+                    unsafeBitCast(leaf.nativeType, to: UnsafeRawPointer.self),
+                    addresses[index]!
+                )
+            }
         }
-        if argument.closure != nil || host is any SwiftClosureValue.Type {
-            self.init(
-                copy: {
-                    SwiftClosureStorage.copy(
-                        $0.address.load(as: ABISwiftClosureValue.self),
-                        retaining: $0,
-                        codeLifetime: $0.codeLifetime
-                    )
-                },
-                destroy: { SwiftClosureStorage.destroy($0) }
-            )
-            return
-        }
-        let result: SwiftGenericResult =
-            if case .value = argument { .value(type) } else { .concrete }
-        func prepare<Value>(_ value: Value.Type) throws -> Self {
-            try Self(value, result: result, type: type)
-        }
-        self = try _openExistential(host, do: prepare)
     }
 }
 
@@ -470,21 +378,11 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
             consumingArguments: values.arguments.map(\.consumes)
         )
         callbackResult = try SwiftCallbackResult(
-            failure: (any Error).self,
-            generic: generic?.result ?? .concrete
+            values.result.conversion,
+            failure: (any Error).self
         )
-        resultOperations = try SwiftHookValueOperations(
-            Result.self,
-            result: generic?.result ?? .concrete,
-            type: values.result.type
-        )
-        argumentOperations = try zip(signature.parameters, parameters.arguments).enumerated().map {
-            try SwiftHookValueOperations(
-                host: $0.element.0,
-                argument: $0.element.1,
-                type: values.arguments[$0.offset].type
-            )
-        }
+        resultOperations = SwiftHookValueOperations(result: values.result.conversion)
+        argumentOperations = values.arguments.map(SwiftHookValueOperations.init(argument:))
     }
 
     func invoke(
@@ -768,8 +666,8 @@ final class SwiftHookSignature: @unchecked Sendable {
             }
             if first.mode == .object { return true }
             return first.isMutating == second.isMutating
-                && first.codec.representation == second.codec.representation
-                && ABIValueTypesEqual(first.codec.type.handle, second.codec.type.handle)
+                && first.representation == second.representation
+                && ABIValueTypesEqual(first.type.handle, second.type.handle)
         default: return false
         }
     }
@@ -917,7 +815,7 @@ final class SwiftHookSignature: @unchecked Sendable {
             ?? cloneArguments(Array(arguments.prefix(explicitArgumentCount)))
         if let receiver, receiver.mode == .value {
             let value = arguments[explicitArgumentCount]
-            values.append(receiver.isConsuming ? try receiver.codec.clone(value) : value)
+            values.append(receiver.isConsuming ? try receiver.clone(value) : value)
         }
         var error: OpaquePointer?
         var context = ABISwiftIncomingContext(call)
@@ -933,7 +831,7 @@ final class SwiftHookSignature: @unchecked Sendable {
             if receiver.mode == .object {
                 consumedObject = Unmanaged<AnyObject>.fromOpaque(context).retain()
             } else {
-                consumedValue = try receiver.codec.clone(readReceiver(call, arguments: arguments))
+                consumedValue = try receiver.clone(readReceiver(call, arguments: arguments))
             }
         }
         if let consumedValue { context = UnsafeRawPointer(consumedValue.address) }
@@ -1000,7 +898,7 @@ final class SwiftHookSignature: @unchecked Sendable {
             ?? cloneArguments(Array(arguments.prefix(explicitArgumentCount)))
         if let receiver, receiver.mode == .value {
             let value = arguments[explicitArgumentCount]
-            values.append(receiver.isConsuming ? try receiver.codec.clone(value) : value)
+            values.append(receiver.isConsuming ? try receiver.clone(value) : value)
         }
         var error: OpaquePointer?
         var context = ABISwiftIncomingContext(call)
@@ -1016,7 +914,7 @@ final class SwiftHookSignature: @unchecked Sendable {
             if receiver.mode == .object {
                 consumedObject = Unmanaged<AnyObject>.fromOpaque(context).retain()
             } else {
-                consumedValue = try receiver.codec.clone(readReceiver(call, arguments: arguments))
+                consumedValue = try receiver.clone(readReceiver(call, arguments: arguments))
             }
         }
         if let consumedValue { context = UnsafeRawPointer(consumedValue.address) }
@@ -1098,13 +996,13 @@ final class SwiftHookSignature: @unchecked Sendable {
             )
         }
         let storage = NativeValueStorage(
-            size: receiver.codec.type.size,
-            alignment: receiver.codec.type.alignment
+            size: receiver.type.size,
+            alignment: receiver.type.alignment
         )
         if receiver.mode == .object {
             storage.address.storeBytes(of: context, as: UnsafeRawPointer.self)
         } else {
-            storage.address.copyMemory(from: context, byteCount: receiver.codec.type.size)
+            storage.address.copyMemory(from: context, byteCount: receiver.type.size)
         }
         return storage
     }
@@ -1125,9 +1023,9 @@ final class SwiftHookSignature: @unchecked Sendable {
         case .object:
             if let context { Unmanaged<AnyObject>.fromOpaque(context).release() }
         case .address:
-            if let context { receiver.codec.destroy(UnsafeMutableRawPointer(mutating: context)) }
+            if let context { receiver.destroy(UnsafeMutableRawPointer(mutating: context)) }
         case .value:
-            receiver.codec.destroy(arguments[nativeExplicitCount]!)
+            receiver.destroy(arguments[nativeExplicitCount]!)
         }
     }
 }

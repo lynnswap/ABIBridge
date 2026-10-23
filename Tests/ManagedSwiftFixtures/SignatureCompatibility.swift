@@ -72,6 +72,10 @@ extension CompatibilityBase: CompatibilityNamed {
     _ pair: (CompatibilityCount, Int64)
 ) -> (CompatibilityCount, Int64) { (CompatibilityCount(pair.0.value + pair.1), pair.1) }
 
+@inline(never) public func compatibilityByte() -> UInt8 { 2 }
+
+@inline(never) public func compatibilityStoreByte(_ byte: inout UInt8) { byte = 2 }
+
 @inline(never) public func compatibilityLocalCount(_ value: Int64) -> Int64 {
     struct Count { var value: Int64 }
     @inline(never) func bump(_ count: Count) -> Count { Count(value: count.value + 1) }

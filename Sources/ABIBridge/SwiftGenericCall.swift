@@ -1,9 +1,14 @@
 import ABIBridgeRuntime
 import ABIBridgeCore
 
+/// How an argument passes: its value's conversion, and how native code
+/// receives it.
 enum SwiftGenericArgument: Sendable {
-    case concrete
-    indirect case convention(SwiftConventionCodec)
+    /// A value that its host type converts by itself, closed in the
+    /// declaration.
+    case host(SwiftHostConversion)
+    /// An ownership wrapper's conversion.
+    case convention(SwiftHostConversion)
     case value(CValueType, consuming: Bool)
     case closure(SwiftGenericClosurePlan, asynchronous: Bool = false)
     case runtimeValue(
@@ -17,7 +22,7 @@ enum SwiftGenericArgument: Sendable {
         switch self {
         case .tuple(let plan, _, _): plan
         case .runtimeValue(let plan, _, _): plan.nativeTuple
-        case .convention(let codec): codec.argument.tuple
+        case .convention(let conversion): conversion.tuple
         default: nil
         }
     }
@@ -26,7 +31,7 @@ enum SwiftGenericArgument: Sendable {
         switch self {
         case .closure(let plan, _): plan
         case .runtimeValue(let plan, _, _): plan.nativeClosure
-        case .convention(let codec): codec.argument.closure
+        case .convention(let conversion): conversion.closure
         default: nil
         }
     }
@@ -34,14 +39,14 @@ enum SwiftGenericArgument: Sendable {
     var runtimeValue: SwiftRuntimeValuePlan? {
         switch self {
         case .runtimeValue(let plan, _, _): plan
-        case .convention(let codec): codec.argument.runtimeValue
+        case .convention(let conversion): conversion.runtimeValue
         default: nil
         }
     }
 
     var convention: SwiftArgumentConvention {
         switch self {
-        case .convention(let codec): codec.convention
+        case .convention(let conversion): conversion.ownership!
         case .runtimeValue(_, let convention, _): convention
         case .value(_, let consuming): consuming ? .consuming : .borrowing
         case .tuple(_, let consuming, _): consuming ? .consuming : .borrowing
@@ -50,8 +55,11 @@ enum SwiftGenericArgument: Sendable {
     }
 }
 
+/// How a result passes: its value's conversion.
 enum SwiftGenericResult: Sendable {
-    case concrete
+    /// A value that its host type converts by itself, closed in the
+    /// declaration.
+    case host(SwiftHostConversion)
     case value(CValueType)
     case closure(SwiftClosureCodec)
     case runtimeValue(SwiftRuntimeValuePlan)
@@ -73,9 +81,9 @@ enum SwiftGenericResult: Sendable {
         }
     }
 
-    var type: CValueType? {
+    var type: CValueType {
         switch self {
-        case .concrete: nil
+        case .host(let conversion): conversion.type
         case .value(let type): type
         case .closure(let codec): codec.type
         case .runtimeValue(let plan): plan.type
@@ -184,10 +192,10 @@ final class SwiftGenericClosurePlan: Sendable {
         func argument(_ type: Any.Type) throws -> SwiftGenericArgument {
             if let convention = type as? any SwiftConventionArgument.Type {
                 return .convention(
-                    try convention.makeArgumentCodec(generic: argument(convention.wrappedType))
+                    try convention.makeConversion(generic: argument(convention.wrappedType))
                 )
             }
-            if let tuple = try SwiftGenericCallPlan.concreteTuple(type, position: .parameter) {
+            if let tuple = try SwiftTupleValuePlan(host: type, position: .parameter) {
                 return .tuple(tuple, asynchronous: signature.isAsync)
             }
             if let closure = type as? any SwiftClosureValue.Type {
@@ -196,7 +204,7 @@ final class SwiftGenericClosurePlan: Sendable {
                     asynchronous: signature.isAsync
                 )
             }
-            return .concrete
+            return .host(try SwiftHostConversion(host: type, position: .parameter))
         }
         let arguments = try signature.parameters.map(argument)
         let parameterPlan = SwiftGenericParameters(
@@ -204,35 +212,30 @@ final class SwiftGenericClosurePlan: Sendable {
             arguments: arguments
         )
         let logicalTypes = try zip(signature.parameters, arguments).map { type, argument in
-            func layout<Value>(_ type: Value.Type) throws -> CValueType {
-                try SwiftArgumentCodec<Value>(
-                    defaultConsuming: false,
-                    generic: argument,
-                    position: .parameter
-                ).type
-            }
-            return try _openExistential(type, do: layout)
+            try SwiftCallValues.Argument(
+                host: type,
+                plan: argument,
+                defaultConsuming: false,
+                asynchronous: false
+            ).type
         }
         let result: SwiftGenericResult
-        if let tuple = try SwiftGenericCallPlan.concreteTuple(signature.result, position: .result) {
+        if let tuple = try SwiftTupleValuePlan(host: signature.result, position: .result) {
             result = .tuple(tuple)
         } else if let closure = signature.result as? any SwiftClosureValue.Type {
             result = .closure(
                 try closure.makeGenericClosureCodec(plan: concrete(closure.swiftFunctionType))
             )
         } else {
-            func layout<Value>(_ type: Value.Type) throws -> CValueType {
-                try SwiftValueCodec<Value>(position: .result).type
-            }
-            result = .value(try _openExistential(signature.result, do: layout))
+            result = .value(try SwiftHostConversion(host: signature.result, position: .result).type)
         }
-        let nativeResult = try SwiftGenericCallPlan.concreteNativeMetadata(signature.result)
+        let nativeResult = try SwiftClosureConversion.nativeType(of: signature.result)
         let nativeParameters = try signature.parameters.map {
-            try SwiftGenericCallPlan.concreteNativeMetadata(
-                ($0 as? any SwiftConventionArgument.Type)?.wrappedType ?? $0
+            try SwiftClosureConversion.nativeType(
+                of: ($0 as? any SwiftConventionArgument.Type)?.wrappedType ?? $0
             )
         }
-        let resultType = result.type!
+        let resultType = result.type
         let types = parameterPlan.types(from: logicalTypes)
         let errorPlan = try signature.makeErrorPlan()
         let transport: Transport =
@@ -288,14 +291,14 @@ final class SwiftGenericClosurePlan: Sendable {
             let layout = try SwiftValueSchema.storage(of: type)
             let argument: SwiftGenericArgument
             if convention == .inoutValue {
-                func prepare<Value>(_ type: Value.Type) throws -> SwiftConventionCodec {
-                    try NativeSwiftInout<Value>.makeArgumentCodec(
+                func prepare<Value>(_ type: Value.Type) throws -> SwiftHostConversion {
+                    try NativeSwiftInout<Value>.makeConversion(
                         generic: .value(layout, consuming: false)
                     )
                 }
-                let codec = try _openExistential(type, do: prepare)
-                argument = .convention(codec)
-                types.append(codec.type)
+                let conversion = try _openExistential(type, do: prepare)
+                argument = .convention(conversion)
+                types.append(conversion.type)
             } else {
                 argument = .value(layout, consuming: convention == .consuming)
                 types.append(layout)
@@ -496,19 +499,13 @@ final class SwiftGenericClosurePlan: Sendable {
                 ABIValueTypesEqual(first.type.handle, second.type.handle)
             else { return false }
             switch (
-                first.nativeClosure ?? first.argument.closure,
-                second.nativeClosure ?? second.argument.closure
+                first.nativeClosure ?? first.conversion.closure,
+                second.nativeClosure ?? second.conversion.closure
             ) {
             case (.some(let first), .some(let second)):
                 if !first.hasSameNativeABI(as: second) { return false }
             case (.none, .none): break
             default: return false
-            }
-            switch (first.result, second.result) {
-            case (.closure(let first), .closure(let second)):
-                if !first.nativePlan!.hasSameNativeABI(as: second.nativePlan!) { return false }
-            case (.closure, _), (_, .closure): return false
-            default: break
             }
         }
         return true
@@ -639,7 +636,12 @@ struct SwiftGenericCallPlan: Sendable {
     let parameters: SwiftGenericParameters
     var arguments: [SwiftGenericArgument] { parameters.arguments }
     let result: SwiftGenericResult
-    var resultType: CValueType? { result.type }
+    /// Whether the declaration decides how the result passes, instead of
+    /// the host type by itself.
+    var plansResult: Bool {
+        if case .host = result { return false }
+        return true
+    }
     /// The schema of a typed error whose formal type depends on generic
     /// parameters.
     let errorSchema: SwiftValueSchema?
@@ -887,7 +889,7 @@ struct SwiftGenericCallPlan: Sendable {
                         index += nested.argumentTypes.count
                     } else {
                         switch field.argument {
-                        case .concrete: break
+                        case .host: break
                         default: add(field.nativeType, layout: field.type, at: index)
                         }
                         index += 1
@@ -1058,7 +1060,7 @@ struct SwiftGenericCallPlan: Sendable {
             var formal = formal
             var actual = signature.parameters[index]
             var argument = parameters.arguments[index]
-            if case .convention(let codec) = argument,
+            if case .convention = argument,
                 let convention = try binding.conventionArgument(
                     actual,
                     for: formal,
@@ -1067,7 +1069,13 @@ struct SwiftGenericCallPlan: Sendable {
             {
                 formal = convention.value
                 actual = convention.wrapper.wrappedType
-                argument = codec.argument
+                argument = try Self.argument(
+                    formal,
+                    actual: actual,
+                    binding: binding,
+                    defaultConsuming: convention.wrapper.convention == .consuming,
+                    position: .parameter
+                )
             }
             do {
                 try checkLowering(
@@ -1076,14 +1084,12 @@ struct SwiftGenericCallPlan: Sendable {
                     position: .parameter,
                     label: "argument \(index)"
                 ) {
-                    func prepare<Value>(_: Value.Type) throws -> CValueType {
-                        try SwiftArgumentCodec<Value>(
-                            defaultConsuming: false,
-                            generic: argument,
-                            position: .parameter
-                        ).type
-                    }
-                    return try _openExistential(actual, do: prepare)
+                    try SwiftCallValues.Argument(
+                        host: actual,
+                        plan: argument,
+                        defaultConsuming: false,
+                        asynchronous: false
+                    ).type
                 }
             } catch let ABIResolutionError.signatureMismatch(mismatch) {
                 throw ABIResolutionError.signatureMismatch(mismatch.at(.argument(index)))
@@ -1096,10 +1102,7 @@ struct SwiftGenericCallPlan: Sendable {
                 position: .result,
                 label: "the result"
             ) {
-                func prepare<Value>(_: Value.Type) throws -> CValueType {
-                    try SwiftResultCodec<Value>(generic: result).type
-                }
-                return try _openExistential(signature.result, do: prepare)
+                try SwiftHostConversion(host: signature.result, result: result).type
             }
         } catch let ABIResolutionError.signatureMismatch(mismatch) {
             throw ABIResolutionError.signatureMismatch(mismatch.at(.result))
@@ -1139,6 +1142,10 @@ struct SwiftGenericCallPlan: Sendable {
             do {
                 metadata = try binding.types(lowered)[0]
             } catch ABIResolutionError.declarationNotFound(let declaration) {
+                // An adapter's representation states how its value passes
+                // where the declared type cannot be named, as for a
+                // function-local type that an optimized image does not name.
+                if Self.describesRepresentation(actual) { return }
                 // An image can use an imported C type without exporting its
                 // descriptor, which a valueABIs entry would also need.
                 throw ABIResolutionError.metadataUnavailable(
@@ -1176,6 +1183,14 @@ struct SwiftGenericCallPlan: Sendable {
             declared: declared,
             position: position
         )
+    }
+
+    /// Whether the host type describes how its own value passes, as an
+    /// `ABIBridgeValue` or `ABIBridgeSwiftValue` conformance does, even in
+    /// an Optional.
+    private static func describesRepresentation(_ host: Any.Type) -> Bool {
+        let base = (host as? any NativeOptionalValue.Type)?.wrappedType ?? host
+        return base is any ABIBridgeValue.Type || base is any ABIBridgeSwiftValue.Type
     }
 
     /// The formal type with `UnsafeRawPointer` for each C function pointer or
@@ -1251,7 +1266,7 @@ struct SwiftGenericCallPlan: Sendable {
                 asynchronous: asynchronous,
                 position: position
             )
-            return .convention(try argument.wrapper.makeArgumentCodec(generic: value))
+            return .convention(try argument.wrapper.makeConversion(generic: value))
         }
         if let handle = runtimeHandle(actual) {
             let metadata = try binding.types(formal)[0]
@@ -1295,12 +1310,12 @@ struct SwiftGenericCallPlan: Sendable {
                 return .value(explicit, consuming: false)
             }
             guard
-                let tuple = try concreteTuple(
-                    actual,
+                let tuple = try SwiftTupleValuePlan(
+                    host: actual,
                     explicitLayout: binding.explicitHostLayout,
                     position: position
                 )
-            else { return .concrete }
+            else { return .host(try SwiftHostConversion(host: actual, position: position)) }
             return .tuple(
                 tuple,
                 consuming: defaultConsuming,
@@ -1322,7 +1337,7 @@ struct SwiftGenericCallPlan: Sendable {
             )
         }
         guard binding.dependsOnParameters(formal) || !formal.opaqueIndices.isEmpty else {
-            return .concrete
+            return .host(try SwiftHostConversion(host: actual, position: position))
         }
         try binding.validate(actual, for: formal)
         return .value(
@@ -1333,7 +1348,7 @@ struct SwiftGenericCallPlan: Sendable {
 
     /// Whether the host type alone lowers a value whose native type has no
     /// generic or opaque part. Such a host type can be an adapter with a
-    /// different Swift name, so its codec takes precedence over the formal
+    /// different Swift name, so its conversion takes precedence over the formal
     /// type; closures and runtime values still need the declaration.
     private static func representsClosedValue(
         _ formal: SwiftFormalType,
@@ -1385,15 +1400,15 @@ struct SwiftGenericCallPlan: Sendable {
                 return .value(explicit)
             }
             if try binding.hasExplicitHostField(actual),
-                let tuple = try concreteTuple(
-                    actual,
+                let tuple = try SwiftTupleValuePlan(
+                    host: actual,
                     explicitLayout: binding.explicitHostLayout,
                     position: position
                 )
             {
                 return .tuple(tuple)
             }
-            return .concrete
+            return .host(try SwiftHostConversion(host: actual, position: position))
         }
         let canonical = try binding.canonicalType(of: formal)
         if case .tuple = canonical {
@@ -1413,7 +1428,7 @@ struct SwiftGenericCallPlan: Sendable {
                 try SwiftValueSchema(formal, actual: native, binding: binding, position: position).type
             )
         }
-        return .concrete
+        return .host(try SwiftHostConversion(host: actual, position: position))
     }
 
     /// Whether a host type holds a runtime value handle in an Optional, a
@@ -1554,7 +1569,6 @@ struct SwiftGenericCallPlan: Sendable {
             let canonical = try binding.canonicalType(of: field)
             let nested: SwiftTupleValuePlan?
             let argument: SwiftGenericArgument
-            let result: SwiftGenericResult
             if case .tuple = canonical {
                 let value = try tuple(
                     canonical,
@@ -1564,8 +1578,7 @@ struct SwiftGenericCallPlan: Sendable {
                     nativeStorage: nativeStorage,
                     position: position.tupleElement
                 )
-                nested = value; argument = .tuple(value, asynchronous: asynchronous);
-                result = .tuple(value)
+                nested = value; argument = .tuple(value, asynchronous: asynchronous)
             } else if nativeStorage {
                 nested = nil
                 let type = try SwiftValueSchema(
@@ -1575,7 +1588,6 @@ struct SwiftGenericCallPlan: Sendable {
                     position: position.tupleElement
                 ).type
                 argument = .value(type, consuming: false)
-                result = .value(type)
             } else {
                 nested = nil
                 try binding.validateArgument(host.type, for: field, position: position.tupleElement)
@@ -1584,12 +1596,6 @@ struct SwiftGenericCallPlan: Sendable {
                     actual: host.type,
                     binding: binding,
                     asynchronous: asynchronous,
-                    position: position.tupleElement
-                )
-                result = try Self.result(
-                    field,
-                    actual: host.type,
-                    binding: binding,
                     position: position.tupleElement
                 )
             }
@@ -1612,7 +1618,6 @@ struct SwiftGenericCallPlan: Sendable {
                     hostOffset: host.offset,
                     nativeOffset: native.offset,
                     argument: argument,
-                    result: result,
                     tuple: nested,
                     nativeClosure: nativeClosure,
                     position: position.tupleElement
@@ -1774,117 +1779,6 @@ struct SwiftGenericCallPlan: Sendable {
         return owned ? NativeSwiftValue.self : NativeSwiftBorrowedValue.self
     }
 
-    /// - Parameter explicitLayout: The `valueABIs` layout of a field's host type, if any.
-    /// - Parameter position: The tuple's own position. Elements of a
-    ///   parameter are whole parameters; elements of a result are nested.
-    static func concreteTuple(
-        _ actual: Any.Type,
-        explicitLayout: (Any.Type) throws -> CValueType? = { _ in nil },
-        position: SwiftValuePosition
-    ) throws -> SwiftTupleValuePlan? {
-        guard let host = SwiftTupleMetadata(actual) else { return nil }
-        let nativeType = try concreteNativeMetadata(actual)
-        let native = SwiftTupleMetadata(nativeType)!
-        var fields: [SwiftTupleValuePlan.Field] = []
-        for (host, native) in zip(host.elements, native.elements) {
-            let argument: SwiftGenericArgument
-            let result: SwiftGenericResult
-            let tuple = try concreteTuple(
-                host.type,
-                explicitLayout: explicitLayout,
-                position: position.tupleElement
-            )
-            if let tuple {
-                argument = .tuple(tuple); result = .tuple(tuple)
-            } else if let closure = host.type as? any SwiftClosureValue.Type {
-                let plan = try SwiftGenericClosurePlan.concrete(closure.swiftFunctionType)
-                argument = .closure(plan)
-                result = .closure(try closure.makeGenericClosureCodec(plan: plan))
-            } else if let explicit = try explicitLayout(host.type) {
-                argument = .value(explicit, consuming: false); result = .value(explicit)
-            } else {
-                argument = .concrete; result = .concrete
-            }
-            fields.append(
-                try .init(
-                    hostType: host.type,
-                    nativeType: native.type,
-                    hostOffset: host.offset,
-                    nativeOffset: native.offset,
-                    argument: argument,
-                    result: result,
-                    tuple: tuple,
-                    position: position.tupleElement
-                )
-            )
-        }
-        let layout = ABISwiftGetValueLayout(unsafeBitCast(nativeType, to: UnsafeRawPointer.self))
-        return try SwiftTupleValuePlan(
-            hostMetadata: actual,
-            nativeMetadata: nativeType,
-            type: CValueType(
-                swiftTuple: fields.map(\.type),
-                offsets: fields.map(\.nativeOffset),
-                size: layout.size,
-                alignment: layout.alignment
-            ),
-            fields: fields
-        )
-    }
-
-    static func concreteNativeMetadata(_ actual: Any.Type) throws -> Any.Type {
-        if let closure = actual as? any SwiftClosureValue.Type, closure.isOptional {
-            func optional<Wrapped>(_: Wrapped.Type) -> Any.Type { Wrapped?.self }
-            return try _openExistential(
-                concreteNativeMetadata((actual as! any NativeOptionalValue.Type).wrappedType),
-                do: optional
-            )
-        }
-        if let closure = actual as? any SwiftClosureValue.Type {
-            let function = closure.swiftFunctionType
-            let signature = try SwiftFunctionSignature(function)
-            var parameterFlags = Array(repeating: UInt32(0), count: signature.parameters.count)
-            let parameters = try signature.parameters.enumerated().map { index, type -> Any.Type in
-                if let convention = type as? any SwiftConventionArgument.Type {
-                    parameterFlags[index] =
-                        switch convention.convention {
-                        case .inoutValue: 1
-                        case .borrowing: 2
-                        case .consuming: 3
-                        }
-                    return try concreteNativeMetadata(convention.wrappedType)
-                }
-                return try concreteNativeMetadata(type)
-            }
-            let result = try concreteNativeMetadata(signature.result)
-            return try withRuntimeErrors {
-                try RuntimeFunctionMetadata(function).replacing(
-                    parameters: parameters,
-                    result: result,
-                    parameterFlags: parameterFlags
-                )
-            }
-        }
-        guard let tuple = SwiftTupleMetadata(actual) else { return actual }
-        let elements = try tuple.elements.map { try concreteNativeMetadata($0.type) }
-        if zip(elements, tuple.elements).allSatisfy({ $0.0 == $0.1.type }) { return actual }
-        let pointers = elements.map { Optional(unsafeBitCast($0, to: UnsafeRawPointer.self)) }
-        let value = pointers.withUnsafeBufferPointer { pointers in
-            if tuple.labels.allSatisfy(\.isEmpty) {
-                return ABISwiftTupleTypeMetadata(pointers.baseAddress, pointers.count, nil)
-            }
-            return (tuple.labels.joined(separator: " ") + " ").withCString {
-                ABISwiftTupleTypeMetadata(pointers.baseAddress, pointers.count, $0)
-            }
-        }
-        guard let value else {
-            throw ABIResolutionError.metadataUnavailable(
-                "The tuple exceeds Swift's metadata element count."
-            )
-        }
-        return unsafeBitCast(value, to: Any.Type.self)
-    }
-
     static func closure(
         _ formal: SwiftFormalType,
         signature: SwiftFunctionSignature,
@@ -1966,8 +1860,8 @@ struct SwiftGenericCallPlan: Sendable {
                 let argument = parameterPlan.arguments[index]
                 let actual =
                     argument.runtimeValue?.valueType.metadata ?? signature.parameters[index]
-                if case .convention(let codec) = argument {
-                    logicalTypes.append(codec.type)
+                if case .convention(let conversion) = argument {
+                    logicalTypes.append(conversion.type)
                     let underlying = formal.argumentConvention?.value ?? formal
                     let wrapper = signature.parameters[index] as! any SwiftConventionArgument.Type
                     authentication.append(
@@ -2010,9 +1904,9 @@ struct SwiftGenericCallPlan: Sendable {
             }
         }
         #if DEBUG
-        // Closed arguments convert with their host types' codecs.
+        // Closed arguments convert as their host types do.
         for (index, argument) in parameterPlan.arguments.enumerated() {
-            guard case .concrete = argument else { continue }
+            guard case .host = argument else { continue }
             checkSchema(
                 of: String(reflecting: signature.parameters[index]),
                 at: .parameter,
@@ -2061,7 +1955,7 @@ struct SwiftGenericCallPlan: Sendable {
             position: .result
         )
         #if DEBUG
-        if case .concrete = resultPlan, !usesStorageConvention {
+        if case .host = resultPlan, !usesStorageConvention {
             checkSchema(
                 of: result.spelling,
                 at: .result,
@@ -2236,12 +2130,12 @@ struct SwiftGenericCallPlan: Sendable {
 
 #if DEBUG
 extension SwiftGenericCallPlan {
-    /// Asserts that the storage the call's host codecs give each closed
+    /// Asserts that the storage the call's host conversions give each closed
     /// position passes where the position's schema does.
     ///
-    /// A closed position still converts its host value with the host type's
-    /// codec. Its schema must agree, so that conversions derived from it pass
-    /// each value as the call does now.
+    /// A closed position converts its host value as the host type does. Its
+    /// schema must agree, so that the value passes as the declaration's
+    /// schema says.
     func checkClosedSchemas(_ signature: SwiftFunctionSignature, values: SwiftCallValues) {
         for (formal, group) in zip(binding.declaration.arguments, parameters.groups) {
             guard case .value(let index) = group else { continue }
@@ -2296,10 +2190,10 @@ extension SwiftGenericCallPlan {
         )
     }
 
-    /// Asserts that the host codec's storage passes at `position` where a
-    /// value with the schema's storage does. A schema that cannot be derived
-    /// says nothing about the codec, so the check passes; the call reports
-    /// any failure itself.
+    /// Asserts that the host conversion's storage passes at `position` where
+    /// a value with the schema's storage does. A schema that cannot be
+    /// derived says nothing about the conversion, so the check passes; the
+    /// call reports any failure itself.
     static func checkSchema(
         of formal: String,
         at position: SwiftValuePosition,
@@ -2312,7 +2206,7 @@ extension SwiftGenericCallPlan {
             SwiftValueSchema(storage: schema, metadata: nil).accepts(host, at: position),
             "The schema of \(formal) at \(label) passes "
                 + SwiftDeclaredLowering.lowering(of: schema)
-                + ", but its host codec passes " + SwiftDeclaredLowering.lowering(of: host)
+                + ", but its host conversion passes " + SwiftDeclaredLowering.lowering(of: host)
                 + "."
         )
     }
