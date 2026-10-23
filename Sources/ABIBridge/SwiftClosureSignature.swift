@@ -135,10 +135,11 @@ func swiftClosureTypeHash(_ type: Any.Type) throws -> String {
 /// A type in an extension of a generic type is mangled with the extension's
 /// generic signature, which its runtime name omits and its context
 /// descriptors record without conformances to marker protocols. Only the
-/// descriptor symbol that its image exports establishes that declaration.
-/// An extension of a nongeneric type has no generic signature, and an
-/// unconstrained extension in its type's module has no context of its own,
-/// so the runtime name spells the declaration of a type in either.
+/// type's descriptor symbol establishes that declaration: an export, or a
+/// local symbol until the image is stripped. An extension of a nongeneric
+/// type has no generic signature, and an unconstrained extension in its
+/// type's module has no context of its own, so the runtime name spells the
+/// declaration of a type in either.
 func swiftNominalClosureDeclaration(_ type: Any.Type, runtimeName: String) throws -> String {
     let metadata = unsafeBitCast(type, to: UnsafeRawPointer.self)
     if ABISwiftTypeIsDeclaredInAnonymousContext(metadata) {
@@ -163,15 +164,16 @@ func swiftNominalClosureDeclaration(_ type: Any.Type, runtimeName: String) throw
     guard ABISwiftTypeIsDeclaredInGenericExtension(metadata) else {
         return runtimeName.hasSuffix("G") ? try swiftNominalClosureName(runtimeName) : runtimeName
     }
-    guard let declaration = swiftExportedTypeDeclaration(type) else {
+    guard let declaration = swiftTypeDeclarationFromSymbols(type) else {
         throw ABIResolutionError.metadataUnavailable(
             "No Swift closure type identity for \(String(reflecting: type)): it is declared in an "
                 + "extension of a generic type, whose generic signature the closure's "
                 + "pointer-authentication discriminator hashes. Its runtime name omits that "
                 + "signature, its context descriptors do not record conformances to marker "
-                + "protocols such as Sendable, and its image does not export its nominal type "
-                + "descriptor, whose symbol spells the signature. Call through a compiled adapter "
-                + "instead, or declare the type public in an image that exports it."
+                + "protocols such as Sendable, and its image has no symbol of its nominal type "
+                + "descriptor, which spells the signature, as when the image does not export the "
+                + "type and is stripped of local symbols. Call through a compiled adapter "
+                + "instead, or keep the image's local symbols."
         )
     }
     return declaration
