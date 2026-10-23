@@ -794,6 +794,46 @@ bool ABISwiftTypeIsDeclaredInGenericExtension(const void *metadata) {
     return false;
 }
 
+bool ABISwiftTypeIsDeclaredInAnonymousContext(const void *metadata) {
+    for (const char *context = typeContextDescriptor(metadata); context; context = parentContext(context))
+        if ((read<uint32_t>(context) & 0x1f) == 2) return true;
+    return false;
+}
+
+namespace {
+// The end of TrailingGenericContextObjects after a generic context header:
+// parameters padded to four bytes, requirements, then the pack shapes,
+// conditional invertible protocols, and value parameters its flags announce.
+// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/ABI/GenericContext.h
+const char *genericContextEnd(const char *header) {
+    const auto flags = read<uint16_t>(header + 6);
+    const char *end = genericRequirements(header) + read<uint16_t>(header + 2) * 12;
+    if (flags & 1) end += 4 + read<uint16_t>(end) * 8;
+    if (flags & 2) {
+        const int protocols = __builtin_popcount(read<uint16_t>(end));
+        // Requirement counts are cumulative, so the last one is the total.
+        const size_t requirements = protocols ? read<uint16_t>(end + 2 * protocols) : 0;
+        const auto counted = reinterpret_cast<uintptr_t>(end + 2 + 2 * protocols);
+        end = reinterpret_cast<const char *>((counted + 3) & ~uintptr_t(3)) + requirements * 12;
+    }
+    if (flags & 4) end += 4 + read<uint32_t>(end) * 4;
+    return end;
+}
+}
+
+const char *ABISwiftTypeAnonymousContextDeclaration(const void *metadata) {
+    const char *descriptor = typeContextDescriptor(metadata);
+    const char *context = descriptor ? parentContext(descriptor) : nullptr;
+    if (!context) return nullptr;
+    // An anonymous context's kind-specific flag 0 says that it records the
+    // mangled name of the declaration it wraps, after its generic context.
+    const auto flags = read<uint32_t>(context);
+    if ((flags & 0x1f) != 2 || !(flags & 0x10000)) return nullptr;
+    const char *name = relative((flags & 0x80) ? genericContextEnd(context + 8) : context + 8);
+    if (!name || name[0] != '$' || name[1] != 's') return nullptr;
+    return name + 2;
+}
+
 ABISwiftSyntax *ABICopySwiftAssociatedTypeSyntax(const void *metadata, const void *protocol, const char *name) {
     const void *witness = swift_conformsToProtocol(metadata, protocol);
     const char *descriptor = typeContextDescriptor(metadata);

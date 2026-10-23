@@ -1119,6 +1119,131 @@ struct NativeSwiftClosureTests {
             }
         }
     }
+
+    enum AnonymousContextEvidence: CaseIterable, Sendable {
+        /// An image that keeps the local symbols of its private descriptors.
+        case localSymbols
+        /// A stripped -g -Onone image, whose anonymous contexts record the
+        /// declarations they wrap.
+        case recordedNames
+        /// A stripped image of another build.
+        case none
+    }
+
+    /// A private or fileprivate type is declared in an anonymous context,
+    /// which its runtime name spells by address, while the compiler hashes
+    /// its declaration with the file's private discriminator. The descriptor
+    /// symbols of an unstripped image spell each declaration. A -g -Onone
+    /// build also records the declaration of each type that an anonymous
+    /// context wraps, but not of a type nested in one, and a stripped image of
+    /// another build establishes none.
+    @Test(arguments: AnonymousContextEvidence.allCases)
+    func privateTypesHashTheirPrivateDiscriminator(
+        evidence: AnonymousContextEvidence
+    ) async throws {
+        let module = "ClosurePrivate_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let types = [
+            ("Hidden", ".init(x: 1, y: 2)"), ("Choice", ".real(1)"),
+            ("Pair<Double>", ".init(a: 1, b: 2)"), ("Outer.Inner", ".init(x: 1, y: 2)"),
+            ("Int.Helper", ".init(x: 1, y: 2)"), ("Wrapper.Nested", ".init(x: 1, y: 2)"),
+        ]
+        let source =
+            """
+            // A String field sets the addressable bit, which Hidden leaves clear.
+            public struct Label { public var text: String = "" }
+            private struct Hidden { var x: Double, y: Double }
+            private enum Choice { case real(Double), none }
+            fileprivate struct Pair<T> { var a: T, b: T }
+            public struct Outer {
+                fileprivate struct Inner { var x: Double, y: Double }
+            }
+            extension Int {
+                fileprivate struct Helper { var x: Double, y: Double }
+            }
+            private struct Wrapper {
+                struct Nested { var x: Double, y: Double }
+            }
+            public func closureProbeType(_ index: Int64) -> Any.Type {
+                let types: [Any.Type] = [\(types.map { $0.0 + ".self" }.joined(separator: ", "))]
+                return types[Int(index)]
+            }
+
+            """
+            + types.enumerated().map { index, entry in
+                "@inline(never) private func closureProbe\(index)(_ callback: (\(entry.0)) -> Double) -> Double { callback(\(entry.1)) }"
+            }.joined(separator: "\n")
+        let library = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: source,
+            stripped: evidence != .localSymbols,
+            linkArguments: ["-parse-as-library", "-swift-version", "6"]
+                + (evidence == .recordedNames ? ["-g"] : [])
+        )
+        defer { library.cleanup() }
+        let found = try arm64eClosureCallDiscriminators(
+            source: source,
+            arguments: ["-module-name", module],
+            functions: types.indices.map { "closureProbe\($0)" }
+        )
+        let runtime = ABIRuntime()
+        let typeAt = try await runtime.resolveSwiftFunction(
+            named: module + ".closureProbeType(_:)",
+            as: ((Int64) -> Any.Type).self,
+            in: .path(library.libraryURL)
+        )
+        for (index, (name, _)) in types.enumerated() {
+            let type = try unsafe typeAt.unsafeInvoke(Int64(index))
+            let runtimeName = try #require(_mangledTypeName(type))
+            let established =
+                evidence == .localSymbols
+                || (evidence == .recordedNames && name != "Wrapper.Nested")
+            if established {
+                let hash = try swiftClosureTypeHash(type)
+                #expect(
+                    swiftClosureDiscriminator(parameters: [hash], result: "$sSd") == found[index],
+                    "\(name): \(hash)"
+                )
+                continue
+            }
+            #expect {
+                try swiftNominalClosureDeclaration(type, runtimeName: runtimeName)
+            } throws: { error in
+                guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                    return false
+                }
+                return message.contains("no anonymous context records the declaration")
+            }
+            if RuntimePointerAuthentication.isEnabled {
+                #expect(throws: ABIResolutionError.self, "\(name)") {
+                    try swiftClosureTypeHash(type)
+                }
+            } else {
+                #expect(try swiftClosureTypeHash(type) == "$s" + runtimeName, "\(name)")
+            }
+        }
+        guard evidence == .localSymbols else { return }
+        // A closure plan of a private function hashes the same declaration.
+        let symbols = try library.definedSymbols()
+        for index in 0..<2 {
+            let symbol = try #require(symbols.first { $0.contains("13closureProbe\(index)33_") })
+            let probe = try await runtime.resolveSwiftFunction(
+                named: try #require(
+                    DeclarationKey.demangle(String(symbol.dropFirst()), language: .swift)
+                ),
+                as: ((NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Double>) -> Double).self,
+                in: .path(library.libraryURL)
+            )
+            let arguments = try #require(probe.call.generic).parameters.arguments
+            guard case .closure(let plan, _) = arguments[0] else {
+                Issue.record("\(types[index].0) has no closure plan")
+                continue
+            }
+            #expect(
+                swiftClosureDiscriminator(description: plan.authentication) == found[index],
+                "\(types[index].0)"
+            )
+        }
+    }
     #endif
 
     #if os(macOS)
@@ -1644,8 +1769,10 @@ private func arm64eClosureCallDiscriminators(
     defer {
         do { try FileManager.default.removeItem(at: directory) } catch { Issue.record(error) }
     }
-    let sourceURL = directory.appendingPathComponent("Closures.swift")
-    let ir = directory.appendingPathComponent("Closures.ll")
+    // A private declaration's discriminator hashes its module and file names,
+    // so the source takes the name of FixtureLibrary's source file.
+    let sourceURL = directory.appendingPathComponent("fixture.swift")
+    let ir = directory.appendingPathComponent("fixture.ll")
     try source.write(to: sourceURL, atomically: true, encoding: .utf8)
     func run(_ arguments: [String]) throws -> String {
         let process = Process(), output = Pipe()
@@ -1681,7 +1808,9 @@ private func arm64eClosureCallDiscriminators(
     )
     let text = try String(contentsOf: ir, encoding: .utf8)
     return try functions.map { function in
-        let pattern = #"(?ms)^define[^\n]*"# + function + #"[y_][^\n]*\{(.*?)^\}"#
+        // A private function's name is followed by its private discriminator.
+        let pattern =
+            #"(?ms)^define[^\n]*"# + function + #"(?:33_[0-9A-F]{32}LL)?[y_][^\n]*\{(.*?)^\}"#
         let expression = try NSRegularExpression(pattern: pattern)
         let match = try #require(
             expression.firstMatch(in: text, range: NSRange(text.startIndex..., in: text))

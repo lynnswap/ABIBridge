@@ -110,11 +110,16 @@ package final class FixtureLibrary {
         try #require(process.terminationStatus == 0)
     }
 
-    package func exportedSymbols() throws -> [String] {
+    package func exportedSymbols() throws -> [String] { try symbols(options: "-gUj") }
+
+    /// The symbols the library defines, including local ones.
+    package func definedSymbols() throws -> [String] { try symbols(options: "-Uj") }
+
+    private func symbols(options: String) throws -> [String] {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
         process.environment = Self.toolEnvironment
-        process.arguments = ["--sdk", "macosx", "nm", "-gUj", libraryURL.path]
+        process.arguments = ["--sdk", "macosx", "nm", options, libraryURL.path]
         let output = Pipe()
         process.standardOutput = output
         try process.run()
