@@ -251,8 +251,9 @@ private struct BindingBoolAdapter: ABIBridgeValue {
                 as: ((NativeSwiftClosure<(Int64) -> Int64>) -> Int64).self
             )
             throw ArchitectureValidationFailure(description: "A Swift closure matched a foreign convention")
-        } catch ABIResolutionError.declarationNotFound {
-            try check(true, "Swift closures do not match foreign callback declarations: \(name)")
+        } catch let ABIResolutionError.signatureMismatch(mismatch) {
+            try check(mismatch.position == .argument(0),
+                "Swift closures do not match foreign callback declarations: \(name)")
         }
     }
     let cBody: @convention(c) (Int64) -> Int64 = { $0 + 2 }
