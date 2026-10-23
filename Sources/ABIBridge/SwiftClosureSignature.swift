@@ -583,7 +583,8 @@ final class SwiftNativeClosureAdapter: Sendable {
 
         func closureOffsets() -> [Int] {
             expanded?.leaves.compactMap { leaf in
-                leaf.nativeClosure != nil || leaf.conversion.closure != nil ? leaf.nativeOffset : nil
+                leaf.nativeClosure != nil || leaf.conversion.closure != nil
+                    ? leaf.nativeOffset : nil
             } ?? []
         }
     }

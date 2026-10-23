@@ -377,7 +377,10 @@ struct SwiftHookCallbackSignature<Result, each Argument>: Sendable {
             arguments: parameters.arguments,
             consumingArguments: values.arguments.map(\.consumes)
         )
-        callbackResult = try SwiftCallbackResult(values.result.conversion, failure: (any Error).self)
+        callbackResult = try SwiftCallbackResult(
+            values.result.conversion,
+            failure: (any Error).self
+        )
         resultOperations = SwiftHookValueOperations(result: values.result.conversion)
         argumentOperations = values.arguments.map(SwiftHookValueOperations.init(argument:))
     }
@@ -663,8 +666,8 @@ final class SwiftHookSignature: @unchecked Sendable {
             }
             if first.mode == .object { return true }
             return first.isMutating == second.isMutating
-                && first.codec.representation == second.codec.representation
-                && ABIValueTypesEqual(first.codec.type.handle, second.codec.type.handle)
+                && first.representation == second.representation
+                && ABIValueTypesEqual(first.type.handle, second.type.handle)
         default: return false
         }
     }
@@ -812,7 +815,7 @@ final class SwiftHookSignature: @unchecked Sendable {
             ?? cloneArguments(Array(arguments.prefix(explicitArgumentCount)))
         if let receiver, receiver.mode == .value {
             let value = arguments[explicitArgumentCount]
-            values.append(receiver.isConsuming ? try receiver.codec.clone(value) : value)
+            values.append(receiver.isConsuming ? try receiver.clone(value) : value)
         }
         var error: OpaquePointer?
         var context = ABISwiftIncomingContext(call)
@@ -828,7 +831,7 @@ final class SwiftHookSignature: @unchecked Sendable {
             if receiver.mode == .object {
                 consumedObject = Unmanaged<AnyObject>.fromOpaque(context).retain()
             } else {
-                consumedValue = try receiver.codec.clone(readReceiver(call, arguments: arguments))
+                consumedValue = try receiver.clone(readReceiver(call, arguments: arguments))
             }
         }
         if let consumedValue { context = UnsafeRawPointer(consumedValue.address) }
@@ -895,7 +898,7 @@ final class SwiftHookSignature: @unchecked Sendable {
             ?? cloneArguments(Array(arguments.prefix(explicitArgumentCount)))
         if let receiver, receiver.mode == .value {
             let value = arguments[explicitArgumentCount]
-            values.append(receiver.isConsuming ? try receiver.codec.clone(value) : value)
+            values.append(receiver.isConsuming ? try receiver.clone(value) : value)
         }
         var error: OpaquePointer?
         var context = ABISwiftIncomingContext(call)
@@ -911,7 +914,7 @@ final class SwiftHookSignature: @unchecked Sendable {
             if receiver.mode == .object {
                 consumedObject = Unmanaged<AnyObject>.fromOpaque(context).retain()
             } else {
-                consumedValue = try receiver.codec.clone(readReceiver(call, arguments: arguments))
+                consumedValue = try receiver.clone(readReceiver(call, arguments: arguments))
             }
         }
         if let consumedValue { context = UnsafeRawPointer(consumedValue.address) }
@@ -993,13 +996,13 @@ final class SwiftHookSignature: @unchecked Sendable {
             )
         }
         let storage = NativeValueStorage(
-            size: receiver.codec.type.size,
-            alignment: receiver.codec.type.alignment
+            size: receiver.type.size,
+            alignment: receiver.type.alignment
         )
         if receiver.mode == .object {
             storage.address.storeBytes(of: context, as: UnsafeRawPointer.self)
         } else {
-            storage.address.copyMemory(from: context, byteCount: receiver.codec.type.size)
+            storage.address.copyMemory(from: context, byteCount: receiver.type.size)
         }
         return storage
     }
@@ -1020,9 +1023,9 @@ final class SwiftHookSignature: @unchecked Sendable {
         case .object:
             if let context { Unmanaged<AnyObject>.fromOpaque(context).release() }
         case .address:
-            if let context { receiver.codec.destroy(UnsafeMutableRawPointer(mutating: context)) }
+            if let context { receiver.destroy(UnsafeMutableRawPointer(mutating: context)) }
         case .value:
-            receiver.codec.destroy(arguments[nativeExplicitCount]!)
+            receiver.destroy(arguments[nativeExplicitCount]!)
         }
     }
 }

@@ -128,7 +128,7 @@ enum SwiftCallablePlan: Sendable {
         let description = try SwiftFunctionSignature(signature)
         let errorPlan = try description.makeErrorPlan(schema: generic?.errorSchema)
         let opaque =
-            try generic?.resultType != nil
+            try generic?.plansResult == true
             ? nil
             : SwiftOpaqueResultPlan.make(
                 for: description.result,
@@ -208,12 +208,7 @@ struct SwiftCallValues: Sendable {
             asynchronous: Bool,
             position: SwiftValuePosition = .parameter
         ) throws {
-            conversion = try SwiftHostConversion(
-                host: host,
-                argument: plan,
-                asynchronous: asynchronous,
-                position: position
-            )
+            conversion = try SwiftHostConversion(host: host, argument: plan, position: position)
             switch plan {
             case .value(let native, let consuming):
                 type = native
@@ -224,14 +219,15 @@ struct SwiftCallValues: Sendable {
                 convention = defaultConsuming ? .consuming : .borrowing
                 self.asynchronous = planned
             case .runtimeValue(let runtime, let planned, let plannedAsynchronous):
-                type = planned == .inoutValue ? try CValueType(scalar: ABIValuePointer) : runtime.type
+                type =
+                    planned == .inoutValue ? try CValueType(scalar: ABIValuePointer) : runtime.type
                 convention = planned
                 self.asynchronous = plannedAsynchronous
             case .tuple(let tuple, let consuming, let planned):
                 type = tuple.type
                 convention = consuming || defaultConsuming ? .consuming : .borrowing
                 self.asynchronous = planned
-            case .convention, .concrete:
+            case .convention, .host:
                 type = conversion.type
                 convention = conversion.ownership ?? (defaultConsuming ? .consuming : .borrowing)
                 self.asynchronous = asynchronous
@@ -247,15 +243,19 @@ struct SwiftCallValues: Sendable {
     let arguments: [Argument]
     let result: Result
 
+    /// - Parameters:
+    ///   - opaqueResult: The underlying type of an opaque result, which
+    ///     applies where the host type would convert the result by itself.
+    ///   - result: How the result passes, or nil for a result that its host
+    ///     type converts by itself.
     init(
         signature: SwiftFunctionSignature,
         consumesArguments: Bool,
         opaqueResult: SwiftOpaqueResultPlan?,
-        arguments argumentPlans: [SwiftGenericArgument] = [],
-        result resultPlan: SwiftGenericResult = .concrete
+        arguments argumentPlans: [SwiftGenericArgument],
+        result resultPlan: SwiftGenericResult?
     ) throws {
-        arguments = try signature.parameters.enumerated().map { index, type in
-            let argument = argumentPlans.isEmpty ? .concrete : argumentPlans[index]
+        arguments = try zip(signature.parameters, argumentPlans).map { type, argument in
             let consuming: Bool
             // Initializers consume escaping closure arguments, but their
             // nonescaping closure parameters are guaranteed borrows.
@@ -271,11 +271,14 @@ struct SwiftCallValues: Sendable {
                 asynchronous: signature.isAsync
             )
         }
-        let conversion = try SwiftHostConversion(
-            host: signature.result,
-            result: resultPlan,
-            opaque: resultPlan.type == nil ? opaqueResult : nil
-        )
+        let resultPlan: SwiftGenericResult? =
+            switch resultPlan {
+            case .host?, nil: opaqueResult.map { .runtimeValue($0.value) } ?? resultPlan
+            default: resultPlan
+            }
+        let conversion =
+            try resultPlan.map { try SwiftHostConversion(host: signature.result, result: $0) }
+            ?? SwiftHostConversion(host: signature.result, position: .result)
         let scoped: SwiftRuntimeValuePlan?
         if signature.result == NativeSwiftBorrowedValue.self {
             scoped = conversion.runtimeValue
@@ -473,16 +476,15 @@ struct SwiftCallbackValues: Sendable {
         argument: SwiftGenericArgument
     ) -> SwiftValueConstants? {
         switch argument {
-        case .value: return SwiftValueConstants(Void.self)
-        case .concrete:
-            func readsInPlace<Value>(_: Value.Type) -> Bool {
-                !(Value.self is any SwiftConventionArgument.Type)
-                    && !(Value.self is any SwiftClosureValue.Type)
-                    && !SwiftHostConversion.isAdapter(Value.self)
-            }
-            return _openExistential(type, do: readsInPlace) ? SwiftValueConstants(type) : nil
-        default: return nil
+        case .value: SwiftValueConstants(Void.self)
+        case .host(let conversion):
+            if case .identity = conversion.kind { SwiftValueConstants(type) } else { nil }
+        default: nil
         }
+    }
+
+    private static let releaseContext: @Sendable (UnsafeMutableRawPointer) -> Void = {
+        ABIReleaseSwiftClosureContext($0.load(as: ABISwiftClosureValue.self).ownedContext)
     }
 
     /// Destroys a consumed callback input that `conversion` receives.
@@ -504,12 +506,9 @@ struct SwiftCallbackValues: Sendable {
             }
         }
         switch conversion.kind {
-        case .closure:
-            return { ABIReleaseSwiftClosureContext($0.load(as: ABISwiftClosureValue.self).ownedContext) }
-        case .runtimeValue(let plan) where plan.nativeClosure != nil:
-            return { ABIReleaseSwiftClosureContext($0.load(as: ABISwiftClosureValue.self).ownedContext) }
-        default:
-            break
+        case .closure: return releaseContext
+        case .runtimeValue(let plan) where plan.nativeClosure != nil: return releaseContext
+        default: break
         }
         let metadata = conversion.runtimeValue?.valueType.metadata ?? conversion.host
         let constants = SwiftValueConstants(metadata)
@@ -550,8 +549,14 @@ struct SwiftCallbackResult<Value>: Sendable {
     private let conversion: SwiftHostConversion
     var initializeNativeResult: SwiftResultInitializer { conversion.initializeNativeResult }
 
-    init(failure: Any.Type, generic: SwiftGenericResult = .concrete) throws {
-        try self.init(SwiftHostConversion(host: Value.self, result: generic), failure: failure)
+    /// - Parameter generic: How the result passes, or nil for a result
+    ///   that its type converts by itself.
+    init(failure: Any.Type, generic: SwiftGenericResult? = nil) throws {
+        try self.init(
+            generic.map { try SwiftHostConversion(host: Value.self, result: $0) }
+                ?? SwiftHostConversion(host: Value.self, position: .result),
+            failure: failure
+        )
     }
 
     /// - Parameter failure: The callback's error type, which reports a

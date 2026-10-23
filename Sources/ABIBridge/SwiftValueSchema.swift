@@ -390,7 +390,7 @@ struct SwiftValueSchema: Sendable {
     /// The schema of a value that the host type `type` passes by itself at
     /// `position` in a call that `binding` prepares.
     ///
-    /// As the call's codecs do, the lookup's `valueABIs` entry for the type,
+    /// As the call's conversions do, the lookup's `valueABIs` entry for the type,
     /// for an Optional's payload, or for a tuple's element takes precedence
     /// over the type's own representation.
     init(host type: Any.Type, binding: SwiftGenericBinding, position: SwiftValuePosition) throws {
@@ -508,7 +508,8 @@ struct SwiftValueSchema: Sendable {
                 metadata: Value.self
             )
         } else if infersLayout(Value.self) {
-            // Explicit ABIs and built-in codecs take precedence over inference.
+            // Explicit ABIs and built-in representations take precedence over
+            // inference.
             schema = Self(
                 storage: try SwiftInferredValue.layout(of: Value.self, position: position),
                 metadata: Value.self
@@ -537,12 +538,13 @@ struct SwiftValueSchema: Sendable {
         field: (Any.Type) throws -> Self
     ) throws -> Self {
         let fields = try elements.map { try field($0.type) }
-        var offsets: [Int] = [], size = 0, alignment = 1
+        var offsets: [Int] = [], size = 0, tupleAlignment = 1
         for field in fields {
-            let offset = (size + field.type.alignment - 1) / field.type.alignment * field.type.alignment
+            let alignment = field.type.alignment
+            let offset = (size + alignment - 1) / alignment * alignment
             offsets.append(offset)
             size = offset + field.type.size
-            alignment = max(alignment, field.type.alignment)
+            tupleAlignment = max(tupleAlignment, alignment)
         }
         let native = zip(fields, elements).allSatisfy { $0.0.metadata == $0.1.type }
         return Self(
@@ -550,7 +552,7 @@ struct SwiftValueSchema: Sendable {
                 swiftTuple: fields.map(\.type),
                 offsets: offsets,
                 size: size,
-                alignment: alignment
+                alignment: tupleAlignment
             ),
             kind: .tuple,
             metadata: native ? Value.self : nil

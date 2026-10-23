@@ -4,9 +4,11 @@ import ABIBridgeCore
 typealias SwiftResultInitializer =
     @Sendable (Int, Int, UnsafeMutableRawPointer, UnsafeMutableRawPointer) -> Void
 
+/// - Parameter generic: How the result passes, or nil for a result that its
+///   type converts by itself.
 func swiftResultInitializer(
     nativeMetadata: Any.Type,
-    generic: SwiftGenericResult = .concrete,
+    generic: SwiftGenericResult? = nil,
     tuple: SwiftTupleValuePlan? = nil
 ) -> SwiftResultInitializer {
     if let tuple {
@@ -20,12 +22,12 @@ func swiftResultInitializer(
         }
     }
     let closureResult: Bool
-    if case .closure = generic {
-        closureResult = true
-    } else if case .concrete = generic {
-        closureResult = nativeMetadata is any SwiftClosureValue.Type
-    } else {
-        closureResult = false
+    switch generic {
+    case .closure: closureResult = true
+    case .host(let conversion):
+        if case .closure = conversion.kind { closureResult = true } else { closureResult = false }
+    case nil: closureResult = nativeMetadata is any SwiftClosureValue.Type
+    default: closureResult = false
     }
     if closureResult {
         return { offset, size, destination, source in
@@ -188,7 +190,8 @@ struct SwiftTupleValuePlan: Sendable {
             type = input.type
             asynchronous = input.asynchronous
             self.nativeClosure = nativeClosure
-            nativeSize = ABISwiftGetValueLayout(unsafeBitCast(nativeType, to: UnsafeRawPointer.self)).size
+            nativeSize =
+                ABISwiftGetValueLayout(unsafeBitCast(nativeType, to: UnsafeRawPointer.self)).size
             constants = SwiftValueConstants(
                 ABISwiftValueIsIndirect(input.type.handle) ? Void.self : nativeType
             )
@@ -815,7 +818,9 @@ extension SwiftTupleValuePlan {
             } else if let explicit = try explicitLayout(element.type) {
                 argument = .value(explicit, consuming: false)
             } else {
-                argument = .concrete
+                argument = .host(
+                    try SwiftHostConversion(host: element.type, position: position.tupleElement)
+                )
             }
             let input = try SwiftCallValues.Argument(
                 host: element.type,

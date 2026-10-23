@@ -19,7 +19,7 @@ final class SwiftCall: Sendable {
             arguments: SwiftGenericParameters.concreteArguments(signature: signature, defaultConsuming: consumesArguments))
         values = try SwiftCallValues(signature: signature, consumesArguments: consumesArguments,
             opaqueResult: opaqueResult, arguments: parameters.arguments,
-            result: generic?.result ?? closure?.result ?? .concrete)
+            result: generic?.result ?? closure?.result)
         #if DEBUG
         generic?.checkClosedSchemas(signature, values: values)
         #endif

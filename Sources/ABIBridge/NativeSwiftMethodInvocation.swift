@@ -3,12 +3,12 @@ import Foundation
 import ObjectiveC
 
 struct SwiftHookReceiverView: Sendable {
-    let codec: SwiftReceiverCodec
+    let receiver: SwiftReceiverPlan
     let expectedClass: AnyClass?
     let owner: any Sendable
 
     init<Signature>(_ method: NativeSwiftMethod<Signature>) {
-        codec = method.receiver.codec; expectedClass = method.type.metadata as? AnyClass;
+        receiver = method.receiver; expectedClass = method.type.metadata as? AnyClass;
         owner = method
     }
 
@@ -32,7 +32,7 @@ struct SwiftHookReceiverView: Sendable {
                 )
             }
         }
-        let decoded = try codec.decode(storage, owner)
+        let decoded = try receiver.decodeValue(storage, retaining: owner)
         guard let value = decoded as? Value else {
             throw ABIInvocationError.incompatibleValue(
                 expected: String(reflecting: Value.self),

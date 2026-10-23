@@ -436,7 +436,7 @@ extension NativeSwiftClosure {
                 try SwiftCallbackValues(signature, arguments: parameters.arguments),
                 try SwiftCallbackResult<Result>(
                     failure: Failure.self,
-                    generic: plan?.result ?? .concrete
+                    generic: plan?.result
                 )
             )
         }
@@ -609,7 +609,7 @@ extension NativeSwiftClosure {
                         codeLifetime: original.codeLifetime,
                         initializeResult: swiftResultInitializer(
                             nativeMetadata: generic?.nativeResult ?? signature.result,
-                            generic: generic?.result ?? .concrete
+                            generic: generic?.result
                         )
                     ) { arguments, result, error in
                         func prepare(

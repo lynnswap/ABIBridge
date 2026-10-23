@@ -107,10 +107,12 @@ struct SwiftErrorPlan: Sendable {
                 )
             }
             // A typed error passes as a whole result does.
-            let codec = try SwiftValueCodec<Failure>(position: .result)
-            type = codec.schema.type
-            makeStorage = { codec.makeStorage() }
-            decode = { try codec.decode($0, retaining: nil) }
+            let conversion = try SwiftHostConversion(host: Failure.self, position: .result)
+            type = conversion.type
+            makeStorage = { conversion.makeStorage() }
+            decode = {
+                try conversion.decode($0, retaining: nil, retainingCode: nil, as: Failure.self)
+            }
         }
     }
 }

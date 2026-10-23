@@ -40,7 +40,8 @@ struct SwiftGenericParameters: Sendable {
             return SwiftValueConstants(convention == .inoutValue || ABISwiftValueIsIndirect(plan.type.handle)
                 ? Void.self : plan.valueType.metadata)
         case .convention(let conversion):
-            guard case .ownership(let convention, let value) = conversion.kind, convention != .inoutValue
+            guard case .ownership(let convention, let value) = conversion.kind,
+                convention != .inoutValue
             else { return SwiftValueConstants(Void.self) }
             return constants(of: value)
         default: return SwiftValueConstants(type)
@@ -56,7 +57,9 @@ struct SwiftGenericParameters: Sendable {
             return convention == .inoutValue ? SwiftValueConstants(Void.self) : constants(of: value)
         }
         let metadata = conversion.runtimeValue?.valueType.metadata ?? conversion.host
-        return SwiftValueConstants(ABISwiftValueIsIndirect(conversion.type.handle) ? Void.self : metadata)
+        return SwiftValueConstants(
+            ABISwiftValueIsIndirect(conversion.type.handle) ? Void.self : metadata
+        )
     }
 
     static func concreteArguments(signature: SwiftFunctionSignature, defaultConsuming: Bool = false) throws -> [SwiftGenericArgument] {
@@ -70,13 +73,23 @@ struct SwiftGenericParameters: Sendable {
                     nested = .tuple(tuple, consuming: convention.convention == .consuming, asynchronous: signature.isAsync)
                 } else if signature.isAsync, let closure = convention.wrappedType as? any SwiftClosureValue.Type {
                     nested = .closure(try SwiftGenericClosurePlan.concrete(closure.swiftFunctionType), asynchronous: true)
-                } else { nested = .concrete }
+                } else {
+                    nested = .host(
+                        try SwiftHostConversion(host: convention.wrappedType, position: .parameter)
+                    )
+                }
                 return .convention(try convention.makeConversion(generic: nested))
             }
             if let tuple = try SwiftTupleValuePlan(host: type, position: .parameter) {
                 return .tuple(tuple, consuming: defaultConsuming, asynchronous: signature.isAsync)
             }
-            return .concrete
+            return .host(
+                try SwiftHostConversion(
+                    host: type,
+                    asynchronous: signature.isAsync,
+                    position: .parameter
+                )
+            )
         }
     }
 

@@ -1,8 +1,12 @@
 import ABIBridgeRuntime
 import ABIBridgeCore
 
+/// How an argument passes: its value's conversion, and how native code
+/// receives it.
 enum SwiftGenericArgument: Sendable {
-    case concrete
+    /// A value that its host type converts by itself, closed in the
+    /// declaration.
+    case host(SwiftHostConversion)
     /// An ownership wrapper's conversion.
     case convention(SwiftHostConversion)
     case value(CValueType, consuming: Bool)
@@ -51,8 +55,11 @@ enum SwiftGenericArgument: Sendable {
     }
 }
 
+/// How a result passes: its value's conversion.
 enum SwiftGenericResult: Sendable {
-    case concrete
+    /// A value that its host type converts by itself, closed in the
+    /// declaration.
+    case host(SwiftHostConversion)
     case value(CValueType)
     case closure(SwiftClosureCodec)
     case runtimeValue(SwiftRuntimeValuePlan)
@@ -74,9 +81,9 @@ enum SwiftGenericResult: Sendable {
         }
     }
 
-    var type: CValueType? {
+    var type: CValueType {
         switch self {
-        case .concrete: nil
+        case .host(let conversion): conversion.type
         case .value(let type): type
         case .closure(let codec): codec.type
         case .runtimeValue(let plan): plan.type
@@ -197,7 +204,7 @@ final class SwiftGenericClosurePlan: Sendable {
                     asynchronous: signature.isAsync
                 )
             }
-            return .concrete
+            return .host(try SwiftHostConversion(host: type, position: .parameter))
         }
         let arguments = try signature.parameters.map(argument)
         let parameterPlan = SwiftGenericParameters(
@@ -228,7 +235,7 @@ final class SwiftGenericClosurePlan: Sendable {
                 of: ($0 as? any SwiftConventionArgument.Type)?.wrappedType ?? $0
             )
         }
-        let resultType = result.type!
+        let resultType = result.type
         let types = parameterPlan.types(from: logicalTypes)
         let errorPlan = try signature.makeErrorPlan()
         let transport: Transport =
@@ -629,7 +636,12 @@ struct SwiftGenericCallPlan: Sendable {
     let parameters: SwiftGenericParameters
     var arguments: [SwiftGenericArgument] { parameters.arguments }
     let result: SwiftGenericResult
-    var resultType: CValueType? { result.type }
+    /// Whether the declaration decides how the result passes, instead of
+    /// the host type by itself.
+    var plansResult: Bool {
+        if case .host = result { return false }
+        return true
+    }
     /// The schema of a typed error whose formal type depends on generic
     /// parameters.
     let errorSchema: SwiftValueSchema?
@@ -877,7 +889,7 @@ struct SwiftGenericCallPlan: Sendable {
                         index += nested.argumentTypes.count
                     } else {
                         switch field.argument {
-                        case .concrete: break
+                        case .host: break
                         default: add(field.nativeType, layout: field.type, at: index)
                         }
                         index += 1
@@ -1303,7 +1315,7 @@ struct SwiftGenericCallPlan: Sendable {
                     explicitLayout: binding.explicitHostLayout,
                     position: position
                 )
-            else { return .concrete }
+            else { return .host(try SwiftHostConversion(host: actual, position: position)) }
             return .tuple(
                 tuple,
                 consuming: defaultConsuming,
@@ -1325,7 +1337,7 @@ struct SwiftGenericCallPlan: Sendable {
             )
         }
         guard binding.dependsOnParameters(formal) || !formal.opaqueIndices.isEmpty else {
-            return .concrete
+            return .host(try SwiftHostConversion(host: actual, position: position))
         }
         try binding.validate(actual, for: formal)
         return .value(
@@ -1336,7 +1348,7 @@ struct SwiftGenericCallPlan: Sendable {
 
     /// Whether the host type alone lowers a value whose native type has no
     /// generic or opaque part. Such a host type can be an adapter with a
-    /// different Swift name, so its codec takes precedence over the formal
+    /// different Swift name, so its conversion takes precedence over the formal
     /// type; closures and runtime values still need the declaration.
     private static func representsClosedValue(
         _ formal: SwiftFormalType,
@@ -1396,7 +1408,7 @@ struct SwiftGenericCallPlan: Sendable {
             {
                 return .tuple(tuple)
             }
-            return .concrete
+            return .host(try SwiftHostConversion(host: actual, position: position))
         }
         let canonical = try binding.canonicalType(of: formal)
         if case .tuple = canonical {
@@ -1416,7 +1428,7 @@ struct SwiftGenericCallPlan: Sendable {
                 try SwiftValueSchema(formal, actual: native, binding: binding, position: position).type
             )
         }
-        return .concrete
+        return .host(try SwiftHostConversion(host: actual, position: position))
     }
 
     /// Whether a host type holds a runtime value handle in an Optional, a
@@ -1892,9 +1904,9 @@ struct SwiftGenericCallPlan: Sendable {
             }
         }
         #if DEBUG
-        // Closed arguments convert with their host types' codecs.
+        // Closed arguments convert as their host types do.
         for (index, argument) in parameterPlan.arguments.enumerated() {
-            guard case .concrete = argument else { continue }
+            guard case .host = argument else { continue }
             checkSchema(
                 of: String(reflecting: signature.parameters[index]),
                 at: .parameter,
@@ -1943,7 +1955,7 @@ struct SwiftGenericCallPlan: Sendable {
             position: .result
         )
         #if DEBUG
-        if case .concrete = resultPlan, !usesStorageConvention {
+        if case .host = resultPlan, !usesStorageConvention {
             checkSchema(
                 of: result.spelling,
                 at: .result,
@@ -2118,12 +2130,12 @@ struct SwiftGenericCallPlan: Sendable {
 
 #if DEBUG
 extension SwiftGenericCallPlan {
-    /// Asserts that the storage the call's host codecs give each closed
+    /// Asserts that the storage the call's host conversions give each closed
     /// position passes where the position's schema does.
     ///
-    /// A closed position still converts its host value with the host type's
-    /// codec. Its schema must agree, so that conversions derived from it pass
-    /// each value as the call does now.
+    /// A closed position converts its host value as the host type does. Its
+    /// schema must agree, so that the value passes as the declaration's
+    /// schema says.
     func checkClosedSchemas(_ signature: SwiftFunctionSignature, values: SwiftCallValues) {
         for (formal, group) in zip(binding.declaration.arguments, parameters.groups) {
             guard case .value(let index) = group else { continue }
@@ -2178,10 +2190,10 @@ extension SwiftGenericCallPlan {
         )
     }
 
-    /// Asserts that the host codec's storage passes at `position` where a
-    /// value with the schema's storage does. A schema that cannot be derived
-    /// says nothing about the codec, so the check passes; the call reports
-    /// any failure itself.
+    /// Asserts that the host conversion's storage passes at `position` where
+    /// a value with the schema's storage does. A schema that cannot be
+    /// derived says nothing about the conversion, so the check passes; the
+    /// call reports any failure itself.
     static func checkSchema(
         of formal: String,
         at position: SwiftValuePosition,
@@ -2194,7 +2206,7 @@ extension SwiftGenericCallPlan {
             SwiftValueSchema(storage: schema, metadata: nil).accepts(host, at: position),
             "The schema of \(formal) at \(label) passes "
                 + SwiftDeclaredLowering.lowering(of: schema)
-                + ", but its host codec passes " + SwiftDeclaredLowering.lowering(of: host)
+                + ", but its host conversion passes " + SwiftDeclaredLowering.lowering(of: host)
                 + "."
         )
     }

@@ -247,7 +247,22 @@ struct SwiftHostConversion: Sendable {
         }
     }
 
+    /// Takes the owned native value in `storage` as a host value.
+    func decodeHost(
+        _ storage: NativeValueStorage,
+        retaining owner: Any?,
+        retainingCode codeOwner: Any?
+    ) throws -> Any {
+        let host = hostValues.makeStorage()
+        try operations.decode(storage, owner, codeOwner, host.address)
+        return hostValues.take(host.address)
+    }
+
     // MARK: Host values
+
+    /// Storage holding a copy of `value`, or nil when it is not a value of
+    /// the host type.
+    func hostStorage(_ value: Any) -> NativeValueStorage? { hostValues.store(value) }
 
     /// Initializes the host value at `address` with `value`, a value of the
     /// host type.
@@ -258,15 +273,34 @@ struct SwiftHostConversion: Sendable {
     func destroyHost(at address: UnsafeMutableRawPointer) { hostValues.destroy(address) }
 }
 
-/// Initializes and destroys values of a host type that is known at run time.
+/// Stores, takes, and destroys values of a host type known at run time.
 private struct SwiftHostValues: Sendable {
+    let makeStorage: @Sendable () -> NativeValueStorage
+    let store: @Sendable (Any) -> NativeValueStorage?
     let initialize: @Sendable (Any, UnsafeMutableRawPointer) -> Void
+    let take: @Sendable (UnsafeMutableRawPointer) -> Any
     let destroy: @Sendable (UnsafeMutableRawPointer) -> Void
 
     init<Value>(_: Value.Type) {
+        makeStorage = {
+            NativeValueStorage(
+                size: MemoryLayout<Value>.stride,
+                alignment: MemoryLayout<Value>.alignment
+            )
+        }
+        store = { value in
+            guard let value = value as? Value else { return nil }
+            let storage = NativeValueStorage(
+                size: MemoryLayout<Value>.stride,
+                alignment: MemoryLayout<Value>.alignment
+            )
+            storage.initialize(value)
+            return storage
+        }
         initialize = { value, address in
             address.initializeMemory(as: Value.self, repeating: value as! Value, count: 1)
         }
+        take = { $0.assumingMemoryBound(to: Value.self).move() }
         destroy = { $0.assumingMemoryBound(to: Value.self).deinitialize(count: 1) }
     }
 }
@@ -277,21 +311,17 @@ extension SwiftHostConversion {
     /// The conversion of an argument whose host type is `host`, as `argument`
     /// plans it.
     ///
-    /// - Parameters:
-    ///   - position: `.parameter` for a whole parameter, or the position of a
-    ///     tuple element; it decides how an undecided inferred host value is
-    ///     passed.
-    ///   - asynchronous: Whether the argument passes to an async function,
-    ///     whose closures need their prepared reabstraction.
+    /// - Parameter position: `.parameter` for a whole parameter, or the
+    ///   position of a tuple element; it decides how an undecided inferred
+    ///   host value is passed.
     init(
         host: Any.Type,
         argument: SwiftGenericArgument,
-        asynchronous: Bool = false,
         position: SwiftValuePosition
     ) throws {
         func prepare<Value>(_: Value.Type) throws -> Self {
             switch argument {
-            case .convention(let conversion):
+            case .host(let conversion), .convention(let conversion):
                 return conversion
             case .value(let type, _):
                 return .identity(
@@ -305,40 +335,18 @@ extension SwiftHostConversion {
                 return try .runtimeValue(Value.self, plan: plan)
             case .tuple(let plan, _, _):
                 return .tuple(Value.self, plan: plan)
-            case .concrete:
-                if let wrapper = Value.self as? any SwiftConventionArgument.Type {
-                    let nested: SwiftGenericArgument
-                    if asynchronous, let closure = wrapper.wrappedType as? any SwiftClosureValue.Type {
-                        nested = .closure(
-                            try SwiftGenericClosurePlan.concrete(closure.swiftFunctionType),
-                            asynchronous: true
-                        )
-                    } else {
-                        nested = .concrete
-                    }
-                    return try wrapper.makeConversion(generic: nested)
-                }
-                if let tuple = try SwiftTupleValuePlan(host: Value.self, position: position) {
-                    return .tuple(Value.self, plan: tuple)
-                }
-                if asynchronous, let closure = Value.self as? any SwiftClosureValue.Type {
-                    return try .closure(
-                        Value.self,
-                        plan: SwiftGenericClosurePlan.concrete(closure.swiftFunctionType),
-                        codec: nil
-                    )
-                }
-                return try Self(host: Value.self, position: position)
             }
         }
         self = try _openExistential(host, do: prepare)
     }
 
-    /// The conversion of a result whose host type is `host`, as `result` or
-    /// an opaque result's underlying type plans it.
-    init(host: Any.Type, result: SwiftGenericResult, opaque: SwiftOpaqueResultPlan? = nil) throws {
+    /// The conversion of a result whose host type is `host`, as `result`
+    /// plans it.
+    init(host: Any.Type, result: SwiftGenericResult) throws {
         func prepare<Value>(_: Value.Type) throws -> Self {
             switch result {
+            case .host(let conversion):
+                return conversion
             case .value(let type):
                 return .identity(
                     Value.self,
@@ -355,14 +363,6 @@ extension SwiftHostConversion {
             case .tuple(let plan):
                 try plan.validateOwnedResult()
                 return .tuple(Value.self, plan: plan)
-            case .concrete:
-                if let opaque {
-                    if Value.self != NativeSwiftBorrowedValue.self {
-                        try opaque.value.requireOwnedValue(as: Value.self)
-                    }
-                    return try .runtimeValue(Value.self, plan: opaque.value)
-                }
-                return try Self(host: Value.self, position: .result)
             }
         }
         self = try _openExistential(host, do: prepare)
@@ -374,7 +374,10 @@ extension SwiftHostConversion {
     /// A tuple whose elements convert passes its native tuple, and a closure
     /// its native function. An adapter passes its C representation. Other
     /// values pass themselves.
-    init(host: Any.Type, position: SwiftValuePosition) throws {
+    ///
+    /// - Parameter asynchronous: Whether the value passes to an async
+    ///   function, which reabstracts a closure to its prepared signature.
+    init(host: Any.Type, asynchronous: Bool = false, position: SwiftValuePosition) throws {
         func prepare<Value>(_: Value.Type) throws -> Self {
             if let tuple = try SwiftTupleValuePlan(host: Value.self, position: position),
                 tuple.needsConversion
@@ -382,7 +385,18 @@ extension SwiftHostConversion {
                 return .tuple(Value.self, plan: tuple)
             }
             if let closure = Value.self as? any SwiftClosureValue.Type {
-                return try .closure(Value.self, plan: nil, codec: closure.makeClosureCodec())
+                // A closure passes its own function, except that an async
+                // callee needs it reabstracted to the prepared signature; a
+                // native function still decodes as the closure's own.
+                guard asynchronous else {
+                    return try .closure(Value.self, plan: nil, codec: closure.makeClosureCodec())
+                }
+                return try .closure(
+                    Value.self,
+                    plan: SwiftGenericClosurePlan.concrete(closure.swiftFunctionType),
+                    codec: nil,
+                    decodesWithPlan: false
+                )
             }
             let schema = try SwiftValueSchema.host(Value.self, position: position)
             if Self.isAdapter(Value.self) {
@@ -391,6 +405,15 @@ extension SwiftHostConversion {
             return .identity(Value.self, schema: schema, restoresConstants: true)
         }
         self = try _openExistential(host, do: prepare)
+    }
+
+    /// The conversion of a value of the native type `metadata`, which passes
+    /// as `schema` describes.
+    init(native metadata: Any.Type, schema: SwiftValueSchema) {
+        func prepare<Value>(_: Value.Type) -> Self {
+            .identity(Value.self, schema: schema, restoresConstants: true)
+        }
+        self = _openExistential(metadata, do: prepare)
     }
 
     /// Whether `Value` passes as its `ABIBridgeValue` representation, even
@@ -560,19 +583,27 @@ extension SwiftHostConversion {
 
     /// A closure. With a native plan, its function is reabstracted to that
     /// plan's convention.
+    ///
+    /// - Parameter decodesWithPlan: Whether native functions decode with
+    ///   `plan` instead of the host closure's own signature.
     private static func closure<Value>(
         _: Value.Type,
         plan: SwiftGenericClosurePlan?,
-        codec: SwiftClosureCodec?
+        codec: SwiftClosureCodec?,
+        decodesWithPlan: Bool = true
     ) throws -> Self {
         let closure = SwiftClosureConversion(
             host: Value.self as! any SwiftClosureValue.Type,
             plan: plan,
-            codec: codec
+            codec: codec,
+            decodesWithPlan: decodesWithPlan
         )
         let pointer = try CValueType(scalar: ABIValuePointer)
         let type = try CValueType(fields: [pointer, pointer])
-        @Sendable func encodeResult(_ value: UnsafeRawPointer, _ owner: Any?) throws
+        @Sendable func encodeResult(
+            _ value: UnsafeRawPointer,
+            _ owner: Any?
+        ) throws
             -> NativeValueStorage
         {
             let value = value.load(as: Value.self)
@@ -667,7 +698,10 @@ extension SwiftHostConversion {
         plan: SwiftRuntimeValuePlan
     ) throws -> Self {
         let pointer = try CValueType(scalar: ABIValuePointer)
-        @Sendable func encodeResult(_ value: UnsafeRawPointer, _: Any?) throws
+        @Sendable func encodeResult(
+            _ value: UnsafeRawPointer,
+            _: Any?
+        ) throws
             -> NativeValueStorage
         {
             try plan.encode(value.load(as: Value.self), convention: .consuming, asynchronous: false)
@@ -851,7 +885,10 @@ extension SwiftHostConversion {
     /// A tuple whose fields `plan` converts.
     private static func tuple<Value>(_: Value.Type, plan: SwiftTupleValuePlan) -> Self {
         @Sendable func destroy(_ value: UnsafeMutableRawPointer) {
-            ABISwiftDestroyValue(unsafeBitCast(plan.nativeMetadata, to: UnsafeRawPointer.self), value)
+            ABISwiftDestroyValue(
+                unsafeBitCast(plan.nativeMetadata, to: UnsafeRawPointer.self),
+                value
+            )
         }
         return Self(
             Value.self,
@@ -874,7 +911,10 @@ extension SwiftHostConversion {
                     return storage
                 },
                 encodeCopy: { value, owner in
-                    let initialize = try plan.prepareNativeCopy(fromHost: value, retainingCode: owner)
+                    let initialize = try plan.prepareNativeCopy(
+                        fromHost: value,
+                        retainingCode: owner
+                    )
                     let storage = plan.makeResultStorage()
                     initialize(storage.address)
                     storage.assumeInitialized(destroyingWith: destroy)
@@ -941,7 +981,11 @@ extension SwiftHostConversion {
             kind: .ownership(convention, value),
             schema: convention == .inoutValue
                 ? SwiftValueSchema(type: type, kind: .scalar, metadata: nil)
-                : SwiftValueSchema(type: type, kind: value.schema.kind, metadata: value.schema.metadata),
+                : SwiftValueSchema(
+                    type: type,
+                    kind: value.schema.kind,
+                    metadata: value.schema.metadata
+                ),
             operations: Operations(
                 encode: { wrapper, _, _, owner in
                     try encode(wrapper.load(as: Wrapper.self), owner)
@@ -1041,17 +1085,26 @@ extension SwiftHostConversion {
 final class SwiftClosureConversion: Sendable {
     let host: any SwiftClosureValue.Type
     let plan: SwiftGenericClosurePlan?
+    private let decodesWithPlan: Bool
     private let prepared: Mutex<SwiftClosureCodec?>
 
-    init(host: any SwiftClosureValue.Type, plan: SwiftGenericClosurePlan?, codec: SwiftClosureCodec?) {
+    init(
+        host: any SwiftClosureValue.Type,
+        plan: SwiftGenericClosurePlan?,
+        codec: SwiftClosureCodec?,
+        decodesWithPlan: Bool = true
+    ) {
         self.host = host
         self.plan = plan
+        self.decodesWithPlan = decodesWithPlan
         prepared = Mutex(codec)
     }
 
     func codec() throws -> SwiftClosureCodec {
         if let codec = prepared.withLock({ $0 }) { return codec }
-        let codec = try plan.map(host.makeGenericClosureCodec) ?? host.makeClosureCodec()
+        let codec =
+            try (decodesWithPlan ? plan : nil).map(host.makeGenericClosureCodec)
+            ?? host.makeClosureCodec()
         return prepared.withLock { prepared in
             if let prepared { return prepared }
             prepared = codec

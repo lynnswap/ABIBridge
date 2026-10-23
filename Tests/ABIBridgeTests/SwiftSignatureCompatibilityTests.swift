@@ -269,7 +269,8 @@ struct SwiftSignatureCompatibilityTests {
     @Test func tupleElementsConvertThroughAdapters() async throws {
         let count = "ManagedSwiftFixtures.CompatibilityCount"
         let pair = try await runtime.resolveSwiftFunction(
-            named: "ManagedSwiftFixtures.compatibilityCountPair((\(count), Swift.Int64)) -> (\(count), Swift.Int64)",
+            named: "ManagedSwiftFixtures.compatibilityCountPair"
+                + "((\(count), Swift.Int64)) -> (\(count), Swift.Int64)",
             as: (((HostCount, Int64)) -> (HostCount, Int64)).self
         )
         let result = try unsafe pair.unsafeInvoke((HostCount(value: 40), 2))

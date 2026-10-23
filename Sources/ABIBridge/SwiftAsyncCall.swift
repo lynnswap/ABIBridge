@@ -109,7 +109,7 @@ final class SwiftAsyncCall: Sendable {
             consumesArguments: consumesArguments,
             opaqueResult: opaqueResult,
             arguments: parameters.arguments,
-            result: generic?.result ?? closure?.result ?? .concrete
+            result: generic?.result ?? closure?.result
         )
         #if DEBUG
         generic?.checkClosedSchemas(signature, values: values)
