@@ -538,23 +538,34 @@ struct SwiftMemberInvocationTests {
         let protocols = try FixtureLibrary(
             swiftModule: base,
             swiftSource: """
-                public protocol Shape { func area() -> Int64 }
+                public protocol Shape {
+                    init()
+                    func area() -> Int64
+                    func scaled(_ factor: Int64) -> Int64
+                }
                 extension Shape {
                     @inline(never) public func area() -> Int64 { -1 }
+                    @inline(never) public func scaled(_ text: String) -> String { "scaled " + text }
+                    @inline(never) public func describe() -> String { "shape \\(area())" }
                 }
                 public final class Square: Shape {
                     let size: Int64
+                    public init() { size = 0 }
                     public init(_ size: Int64) { self.size = size }
                     @inline(never) public func area() -> Int64 { size * size }
+                    @inline(never) public func scaled(_ factor: Int64) -> Int64 { size * factor }
                 }
                 public final class Twin: Shape {
                     let size: Int64
+                    public init() { size = 0 }
                     public init(_ size: Int64) { self.size = size }
                     @inline(never) public func area() -> Int64 { size * size }
+                    @inline(never) public func scaled(_ factor: Int64) -> Int64 { size * factor }
                 }
                 public final class Crate<Element> { public init() {} }
                 extension Crate: Shape where Element: Equatable {
                     @inline(never) public func area() -> Int64 { 21 }
+                    @inline(never) public func scaled(_ factor: Int64) -> Int64 { 21 * factor }
                 }
                 public func makeSquare() -> AnyObject { Square(3) }
                 public func makeTwin() -> AnyObject { Twin(4) }
@@ -569,8 +580,9 @@ struct SwiftMemberInvocationTests {
             swiftSource: """
                 import \(base)
                 open class Plate: Shape {
-                    public init() {}
+                    public required init() {}
                     @inline(never) public func area() -> Int64 { 11 }
+                    @inline(never) public func scaled(_ factor: Int64) -> Int64 { 11 * factor }
                 }
                 public func makePlate() -> AnyObject { Plate() }
                 """,
@@ -589,6 +601,7 @@ struct SwiftMemberInvocationTests {
                 public final class Hidden: Shape {
                     public init() {}
                     @inline(never) public func area() -> Int64 { 5 }
+                    @inline(never) public func scaled(_ factor: Int64) -> Int64 { 5 * factor }
                 }
                 public final class Saucer: Plate {}
                 public func makeHidden() -> AnyObject { Hidden() }
@@ -648,6 +661,19 @@ struct SwiftMemberInvocationTests {
         // A subclass finds its superclass's conformance in the superclass's module.
         #expect(try await area(last, "Saucer") == 11)
 
+        // An initializer requirement runs the witness of the conformance that
+        // Saucer inherits from another module, and constructs a Saucer.
+        let saucer = try await runtime.resolveSwiftType(
+            named: last + ".Saucer",
+            in: .path(stripped.libraryURL)
+        )
+        let makeSaucer = try await saucer.resolveInitializer(
+            named: base + ".Shape.init()",
+            as: (() -> AnyObject).self
+        )
+        let made = try unsafe makeSaucer.unsafeInvoke()
+        #expect(String(describing: type(of: made)) == "Saucer")
+
         // Other conformances' witnesses show that Shape declares area(), so
         // its default implementation does not stand in for Hidden's witness.
         let hidden = try await runtime.resolveSwiftType(
@@ -675,6 +701,95 @@ struct SwiftMemberInvocationTests {
             as: (() -> Int64).self
         )
         #expect(try unsafe defaultArea.unsafeInvoke(on: makeHidden.unsafeInvoke()) == -1)
+
+        // Shape requires scaled(Int64) and its extension declares
+        // scaled(String). Hidden's missing witness rules out only the
+        // requirement, which a request for String does not name.
+        let scaledText = try await hidden.resolveMethod(
+            named: base + ".Shape.scaled(Swift.String) -> Swift.String",
+            as: ((String) -> String).self
+        )
+        let receiver = try unsafe makeHidden.unsafeInvoke()
+        #expect(try unsafe scaledText.unsafeInvoke(on: receiver, "a") == "scaled a")
+        let scaledLabel = try await hidden.resolveMethod(
+            named: base + ".Shape.scaled(_:)",
+            as: ((String) -> String).self
+        )
+        #expect(try unsafe scaledLabel.unsafeInvoke(on: receiver, "b") == "scaled b")
+        await #expect {
+            _ = try await hidden.resolveMethod(
+                named: base + ".Shape.scaled(_:)",
+                as: ((Int64) -> Int64).self
+            )
+        } throws: { error in
+            guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                return false
+            }
+            return message.contains("witness of \(last).Hidden's conformance")
+        }
+        // The witnesses of a conformance in Shape's image name all of its
+        // requirements, so a member that only its extension declares applies.
+        let describe = try await hidden.resolveMethod(
+            named: base + ".Shape.describe()",
+            as: (() -> String).self
+        )
+        #expect(try unsafe describe.unsafeInvoke(on: receiver) == "shape 5")
+
+    }
+
+    @Test func extensionMembersDoNotStandInForUnnamedRequirements() async throws {
+        let module = "Gauges_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        // Stripping removes every witness, and the module exports no method
+        // descriptors, so nothing names Gauge's requirement.
+        let library = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                public protocol Gauge { func read() -> Int64 }
+                extension Gauge {
+                    @inline(never) public func read() -> Int64 { -1 }
+                    public var label: String { "gauge" }
+                }
+                public final class Meter: Gauge {
+                    public init() {}
+                    @inline(never) public func read() -> Int64 { 7 }
+                }
+                public func makeMeter() -> AnyObject { Meter() }
+                """,
+            stripped: true,
+            linkArguments: ["-O"]
+        )
+        defer { library.cleanup() }
+        let runtime = ABIRuntime()
+        let scope = ImageSelector.path(library.libraryURL)
+        let meter = try await runtime.resolveSwiftType(named: module + ".Meter", in: scope)
+        let make = try await runtime.resolveSwiftFunction(
+            named: module + ".makeMeter()",
+            as: (() -> AnyObject).self,
+            in: scope
+        )
+        await #expect {
+            _ = try await meter.resolveMethod(
+                named: module + ".Gauge.read()",
+                as: (() -> Int64).self
+            )
+        } throws: { error in
+            guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                return false
+            }
+            return message.contains("whether it is one of them is not established")
+        }
+        // Gauge has no getter requirement, so its extension's getter applies.
+        let label = try await meter.resolveGetter(
+            named: module + ".Gauge.label",
+            as: (() -> String).self
+        )
+        #expect(try unsafe label.unsafeInvoke(on: make.unsafeInvoke()) == "gauge")
+        // A complete extension declaration names the extension member.
+        let read = try await meter.resolveMethod(
+            named: "(extension in \(module)):\(module).Gauge.read() -> Swift.Int64",
+            as: (() -> Int64).self
+        )
+        #expect(try unsafe read.unsafeInvoke(on: make.unsafeInvoke()) == -1)
     }
 
     @Test func classMembersExportedOnlyThroughDispatchThunksCaptureTheSelectedEntry() async throws {

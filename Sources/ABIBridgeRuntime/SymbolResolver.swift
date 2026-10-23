@@ -614,6 +614,18 @@ package final class RuntimeSymbolResolver: Sendable {
         }
     }
 
+    /// The witnesses that `image`'s symbol table holds for the conformance
+    /// whose descriptor is at `descriptor`.
+    package func swiftWitnesses(
+        ofConformanceAt descriptor: UInt64,
+        in image: RuntimeImage
+    ) -> [RuntimeSwiftCandidate] {
+        let index = state.withLock { $0.index(for: image) }
+        return withExtendedLifetime(index) {
+            state.withLock { _ in index.swiftWitnesses(ofConformanceAt: descriptor) }
+        }
+    }
+
     /// The symbols `image` exports with names starting with `prefix`.
     package func exportedSymbols(
         withPrefix prefix: String,

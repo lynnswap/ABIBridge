@@ -316,7 +316,7 @@ public actor NativeSwiftType: Hashable {
         )
     }
 
-    private nonisolated func declarationName() throws -> String {
+    nonisolated func declarationName() throws -> String {
         if let cached = cachedDeclarationName.withLock({ $0 }) { return cached }
         // Runtime value construction retains metadata without scanning symbols.
         // A member lookup needs the declaration's uninstantiated owner name.
@@ -624,9 +624,15 @@ public actor NativeSwiftType: Hashable {
         var ownerName = try declarationName()
         var hasUnavailableImages = false
         var preparationFailure: (any Error)?
-        // Why a requirement that the protocol declares has no witness for
-        // this type. Extension members then never stand in for it.
+        // Why a requirement that the request names has no witness for this
+        // type. Extension members then never stand in for it.
         var missingWitness: (any Error)?
+        // The requirements whose records selection considered, and the
+        // conformances whose witnesses it saw.
+        var considered: Set<String> = []
+        var conformances: [UnsafeRawPointer: NativeImage] = [:]
+        // This type's conformance to the protocol qualifying a request.
+        var protocolConformance: SwiftConformance??
         while true {
             let owner: Any.Type = ownerClass ?? metadata
             let enclosing =
@@ -635,6 +641,32 @@ public actor NativeSwiftType: Hashable {
             if originalRequest == nil { originalRequest = declaration }
             let isProtocolMember = !SwiftMemberLookup.belongs(declaration.name, to: ownerName)
             let extensionModule = Self.extensionModule(of: declaration.name)
+            // Prepares a candidate whose context applies to the request.
+            func prepare(
+                _ candidate: SwiftCandidate,
+                _ entry: SwiftEntry
+            ) throws -> SwiftGenericCallPlan? {
+                if isComplete {
+                    guard Self.spells(candidate, declaration.name, exactly: isQualified)
+                    else { return nil }
+                }
+                let plan = try SwiftGenericCallPlan(
+                    entry: entry,
+                    genericArguments: genericArguments,
+                    signature: description,
+                    resolver: resolver,
+                    enclosing: enclosing,
+                    implicitSelf: isProtocolMember ? self : nil,
+                    declaredSignature: declaredSignature,
+                    valueABIs: valueABIs
+                )
+                if isComplete {
+                    try plan.checkLowerings(description)
+                } else {
+                    try plan.check(description, representations: representations)
+                }
+                return plan
+            }
             func select(
                 extensionsOnly: Bool,
                 includingSharedCache: Bool
@@ -642,34 +674,42 @@ public actor NativeSwiftType: Hashable {
                 selection: SwiftCandidateSelection<SwiftGenericCallPlan>,
                 unserved: [NativeDeclaration]
             ) {
-                var candidates = try resolver.swiftDeclarationCandidates(
-                    declaration,
-                    in: isProtocolMember || extensionsOnly ? nil : ownerImage,
-                    extensionsOnly: extensionsOnly,
-                    includingSharedCache: includingSharedCache
+                var tier = SwiftRequirementCandidates(
+                    candidates: try resolver.swiftDeclarationCandidates(
+                        declaration,
+                        in: isProtocolMember || extensionsOnly ? nil : ownerImage,
+                        extensionsOnly: extensionsOnly,
+                        includingSharedCache: includingSharedCache
+                    )
                 )
-                var unserved: [NativeDeclaration] = []
                 if isProtocolMember && !extensionsOnly {
                     // A protocol that exports dispatch thunks exports one for
                     // each requirement, so their witnesses are not searched.
-                    let dispatches = candidates.contains {
-                        $0.record.context == .protocolRequirement && $0.record.role == .dispatchThunk
+                    let dispatches = tier.candidates.contains {
+                        $0.record.context == .protocolRequirement
+                            && $0.record.role == .dispatchThunk
                     }
-                    do {
-                        if !dispatches {
-                            candidates += try witnesses(
+                    if !dispatches {
+                        if protocolConformance == nil {
+                            protocolConformance = try protocolDescriptor(qualifying: declaration)
+                                .flatMap { symbol in
+                                    try conformance(to: unsafe symbol.withUnsafeAddress { $0 })
+                                }
+                        }
+                        if let own = protocolConformance ?? nil {
+                            tier.candidates += try witnesses(
                                 of: declaration,
-                                owner: ownerName,
+                                through: own,
                                 includingSharedCache: includingSharedCache
                             )
                         }
-                    } catch ABIResolutionError.imageUnavailable {
-                        hasUnavailableImages = true
                     }
-                    candidates = try servingWitnesses(candidates, unserved: &unserved)
+                    tier = try servingWitnesses(tier.candidates)
+                    conformances.merge(tier.conformances) { first, _ in first }
                 }
+                var unserved: [NativeDeclaration] = []
                 let selection = SwiftCandidateSelection(
-                    candidates,
+                    tier.candidates,
                     namesDeclaration: isComplete,
                     dispatch: { try self.dispatchedEntry($0, asynchronous: description.isAsync) }
                 ) { candidate, entry -> SwiftGenericCallPlan? in
@@ -677,9 +717,13 @@ public actor NativeSwiftType: Hashable {
                         switch candidate.record.context {
                         // A requirement's own symbol in a resilient protocol is
                         // its default implementation, not a conformance's witness.
-                        case .protocolRequirement where candidate.record.role != .implementation,
-                            .protocolExtension:
-                            break
+                        case .protocolRequirement where candidate.record.role != .implementation:
+                            if case .witness(let witness) = candidate.record.role {
+                                considered.insert(witness.requirement)
+                            } else {
+                                considered.insert(candidate.record.identity)
+                            }
+                        case .protocolExtension: break
                         default: return nil
                         }
                     }
@@ -688,24 +732,12 @@ public actor NativeSwiftType: Hashable {
                     {
                         return nil
                     }
-                    if isComplete {
-                        guard Self.spells(candidate, declaration.name, exactly: isQualified)
-                        else { return nil }
-                    }
-                    let plan = try SwiftGenericCallPlan(
-                        entry: entry,
-                        genericArguments: genericArguments,
-                        signature: description,
-                        resolver: resolver,
-                        enclosing: enclosing,
-                        implicitSelf: isProtocolMember ? self : nil,
-                        declaredSignature: declaredSignature,
-                        valueABIs: valueABIs
-                    )
-                    if isComplete {
-                        try plan.checkLowerings(description)
-                    } else {
-                        try plan.check(description, representations: representations)
+                    guard let plan = try prepare(candidate, entry) else { return nil }
+                    // Another conformance's witness only shows that the
+                    // request names a requirement without this type's witness.
+                    if tier.others.contains(candidate.record.identity) {
+                        unserved.append(candidate.declaration)
+                        return nil
                     }
                     return plan
                 }
@@ -734,32 +766,47 @@ public actor NativeSwiftType: Hashable {
                     continue
                 }
                 if let (entry, plan) = try selection.selected(for: declaration) {
+                    // A name that does not spell the extension's module can
+                    // also name a requirement.
+                    if isProtocolMember && extensionsOnly && extensionModule == nil {
+                        try checkRequirements(
+                            excluding: declaration,
+                            isAsync: description.isAsync,
+                            considered: considered,
+                            conformances: conformances
+                        ) { witness in
+                            do {
+                                return try prepare(witness, witness.entry) != nil
+                            } catch ABIResolutionError.signatureMismatch {
+                                return false
+                            }
+                        }
+                    }
                     return (entry, isProtocolMember ? metadata : owner, plan)
                 }
                 // A member that applies but has no selectable code still hides
                 // extension and superclass members. A protocol extension
                 // member is not the requirement, so it cannot stand in for one
-                // that fails or that serves only other conformances.
+                // that fails or that only other conformances serve.
                 if let unavailable = selection.unavailable { throw unavailable }
                 if isProtocolMember && !extensionsOnly, let failure = selection.failure {
                     throw failure
                 }
-                if let failure = selection.failure ?? selection.mismatch {
-                    preparationFailure = failure
-                } else if let requirement = unserved.first {
-                    // A superclass's module can still hold the witness of an
-                    // inherited conformance.
+                if let requirement = unserved.first {
                     missingWitness = ABIResolutionError.metadataUnavailable(
                         requirement.name
                             + ": neither the protocol's dispatch thunk for this requirement nor the witness of \(self.name)'s conformance is in the loaded images. Witnesses of other conformances show that the protocol declares it, so no extension member stands in for it. A conformance's witnesses are local symbols, which stripping removes."
                     )
                 }
+                if let failure = selection.failure ?? selection.mismatch {
+                    preparationFailure = failure
+                }
             }
             guard inherited, let current = ownerClass, let parent = class_getSuperclass(current)
             else {
                 if hasUnavailableImages { throw ABIResolutionError.imageUnavailable }
-                if let preparationFailure { throw preparationFailure }
                 if let missingWitness { throw missingWitness }
+                if let preparationFailure { throw preparationFailure }
                 throw ABIResolutionError.declarationNotFound(originalRequest!)
             }
             let runtimeName = try swiftFunctionTypeName(parent)
@@ -772,112 +819,6 @@ public actor NativeSwiftType: Hashable {
                 resolver: resolver
             )
         }
-    }
-
-    /// The witnesses of a protocol requirement in the module of `owner`.
-    ///
-    /// Swift mangles a conformance's witness in the module of the conforming
-    /// type, which can differ from the protocol's module.
-    private nonisolated func witnesses(
-        of requirement: NativeDeclaration,
-        owner: String,
-        includingSharedCache: Bool
-    ) throws -> [SwiftCandidate] {
-        guard let module = SwiftModuleFilter(owner)?.module,
-            module != SwiftModuleFilter(requirement.name)?.module
-        else { return [] }
-        return try resolver.swiftDeclarationCandidates(
-            requirement,
-            in: nil,
-            module: module,
-            includingSharedCache: includingSharedCache
-        ).filter {
-            guard case .witness = $0.record.role else { return false }
-            return true
-        }
-    }
-
-    /// The candidates that can serve this type, among the witnesses of
-    /// protocol requirements.
-    ///
-    /// A requirement's dispatch thunk selects the witness of the conformance
-    /// that a call passes, so a requirement with a thunk is not called
-    /// through a witness. A witness runs one conformance's implementation and
-    /// serves this type only when the Swift runtime finds that conformance
-    /// for it. When this type does not conform, one witness of each
-    /// requirement remains, so that binding reports the missing conformance
-    /// as it does for a thunk.
-    ///
-    /// - Parameter unserved: Receives the requirements whose witnesses all
-    ///   serve other conformances. They show that the protocol declares the
-    ///   requirement even without its thunk.
-    private nonisolated func servingWitnesses(
-        _ candidates: [SwiftCandidate],
-        unserved: inout [NativeDeclaration]
-    ) throws -> [SwiftCandidate] {
-        let thunks = Set(
-            candidates.lazy.filter {
-                $0.record.context == .protocolRequirement && $0.record.role == .dispatchThunk
-            }.map(\.record.identity)
-        )
-        let type = unsafeBitCast(metadata, to: UnsafeRawPointer.self)
-        // This type's conformance descriptor for each protocol, nil when it
-        // does not conform.
-        var conformances: [UnsafeRawPointer: UnsafeRawPointer?] = [:]
-        var served: Set<String> = []
-        var others: [(requirement: String, declaration: NativeDeclaration)] = []
-        var kept: [SwiftCandidate] = []
-        for candidate in candidates {
-            guard case .witness(let witness) = candidate.record.role else {
-                kept.append(candidate)
-                continue
-            }
-            guard !thunks.contains(witness.requirement) else { continue }
-            let descriptor: ResolvedSymbol
-            do {
-                descriptor = try resolver.resolve(
-                    NativeDeclaration(
-                        machOName: "_" + witness.conformanceDescriptor,
-                        language: .swift,
-                        kind: .data
-                    ),
-                    in: candidate.symbol.image,
-                    loading: .loadedOnly
-                )
-            } catch ABIResolutionError.declarationNotFound {
-                // Without its descriptor, the conformance is not established.
-                others.append((witness.requirement, candidate.declaration))
-                continue
-            }
-            let applies = unsafe descriptor.withUnsafeAddress { address -> Bool? in
-                // The descriptor's first field references the protocol.
-                guard let protocolDescriptor = ABISwiftProtocolRequirementDescriptor(address)
-                else { return false }
-                let conformance =
-                    conformances[protocolDescriptor]
-                    ?? ABISwiftConformance(type, protocolDescriptor).flatMap {
-                        ABISwiftConformanceDescriptor($0)
-                    }
-                conformances[protocolDescriptor] = .some(conformance)
-                guard let conformance else { return nil }
-                return conformance == address
-            }
-            switch applies {
-            case true?:
-                served.insert(witness.requirement)
-                kept.append(candidate)
-            case false?:
-                others.append((witness.requirement, candidate.declaration))
-            case nil:
-                if served.insert(witness.requirement).inserted { kept.append(candidate) }
-            }
-        }
-        var reported: Set<String> = []
-        for other in others
-        where !served.contains(other.requirement) && reported.insert(other.requirement).inserted {
-            unserved.append(other.declaration)
-        }
-        return kept
     }
 
     /// Whether a candidate is the declaration a complete request spells.

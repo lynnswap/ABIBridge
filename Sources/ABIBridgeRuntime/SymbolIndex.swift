@@ -977,20 +977,60 @@ package final class SymbolIndex {
             } else {
                 guard addresses.insert(symbol.address).inserted else { return nil }
             }
-            return RuntimeSwiftCandidate(
-                symbol: RuntimeSymbol(
-                    declaration: .init(name: spelling, language: .swift),
-                    image: image,
-                    sectionRange: section.range,
-                    source: source,
-                    address: symbol.address,
-                    linkageName: symbol.name
-                ),
-                record: record,
-                declaration: .init(name: name, language: .swift),
-                memberName: Self.extensionMemberName(name) ?? name
-            )
+            return candidate(symbol, record: record, name: name, spelling: spelling, section: section)
         }
+    }
+
+    /// The witnesses that this image's symbol table holds for the
+    /// conformance whose descriptor is at `descriptor`.
+    package func swiftWitnesses(ofConformanceAt descriptor: UInt64) -> [RuntimeSwiftCandidate] {
+        // Swift mangles a witness with the suffix `TW` and a conformance
+        // descriptor with `Mc`.
+        let symbols = swiftSymbols { name in
+            let length = strlen(name)
+            guard length > 2 else { return false }
+            let suffix = (name[length - 2], name[length - 1])
+            return suffix == (84, 87) || suffix == (77, 99)
+        }
+        let names = Set(
+            symbols.lazy.filter { $0.address == descriptor && $0.name.hasSuffix("Mc") }.map {
+                $0.name.hasPrefix("_") ? String($0.name.dropFirst()) : $0.name
+            }
+        )
+        guard !names.isEmpty else { return [] }
+        return symbols.compactMap { symbol in
+            guard symbol.name.hasSuffix("TW"),
+                let record = record(of: symbol),
+                case .witness(let witness) = record.role,
+                names.contains(witness.conformanceDescriptor),
+                let name = memberName(of: symbol),
+                let section = sections.first(where: { $0.range.contains(symbol.address) }),
+                let spelling = DeclarationKey.demangle(symbol.name, language: .swift)
+            else { return nil }
+            return candidate(symbol, record: record, name: name, spelling: spelling, section: section)
+        }
+    }
+
+    private func candidate(
+        _ symbol: IndexedSymbol,
+        record: RuntimeSwiftDeclaration,
+        name: String,
+        spelling: String,
+        section: SymbolSection
+    ) -> RuntimeSwiftCandidate {
+        RuntimeSwiftCandidate(
+            symbol: RuntimeSymbol(
+                declaration: .init(name: spelling, language: .swift),
+                image: image,
+                sectionRange: section.range,
+                source: symbol.source,
+                address: symbol.address,
+                linkageName: symbol.name
+            ),
+            record: record,
+            declaration: .init(name: name, language: .swift),
+            memberName: Self.extensionMemberName(name) ?? name
+        )
     }
 
     private func record(of symbol: IndexedSymbol) -> RuntimeSwiftDeclaration? {
