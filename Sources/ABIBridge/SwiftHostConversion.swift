@@ -229,8 +229,8 @@ struct SwiftHostConversion: Sendable {
     /// a callback's result storage into native result storage.
     var initializeNativeResult: SwiftResultInitializer { operations.initializeNativeResult }
 
-    /// Storage for a callback's result, which moves an owned native value
-    /// for the host value into native result storage.
+    /// Encodes the host value at `value` as a callback's owned native result,
+    /// and returns the function that moves it into native result storage.
     func prepareResult(
         _ value: UnsafeRawPointer,
         retainingCode owner: Any?
