@@ -621,12 +621,15 @@ struct SwiftInferredValueTests {
     }
 
     /// A generic instance's value witnesses come from its pattern, which
-    /// treats an unowned reference to a type parameter as non-native, so the
-    /// instance is undecided on its own. A nongeneric value that stores it
-    /// has static value witnesses for the concrete referent, which decide
-    /// both: a native referent is a loadable reference, and an Objective-C
-    /// one is not bitwise-takable.
-    @Test func genericInstancesAreDecidedWithTheirStaticParents() async throws {
+    /// treats an unowned reference to a type parameter as non-native, so its
+    /// referent decides: a Swift class that uses native reference counting
+    /// is a loadable reference, while an Objective-C class and a class-bound
+    /// existential without a superclass are address-only. Nothing decides an
+    /// existential with a superclass, which a type parameter cannot be bound
+    /// to but another field can store. A nongeneric value that stores the
+    /// instance has static value witnesses for the concrete referent, which
+    /// decide both.
+    @Test func unownedReferentsDecideGenericInstances() async throws {
         let (library, module) = try provider(
             """
             import Foundation
@@ -658,7 +661,23 @@ struct SwiftInferredValueTests {
                 public var text = "label"
                 public init() {}
             }
+            public protocol Marked: AnyObject {}
+            public class Shape { public let n: Int64; public init(_ n: Int64) { self.n = n } }
+            public final class Square: Shape, Marked {}
+            public struct Marking<T> {
+                public unowned var shape: Shape & Marked
+                public var t: T
+                public init(shape: Shape & Marked, t: T) { referents.append(shape); self.shape = shape; self.t = t }
+            }
             @inline(never) public func makeNativeHolder() -> Holder<Native> { Holder(t: Native(5), x: 3) }
+            @inline(never) public func describeNativeHolder(_ h: Holder<Native>) -> String { "\\(h.t.n),\\(h.x)" }
+            @inline(never) public func makeBridgedHolder() -> Holder<Bridged> { Holder(t: Bridged(6), x: 4) }
+            @inline(never) public func describeBridgedHolder(_ h: Holder<Bridged>) -> String { "\\(h.t.n),\\(h.x)" }
+            @inline(never) public func makeAnyHolder() -> Holder<AnyObject> { Holder(t: Native(7), x: 5) }
+            @inline(never) public func describeAnyHolder(_ h: Holder<AnyObject>) -> String {
+                "\\((h.t as! Native).n),\\(h.x)"
+            }
+            @inline(never) public func makeMarking() -> Marking<Int64> { Marking(shape: Square(8), t: 6) }
             @inline(never) public func makeOuter() -> Outer { Outer(h: Holder(t: Native(8), x: 2), f: 1.5) }
             @inline(never) public func describeOuter(_ o: Outer) -> String { "\\(o.h.t.n),\\(o.h.x),\\(o.f)" }
             @inline(never) public func makeBridgedOuter() -> BridgedOuter {
@@ -671,12 +690,15 @@ struct SwiftInferredValueTests {
         )
         defer { library.cleanup() }
         await expectFailure(
-            module + ".makeNativeHolder()",
+            module + ".makeMarking()",
             in: library,
             as: (() -> NativeSwiftValue).self,
-            naming: "has runtime-built metadata"
+            naming: "nothing shows how its field `shape: \(module).Shape & \(module).Marked` counts references to its referent"
         )
-        for (name, expected) in [("Outer", "8,2,1.5"), ("BridgedOuter", "9,3,2.5")] {
+        for (name, expected) in [
+            ("NativeHolder", "5,3"), ("BridgedHolder", "6,4"), ("AnyHolder", "7,5"),
+            ("Outer", "8,2,1.5"), ("BridgedOuter", "9,3,2.5"),
+        ] {
             #expect(
                 try await describeMade(
                     "\(module).make\(name)()",
@@ -1482,7 +1504,8 @@ struct SwiftInferredValueTests {
     /// result borrows from. A value that only a module's records decide, and
     /// that sets the bit, is therefore undecided in a call with a scoped
     /// result, alone or in a tuple of any size, unless it passes by address
-    /// anyway. A value whose static summary decides it leaves the bit clear.
+    /// anyway, and so is a generic instance, which has no static summary. A
+    /// value whose static summary decides it leaves the bit clear.
     @Test func resultsThatBorrowFromValuesLeaveAddressableValuesUndecided() async throws {
         let (library, module) = try provider(
             """
@@ -1516,6 +1539,14 @@ struct SwiftInferredValueTests {
                 public init() { text = "wide"; a = 5; b = 6; c = 7 }
             }
             @_lifetime(borrow t) @inline(never) public func borrowTriple(_ t: (Label, Int64, Int64)) -> View { View(t.1) }
+            public struct Pair<T> {
+                public var a: T
+                public var b: T
+                public init(a: T, b: T) { self.a = a; self.b = b }
+            }
+            @_lifetime(borrow p) @inline(never) public func borrowPair(_ p: Pair<Int64>) -> View { View(p.a) }
+            @inline(never) public func makePair() -> Pair<Int64> { Pair(a: 1, b: 2) }
+            @inline(never) public func describePair(_ p: Pair<Int64>) -> String { "\\(p.a),\\(p.b)" }
             @_lifetime(borrow w) @inline(never) public func borrowWide(_ w: Wide) -> View { View(w.a * 10 + w.c) }
             @inline(never) public func makeWide() -> Wide { Wide() }
             @inline(never) public func makeLabel() -> Label { Label(text: "label", n: 4) }
@@ -1545,6 +1576,15 @@ struct SwiftInferredValueTests {
             in: library,
             as: (((NativeSwiftValue, Int64, Int64)) -> NativeSwiftBorrowedValue).self,
             naming: borrowed
+        )
+        #expect(
+            try await describeMade(module + ".makePair()", module + ".describePair(_:)", in: library) == "1,2"
+        )
+        await expectFailure(
+            module + ".borrowPair(_:)",
+            in: library,
+            as: ((NativeSwiftValue) -> NativeSwiftBorrowedValue).self,
+            naming: "generic instance"
         )
         let label = try await runtime.resolveSwiftType(named: module + ".Label", in: scope)
         await #expect {

@@ -676,19 +676,159 @@ extension ConformanceCase {
             invoke: { f in
                 try await describeMade(f, "cmMakeDoublePair()", "cmDescribeDoublePair(_:)")
             },
-            expectedError: { _ in "has runtime-built metadata" }
+            expectedError: { $0.libraryEvolution ? "has runtime-built metadata" : nil }
         ),
         // With library evolution, the resilient field makes the pair
-        // address-only; without it, the generic instance is undecided.
+        // address-only; without it, the module's records decide the pair.
         ConformanceCase(
             id: "value.genericHoldsOpen.inferred",
             provider: "",
-            oracle: "return cmDescribeOpenPair(cmMakeOpenPair())",
+            oracle: "return cmDescribeOpenPair(cmMakeOpenPair())"
+        ) { f in
+            try await describeMade(f, "cmMakeOpenPair()", "cmDescribeOpenPair(_:)")
+        },
+        // Nothing records whether a generic type of a library-evolution
+        // module is frozen, and its instances' value witnesses are the same
+        // either way.
+        ConformanceCase(
+            id: "value.genericOpen.inferred",
+            provider: """
+                public struct CMOpenGenericPair<T> {
+                    public var a: T
+                    public var b: T
+                    public init(a: T, b: T) { self.a = a; self.b = b }
+                }
+                public struct CMGenericInternal<T> {
+                    public var t: T
+                    var extra: Int64 = 9
+                    public init(t: T) { self.t = t }
+                    public var total: Int64 { extra }
+                }
+                @inline(never) public func cmMakeOpenDoublePair() -> CMOpenGenericPair<Double> {
+                    CMOpenGenericPair(a: 0.5, b: 4.5)
+                }
+                @inline(never) public func cmDescribeOpenDoublePair(_ p: CMOpenGenericPair<Double>) -> String {
+                    "\\(p.a)+\\(p.b)"
+                }
+                @inline(never) public func cmMakeInternalDouble() -> CMGenericInternal<Double> { CMGenericInternal(t: 2.5) }
+                @inline(never) public func cmDescribeInternalDouble(_ v: CMGenericInternal<Double>) -> String {
+                    "\\(v.t),\\(v.total)"
+                }
+                """,
+            oracle: """
+                return cmDescribeOpenDoublePair(cmMakeOpenDoublePair()) + "|"
+                    + cmDescribeInternalDouble(cmMakeInternalDouble())
+                """,
             invoke: { f in
-                try await describeMade(f, "cmMakeOpenPair()", "cmDescribeOpenPair(_:)")
+                try await describeMade(f, "cmMakeOpenDoublePair()", "cmDescribeOpenDoublePair(_:)") + "|"
+                    + describeMade(f, "cmMakeInternalDouble()", "cmDescribeInternalDouble(_:)")
             },
-            expectedError: { $0.libraryEvolution ? nil : "has runtime-built metadata" }
+            expectedError: { $0.libraryEvolution ? "has runtime-built metadata" : nil }
         ),
+        // A field record holds the opaque property's underlying type. With
+        // library evolution, that type, CMQuad, is resilient.
+        ConformanceCase(
+            id: "value.genericOpaque.inferred",
+            provider: """
+                public struct CMGenericOpaque<T> {
+                    public var x: some CMSided = CMQuad()
+                    public var t: T
+                    public init(t: T) { self.t = t }
+                }
+                @inline(never) public func cmMakeOpaqueDouble() -> CMGenericOpaque<Double> { CMGenericOpaque(t: 3.5) }
+                @inline(never) public func cmDescribeOpaqueDouble(_ v: CMGenericOpaque<Double>) -> String {
+                    "\\(v.x.sides),\\(v.t)"
+                }
+                """,
+            oracle: "return cmDescribeOpaqueDouble(cmMakeOpaqueDouble())",
+            invoke: { f in
+                try await describeMade(f, "cmMakeOpaqueDouble()", "cmDescribeOpaqueDouble(_:)")
+            },
+            expectedError: {
+                $0.libraryEvolution ? nil : "its stored property `x` has an opaque (`some`) type"
+            }
+        ),
+        // With library evolution, enum case symbols show that CMEither is
+        // resilient.
+        ConformanceCase(
+            id: "value.genericEnum.inferred",
+            provider: """
+                public enum CMEither<L, R> { case left(L), right(R) }
+                @inline(never) public func cmMakeEitherText(_ k: Int64) -> CMEither<Int64, String> {
+                    k == 0 ? .left(41) : .right("r\\(k)")
+                }
+                @inline(never) public func cmDescribeEitherText(_ v: CMEither<Int64, String>) -> String { "\\(v)" }
+                @inline(never) public func cmMakeEitherReal(_ k: Int64) -> CMEither<Int64, Double> {
+                    k == 0 ? .left(42) : .right(Double(k) + 0.5)
+                }
+                @inline(never) public func cmDescribeEitherReal(_ v: CMEither<Int64, Double>) -> String { "\\(v)" }
+                """,
+            oracle: """
+                let kinds: [Int64] = [0, 3]
+                return [
+                    kinds.map { cmDescribeEitherText(cmMakeEitherText($0)) },
+                    kinds.map { cmDescribeEitherReal(cmMakeEitherReal($0)) },
+                ].map { $0.joined(separator: "|") }.joined(separator: ";")
+                """
+        ) { f in
+            [
+                try await describeKinds(f, "cmMakeEitherText(_:)", "cmDescribeEitherText(_:)", kinds: [0, 3]),
+                try await describeKinds(f, "cmMakeEitherReal(_:)", "cmDescribeEitherReal(_:)", kinds: [0, 3]),
+            ].joined(separator: ";")
+        },
+        // An unowned reference to a type parameter is a pointer when its
+        // referent uses native Swift reference counting, which the instance's
+        // value witnesses do not show.
+        ConformanceCase(
+            id: "value.genericUnownedNative.inferred",
+            provider: """
+                import Foundation
+                nonisolated(unsafe) public var cmReferents: [AnyObject] = []
+                public struct CMUnownedBox<T: AnyObject> {
+                    public unowned var t: T
+                    public var x: Int64
+                    public init(t: T, x: Int64) { cmReferents.append(t); self.t = t; self.x = x }
+                }
+                public final class CMBridgedBox: NSObject {
+                    public let value: Int64
+                    public init(_ value: Int64) { self.value = value }
+                }
+                @inline(never) public func cmMakeNativeUnowned() -> CMUnownedBox<CMBox> { CMUnownedBox(t: CMBox(31), x: 1) }
+                @inline(never) public func cmDescribeNativeUnowned(_ v: CMUnownedBox<CMBox>) -> String {
+                    "\\(v.t.value),\\(v.x)"
+                }
+                @inline(never) public func cmMakeBridgedUnowned() -> CMUnownedBox<CMBridgedBox> {
+                    CMUnownedBox(t: CMBridgedBox(32), x: 2)
+                }
+                @inline(never) public func cmDescribeBridgedUnowned(_ v: CMUnownedBox<CMBridgedBox>) -> String {
+                    "\\(v.t.value),\\(v.x)"
+                }
+                @inline(never) public func cmMakeAnyUnowned() -> CMUnownedBox<AnyObject> {
+                    CMUnownedBox(t: CMBox(33), x: 3)
+                }
+                @inline(never) public func cmDescribeAnyUnowned(_ v: CMUnownedBox<AnyObject>) -> String {
+                    "\\((v.t as! CMBox).value),\\(v.x)"
+                }
+                """,
+            oracle: "return cmDescribeNativeUnowned(cmMakeNativeUnowned())",
+            invoke: { f in
+                try await describeMade(f, "cmMakeNativeUnowned()", "cmDescribeNativeUnowned(_:)")
+            },
+            expectedError: { $0.libraryEvolution ? "has runtime-built metadata" : nil }
+        ),
+        // A non-native class or a class-bound existential makes an unowned
+        // reference address-only, whatever the module.
+        ConformanceCase(
+            id: "value.genericUnownedForeign.inferred",
+            provider: "",
+            oracle: """
+                return cmDescribeBridgedUnowned(cmMakeBridgedUnowned()) + "|"
+                    + cmDescribeAnyUnowned(cmMakeAnyUnowned())
+                """
+        ) { f in
+            try await describeMade(f, "cmMakeBridgedUnowned()", "cmDescribeBridgedUnowned(_:)") + "|"
+                + describeMade(f, "cmMakeAnyUnowned()", "cmDescribeAnyUnowned(_:)")
+        },
         ConformanceCase(
             id: "value.largeUndecided.inferred",
             provider: """
@@ -836,7 +976,7 @@ extension ConformanceCase {
             invoke: { f in
                 try await describeMade(f, "cmMakeGenericType()", "cmDescribeGenericType(_:)")
             },
-            expectedError: { _ in "has runtime-built metadata" }
+            expectedError: { $0.libraryEvolution ? "has runtime-built metadata" : nil }
         ),
         ConformanceCase(
             id: "value.tupleFields.inferred",

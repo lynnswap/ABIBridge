@@ -39,10 +39,10 @@ a loadable decision meets an indirect signature or an address-only decision
 a direct one. Where a link hides enum case symbols and variable
 initializers, decisions may only become undecided. Each weakened variant of
 the rules, including the rules #430 removed, must disagree with some
-compiled signature, so that the fixtures keep exercising every guard. A
-known limit, a `@sensitive` struct that stores only a class reference and an
-integer, must keep contradicting its compiled signature until a record shows
-the attribute.
+compiled signature, so that the fixtures keep exercising every guard. Known
+limits, a `@sensitive` struct that stores only a class reference and an
+integer and an instance of a generic `@sensitive` struct, must keep
+contradicting their compiled signatures until a record shows the attribute.
 """
 
 from concurrent.futures import ThreadPoolExecutor
@@ -91,8 +91,9 @@ PROVIDER_VALUES = {
 # that the documentation can drop the limit.
 PROVIDER_LIMITS = {
     # A @sensitive struct is address-only, but nothing records the attribute
-    # when its stored values leave AFD clear, as a class reference does.
-    "RefSecret": LOADABLE,
+    # when its stored values leave AFD clear, as a class reference does, nor
+    # in a generic instance, whose value witnesses the rules never read.
+    "RefSecret": LOADABLE, "GSecretInt64": LOADABLE,
 }
 # Decisions where `borrow<Name>(_:)` and `<Name>.scoped()` return a result
 # that borrows from the value.

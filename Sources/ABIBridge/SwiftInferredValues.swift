@@ -54,16 +54,20 @@ enum SwiftValuePosition: Sendable, Equatable {
 ///   non-POD value witnesses show it. Its fields, including generic
 ///   instances, are decided with it.
 /// - Otherwise, a nongeneric type whose fields explain whether its value
-///   witnesses are POD is loadable when it is not resilient, no stored
-///   property has an opaque type, and every field is loadable on its own
-///   (``nonEvolutionGap(of:storedBy:)``).
+///   witnesses are POD, or a generic instance, is loadable when it is not
+///   resilient, no stored property has an opaque type, and every field is
+///   loadable on its own (``nonEvolutionGap(of:storedBy:)``). A generic
+///   instance's fields come from its field records with its generic
+///   arguments, and an unowned reference in it is address-only unless its
+///   referent is a Swift class that uses native reference counting.
 /// - Neither applies to a value that is, or stores, a value whose static
 ///   value witnesses leave the bit clear although a value it stores sets it.
 ///   Swift ORs the bit over stored values except for a `@sensitive` struct.
 ///
-/// Missing symbols, the runtime-built value witnesses of a generic instance,
-/// and class reference counting are not evidence: each made a resilient or
-/// address-only value look loadable.
+/// Missing symbols, the value witnesses of a generic instance, which the
+/// runtime builds from field layouts or reuses from its pattern, and the
+/// Swift class bit of an unowned referent are not evidence: each made a
+/// resilient or address-only value look loadable.
 ///
 /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/SIL/IR/TypeLowering.cpp
 /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/IRGen/GenValueWitness.cpp
@@ -154,9 +158,11 @@ enum SwiftInferredValue {
         /// decide the value: it is nongeneric, and its fields explain whether
         /// its value witnesses are POD.
         var followsNonEvolutionRules = false
-        /// Whether its static value witnesses set the addressable-for-
-        /// dependencies bit.
-        var setsAddressableForDependencies = false
+        /// Whether Swift can pass it by address where a result borrows from
+        /// it: its static value witnesses set the addressable-for-
+        /// dependencies bit, or it is a generic instance, which has no static
+        /// summary.
+        var isAddressableWhereBorrowed = false
         /// Whether it, or a value it stores, has static value witnesses that
         /// leave the addressable-for-dependencies bit clear although a value
         /// it stores sets the bit. Swift sets the bit for a value whenever a
@@ -238,19 +244,34 @@ enum SwiftInferredValue {
             )
         }
         let addressOnly = Classification(convention: .addressOnly, storesNonPOD: true)
-        let nonEvolution = !info.isGeneric
+        // Only static value witnesses summarize the concrete fields. The
+        // runtime builds a generic instance's from field layouts, or reuses
+        // its pattern's, which IRGen computed for the unsubstituted
+        // declaration, so they are never read.
+        let hasStaticWitnesses = !info.isGeneric
         // Runtime initialization lays out a resilient type from another module.
         if info.metadataInitialization == 1 { return addressOnly }
-        // Only static value witnesses summarize the concrete fields; a generic
-        // instance's come from its pattern.
-        if !info.isGeneric, flags & nonBitwiseTakable != 0 { return addressOnly }
+        if hasStaticWitnesses, flags & nonBitwiseTakable != 0 { return addressOnly }
         let module = ModuleContext(metadata)
         if info.isEnum, module.exportsEnumCases { return addressOnly }
         let fields = try readFields(of: metadata, info: info)
         var parts: [CValueType?] = []
         var storesNonPOD = false
         var masking: Field?
+        var unknownReferent: Field?
         for field in fields {
+            // A generic instance has no static value witnesses to show that an
+            // unowned reference is not bitwise-takable, so its referent
+            // decides.
+            if info.isGeneric, field.reference == ABISwiftReferenceStorageUnowned,
+                let type = field.type
+            {
+                switch unownedStorage(of: type) {
+                case .pointer: break
+                case .addressOnly: return addressOnly
+                case .unknown: if unknownReferent == nil { unknownReferent = field }
+                }
+            }
             let part: Part
             do throws(InferenceFailure) {
                 part = try self.part(of: field)
@@ -272,24 +293,31 @@ enum SwiftInferredValue {
         // a value it stores sets it, except for a @sensitive struct, which is
         // address-only. Only static value witnesses show the bit.
         let masked =
-            nonEvolution && flags & addressableForDependencies == 0
+            hasStaticWitnesses && flags & addressableForDependencies == 0
             ? fields.first { $0.type.map(addressability) == .yes } : nil
-        let decision = decide(
-            metadata,
-            info: info,
-            flags: flags,
-            fields: fields,
-            storesNonPOD: storesNonPOD,
-            module: module
-        )
-        // A @sensitive type is address-only, and only its non-POD value
-        // witnesses show it.
-        let followsNonEvolutionRules = nonEvolution && (flags & nonPOD == 0 || storesNonPOD)
+        let kind = info.isEnum ? "enum" : "struct"
+        let decision =
+            hasStaticWitnesses
+            ? decide(
+                metadata,
+                info: info,
+                flags: flags,
+                fields: fields,
+                storesNonPOD: storesNonPOD,
+                module: module
+            )
+            : .undecided(
+                "generic \(kind) `\(String(reflecting: metadata))` has runtime-built metadata, whose value witnesses do not show whether it is resilient"
+            )
+        // A @sensitive struct is address-only, and only its non-POD static
+        // value witnesses show it. Nothing shows it for a generic struct.
+        let followsNonEvolutionRules =
+            unknownReferent == nil
+            && (!hasStaticWitnesses || flags & nonPOD == 0 || storesNonPOD)
         let convention: Convention
         switch decision {
         case .addressOnly: return addressOnly
         case _ where masked != nil || masking != nil:
-            let kind = info.isEnum ? "enum" : "struct"
             let detail =
                 masked.map {
                     "the value witnesses of \(kind) `\(String(reflecting: metadata))` leave the addressable-for-dependencies bit clear although its field \($0.description) sets it, as a @sensitive struct's do, which is address-only"
@@ -308,7 +336,13 @@ enum SwiftInferredValue {
             convention = try .loadable(layout(of: metadata, info: info, fields: fields, parts: parts))
         case .undecided(let missing):
             let frozen = try layout(of: metadata, info: info, fields: fields, parts: parts)
-            if !followsNonEvolutionRules {
+            if let unknownReferent {
+                convention = .undecided(
+                    frozen: frozen,
+                    missing: missing
+                        + "; nothing shows how its field \(unknownReferent.description) counts references to its referent, which decides whether an unowned reference is address-only"
+                )
+            } else if !followsNonEvolutionRules {
                 convention = .undecided(frozen: frozen, missing: missing)
             } else if let gap = nonEvolutionGap(of: metadata, storedBy: []) {
                 convention = .undecided(frozen: frozen, missing: missing + "; " + gap)
@@ -318,8 +352,8 @@ enum SwiftInferredValue {
         }
         var classification = Classification(convention: convention, storesNonPOD: storesNonPOD)
         classification.followsNonEvolutionRules = followsNonEvolutionRules
-        classification.setsAddressableForDependencies =
-            nonEvolution && flags & addressableForDependencies != 0
+        classification.isAddressableWhereBorrowed =
+            !hasStaticWitnesses || flags & addressableForDependencies != 0
         return classification
     }
 
@@ -399,8 +433,46 @@ enum SwiftInferredValue {
         default:
             // An unowned reference is loadable when its referent uses native
             // Swift reference counting. Otherwise it is not bitwise-takable,
-            // which the static value witnesses of a type that stores it show.
+            // which the static value witnesses of a type that stores it show;
+            // ``classify(_:)`` reads a generic instance's referents instead.
             return try part(of: type, genericDependent: field.genericDependent)
+        }
+    }
+
+    private enum UnownedStorage {
+        case pointer, addressOnly, unknown
+    }
+
+    /// How a value stores an unowned reference to `referent`: as a pointer
+    /// when the referent is a Swift class that uses native Swift reference
+    /// counting, and address-only when it is another class, or an
+    /// existential that is class-bound without a superclass, whose reference
+    /// counting is unknown. Any other referent is unknown.
+    /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/AST/Type.cpp
+    /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/IRGen/GenMeta.cpp
+    private static func unownedStorage(of referent: Any.Type) -> UnownedStorage {
+        let metadata = unsafeBitCast(referent, to: UnsafeRawPointer.self)
+        let kind = metadata.load(as: UInt.self)
+        switch kind {
+        // An Objective-C class wrapper.
+        case 0x305:
+            return .addressOnly
+        case 0x303:
+            // ExistentialTypeFlags: a clear class constraint bit means
+            // class-bound; the next bit announces a superclass.
+            let flags = metadata.load(fromByteOffset: MemoryLayout<UInt>.size, as: UInt32.self)
+            return flags & 0xc000_0000 == 0 ? .addressOnly : .unknown
+        default:
+            // Class metadata starts with an isa pointer, above every other
+            // kind, and only a Swift class has a nominal type descriptor.
+            // Its ClassFlags follow the superclass, the cache, and the data.
+            guard kind > 0x7ff, ABISwiftTypeDescriptor(metadata) != nil else { return .unknown }
+            let flags = metadata.load(
+                fromByteOffset: 5 * MemoryLayout<UInt>.size,
+                as: UInt32.self
+            )
+            // ClassFlags::UsesSwiftRefcounting
+            return flags & 0x2 != 0 ? .pointer : .addressOnly
         }
     }
 
@@ -656,11 +728,6 @@ enum SwiftInferredValue {
         let name = String(reflecting: metadata)
         let kind = info.isEnum ? "enum" : "struct"
         let moduleName = module.name.map { "module `\($0)`" } ?? "its module"
-        guard !info.isGeneric else {
-            return .undecided(
-                "generic \(kind) `\(name)` has runtime-built metadata, whose value witnesses do not show whether it is resilient"
-            )
-        }
         if flags & addressableForDependencies != 0 {
             if let explanation = explanation(of: metadata, fields: fields) {
                 return .undecided(
@@ -851,9 +918,11 @@ enum SwiftInferredValue {
                 }
             }
         }
-        // Its own metadata is static: it is nongeneric, and runtime
-        // initialization makes it address-only.
-        let inner = parents.union([name])
+        // A nongeneric value's metadata is static, because runtime
+        // initialization makes it address-only, and shows that the types it
+        // stores from other modules are not resilient. The runtime lays out a
+        // generic instance, which shows nothing.
+        let inner = info.isGeneric ? parents : parents.union([name])
         for field in fields {
             if let gap = field.type.flatMap({ nonEvolutionGap(ofField: $0, storedBy: inner) }) {
                 return "its field \(field.description) is not decided: \(gap)"
@@ -912,9 +981,10 @@ enum SwiftInferredValue {
     /// a tuple, whose elements it otherwise passes separately. No symbol
     /// records which input a result borrows from. A value that only the
     /// records of a module built without library evolution make loadable can
-    /// set the bit, so it is undecided there, unless the call already passes
-    /// it by address. Values that a static summary makes loadable leave the
-    /// bit clear.
+    /// set the bit, as its static value witnesses show, and nothing shows
+    /// whether a generic instance sets it, so such a value is undecided
+    /// there, unless the call already passes it by address. Values that a
+    /// static summary makes loadable leave the bit clear.
     /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/SIL/IR/SILFunctionType.cpp
     ///
     /// - Parameters:
@@ -943,7 +1013,7 @@ enum SwiftInferredValue {
                 guard lowersByInference(type),
                     let classification = try? classification(of: type),
                     case .loadable = classification.convention,
-                    classification.setsAddressableForDependencies
+                    classification.isAddressableWhereBorrowed
                 else { return nil }
                 return type
             default:
@@ -951,10 +1021,17 @@ enum SwiftInferredValue {
             }
         }
         guard let value = addressable(type) else { return }
+        var info = ABISwiftValueDescriptorInfo()
+        let summary =
+            ABISwiftGetValueDescriptorInfo(unsafeBitCast(value, to: UnsafeRawPointer.self), &info)
+                && info.isGeneric
+            ? "it is a generic instance, whose value witnesses do not show whether it sets the addressable-for-dependencies bit, so Swift can pass it by address"
+            : "its value witnesses set the addressable-for-dependencies bit, so Swift passes it by address"
         throw ABIResolutionError.metadataUnavailable(
             message(
                 for: value,
-                "its value witnesses set the addressable-for-dependencies bit, so Swift passes it by address where the call's result borrows from it, and no symbol records which input a result borrows from",
+                summary
+                    + " where the call's result borrows from it, and no symbol records which input a result borrows from",
                 at: position
             )
         )
