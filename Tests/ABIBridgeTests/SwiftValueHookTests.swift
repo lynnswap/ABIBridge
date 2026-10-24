@@ -7,25 +7,29 @@ import Testing
 @Suite(.serialized)
 struct SwiftValueHookTests {
     @Test func indirectReceiversAndResultsPreserveTheirSeparateStorage() async throws {
-        let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
-        public struct WideValue {
-            public var a,b,c,d,e: Int64
-            public init(_ seed: Int64) { a=seed; b=seed+1; c=seed+2; d=seed+3; e=seed+4 }
-            @inline(never) public func sum(_ delta: Int64) -> Int64 { a+b+c+d+e+delta }
-            @inline(never) public consuming func consume(_ delta: Int64) -> Int64 { a+b+c+d+e+delta }
-            @inline(never) public func payload(_ delta: Int64) -> ReplacementPayload { ReplacementPayload(a+delta) }
-        }
-        """, callerExtra: """
-        @inline(never) public func wideSum(_ seed: Int64, _ delta: Int64) -> Int64 { WideValue(seed).sum(delta) }
-        @inline(never) public func wideConsume(_ seed: Int64, _ delta: Int64) -> Int64 { WideValue(seed).consume(delta) }
-        @inline(never) public func widePayload(_ seed: Int64, _ delta: Int64) -> Int64 { WideValue(seed).payload(delta).checksum }
-        """); defer { fixture.cleanup() }
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: fixture.module + ".WideValue",
-            as: SwiftABIFive.self,
+        let fixture = try CompiledSwiftReplacementFixture(
+            providerExtra: """
+                public struct WideValue {
+                    public var a,b,c,d,e: Int64
+                    public init(_ seed: Int64) { a=seed; b=seed+1; c=seed+2; d=seed+3; e=seed+4 }
+                    @inline(never) public func sum(_ delta: Int64) -> Int64 { a+b+c+d+e+delta }
+                    @inline(never) public consuming func consume(_ delta: Int64) -> Int64 { a+b+c+d+e+delta }
+                    @inline(never) public func payload(_ delta: Int64) -> ReplacementPayload { ReplacementPayload(a+delta) }
+                }
+                """,
+            callerExtra: """
+                @inline(never) public func wideSum(_ seed: Int64, _ delta: Int64) -> Int64 { WideValue(seed).sum(delta) }
+                @inline(never) public func wideConsume(_ seed: Int64, _ delta: Int64) -> Int64 { WideValue(seed).consume(delta) }
+                @inline(never) public func widePayload(_ seed: Int64, _ delta: Int64) -> Int64 { WideValue(seed).payload(delta).checksum }
+                """
+        ); defer { fixture.cleanup() }
+        let type = try await fixture.runtime.resolve(
+            .swift(.type(fixture.module + ".WideValue", as: SwiftABIFive.self)),
             in: fixture.providerScope
         )
-        for (member, caller, consuming) in [("sum", "wideSum", false), ("consume", "wideConsume", true)] {
+        for (member, caller, consuming) in [
+            ("sum", "wideSum", false), ("consume", "wideConsume", true),
+        ] {
             let method = try await type.resolve(
                 .swift(
                     .method(
@@ -82,9 +86,8 @@ struct SwiftValueHookTests {
 
     @Test func registerPassedSelfIsSeparateFromExplicitArguments() async throws {
         let fixture = try CompiledSwiftReplacementFixture(); defer { fixture.cleanup() }
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: fixture.module + ".ReplacementValue",
-            as: Int64.self,
+        let type = try await fixture.runtime.resolve(
+            .swift(.type(fixture.module + ".ReplacementValue", as: Int64.self)),
             in: fixture.providerScope
         )
         let method = try await type.resolve(
@@ -112,16 +115,18 @@ struct SwiftValueHookTests {
     }
 
     @Test func trailingSelfSurvivesStackArgumentsAndExpiredViews() async throws {
-        let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
-        extension ReplacementValue {
-            @inline(never) public func stack(_ a: Int64, _ b: Int64, _ c: Int64, _ d: Int64, _ e: Int64, _ f: Int64, _ g: Int64, _ h: Int64, _ i: Int64, _ j: Int64, _ k: Int64, _ l: Int64) -> Int64 { seed+a+b+c+d+e+f+g+h+i+j+k+l }
-        }
-        """, callerExtra: """
-        @inline(never) public func stackedValue() -> Int64 { ReplacementValue(40).stack(1,2,3,4,5,6,7,8,9,10,11,12) }
-        """); defer { fixture.cleanup() }
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: fixture.module + ".ReplacementValue",
-            as: Int64.self,
+        let fixture = try CompiledSwiftReplacementFixture(
+            providerExtra: """
+                extension ReplacementValue {
+                    @inline(never) public func stack(_ a: Int64, _ b: Int64, _ c: Int64, _ d: Int64, _ e: Int64, _ f: Int64, _ g: Int64, _ h: Int64, _ i: Int64, _ j: Int64, _ k: Int64, _ l: Int64) -> Int64 { seed+a+b+c+d+e+f+g+h+i+j+k+l }
+                }
+                """,
+            callerExtra: """
+                @inline(never) public func stackedValue() -> Int64 { ReplacementValue(40).stack(1,2,3,4,5,6,7,8,9,10,11,12) }
+                """
+        ); defer { fixture.cleanup() }
+        let type = try await fixture.runtime.resolve(
+            .swift(.type(fixture.module + ".ReplacementValue", as: Int64.self)),
             in: fixture.providerScope
         )
         let method = try await type.resolve(
@@ -177,22 +182,24 @@ struct SwiftValueHookTests {
     }
 
     @Test func mutatingSelfUsesTheCallersAddressAndPreservesEffectsOnFailure() async throws {
-        let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
-        public struct CounterValue {
-            public var count: Int64
-            public init(_ count: Int64) { self.count = count }
-            @inline(never) public mutating func increment(_ delta: Int64) -> Int64 { count += delta; return count }
-        }
-        """, callerExtra: """
-        @inline(never) public func incrementValue(_ seed: Int64, _ delta: Int64) -> Int64 {
-            var value = CounterValue(seed)
-            let result = value.increment(delta)
-            return value.count * 1000 + result
-        }
-        """); defer { fixture.cleanup() }
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: fixture.module + ".CounterValue",
-            as: Int64.self,
+        let fixture = try CompiledSwiftReplacementFixture(
+            providerExtra: """
+                public struct CounterValue {
+                    public var count: Int64
+                    public init(_ count: Int64) { self.count = count }
+                    @inline(never) public mutating func increment(_ delta: Int64) -> Int64 { count += delta; return count }
+                }
+                """,
+            callerExtra: """
+                @inline(never) public func incrementValue(_ seed: Int64, _ delta: Int64) -> Int64 {
+                    var value = CounterValue(seed)
+                    let result = value.increment(delta)
+                    return value.count * 1000 + result
+                }
+                """
+        ); defer { fixture.cleanup() }
+        let type = try await fixture.runtime.resolve(
+            .swift(.type(fixture.module + ".CounterValue", as: Int64.self)),
             in: fixture.providerScope
         )
         let method = try await type.resolve(
@@ -241,9 +248,8 @@ struct SwiftValueHookTests {
         """); defer { fixture.cleanup() }
         // A one-field String wrapper has String's established native storage and
         // ownership. This does not synthesize a general nontrivial struct adapter.
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: fixture.module + ".TextValue",
-            as: String.self,
+        let type = try await fixture.runtime.resolve(
+            .swift(.type(fixture.module + ".TextValue", as: String.self)),
             in: fixture.providerScope
         )
         let method = try await type.resolve(
@@ -275,22 +281,24 @@ struct SwiftValueHookTests {
     }
 
     @Test func mutatingStringSnapshotsObserveNativeWriteback() async throws {
-        let fixture = try CompiledSwiftReplacementFixture(providerExtra: """
-        public struct MutableTextValue {
-            public var text: String
-            public init(_ text: String) { self.text = text }
-            @inline(never) public mutating func append(_ suffix: String) -> String { text += suffix; return text }
-        }
-        """, callerExtra: """
-        @inline(never) public func appendTextValue(_ input: String, _ suffix: String) -> String {
-            var value = MutableTextValue(input)
-            let result = value.append(suffix)
-            return result + "|" + value.text
-        }
-        """); defer { fixture.cleanup() }
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: fixture.module + ".MutableTextValue",
-            as: String.self,
+        let fixture = try CompiledSwiftReplacementFixture(
+            providerExtra: """
+                public struct MutableTextValue {
+                    public var text: String
+                    public init(_ text: String) { self.text = text }
+                    @inline(never) public mutating func append(_ suffix: String) -> String { text += suffix; return text }
+                }
+                """,
+            callerExtra: """
+                @inline(never) public func appendTextValue(_ input: String, _ suffix: String) -> String {
+                    var value = MutableTextValue(input)
+                    let result = value.append(suffix)
+                    return result + "|" + value.text
+                }
+                """
+        ); defer { fixture.cleanup() }
+        let type = try await fixture.runtime.resolve(
+            .swift(.type(fixture.module + ".MutableTextValue", as: String.self)),
             in: fixture.providerScope
         )
         let method = try await type.resolve(
@@ -349,9 +357,8 @@ struct SwiftValueHookTests {
         var object: AnyObject? = try unsafe make.unsafeInvoke()
         weak var observed = object
         let identity = ObjectIdentifier(object!)
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: fixture.module + ".ReferenceValue",
-            as: AnyObject.self,
+        let type = try await fixture.runtime.resolve(
+            .swift(.type(fixture.module + ".ReferenceValue", as: AnyObject.self)),
             in: fixture.providerScope
         )
         let method = try await type.resolve(
@@ -419,9 +426,8 @@ struct SwiftValueHookTests {
         )
         var object: AnyObject? = try unsafe make.unsafeInvoke()
         weak var observed = object
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: fixture.module + ".BoxValue",
-            as: AnyObject.self,
+        let type = try await fixture.runtime.resolve(
+            .swift(.type(fixture.module + ".BoxValue", as: AnyObject.self)),
             in: fixture.providerScope
         )
         let setter = try await type.resolve(
@@ -473,8 +479,8 @@ struct SwiftValueHookTests {
                 """
         )
         defer { fixture.cleanup() }
-        let token = try await fixture.runtime.resolveSwiftType(
-            named: fixture.module + ".HookToken",
+        let token = try await fixture.runtime.resolve(
+            .swift(.type(fixture.module + ".HookToken")),
             in: fixture.providerScope
         )
         let function = try await fixture.runtime.resolve(

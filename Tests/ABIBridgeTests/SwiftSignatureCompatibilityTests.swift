@@ -152,7 +152,9 @@ struct SwiftSignatureCompatibilityTests {
         }
         // Convention wrappers keep the native type, so hooks cannot see a
         // superclass instance as the subclass.
-        let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.CompatibilityBase")
+        let type = try await runtime.resolve(
+            .swift(.type("ManagedSwiftFixtures.CompatibilityBase"))
+        )
         await #expect(throws: ABIResolutionError.self) {
             _ = try await type.resolve(
                 .swift(
@@ -217,7 +219,9 @@ struct SwiftSignatureCompatibilityTests {
     }
 
     @Test func labelOnlyMembersSelectCompatibleDeclarations() async throws {
-        let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.CompatibilityBase")
+        let type = try await runtime.resolve(
+            .swift(.type("ManagedSwiftFixtures.CompatibilityBase"))
+        )
         // Both properties are declared with the subclass type, in the class
         // and in an extension from another module.
         for name in ["derived", "extensionDerived"] {
@@ -267,7 +271,9 @@ struct SwiftSignatureCompatibilityTests {
     }
 
     @Test func protocolRequirementsPrecedeTheirDefaultImplementations() async throws {
-        let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.CompatibilityTagged")
+        let type = try await runtime.resolve(
+            .swift(.type("ManagedSwiftFixtures.CompatibilityTagged"))
+        )
         let set = try await type.resolve(
             .swift(
                 .setter(
@@ -282,9 +288,8 @@ struct SwiftSignatureCompatibilityTests {
     }
 
     @Test func labelOnlyMembersAcceptTheOwnersRepresentation() async throws {
-        let type = try await runtime.resolveSwiftType(
-            named: "ManagedSwiftFixtures.CompatibilityCount",
-            as: HostCount.self
+        let type = try await runtime.resolve(
+            .swift(.type("ManagedSwiftFixtures.CompatibilityCount", as: HostCount.self))
         )
         let make = try await type.resolve(
             .swift(.initializer("init(_:)", as: ((Int64) -> HostCount).self))
@@ -310,8 +315,12 @@ struct SwiftSignatureCompatibilityTests {
     }
 
     @Test func valueABIsLowerClosedValuesOfHostTypes() async throws {
-        let count = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.CompatibilityCount")
-        let valueABIs = [count: try NativeType.structure(named: "CompatibilityCount", fields: [.int64])]
+        let count = try await runtime.resolve(
+            .swift(.type("ManagedSwiftFixtures.CompatibilityCount"))
+        )
+        let valueABIs = [
+            count: try NativeType.structure(named: "CompatibilityCount", fields: [.int64])
+        ]
         let doubled = try await runtime.resolve(
             .swift(
                 .function(
@@ -337,7 +346,7 @@ struct SwiftSignatureCompatibilityTests {
 
     @Test func valueABIsKeepOtherHostRepresentations() async throws {
         let count = "ManagedSwiftFixtures.CompatibilityCount"
-        let int64 = try await runtime.resolveSwiftType(named: "Swift.Int64")
+        let int64 = try await runtime.resolve(.swift(.type("Swift.Int64")))
         let pair = try await runtime.resolve(
             .swift(
                 .function(
@@ -350,7 +359,9 @@ struct SwiftSignatureCompatibilityTests {
         let result = try unsafe pair.unsafeInvoke((HostStoredCount(value: 40), 2))
         #expect(result.0.value == 42 && result.1 == 2)
         // A class reference keeps its subclass conversion.
-        let derived = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.CompatibilityDerived")
+        let derived = try await runtime.resolve(
+            .swift(.type("ManagedSwiftFixtures.CompatibilityDerived"))
+        )
         let name = try await runtime.resolve(
             .swift(
                 .function(
@@ -431,7 +442,9 @@ struct SwiftSignatureCompatibilityTests {
             )
         )
         #expect(try unsafe function.unsafeInvoke() == 41)
-        let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.CompatibilityBase")
+        let type = try await runtime.resolve(
+            .swift(.type("ManagedSwiftFixtures.CompatibilityBase"))
+        )
         let method = try await type.resolve(
             .swift(.method("opaqueCount()", as: (() -> Int64).self))
         )
@@ -439,7 +452,9 @@ struct SwiftSignatureCompatibilityTests {
     }
 
     @Test func hooksRequireTheNativeTypes() async throws {
-        let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.CompatibilityBase")
+        let type = try await runtime.resolve(
+            .swift(.type("ManagedSwiftFixtures.CompatibilityBase"))
+        )
         let make = try await type.resolve(
             .swift(
                 .method(

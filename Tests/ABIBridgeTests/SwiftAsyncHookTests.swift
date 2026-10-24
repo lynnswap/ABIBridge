@@ -145,7 +145,7 @@ struct SwiftAsyncHookTests {
         """)
         defer { fixture.cleanup() }
         let name = fixture.module + ".AsyncHookOwner"
-        let type = try await fixture.runtime.resolveSwiftType(named: name, in: fixture.providerScope)
+        let type = try await fixture.runtime.resolve(.swift(.type(name)), in: fixture.providerScope)
         let method = try await type.resolve(
             .swift(
                 .method(
@@ -236,7 +236,7 @@ struct SwiftAsyncHookTests {
         """)
         defer { fixture.cleanup() }
         let name = fixture.module + ".AsyncTextOwner"
-        let type = try await fixture.runtime.resolveSwiftType(named: name, in: fixture.providerScope)
+        let type = try await fixture.runtime.resolve(.swift(.type(name)), in: fixture.providerScope)
         let method = try await type.resolve(
             .swift(
                 .method(
@@ -317,20 +317,23 @@ struct SwiftAsyncHookTests {
         _ = try unsafe await oracle.unsafeInvoke(1, count)
         count.pointee = 0
         let failures = Mutex(0)
-        let hook = try unsafe await function.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
-            onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value, count in
-                if value == 99 { throw NSError(domain: "async-hook", code: 99) }
-                if value == 98 { throw AsyncHookFailure.rejected }
-                do {
-                    let result = try await call.proceed(value, count)
-                    await Task.yield()
-                    if value == 97 { throw AsyncHookFailure.rejected }
-                    return result + "-hook"
-                } catch {
-                    if value == -8 { throw AsyncHookFailure.rejected }
-                    throw error
-                }
+        let hook = try unsafe await function.hookImportedCalls(
+            in: fixture.callerScope,
+            using: fixture.runtime,
+            onFailure: { _ in failures.withLock { $0 += 1 } }
+        ) { call, value, count in
+            if value == 99 { throw NSError(domain: "async-hook", code: 99) }
+            if value == 98 { throw AsyncHookFailure.rejected }
+            do {
+                let result = try await call.proceed(value, count)
+                await Task.yield()
+                if value == 97 { throw AsyncHookFailure.rejected }
+                return result + "-hook"
+            } catch {
+                if value == -8 { throw AsyncHookFailure.rejected }
+                throw error
             }
+        }
         defer { hook.invalidate() }
         #expect(try unsafe await oracle.unsafeInvoke(98, count) == String(repeating: "value:98", count: 100))
         #expect(try unsafe await oracle.unsafeInvoke(97, count) == String(repeating: "value:97", count: 100))
@@ -593,9 +596,8 @@ struct SwiftAsyncHookTests {
         }
         """)
         defer { fixture.cleanup() }
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: fixture.module + ".AsyncHookCounter",
-            as: Int64.self,
+        let type = try await fixture.runtime.resolve(
+            .swift(.type(fixture.module + ".AsyncHookCounter", as: Int64.self)),
             in: fixture.providerScope
         )
         let method = try await type.resolve(
@@ -698,8 +700,8 @@ struct SwiftAsyncHookTests {
         }
         """)
         defer { fixture.cleanup() }
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: fixture.module + ".AsyncConsumedOwner",
+        let type = try await fixture.runtime.resolve(
+            .swift(.type(fixture.module + ".AsyncConsumedOwner")),
             in: fixture.providerScope
         )
         let method = try await type.resolve(

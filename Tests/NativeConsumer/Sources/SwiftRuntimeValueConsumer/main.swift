@@ -25,8 +25,12 @@ private struct Prepared {
     defer { dlclose(loader) }
     let runtime = ABIRuntime()
     let scope = ImageSelector.path(URL(fileURLWithPath: path))
-    let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.RuntimeRecord", in: scope)
-    return try await Prepared(type: type,
+    let type = try await runtime.resolve(
+        .swift(.type("ManagedSwiftFixtures.RuntimeRecord")),
+        in: scope
+    )
+    return try await Prepared(
+        type: type,
         text: type.resolve(
             .swift(.getter("text", as: (() -> String).self, receiverABI: .opaque(named: type.name)))
         ),
@@ -526,8 +530,10 @@ state.closure = nil
 guard state.text == "destroyed" else { throw ConsumerError.wrongResult }
 print("Consuming nested closure inputs remain callable after delivery and release captures exactly once")
 
-
-let pairType = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair", in: source)
+let pairType = try await runtime.resolve(
+    .swift(.type("ManagedSwiftFixtures.RuntimeFixedPair")),
+    in: source
+)
 let pairABI = try NativeType.structure(named: pairType.name, fields: [.int64, .int64])
 let pairABIs = [pairType: pairABI]
 let makePair = try await runtime.resolve(
@@ -927,10 +933,15 @@ let opaqueClosure = try await runtime.resolve(
     in: source
 )
 let closureResult = try unsafe opaqueClosure.unsafeInvoke("closure")
-guard try unsafe closureResult.unsafeInvoke().withCopy({ $0 as? String }) == "closure" else { throw ConsumerError.wrongResult }
-let opaqueOwner = try await runtime.resolveSwiftType(
-    named: "ManagedSwiftFixtures.RuntimeOpaqueOwner",
-    in: source, genericArguments: [.type(String.self)])
+guard try unsafe closureResult.unsafeInvoke().withCopy({ $0 as? String }) == "closure" else {
+    throw ConsumerError.wrongResult
+}
+let opaqueOwner = try await runtime.resolve(
+    .swift(
+        .type("ManagedSwiftFixtures.RuntimeOpaqueOwner", genericArguments: [.type(String.self)])
+    ),
+    in: source
+)
 let ownerInit = try await opaqueOwner.resolve(
     .swift(.initializer("init(_:)", as: ((String) -> AnyObject).self))
 )
@@ -1042,8 +1053,8 @@ let scopedCounts = try await runtime.resolve(
     ),
     in: source
 )
-let scopedType = try await runtime.resolveSwiftType(
-    named: "ManagedSwiftFixtures.RuntimeScopedResult",
+let scopedType = try await runtime.resolve(
+    .swift(.type("ManagedSwiftFixtures.RuntimeScopedResult")),
     in: source
 )
 let scopedRead = try await scopedType.resolve(
@@ -1098,7 +1109,10 @@ guard let callerLoader = dlopen(callerPath.path, RTLD_NOW | RTLD_LOCAL) else { t
 defer { dlclose(callerLoader) }
 let providerScope = ImageSelector.path(providerPath)
 let callerScope = ImageSelector.path(callerPath)
-let ticketType = try await runtime.resolveSwiftType(named: "SwiftImportProvider.HookTicket", in: providerScope)
+let ticketType = try await runtime.resolve(
+    .swift(.type("SwiftImportProvider.HookTicket")),
+    in: providerScope
+)
 let ticketMove = try await runtime.resolve(
     .swift(
         .function(

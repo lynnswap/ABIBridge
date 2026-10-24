@@ -8,18 +8,18 @@ struct SearchBenchmark {
     static func run(in directory: URL) async throws {
         for count in [100, 1000, 10000] {
             let function = "f\(count - 1)"
-            let workloads: [(String, String, NativeDeclaration, String)] = [
+            let workloads: [(String, String, NativeRequest<NativeSymbolLookupRequest>, String)] = [
                 (
-                    "C++", "libSymbols", .init(name: "LookupBench::\(function)()", language: .cxx),
+                    "C++", "libSymbols", .cxx(.symbol("LookupBench::\(function)()")),
                     "__ZN11LookupBench\(function.utf8.count)\(function)Ev"
                 ),
                 (
-                    "C", "libSymbols", .init(name: "lookup_C\(count - 1)", language: .c),
+                    "C", "libSymbols", .c(.symbol("lookup_C\(count - 1)")),
                     "_lookup_C\(count - 1)"
                 ),
                 (
                     "Swift", "libSwiftSymbols",
-                    .init(name: "SwiftLookupBench.\(function)() -> Swift.Int32", language: .swift),
+                    .swift(.symbol("SwiftLookupBench.\(function)() -> Swift.Int32")),
                     "_$s16SwiftLookupBench\(function.utf8.count)\(function)s5Int32VyF"
                 ),
             ]

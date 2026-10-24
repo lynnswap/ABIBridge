@@ -12,7 +12,7 @@ import Synchronization
     }
     let provider = path("SwiftImportProvider"), caller = path("SwiftImportCallerControl")
     let name = "SwiftImportProvider.HookRenderer"
-    let type = try await runtime.resolveSwiftType(named: name, in: provider)
+    let type = try await runtime.resolve(.swift(.type(name)), in: provider)
     let make = try await runtime.resolve(
         .swift(
             .function(
@@ -143,7 +143,7 @@ import Synchronization
     consumed.invalidate()
     try check(try unsafe consumeOracle.unsafeInvoke(object!, 2) == 32, "Consuming fallback preserves the compiler ownership convention")
     let childName = "SwiftImportCallerControl.CallerOverridingRenderer"
-    let childType = try await runtime.resolveSwiftType(named: childName, in: caller)
+    let childType = try await runtime.resolve(.swift(.type(childName)), in: caller)
     let makeChild = try await runtime.resolve(
         .swift(
             .function(
@@ -248,8 +248,8 @@ private func validateClassMemberHooks(
         return kindResult == kind && levelResult == level
     }
     for (index, name) in names.enumerated() {
-        let type = try await runtime.resolveSwiftType(
-            named: "SwiftImportProvider." + name,
+        let type = try await runtime.resolve(
+            .swift(.type("SwiftImportProvider." + name)),
             in: provider
         )
         let kind = try await type.resolve(

@@ -74,7 +74,7 @@ final class CompiledSwiftReplacementFixture {
     var callerScope: ImageSelector { .path(caller.libraryURL) }
     func symbol(_ name: String) async throws -> ResolvedSymbol {
         try runtime.resolveAndWait(
-            .init(name: module + "." + name, language: .swift),
+            .swift(.symbol(module + "." + name)),
             in: providerScope
         )
     }
@@ -86,16 +86,12 @@ final class CompiledSwiftReplacementFixture {
     ) async throws {
         let original = try await symbol("ReplacementRenderer." + name)
         let replacement = try await symbol("ReplacementRenderer." + replacement)
-        let type = try await runtime.resolveSwiftType(
-            named: module + ".ReplacementRenderer",
+        let type = try await runtime.resolve(
+            .swift(.type(module + ".ReplacementRenderer")),
             in: providerScope
         )
         let descriptor = try runtime.resolveAndWait(
-            .init(
-                name: "nominal type descriptor for " + type.name,
-                language: .swift,
-                kind: .data
-            ),
+            .swift(.symbol("nominal type descriptor for " + type.name, kind: .data)),
             in: providerScope
         )
         let metadata = unsafeBitCast(await type.metadata, to: UnsafeMutableRawPointer.self)

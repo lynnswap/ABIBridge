@@ -116,7 +116,7 @@ struct SwiftObjectConsumer {
         defer { dlclose(loader) }
         let runtime = ABIRuntime()
         var original: ResolvedSymbol? = try runtime.resolveAndWait(
-            .init(name: "ABIBridgeFixture::counter", language: .cxx, kind: .data),
+            .cxx(.symbol("ABIBridgeFixture::counter", kind: .data)),
             in: .path(url)
         )
         let exported = unsafe original!.copyNativeHandle()

@@ -39,7 +39,7 @@ Save a Swift member declaration with `NativeRequest.swift(...)`. The same reques
 
 ```swift
 let request = NativeRequest.swift(.method("start()", as: (() -> Void).self))
-let type = try await runtime.resolveSwiftType(named: "Example.Renderer")
+let type = try await runtime.resolve(.swift(.type("Example.Renderer")))
 let start = try await type.resolve(request)
 try unsafe start.unsafeInvoke(on: renderer)
 
@@ -93,7 +93,7 @@ An absent declaration or specialization with no applicable candidate reports `AB
 ## Reuse a type
 
 ```swift
-let type = try ABIRuntime.shared.resolveSwiftTypeAndWait(named: "Example.Renderer")
+let type = try ABIRuntime.shared.resolveAndWait(.swift(.type("Example.Renderer")))
 let start = try type.resolveAndWait(.swift(.method("start()", as: (() -> Void).self)))
 let stop = try type.resolveAndWait(.swift(.method("stop()", as: (() -> Void).self)))
 try unsafe start.unsafeInvoke(on: renderer)
@@ -109,7 +109,7 @@ Concrete members capture the selected implementation. Lookup prefers declaration
 A library-evolution framework can export only the dispatch thunk and method descriptor of an open or nonfinal class member, without its implementation symbol. Method, getter, and setter lookup on a class then reads the member's code from the lookup type's class metadata entry:
 
 ```swift
-let view = try ABIRuntime.shared.resolveSwiftTypeAndWait(named: "Example.CanvasView")
+let view = try ABIRuntime.shared.resolveAndWait(.swift(.type("Example.CanvasView")))
 let setShowsGrid = try view.resolveAndWait(.swift(.setter("showsGrid", as: ((Bool) -> Void).self)))
 try unsafe setShowsGrid.unsafeInvoke(on: canvas, true)
 ```
@@ -139,7 +139,7 @@ Getter, setter, and static member requests use the same rule. A protocol-qualifi
 A name qualified by the protocol, label-only or complete, selects a requirement of any kind: methods, getters and setters, subscript accessors, static members, and initializers. Use the request for the member's kind:
 
 ```swift
-let type = try runtime.resolveSwiftTypeAndWait(named: "Example.Tile")
+let type = try runtime.resolveAndWait(.swift(.type("Example.Tile")))
 let make = try type.resolveAndWait(.swift(.initializer(
     "Example.Shape.init(size:)", as: ((Int64) -> AnyObject).self
 )))
@@ -184,7 +184,7 @@ Lookup binds `Self` to the builder's concrete type and resolves `Request`, `Cont
 For an owned `NativeSwiftValue` named `receiver` whose concrete type conforms to `Example.Provider`, use the complete protocol getter declaration:
 
 ```swift
-let payloadType = try runtime.resolveSwiftTypeAndWait(named: "Example.Payload")
+let payloadType = try runtime.resolveAndWait(.swift(.type("Example.Payload")))
 let getter = try receiver.type.resolveAndWait(.swift(.getter(
     "Example.Provider.payload.getter : Example.Payload",
     as: (() -> NativeSwiftValue).self,
@@ -199,7 +199,7 @@ Lookup checks the native conformance before invocation and retains the protocol 
 
 ## Await type and member preparation
 
-Types and objects resolve member requests with async `resolve` and synchronous `resolveAndWait`, and `ABIRuntime` resolves type lookups with `resolveSwiftType` and `resolveSwiftTypeAndWait`. Async lookup moves search, metadata, and call preparation to a worker queue while the caller suspends. `AndWait` runs on the caller's thread or blocks while joining required work already running. Both reuse indexes and call layouts. `ABIRuntime` and `NativeSwiftType` are actors.
+Types and objects resolve member requests with async `resolve` and synchronous `resolveAndWait`. `ABIRuntime` uses the same pair for `.swift(.type(...))` requests. Async lookup moves search, metadata, and call preparation to a worker queue while the caller suspends. `AndWait` runs on the caller's thread or blocks while joining required work already running. Both reuse indexes and call layouts. `ABIRuntime` and `NativeSwiftType` are actors.
 
 Use async resolution on `MainActor` without an earlier `prepare` call:
 
@@ -208,7 +208,7 @@ Use async resolution on `MainActor` without an earlier `prepare` call:
 func readText(
     from renderer: AnyObject, using runtime: ABIRuntime = .shared
 ) async throws -> String {
-    let type = try await runtime.resolveSwiftType(named: "Example.Renderer")
+    let type = try await runtime.resolve(.swift(.type("Example.Renderer")))
     let getText = try await type.resolve(.swift(.getter("text", as: (() -> String).self)))
     return try unsafe getText.unsafeInvoke(on: renderer)
 }
@@ -223,7 +223,7 @@ Optional `prepare(_:)` can start the same work ahead of lookup. Keep the receive
 func readTextWithPreparation(from renderer: AnyObject) async throws -> String {
     let runtime = ABIRuntime.shared
     async let preparation = runtime.prepare { runtime in
-        let type = try runtime.resolveSwiftTypeAndWait(named: "Example.Renderer")
+        let type = try runtime.resolveAndWait(.swift(.type("Example.Renderer")))
         return try type.resolveAndWait(.swift(.getter("text", as: (() -> String).self)))
     }
 
@@ -259,7 +259,7 @@ Initializer and static member requests follow the same async lookup contract. Fo
 ```swift
 @MainActor
 func makeRenderer() async throws -> AnyObject {
-    let type = try await ABIRuntime.shared.resolveSwiftType(named: "Example.Renderer")
+    let type = try await ABIRuntime.shared.resolve(.swift(.type("Example.Renderer")))
     let initialize = try await type.resolve(.swift(.initializer(
         "init(text:)", as: ((String) -> AnyObject).self
     )))
@@ -352,11 +352,9 @@ The setter consumes `replacement` and `setterKey`; the original `key` remains us
 Resolve a computed property's native `WritableKeyPath` when its root or value type is unavailable at compile time:
 
 ```swift
-let settings = try await runtime.resolveSwiftType(named: "Example.Settings")
-let theme = try await runtime.resolveSwiftType(named: "Example.Theme")
-let themePath = try await settings.resolveWritableKeyPath(
-    named: "theme", valueType: theme
-)
+let settings = try await runtime.resolve(.swift(.type("Example.Settings")))
+let theme = try await runtime.resolve(.swift(.type("Example.Theme")))
+let themePath = try await settings.resolve(.swift(.writableKeyPath("theme", valueType: theme)))
 ```
 
 The result is a ``NativeSwiftValue`` containing the actual `WritableKeyPath<Settings, Theme>`, or its `ReferenceWritableKeyPath` subclass for a nonmutating setter. Its property identity, equality, and hashing match a compiler-generated key path for that property. You can pass the owned value to a compatible native call, inspect an `AnyKeyPath` copy with `withCopy`, or use `take(as:)` with the exact key-path type when both types are importable. Copies retain the property's implementation images through the value handle's lifetime; keep the handle or its type alive if an extracted key path outlives the extraction scope.
@@ -364,23 +362,19 @@ The result is a ``NativeSwiftValue`` containing the actual `WritableKeyPath<Sett
 For a property defined in another module, supply its complete extension-qualified name:
 
 ```swift
-let themePath = try await settings.resolveWritableKeyPath(
-    named: "(extension in Themes):Example.Settings.theme", valueType: theme
-)
+let themePath = try await settings.resolve(.swift(.writableKeyPath("(extension in Themes):Example.Settings.theme", valueType: theme)))
 ```
 
-The extension module must already be loaded. `resolveWritableKeyPathAndWait` performs the same operation synchronously. Async lookup prepares the descriptor on a worker and creates the owned value in the caller's isolation domain. Neither form reads or changes a root value.
+The extension module must already be loaded. Pass the same `.swift(.writableKeyPath(...))` request to `resolveAndWait` for synchronous resolution. Async lookup prepares the descriptor on a worker and creates the owned value in the caller's isolation domain. Neither form reads or changes a root value.
 
 Applying an extracted key path invokes the native accessors synchronously. Apply it only on the actor or thread required by the property; the key path does not perform an actor hop.
 
 For KVC/KVO APIs such as `NSObject.observe`, supply the property's actual Objective-C key. For example, a property declared as `@objc(displayTitle) var title: String` uses `displayTitle`:
 
 ```swift
-let rendererType = try await runtime.resolveSwiftType(named: "Example.Renderer")
-let stringType = try await runtime.resolveSwiftType(named: "Swift.String")
-let titlePath = try await rendererType.resolveWritableKeyPath(
-    named: "title", valueType: stringType, keyValueCodingKey: "displayTitle"
-)
+let rendererType = try await runtime.resolve(.swift(.type("Example.Renderer")))
+let stringType = try await runtime.resolve(.swift(.type("Swift.String")))
+let titlePath = try await rendererType.resolve(.swift(.writableKeyPath("title", valueType: stringType, keyValueCodingKey: "displayTitle")))
 ```
 
 The key-path object retains its KVC string after extraction or copying. The provider's declaration must establish that the supplied key refers to the same property; lookup cannot validate that correspondence. The root and property must meet the KVC/KVO API's usual requirements. Omitting `keyValueCodingKey` leaves the KVC compatibility string absent, while preserving Swift access, equality, and hashing.
@@ -392,9 +386,7 @@ This operation requires a non-generic root and a nontrivial property descriptor 
 For a supported fixed-layout value or a value conforming to ABIBridgeValue:
 
 ```swift
-let pointType = try runtime.resolveSwiftTypeAndWait(
-    named: "Example.Point", as: Point.self
-)
+let pointType = try runtime.resolveAndWait(.swift(.type("Example.Point", as: Point.self)))
 let translate = try pointType.resolveAndWait(.swift(.method(
     "translate(_:)", as: ((Double) -> Void).self,
     receiver: .mutating

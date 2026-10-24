@@ -24,7 +24,7 @@ func prepare(_ path: String, extensionPath: String) async throws -> [NativeBound
     defer { dlclose(original) }
     let runtime = ABIRuntime()
     let scope = ImageSelector.path(URL(fileURLWithPath: path))
-    let type = try await runtime.resolveSwiftType(named: "SwiftFunctionFixture.Renderer", in: scope)
+    let type = try await runtime.resolve(.swift(.type("SwiftFunctionFixture.Renderer")), in: scope)
     let initialize = try await type.resolve(
         .swift(
             .initializer(
@@ -45,8 +45,9 @@ func prepare(_ path: String, extensionPath: String) async throws -> [NativeBound
     let standardText = try unsafe standard.unsafeInvoke()
     precondition(standardText == "standard")
 
-    let pointType = try await runtime.resolveSwiftType(
-        named: "SwiftFunctionFixture.Point", as: ForeignPoint.self, in: type.image
+    let pointType = try await runtime.resolve(
+        .swift(.type("SwiftFunctionFixture.Point", as: ForeignPoint.self)),
+        in: type.image
     )
     let pointInitializer = try await pointType.resolve(
         .swift(

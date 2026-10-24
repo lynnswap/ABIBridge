@@ -177,9 +177,9 @@ struct SwiftExplicitValueTests {
     }
 
     @Test func memberInitializationAndSetterTransferOwnedEnumPayloads() async throws {
-        let type = try await ABIRuntime.shared.resolveSwiftType(
-            named: "ManagedSwiftFixtures.ExplicitValueStore",
-                                                         as: ExplicitValueStore.self)
+        let type = try await ABIRuntime.shared.resolve(
+            .swift(.type("ManagedSwiftFixtures.ExplicitValueStore", as: ExplicitValueStore.self))
+        )
         let create = try await type.resolve(
             .swift(
                 .initializer(
@@ -209,14 +209,16 @@ struct SwiftExplicitValueTests {
 
     @Test func invalidStorageExtentFailsBeforeInvokingACallback() throws {
         var invoked = false
-        try unsafe NativeSwiftClosure<(UndersizedSwiftValue) -> UndersizedSwiftValue>.withUnsafeNonescaping({ value in
-            invoked = true
-            return value
-        }) { callback in
-            #expect(throws: ABIResolutionError.self) {
-                try unsafe callback.unsafeInvoke(UndersizedSwiftValue(first: 1, second: 2)) as UndersizedSwiftValue
+        try unsafe NativeSwiftClosure<(UndersizedSwiftValue) -> UndersizedSwiftValue>
+            .withUnsafeNonescaping({ value in
+                invoked = true
+                return value
+            }) { callback in
+                #expect(throws: ABIResolutionError.self) {
+                    try unsafe callback.unsafeInvoke(UndersizedSwiftValue(first: 1, second: 2))
+                        as UndersizedSwiftValue
+                }
             }
-        }
         #expect(!invoked)
     }
 }

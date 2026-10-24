@@ -225,7 +225,9 @@ struct SwiftArgumentConventionTests {
     }
 
     @Test func initializersMixBorrowedAndConsumedArguments() async throws {
-        let type = try await ABIRuntime.shared.resolveSwiftType(named: "ManagedSwiftFixtures.ArgumentOwner")
+        let type = try await ABIRuntime.shared.resolve(
+            .swift(.type("ManagedSwiftFixtures.ArgumentOwner"))
+        )
         let make = try await type.resolve(
             .swift(
                 .initializer(
@@ -251,9 +253,8 @@ struct SwiftArgumentConventionTests {
     }
 
     @Test func receiverAndExplicitInoutArgumentsHaveSeparateWriteback() async throws {
-        let type = try await ABIRuntime.shared.resolveSwiftType(
-            named: "ManagedSwiftFixtures.ArgumentCounter",
-            as: ArgumentCounter.self
+        let type = try await ABIRuntime.shared.resolve(
+            .swift(.type("ManagedSwiftFixtures.ArgumentCounter", as: ArgumentCounter.self))
         )
         let update = try await type.resolve(
             .swift(
@@ -304,7 +305,9 @@ struct SwiftArgumentConventionTests {
     }
 
     @Test func asyncInitializersRetainBorrowedArgumentsUntilCompletion() async throws {
-        let type = try await ABIRuntime.shared.resolveSwiftType(named: "ManagedSwiftFixtures.ArgumentOwner")
+        let type = try await ABIRuntime.shared.resolve(
+            .swift(.type("ManagedSwiftFixtures.ArgumentOwner"))
+        )
         let make = try await type.resolve(
             .swift(
                 .initializer(

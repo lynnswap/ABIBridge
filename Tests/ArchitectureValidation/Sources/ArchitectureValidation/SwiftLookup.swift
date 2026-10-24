@@ -31,12 +31,14 @@ import SwiftReplacementFixtures
     }
     for pass in ["cold", "warm"] {
         try await measure("nominal descriptor \(pass)", repetitions: pass == "warm" ? 100 : 1) {
-            _ = try runtime.resolveAndWait(declaration)
+            _ = try runtime.resolveAndWait(
+                .swift(.symbol(declaration.name, kind: declaration.kind))
+            )
         }
     }
-    let base = try await runtime.resolveSwiftType(named: module + ".ReplacementRenderer")
-    let child = try await runtime.resolveSwiftType(
-        named: module + ".InheritedRenderer",
+    let base = try await runtime.resolve(.swift(.type(module + ".ReplacementRenderer")))
+    let child = try await runtime.resolve(
+        .swift(.type(module + ".InheritedRenderer")),
         in: base.image,
         loading: .loadedOnly
     )
@@ -70,11 +72,7 @@ import SwiftReplacementFixtures
     ] {
         try await measure("different module: \(typeName)") {
             _ = try runtime.resolveAndWait(
-                .init(
-                    name: "nominal type descriptor for " + typeName,
-                    language: .swift,
-                    kind: .data
-                )
+                .swift(.symbol("nominal type descriptor for " + typeName, kind: .data))
             )
         }
     }
@@ -83,7 +81,7 @@ import SwiftReplacementFixtures
         let absent = NativeDeclaration(name: module + ".missing() -> ()", language: .swift)
         try await measure("absent module: \(module)") {
             do {
-                _ = try runtime.resolveAndWait(absent)
+                _ = try runtime.resolveAndWait(.swift(.symbol(absent.name, kind: absent.kind)))
                 throw ArchitectureValidationFailure(
                     description: "Absent module unexpectedly resolved"
                 )
@@ -104,7 +102,7 @@ import SwiftReplacementFixtures
         ) {
             do {
                 _ = try runtime.resolveAndWait(
-                    scopedAbsent,
+                    .swift(.symbol(scopedAbsent.name, kind: scopedAbsent.kind)),
                     in: .framework(named: "Foundation"),
                     loading: .loadedOnly
                 )

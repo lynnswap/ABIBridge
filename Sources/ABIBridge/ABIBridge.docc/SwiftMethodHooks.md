@@ -7,7 +7,7 @@ Inspect a Swift method's receiver, edit object properties or arguments, and tran
 Resolve the class and method using source names and an ordinary Swift function type:
 
 ```swift
-let renderer = try await runtime.resolveSwiftType(named: "Rendering.Renderer")
+let renderer = try await runtime.resolve(.swift(.type("Rendering.Renderer")))
 let render = try await renderer.resolve(.swift(.method(
     "render(_:)", as: ((String) -> String).self
 )))
@@ -34,7 +34,7 @@ Other images call a library-evolution class member through its dispatch thunk, w
 Resolve a concrete conforming type, then qualify the member with its protocol:
 
 ```swift
-let counter = try await runtime.resolveSwiftType(named: "Rendering.Counter")
+let counter = try await runtime.resolve(.swift(.type("Rendering.Counter")))
 let read = try await counter.resolve(.swift(.method(
     "Rendering.Readable.read(_:)", as: ((Int64) -> Int64).self
 )))
@@ -56,7 +56,7 @@ Slot identity comes from protocol requirement descriptors. When a binary has no 
 A `class func`, and a `class var`'s or `class subscript`'s getter and setter, receive their class's metatype as `self` and dispatch through entries of the class's metadata, which subclasses copy and override as they do instance entries. Resolve them with `staticMethod`, `staticGetter`, or `staticSetter` requests, then hook the returned `NativeSwiftFunction`:
 
 ```swift
-let preview = try await runtime.resolveSwiftType(named: "Rendering.PreviewRenderer")
+let preview = try await runtime.resolve(.swift(.type("Rendering.PreviewRenderer")))
 let scale = try await preview.resolve(.swift(.staticMethod(
     "scale(for:)", as: ((Double) -> Double).self
 )))
@@ -80,9 +80,7 @@ Virtual async methods use the class metadata's or conformance witness table's as
 Imported-member hooks also accept the concrete value representation selected during type lookup. For a native counter whose fixed storage is one `Int64`:
 
 ```swift
-let counter = try await runtime.resolveSwiftType(
-    named: "Rendering.Counter", as: Int64.self
-)
+let counter = try await runtime.resolve(.swift(.type("Rendering.Counter", as: Int64.self)))
 let increment = try await counter.resolve(.swift(.method(
     "increment(_:)", as: ((Int64) -> Int64).self,
     receiver: .mutating

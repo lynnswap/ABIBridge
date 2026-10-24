@@ -107,8 +107,8 @@ struct SwiftHookDeclarationTests {
     func classMembersAreInterceptedAtTheirDispatchThunkImports(stripped: Bool) async throws {
         let fixture = try DispatchedHookFixture(stripped: stripped)
         defer { fixture.cleanup() }
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: fixture.module + ".Dispatched",
+        let type = try await fixture.runtime.resolve(
+            .swift(.type(fixture.module + ".Dispatched")),
             in: fixture.providerScope
         )
         let value = try await type.resolve(
@@ -171,8 +171,8 @@ struct SwiftHookDeclarationTests {
     @Test func protocolRequirementsAreInterceptedAtTheirDispatchThunkImports() async throws {
         let fixture = try DispatchedHookFixture(stripped: false)
         defer { fixture.cleanup() }
-        let first = try await fixture.runtime.resolveSwiftType(
-            named: fixture.module + ".FirstValued",
+        let first = try await fixture.runtime.resolve(
+            .swift(.type(fixture.module + ".FirstValued")),
             in: fixture.providerScope
         )
         let requirement = try await first.resolve(
@@ -226,8 +226,8 @@ struct SwiftHookDeclarationTests {
         defer { library.cleanup() }
         let runtime = ABIRuntime()
         let scope = ImageSelector.path(library.libraryURL)
-        let small = try await runtime.resolveSwiftType(named: module + ".SmallRecord", in: scope)
-        let large = try await runtime.resolveSwiftType(named: module + ".LargeRecord", in: scope)
+        let small = try await runtime.resolve(.swift(.type(module + ".SmallRecord")), in: scope)
+        let large = try await runtime.resolve(.swift(.type(module + ".LargeRecord")), in: scope)
         let valueABIs: [NativeSwiftType: NativeType] = [
             small: try .structure(named: "SmallRecord", fields: [.int64]),
             large: try .structure(named: "LargeRecord", fields: Array(repeating: .int64, count: 5)),
@@ -274,8 +274,8 @@ struct SwiftHookDeclarationTests {
             _ = try unsafe makeLarge.prepareImportedReplacementAndWait(with: makeSmall, in: scope)
         }
         // A generic method passes its value by address, with its metadata.
-        let renderer = try await runtime.resolveSwiftType(
-            named: module + ".LoweringRenderer",
+        let renderer = try await runtime.resolve(
+            .swift(.type(module + ".LoweringRenderer")),
             in: scope
         )
         let generic = try await renderer.resolve(
@@ -365,7 +365,7 @@ struct SwiftHookDeclarationTests {
             in: callerScope
         )
         func scaled(_ type: String) async throws -> NativeSwiftFunction<(Int64) -> Int64> {
-            try await runtime.resolveSwiftType(named: module + "." + type, in: scope)
+            try await runtime.resolve(.swift(.type(module + "." + type)), in: scope)
                 .resolve(.swift(.staticMethod("scaled(_:)", as: ((Int64) -> Int64).self)))
         }
         for (type, factor) in [("ScaledValue", Int64(3)), ("ScaledChoice", 4)] {
@@ -444,7 +444,7 @@ struct SwiftHookDeclarationTests {
         let scope = ImageSelector.path(provider.libraryURL)
         let callerScope = ImageSelector.path(caller.libraryURL)
         func advance(_ type: String) async throws -> NativeSwiftMethod<() -> Int64> {
-            try await runtime.resolveSwiftType(named: module + "." + type, in: scope)
+            try await runtime.resolve(.swift(.type(module + "." + type)), in: scope)
                 .resolve(.swift(.method("advance()", as: (() -> Int64).self, receiver: .mutating)))
         }
         let call = try await runtime.resolve(

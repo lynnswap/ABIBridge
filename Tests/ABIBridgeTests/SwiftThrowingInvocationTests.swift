@@ -52,9 +52,9 @@ extension ThrowingCounter: ABIBridgeSwiftValue {
 
 struct SwiftThrowingInvocationTests {
     @Test func mutationWritesBackEvenWhenNativeCodeThrows() async throws {
-        let type = try await ABIRuntime.shared.resolveSwiftType(
-            named: "ManagedSwiftFixtures.ThrowingCounter",
-                                                         as: ThrowingCounter.self)
+        let type = try await ABIRuntime.shared.resolve(
+            .swift(.type("ManagedSwiftFixtures.ThrowingCounter", as: ThrowingCounter.self))
+        )
         let advance = try await type.resolve(
             .swift(
                 .method(
@@ -315,7 +315,9 @@ struct SwiftThrowingInvocationTests {
     }
 
     @Test func throwingInitializerAndMemberPreserveErrorAndArgumentOwnership() async throws {
-        let type = try await ABIRuntime.shared.resolveSwiftType(named: "ManagedSwiftFixtures.ThrowingOwner")
+        let type = try await ABIRuntime.shared.resolve(
+            .swift(.type("ManagedSwiftFixtures.ThrowingOwner"))
+        )
         let initialize = try await type.resolve(
             .swift(
                 .initializer(

@@ -11,8 +11,8 @@ struct SwiftWitnessDispatchTests {
             libraryEvolution: evolution
         )
         defer { fixture.cleanup() }
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: fixture.module + ".WitnessValue",
+        let type = try await fixture.runtime.resolve(
+            .swift(.type(fixture.module + ".WitnessValue")),
             in: fixture.providerScope
         )
         let name = fixture.module + ".Witnessed.read(_:)"
@@ -63,8 +63,8 @@ struct SwiftWitnessDispatchTests {
             libraryEvolution: evolution
         )
         defer { fixture.cleanup() }
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: fixture.module + ".WitnessValue",
+        let type = try await fixture.runtime.resolve(
+            .swift(.type(fixture.module + ".WitnessValue")),
             in: fixture.providerScope
         )
         let method = try await type.resolve(
@@ -109,8 +109,8 @@ struct SwiftWitnessDispatchTests {
             libraryEvolution: evolution
         )
         defer { fixture.cleanup() }
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: fixture.module + ".WitnessValue",
+        let type = try await fixture.runtime.resolve(
+            .swift(.type(fixture.module + ".WitnessValue")),
             in: fixture.providerScope
         )
         let protocolName = fixture.module + ".Witnessed."
@@ -233,15 +233,13 @@ struct SwiftWitnessDispatchTests {
             in: fixture.callerScope
         )
         for (base, which) in [("WitnessBox", Int64(2)), ("WitnessConditional", Int64(4))] {
-            let int = try await fixture.runtime.resolveSwiftType(
-                named: fixture.module + "." + base,
-                in: fixture.providerScope,
-                genericArguments: [.type(Int64.self)]
+            let int = try await fixture.runtime.resolve(
+                .swift(.type(fixture.module + "." + base, genericArguments: [.type(Int64.self)])),
+                in: fixture.providerScope
             )
-            let string = try await fixture.runtime.resolveSwiftType(
-                named: fixture.module + "." + base,
-                in: fixture.providerScope,
-                genericArguments: [.type(String.self)]
+            let string = try await fixture.runtime.resolve(
+                .swift(.type(fixture.module + "." + base, genericArguments: [.type(String.self)])),
+                in: fixture.providerScope
             )
             let name = fixture.module + ".Witnessed.read(_:)"
             let first = try await int.resolve(.swift(.method(name, as: ((Int64) -> Int64).self)))
@@ -278,15 +276,15 @@ struct SwiftWitnessDispatchTests {
             libraryEvolution: evolution
         )
         defer { fixture.cleanup() }
-        let int = try await fixture.runtime.resolveSwiftType(
-            named: fixture.module + ".WitnessShared",
-            in: fixture.providerScope,
-            genericArguments: [.type(Int64.self)]
+        let int = try await fixture.runtime.resolve(
+            .swift(.type(fixture.module + ".WitnessShared", genericArguments: [.type(Int64.self)])),
+            in: fixture.providerScope
         )
-        let string = try await fixture.runtime.resolveSwiftType(
-            named: fixture.module + ".WitnessShared",
-            in: fixture.providerScope,
-            genericArguments: [.type(String.self)]
+        let string = try await fixture.runtime.resolve(
+            .swift(
+                .type(fixture.module + ".WitnessShared", genericArguments: [.type(String.self)])
+            ),
+            in: fixture.providerScope
         )
         let name = fixture.module + ".SharedWitnessed.read(_:)"
         let method = try await int.resolve(.swift(.method(name, as: ((Int64) -> Int64).self)))
@@ -332,8 +330,8 @@ struct SwiftWitnessDispatchTests {
                 """
         )
         defer { fixture.cleanup() }
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: fixture.module + ".FoldedValue",
+        let type = try await fixture.runtime.resolve(
+            .swift(.type(fixture.module + ".FoldedValue")),
             in: fixture.providerScope
         )
         let first = try await type.resolve(

@@ -34,7 +34,7 @@ Use ``ImageSelector/installName(_:)`` for loader syntax rather than constructing
 
 ```swift
 let symbol = try runtime.resolveAndWait(
-    declaration,
+    .cxx(.symbol("Example::Renderer::version()")),
     in: .installName("@rpath/Example.framework/Example")
 )
 ```
@@ -49,7 +49,7 @@ To resolve within an explicit scope without requesting loading or initialization
 
 ```swift
 let symbol = try runtime.resolveAndWait(
-    declaration, in: .path(binaryURL), loading: .loadedOnly
+    .cxx(.symbol("Example::Renderer::version()")), in: .path(binaryURL), loading: .loadedOnly
 )
 ```
 

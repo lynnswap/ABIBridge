@@ -5,7 +5,7 @@ Select a class method by its source declaration and replace the entry in that cl
 ## Prepare and publish
 
 ```swift
-let type = try runtime.resolveSwiftTypeAndWait(named: "Rendering.Renderer")
+let type = try runtime.resolveAndWait(.swift(.type("Rendering.Renderer")))
 let method = try type.resolveAndWait(.swift(.method(
     "render(_:)", as: ((String) -> String).self
 )))

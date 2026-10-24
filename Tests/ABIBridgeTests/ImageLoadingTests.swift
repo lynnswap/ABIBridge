@@ -31,7 +31,11 @@ struct ImageLoadingTests {
         #expect(try runtime.resolveImagesAndWait(matching: scope).isEmpty)
         let declaration = NativeDeclaration(name: name + "::answer()", language: .cxx)
         #expect(throws: ABIResolutionError.imageNotLoaded) {
-            _ = try runtime.resolveAndWait(declaration, in: scope, loading: .loadedOnly)
+            _ = try runtime.resolveAndWait(
+                .cxx(.symbol(declaration.name, kind: declaration.kind)),
+                in: scope,
+                loading: .loadedOnly
+            )
         }
         var first: NativeFunction<Int32>? = try runtime.resolveAndWait(
             .cxx(.function(declaration.name, as: (() -> Int32).self)),
@@ -64,12 +68,21 @@ struct ImageLoadingTests {
             language: .cxx
         )
         #expect(try runtime.resolveImagesAndWait(matching: .installName(alias.path)).isEmpty)
-        let first = try runtime.resolveAndWait(declaration, in: .installName(alias.path))
-        let second = try runtime.resolveAndWait(declaration, in: .path(fixture.libraryURL))
+        let first = try runtime.resolveAndWait(
+            .cxx(.symbol(declaration.name, kind: declaration.kind)),
+            in: .installName(alias.path)
+        )
+        let second = try runtime.resolveAndWait(
+            .cxx(.symbol(declaration.name, kind: declaration.kind)),
+            in: .path(fixture.libraryURL)
+        )
         #expect(first.image.identity == second.image.identity)
         let inspected = try runtime.resolveImagesAndWait(matching: .installName(alias.path))
         #expect(inspected.map(\.identity) == [first.image.identity])
-        let fromLease = try runtime.resolveAndWait(declaration, in: inspected[0])
+        let fromLease = try runtime.resolveAndWait(
+            .cxx(.symbol(declaration.name, kind: declaration.kind)),
+            in: inspected[0]
+        )
         #expect(fromLease.image.identity == first.image.identity)
         runtime.removeCachedResults()
     }
@@ -90,13 +103,16 @@ struct ImageLoadingTests {
         )
         #expect(throws: ABIResolutionError.imageNotLoaded) {
             _ = try runtime.resolveAndWait(
-                declaration,
+                .cxx(.symbol(declaration.name, kind: declaration.kind)),
                 in: .installName(alias),
                 loading: .loadedOnly
             )
         }
         #expect(try runtime.resolveImagesAndWait(matching: .installName(path)).isEmpty)
-        let identity = try runtime.resolveAndWait(declaration, in: .installName(path)).image
+        let identity = try runtime.resolveAndWait(
+            .cxx(.symbol(declaration.name, kind: declaration.kind)),
+            in: .installName(path)
+        ).image
             .identity
         let retained = try runtime.resolveAndWait(
             .cxx(.function(declaration.name, as: ((Int32, Int32) -> Int32).self)),
@@ -196,10 +212,16 @@ struct ImageLoadingTests {
         let declaration = NativeDeclaration(name: "getpid", language: .c)
         let invalid = URL(string: "https://example.invalid/library")!
         #expect(throws: ABIResolutionError.invalidImageTarget(invalid.absoluteString)) {
-            _ = try runtime.resolveAndWait(declaration, in: .path(invalid))
+            _ = try runtime.resolveAndWait(
+                .c(.symbol(declaration.name, kind: declaration.kind)),
+                in: .path(invalid)
+            )
         }
         #expect(throws: ABIResolutionError.invalidImageTarget("bad\0name")) {
-            _ = try runtime.resolveAndWait(declaration, in: .installName("bad\0name"))
+            _ = try runtime.resolveAndWait(
+                .c(.symbol(declaration.name, kind: declaration.kind)),
+                in: .installName("bad\0name")
+            )
         }
         let missing = FileManager.default.temporaryDirectory.appendingPathComponent(
             UUID().uuidString + ".dylib"
@@ -237,7 +259,7 @@ struct ImageLoadingTests {
             in: scope
         )
         #expect(try unsafe function.unsafeInvoke() == 42)
-        let type = try await runtime.resolveSwiftType(named: module + ".Box", in: scope)
+        let type = try await runtime.resolve(.swift(.type(module + ".Box")), in: scope)
         #expect(type.name == module + ".Box")
         #expect(type.image.identity == function.symbol.image.identity)
         runtime.removeCachedResults()
@@ -279,11 +301,14 @@ struct ImageLoadingTests {
             kind: .data
         )
         do {
-            _ = try runtime.resolveAndWait(declaration, in: .framework(named: name))
+            _ = try runtime.resolveAndWait(
+                .cxx(.symbol(declaration.name, kind: declaration.kind)),
+                in: .framework(named: name)
+            )
             Issue.record("A framework name must not select between two loaded images")
         } catch ABIResolutionError.ambiguousImage(let candidates) { #expect(candidates.count == 2) }
         let inspected = try runtime.resolveAndWait(
-            declaration,
+            .cxx(.symbol(declaration.name, kind: declaration.kind)),
             in: .framework(named: name),
             loading: .loadedOnly
         )
@@ -303,12 +328,19 @@ struct ImageLoadingTests {
         let scope = ImageSelector.path(fixture.libraryURL)
         let clock = ContinuousClock()
         let coldStart = clock.now
-        let first = try runtime.resolveAndWait(declaration, in: scope)
+        let first = try runtime.resolveAndWait(
+            .cxx(.symbol(declaration.name, kind: declaration.kind)),
+            in: scope
+        )
         let cold = coldStart.duration(to: clock.now)
         for policy in [ImageLoadingPolicy.loadedOnly, .ifNeeded] {
             let start = clock.now
             for _ in 0..<100 {
-                let next = try runtime.resolveAndWait(declaration, in: scope, loading: policy)
+                let next = try runtime.resolveAndWait(
+                    .cxx(.symbol(declaration.name, kind: declaration.kind)),
+                    in: scope,
+                    loading: policy
+                )
                 #expect(next.image.identity == first.image.identity)
             }
             print(

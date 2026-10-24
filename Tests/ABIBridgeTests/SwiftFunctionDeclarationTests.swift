@@ -11,12 +11,16 @@ import Testing
 struct SwiftFunctionDeclarationTests {
     @Test func arrowOperatorsResolveByLabelsAndCompleteDeclarations() async throws {
         let runtime = ABIRuntime()
-        let type = try await runtime.resolveSwiftType(
-            named: "ManagedSwiftFixtures.ArrowOperatorValue"
+        let type = try await runtime.resolve(
+            .swift(.type("ManagedSwiftFixtures.ArrowOperatorValue"))
         )
-        let generic = try await runtime.resolveSwiftType(
-            named: "ManagedSwiftFixtures.GenericOperatorBox",
-            genericArguments: [.type(Int64.self)]
+        let generic = try await runtime.resolve(
+            .swift(
+                .type(
+                    "ManagedSwiftFixtures.GenericOperatorBox",
+                    genericArguments: [.type(Int64.self)]
+                )
+            )
         )
         let first = ArrowOperatorValue(35), second = ArrowOperatorValue(7)
         let genericFirst = GenericOperatorBox<Int64>(35),
@@ -94,7 +98,7 @@ struct SwiftFunctionDeclarationTests {
             // Establish that the complete spelling identifies an actual compiler
             // symbol before testing rejection at the invocation boundary.
             _ = try runtime.resolveAndWait(
-                .init(name: declaration, language: .swift),
+                .swift(.symbol(declaration)),
                 in: .path(fixture.libraryURL),
                 loading: .loadedOnly
             )

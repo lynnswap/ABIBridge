@@ -13,8 +13,8 @@ import Synchronization
     let caller = ImageSelector.path(
         root.appendingPathComponent("SwiftImportCallerControl.framework/SwiftImportCallerControl")
     )
-    let type = try await runtime.resolveSwiftType(
-        named: "SwiftImportProvider.WitnessValue",
+    let type = try await runtime.resolve(
+        .swift(.type("SwiftImportProvider.WitnessValue")),
         in: provider
     )
     let prefix = "SwiftImportProvider.Witnessed."
@@ -181,10 +181,9 @@ import Synchronization
     )
 
     for (name, which) in [("WitnessBox", Int64(2)), ("WitnessConditional", Int64(4))] {
-        let bound = try await runtime.resolveSwiftType(
-            named: "SwiftImportProvider." + name,
-            in: provider,
-            genericArguments: [.type(Int64.self)]
+        let bound = try await runtime.resolve(
+            .swift(.type("SwiftImportProvider." + name, genericArguments: [.type(Int64.self)])),
+            in: provider
         )
         let boundMethod = try await bound.resolve(
             .swift(.method(prefix + "read(_:)", as: ((Int64) -> Int64).self))
@@ -205,15 +204,13 @@ import Synchronization
         )
         boundHook.invalidate()
     }
-    let sharedInt = try await runtime.resolveSwiftType(
-        named: "SwiftImportProvider.WitnessShared",
-        in: provider,
-        genericArguments: [.type(Int64.self)]
+    let sharedInt = try await runtime.resolve(
+        .swift(.type("SwiftImportProvider.WitnessShared", genericArguments: [.type(Int64.self)])),
+        in: provider
     )
-    let sharedString = try await runtime.resolveSwiftType(
-        named: "SwiftImportProvider.WitnessShared",
-        in: provider,
-        genericArguments: [.type(String.self)]
+    let sharedString = try await runtime.resolve(
+        .swift(.type("SwiftImportProvider.WitnessShared", genericArguments: [.type(String.self)])),
+        in: provider
     )
     let sharedName = "SwiftImportProvider.SharedWitnessed.read(_:)"
     let sharedMethod = try await sharedInt.resolve(

@@ -98,7 +98,7 @@ final class ConformanceFixture: @unchecked Sendable {
     }
 
     func type(_ name: String) async throws -> NativeSwiftType {
-        try await runtime.resolveSwiftType(named: module + "." + name, in: scope)
+        try await runtime.resolve(.swift(.type(module + "." + name)), in: scope)
     }
 
     /// A provider function, named relative to the provider module.

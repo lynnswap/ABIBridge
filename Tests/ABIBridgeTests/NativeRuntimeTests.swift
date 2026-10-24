@@ -31,7 +31,7 @@ struct NativeRuntimeTests {
         var info = ABIImageInfo()
         ABIResolvedSymbolGetImage(symbol, &info)
 
-        let swift = try ABIRuntime.shared.resolveAndWait(.init(name: "getpid", language: .c))
+        let swift = try ABIRuntime.shared.resolveAndWait(.c(.symbol("getpid")))
         #expect(info.generation == swift.image.identity.loadGeneration)
         #expect(info.header == UInt(swift.image.identity.headerAddress))
         let swiftAddress = unsafe swift.withUnsafeAddress { UInt(bitPattern: $0) }
@@ -41,7 +41,7 @@ struct NativeRuntimeTests {
     }
 
     @Test func swiftAndNativeHandoffsPreserveSymbolMetadata() async throws {
-        let original = try ABIRuntime().resolveAndWait(.init(name: "getpid", language: .c))
+        let original = try ABIRuntime().resolveAndWait(.c(.symbol("getpid")))
         let exported = unsafe original.copyNativeHandle()
         #expect(ABIResolvedSymbolGetKind(exported) == Int32(ABISymbolFunction))
         #expect(ABIResolvedSymbolGetLanguage(exported) == Int32(ABILanguageC))
@@ -66,7 +66,7 @@ struct NativeRuntimeTests {
         defer { ABIReleaseValueType(resultType) }
         let interface = try #require(ABICreateCCallInterface(resultType, nil, 0, &failure))
         defer { ABIReleaseCallInterface(interface) }
-        let symbol = try ABIRuntime.shared.resolveAndWait(.init(name: "getpid", language: .c))
+        let symbol = try ABIRuntime.shared.resolveAndWait(.c(.symbol("getpid")))
         var result: Int32 = 0
         let success = unsafe symbol.withUnsafeAddress {
             ABIUnsafeInvokeCCallInterface(
@@ -87,7 +87,7 @@ struct NativeRuntimeTests {
         defer { dlclose(process) }
         let expected = try #require(dlsym(process, "OBJC_CLASS_$_NSObject"))
         let symbol = try ABIRuntime.shared.resolveAndWait(
-            .init(machOName: "_OBJC_CLASS_$_NSObject", language: .objectiveC, kind: .data)
+            .objc(.symbol(machOName: "_OBJC_CLASS_$_NSObject", kind: .data))
         )
         #expect(symbol.declaration.language == .objectiveC)
         #expect(unsafe symbol.withUnsafeAddress { $0 == UnsafeRawPointer(expected) })

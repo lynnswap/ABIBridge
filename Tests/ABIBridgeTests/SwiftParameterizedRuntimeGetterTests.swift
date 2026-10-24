@@ -6,14 +6,22 @@ import Testing
 struct SwiftParameterizedRuntimeGetterTests {
     @Test func associatedWitnessPreservesItsDeclaringProtocol() async throws {
         let runtime = ABIRuntime.shared
-        let receiver = try await runtime.resolveSwiftType(
-            named: "ManagedSwiftFixtures.RuntimeAssociatedGetter",
-            genericArguments: [.type(Int64.self)]
+        let receiver = try await runtime.resolve(
+            .swift(
+                .type(
+                    "ManagedSwiftFixtures.RuntimeAssociatedGetter",
+                    genericArguments: [.type(Int64.self)]
+                )
+            )
         )
         typealias Storage = RuntimeAssociatedElement<FreshCollectionSuperclassValue<[Int64]>>
-        let storage = try await runtime.resolveSwiftType(
-            named: "ManagedSwiftFixtures.RuntimeAssociatedElement",
-            genericArguments: [.type(FreshCollectionSuperclassValue<[Int64]>.self)]
+        let storage = try await runtime.resolve(
+            .swift(
+                .type(
+                    "ManagedSwiftFixtures.RuntimeAssociatedElement",
+                    genericArguments: [.type(FreshCollectionSuperclassValue<[Int64]>.self)]
+                )
+            )
         )
         let getter = try await receiver.resolve(
             .swift(
@@ -31,14 +39,22 @@ struct SwiftParameterizedRuntimeGetterTests {
 
     @Test func conditionalWitnessUsesTheGetterGenericContext() async throws {
         let runtime = ABIRuntime.shared
-        let receiver = try await runtime.resolveSwiftType(
-            named: "ManagedSwiftFixtures.RuntimeConditionalGetter",
-            genericArguments: [.type([Int64].self)]
+        let receiver = try await runtime.resolve(
+            .swift(
+                .type(
+                    "ManagedSwiftFixtures.RuntimeConditionalGetter",
+                    genericArguments: [.type([Int64].self)]
+                )
+            )
         )
         typealias Storage = RuntimeAssociatedElement<RuntimeConditionalSource<[Int64]>>
-        let storage = try await runtime.resolveSwiftType(
-            named: "ManagedSwiftFixtures.RuntimeAssociatedElement",
-            genericArguments: [.type(RuntimeConditionalSource<[Int64]>.self)]
+        let storage = try await runtime.resolve(
+            .swift(
+                .type(
+                    "ManagedSwiftFixtures.RuntimeAssociatedElement",
+                    genericArguments: [.type(RuntimeConditionalSource<[Int64]>.self)]
+                )
+            )
         )
         let getter = try await receiver.resolve(
             .swift(
@@ -56,16 +72,26 @@ struct SwiftParameterizedRuntimeGetterTests {
 
     @Test func nestedWitnessUsesAssociatedConformanceRequirements() async throws {
         let runtime = ABIRuntime.shared
-        let receiver = try await runtime.resolveSwiftType(
-            named: "ManagedSwiftFixtures.RuntimeNestedGetter",
-            genericArguments: [.type(RuntimeCollectionSourceValue.self)]
+        let receiver = try await runtime.resolve(
+            .swift(
+                .type(
+                    "ManagedSwiftFixtures.RuntimeNestedGetter",
+                    genericArguments: [.type(RuntimeCollectionSourceValue.self)]
+                )
+            )
         )
         typealias Storage = RuntimeAssociatedElement<
             RuntimeNestedSource<RuntimeCollectionSourceValue>
         >
-        let storage = try await runtime.resolveSwiftType(
-            named: "ManagedSwiftFixtures.RuntimeAssociatedElement",
-            genericArguments: [.type(RuntimeNestedSource<RuntimeCollectionSourceValue>.self)]
+        let storage = try await runtime.resolve(
+            .swift(
+                .type(
+                    "ManagedSwiftFixtures.RuntimeAssociatedElement",
+                    genericArguments: [
+                        .type(RuntimeNestedSource<RuntimeCollectionSourceValue>.self)
+                    ]
+                )
+            )
         )
         let getter = try await receiver.resolve(
             .swift(
@@ -95,9 +121,13 @@ struct SwiftParameterizedRuntimeGetterTests {
             )
         )
         let source = try unsafe make.unsafeInvoke(42)
-        let structureType = try await runtime.resolveSwiftType(
-            named: "ManagedSwiftFixtures.RuntimeParameterizedGetter.Structure",
-            genericArguments: [.type(Int64.self)]
+        let structureType = try await runtime.resolve(
+            .swift(
+                .type(
+                    "ManagedSwiftFixtures.RuntimeParameterizedGetter.Structure",
+                    genericArguments: [.type(Int64.self)]
+                )
+            )
         )
         let valueABIs = [structureType: try NativeType.opaque(named: structureType.name)]
         let getter = try await source.type.resolve(
@@ -162,9 +192,13 @@ struct SwiftParameterizedRuntimeGetterTests {
         #expect(try result.take(as: Int64.self) == 42)
         #expect(!input.isConsumed)
 
-        let elementStorage = try await runtime.resolveSwiftType(
-            named: "ManagedSwiftFixtures.GenericElementStorage",
-            genericArguments: [.type([Int64].self)]
+        let elementStorage = try await runtime.resolve(
+            .swift(
+                .type(
+                    "ManagedSwiftFixtures.GenericElementStorage",
+                    genericArguments: [.type([Int64].self)]
+                )
+            )
         )
         let arrayElement = try await runtime.resolve(
             .swift(

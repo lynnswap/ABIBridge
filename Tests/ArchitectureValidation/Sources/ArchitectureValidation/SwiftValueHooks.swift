@@ -19,10 +19,11 @@ private enum ValueHookProbeFailure: Error { case afterProceed }
         checks.append(message)
     }
     let failures = Mutex<[String]>([])
-    let failure: @Sendable (any Error) -> Void = { error in failures.withLock { $0.append(String(describing: error)) } }
-    let counter = try await runtime.resolveSwiftType(
-        named: "SwiftImportProvider.HookCounter",
-        as: Int64.self,
+    let failure: @Sendable (any Error) -> Void = { error in
+        failures.withLock { $0.append(String(describing: error)) }
+    }
+    let counter = try await runtime.resolve(
+        .swift(.type("SwiftImportProvider.HookCounter", as: Int64.self)),
         in: provider
     )
     let adding = try await counter.resolve(
@@ -76,12 +77,13 @@ private enum ValueHookProbeFailure: Error { case afterProceed }
     try check(try unsafe incrementCaller.unsafeInvoke(40, 3) == 44044, "Failure after proceeding preserves receiver mutation and the completed result")
     incrementHook.invalidate()
 
-    let wide = try await runtime.resolveSwiftType(
-        named: "SwiftImportProvider.HookWideValue",
-        as: VirtualPayload.self,
+    let wide = try await runtime.resolve(
+        .swift(.type("SwiftImportProvider.HookWideValue", as: VirtualPayload.self)),
         in: provider
     )
-    for (member, callName, consuming) in [("sum", "hookWideValueSum", false), ("consume", "hookWideValueConsume", true)] {
+    for (member, callName, consuming) in [
+        ("sum", "hookWideValueSum", false), ("consume", "hookWideValueConsume", true),
+    ] {
         let method = try await wide.resolve(
             .swift(
                 .method(
@@ -111,9 +113,8 @@ private enum ValueHookProbeFailure: Error { case afterProceed }
         hook.invalidate()
     }
 
-    let textType = try await runtime.resolveSwiftType(
-        named: "SwiftImportProvider.HookTextValue",
-        as: String.self,
+    let textType = try await runtime.resolve(
+        .swift(.type("SwiftImportProvider.HookTextValue", as: String.self)),
         in: provider
     )
     let consume = try await textType.resolve(

@@ -215,9 +215,9 @@ struct SwiftCollectionValueTests {
     }
 
     @Test func memberOwnershipMatchesOrdinaryCalls() async throws {
-        let type = try await ABIRuntime.shared.resolveSwiftType(
-            named: "ManagedSwiftFixtures.CollectionStore",
-                                                         as: CollectionStore.self)
+        let type = try await ABIRuntime.shared.resolve(
+            .swift(.type("ManagedSwiftFixtures.CollectionStore", as: CollectionStore.self))
+        )
         let create = try await type.resolve(
             .swift(
                 .initializer(
@@ -247,9 +247,9 @@ struct SwiftCollectionValueTests {
     }
 
     @Test func escapingCollectionCallbackKeepsItsCapture() async throws {
-        let type = try await ABIRuntime.shared.resolveSwiftType(
-            named: "ManagedSwiftFixtures.CollectionStore",
-                                                         as: CollectionStore.self)
+        let type = try await ABIRuntime.shared.resolve(
+            .swift(.type("ManagedSwiftFixtures.CollectionStore", as: CollectionStore.self))
+        )
         let retain = try await type.resolve(
             .swift(
                 .method(

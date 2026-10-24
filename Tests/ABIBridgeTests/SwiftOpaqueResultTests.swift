@@ -23,7 +23,9 @@ struct SwiftOpaqueResultTests {
         let runtime = ABIRuntime.shared
         let counts = ArgumentCounts()
         let owner = RuntimeScopedOwner(42, counts)
-        let resultType = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.RuntimeScopedResult")
+        let resultType = try await runtime.resolve(
+            .swift(.type("ManagedSwiftFixtures.RuntimeScopedResult"))
+        )
         let read = try await resultType.resolve(
             .swift(
                 .method(
@@ -68,7 +70,9 @@ struct SwiftOpaqueResultTests {
         let counts = ArgumentCounts()
         let owner = RuntimeScopedOwner(42, counts)
         let runtime = ABIRuntime.shared
-        let resultType = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.RuntimeScopedResult")
+        let resultType = try await runtime.resolve(
+            .swift(.type("ManagedSwiftFixtures.RuntimeScopedResult"))
+        )
         let read = try await resultType.resolve(
             .swift(
                 .method(
@@ -78,7 +82,9 @@ struct SwiftOpaqueResultTests {
                 )
             )
         )
-        let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.RuntimeScopedOwner")
+        let type = try await runtime.resolve(
+            .swift(.type("ManagedSwiftFixtures.RuntimeScopedOwner"))
+        )
         let method = try await type.resolve(
             .swift(.method("scoped()", as: (() -> NativeSwiftBorrowedValue).self))
         )
@@ -121,9 +127,10 @@ struct SwiftOpaqueResultTests {
         let output = try unsafe make.unsafeInvoke(owner, false, withResult: { _ in ScopedBodyOutput(number: 42) })
         #expect(output.number == 42)
         #expect(counts.destructions == 1)
-        let type = try await runtime.resolveSwiftType(
-            named: "ManagedSwiftFixtures.RuntimeScopedCounter",
-            as: RejectingScopedCounter.self
+        let type = try await runtime.resolve(
+            .swift(
+                .type("ManagedSwiftFixtures.RuntimeScopedCounter", as: RejectingScopedCounter.self)
+            )
         )
         let sync = try await type.resolve(
             .swift(
@@ -170,7 +177,9 @@ struct SwiftOpaqueResultTests {
         let counts = ArgumentCounts()
         var owner: RuntimeScopedOwner? = RuntimeScopedOwner(42, counts)
         weak var observed = owner
-        let resultType = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.RuntimeScopedResult")
+        let resultType = try await runtime.resolve(
+            .swift(.type("ManagedSwiftFixtures.RuntimeScopedResult"))
+        )
         let read = try await resultType.resolve(
             .swift(
                 .method(
@@ -319,8 +328,8 @@ struct SwiftOpaqueResultTests {
         }
         try await check(InlineExistentialValue(41))
         try await check(ProtocolExtensionValue("generic receiver", 42))
-        let concrete = try await runtime.resolveSwiftType(
-            named: "ManagedSwiftFixtures.InlineExistentialValue"
+        let concrete = try await runtime.resolve(
+            .swift(.type("ManagedSwiftFixtures.InlineExistentialValue"))
         )
         let number = try await concrete.resolve(
             .swift(
@@ -386,9 +395,8 @@ struct SwiftOpaqueResultTests {
                 #expect(try unsafe method.unsafeInvoke(on: owner) == 43)
             }
             #expect(!owner.isConsumed)
-            let represented = try await runtime.resolveSwiftType(
-                named: "ManagedSwiftFixtures.ProtocolExtensionObject",
-                as: AnyObject.self
+            let represented = try await runtime.resolve(
+                .swift(.type("ManagedSwiftFixtures.ProtocolExtensionObject", as: AnyObject.self))
             )
             let method = try await represented.resolve(
                 .swift(
@@ -429,7 +437,7 @@ struct SwiftOpaqueResultTests {
     }
 
     @Test func protocolExtensionMembersRequireTheConcreteSelfConformance() async throws {
-        let type = try await ABIRuntime.shared.resolveSwiftType(named: "Swift.String")
+        let type = try await ABIRuntime.shared.resolve(.swift(.type("Swift.String")))
         do {
             _ = try await type.resolve(
                 .swift(
@@ -445,8 +453,8 @@ struct SwiftOpaqueResultTests {
 
     @Test func mutatingProtocolExtensionSelfPreservesTheOwnedStorageType() async throws {
         let runtime = ABIRuntime.shared
-        let type = try await runtime.resolveSwiftType(
-            named: "ManagedSwiftFixtures.ProtocolExtensionObject"
+        let type = try await runtime.resolve(
+            .swift(.type("ManagedSwiftFixtures.ProtocolExtensionObject"))
         )
         let replace = try await type.resolve(
             .swift(
@@ -670,9 +678,14 @@ struct SwiftOpaqueResultTests {
 
     @Test func genericOpaqueMembersCombineEnclosingAndMethodBindings() async throws {
         let runtime = ABIRuntime.shared
-        let type = try await runtime.resolveSwiftType(
-            named: "ManagedSwiftFixtures.GenericOpaqueOwner",
-            genericArguments: [.type(String.self)])
+        let type = try await runtime.resolve(
+            .swift(
+                .type(
+                    "ManagedSwiftFixtures.GenericOpaqueOwner",
+                    genericArguments: [.type(String.self)]
+                )
+            )
+        )
         let initialize = try await type.resolve(
             .swift(.initializer("init(_:)", as: ((String) -> AnyObject).self))
         )
@@ -739,8 +752,10 @@ struct SwiftOpaqueResultTests {
 
     @Test func declaredClassConstraintsSelectDirectResultsAndRetainObjects() async throws {
         let runtime = ABIRuntime.shared
-        for (name, expected) in [("makeOpaqueClassAny", 41), ("makeOpaqueClassProtocol", 42),
-                                 ("makeOpaqueSuperclass", 43), ("makeOpaqueUnconstrainedClass", 44)] {
+        for (name, expected) in [
+            ("makeOpaqueClassAny", 41), ("makeOpaqueClassProtocol", 42),
+            ("makeOpaqueSuperclass", 43), ("makeOpaqueUnconstrainedClass", 44),
+        ] {
             let call = try await runtime.resolve(
                 .swift(
                     .function(
@@ -809,7 +824,9 @@ struct SwiftOpaqueResultTests {
     }
 
     @Test func extensionMembersUseTheirMatchedOpaqueOrigin() async throws {
-        let type = try await ABIRuntime.shared.resolveSwiftType(named: "ManagedSwiftFixtures.OpaqueOwner")
+        let type = try await ABIRuntime.shared.resolve(
+            .swift(.type("ManagedSwiftFixtures.OpaqueOwner"))
+        )
         let owner = OpaqueOwner(ErrorLifetimeToken())
         let method = try await type.resolve(
             .swift(
@@ -972,7 +989,9 @@ struct SwiftOpaqueResultTests {
     }
 
     @Test func methodsPropertiesAndStaticFunctionsFindTheirOpaqueDescriptors() async throws {
-        let type = try await ABIRuntime.shared.resolveSwiftType(named: "ManagedSwiftFixtures.OpaqueOwner")
+        let type = try await ABIRuntime.shared.resolve(
+            .swift(.type("ManagedSwiftFixtures.OpaqueOwner"))
+        )
         let token = ErrorLifetimeToken(), owner = OpaqueOwner(token)
         let method = try await type.resolve(
             .swift(.method("make(_:)", as: ((Int64) -> NativeSwiftValue).self))

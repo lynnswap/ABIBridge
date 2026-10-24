@@ -45,7 +45,7 @@ struct ImageMetadataTests {
         #expect(!starts.contains(UInt64(try fixture.address(kind: 1))))
         #expect(Set(starts).count == starts.count)
         let function = try runtime.resolveAndWait(
-            .init(name: "ABIFixtureAdd", language: .c),
+            .c(.symbol("ABIFixtureAdd")),
             in: image
         )
         #expect(
@@ -139,7 +139,7 @@ struct ImageMetadataTests {
         #expect(metadata.architecture.cpuType == header.cputype)
         #expect(metadata.architecture.cpuSubtype == header.cpusubtype)
         let function = try runtime.resolveAndWait(
-            .init(name: "CFRunLoopGetTypeID", language: .c),
+            .c(.symbol("CFRunLoopGetTypeID")),
             in: image
         )
         try unsafe function.withUnsafeAddress {

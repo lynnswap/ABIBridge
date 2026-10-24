@@ -229,9 +229,13 @@ struct NativeSwiftClosureTests {
     @Test func initializersBorrowNonescapingClosureArguments() async throws {
         typealias Inner = NativeSwiftClosure<(Int64) -> Int64>
         let runtime = ABIRuntime.shared
-        let type = try await runtime.resolveSwiftType(
-            named: "ManagedSwiftFixtures.EvaluatedIntegerClosure",
-            as: EvaluatedIntegerClosure.self
+        let type = try await runtime.resolve(
+            .swift(
+                .type(
+                    "ManagedSwiftFixtures.EvaluatedIntegerClosure",
+                    as: EvaluatedIntegerClosure.self
+                )
+            )
         )
         let create = try await type.resolve(
             .swift(
@@ -1146,8 +1150,8 @@ struct NativeSwiftClosureTests {
             ) == expected
         )
         // An explicit layout of the element follows the same rule.
-        let wide = try await runtime.resolveSwiftType(
-            named: module + ".AuthWide",
+        let wide = try await runtime.resolve(
+            .swift(.type(module + ".AuthWide")),
             in: .path(library.libraryURL)
         )
         let wideABI = try NativeType.structure(
@@ -1196,8 +1200,8 @@ struct NativeSwiftClosureTests {
                 )
             ) == openExpected
         )
-        let open = try await runtime.resolveSwiftType(
-            named: module + ".AuthOpen",
+        let open = try await runtime.resolve(
+            .swift(.type(module + ".AuthOpen")),
             in: .path(library.libraryURL)
         )
         let openABIs: [[NativeSwiftType: NativeType]] =
@@ -1347,10 +1351,14 @@ struct NativeSwiftClosureTests {
         where ["Int.Helper", "Box<Int>.Hidden", "Box<Int>.Marked"].contains(name) {
             var valueABIs: [NativeSwiftType: NativeType] = [:]
             if name.hasPrefix("Box") {
-                let type = try await runtime.resolveSwiftType(
-                    named: "\(module).Box.\(name.dropFirst("Box<Int>.".count))",
-                    in: .path(library.libraryURL),
-                    genericArguments: [.type(Int.self)]
+                let type = try await runtime.resolve(
+                    .swift(
+                        .type(
+                            "\(module).Box.\(name.dropFirst("Box<Int>.".count))",
+                            genericArguments: [.type(Int.self)]
+                        )
+                    ),
+                    in: .path(library.libraryURL)
                 )
                 valueABIs[type] = layout
             }
@@ -1770,10 +1778,9 @@ struct NativeSwiftClosureTests {
         let callback = try NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Double> { _ in 40 }
         for (name, offset) in [("Hidden", 1.0), ("Marked", 2.0)] {
             // Inference leaves generic structs that are not public undecided.
-            let type = try await runtime.resolveSwiftType(
-                named: "\(module).Box.\(name)",
-                in: .path(library.libraryURL),
-                genericArguments: [.type(Int.self)]
+            let type = try await runtime.resolve(
+                .swift(.type("\(module).Box.\(name)", genericArguments: [.type(Int.self)])),
+                in: .path(library.libraryURL)
             )
             let function = try await runtime.resolve(
                 .swift(
@@ -1971,9 +1978,10 @@ struct NativeSwiftClosureTests {
     }
 
     @Test func closureResultsDoNotRetainUncapturedReceivers() async throws {
-        let type = try await ABIRuntime.shared.resolveSwiftType(
-            named: "ManagedSwiftFixtures.ClosurePropertyOwner",
-            as: ClosurePropertyOwner.self
+        let type = try await ABIRuntime.shared.resolve(
+            .swift(
+                .type("ManagedSwiftFixtures.ClosurePropertyOwner", as: ClosurePropertyOwner.self)
+            )
         )
         let getter = try await type.resolve(
             .swift(
@@ -2023,9 +2031,10 @@ struct NativeSwiftClosureTests {
 
     @Test func initializersTransferClosuresAndMethodsBorrowThem() async throws {
         let runtime = ABIRuntime.shared
-        let type = try await runtime.resolveSwiftType(
-            named: "ManagedSwiftFixtures.StoredIntegerClosure",
-            as: StoredIntegerClosure.self
+        let type = try await runtime.resolve(
+            .swift(
+                .type("ManagedSwiftFixtures.StoredIntegerClosure", as: StoredIntegerClosure.self)
+            )
         )
         let create = try await type.resolve(
             .swift(
@@ -2219,8 +2228,8 @@ struct NativeSwiftClosureTests {
         var keeper: ClosurePropertyOwner? = ClosurePropertyOwner()
         do {
             let runtime = ABIRuntime()
-            let type = try await runtime.resolveSwiftType(
-                named: "ManagedSwiftFixtures.ClosurePropertyOwner"
+            let type = try await runtime.resolve(
+                .swift(.type("ManagedSwiftFixtures.ClosurePropertyOwner"))
             )
             let set = try await type.resolve(
                 .swift(

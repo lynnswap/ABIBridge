@@ -244,26 +244,25 @@ struct RuntimePreparationTests {
 
         if typeLookup {
             let typeName = module + ".Receiver"
+            let typeRequest = NativeRequest.swift(.type(typeName))
             let type: NativeSwiftType
             if asynchronous {
-                type = try await runtime.resolveSwiftType(named: typeName, in: image)
+                type = try await runtime.resolve(typeRequest, in: image)
             } else {
-                type = try runtime.resolveSwiftTypeAndWait(named: typeName, in: image)
+                type = try runtime.resolveAndWait(typeRequest, in: image)
             }
-            let retained = try await runtime.resolveSwiftType(
-                named: typeName,
+            let retained = try await runtime.resolve(
+                typeRequest,
                 in: type.image,
                 loading: .loadedOnly
             )
             #expect(type === retained)
-            let represented = try await runtime.resolveSwiftType(
-                named: typeName,
-                as: AnyObject.self,
+            let represented = try await runtime.resolve(
+                .swift(.type(typeName, as: AnyObject.self)),
                 in: image
             )
-            let retainedRepresentation = try await runtime.resolveSwiftType(
-                named: typeName,
-                as: AnyObject.self,
+            let retainedRepresentation = try await runtime.resolve(
+                .swift(.type(typeName, as: AnyObject.self)),
                 in: type.image,
                 loading: .loadedOnly
             )
@@ -314,8 +313,8 @@ struct RuntimePreparationTests {
     func asynchronousMemberPreparationKeepsReceiverIsolation(bound: Bool) async throws {
         let runtime = ABIRuntime()
         let receiver = SwiftPreparationReceiver()
-        let type = try await runtime.resolveSwiftType(
-            named: "ABIBridgeTests.SwiftPreparationReceiver"
+        let type = try await runtime.resolve(
+            .swift(.type("ABIBridgeTests.SwiftPreparationReceiver"))
         )
         let object = runtime.object(receiver)
         SwiftPreparationValue.preparationThreads.withLock { $0.removeAll() }
@@ -395,8 +394,8 @@ struct RuntimePreparationTests {
     @MainActor @Test
     func asynchronousInitializerAndStaticPreparationRunAwayFromMainActor() async throws {
         let runtime = ABIRuntime()
-        let type = try await runtime.resolveSwiftType(
-            named: "ABIBridgeTests.SwiftPreparationReceiver"
+        let type = try await runtime.resolve(
+            .swift(.type("ABIBridgeTests.SwiftPreparationReceiver"))
         )
         let originalStaticValue = SwiftPreparationReceiver.staticValue
         defer { SwiftPreparationReceiver.staticValue = originalStaticValue }
@@ -481,10 +480,10 @@ struct RuntimePreparationTests {
             kind: .data
         )
         await #expect(throws: ABIResolutionError.declarationNotFound(missingType)) {
-            try await runtime.resolveSwiftType(named: "ABIBridgeTests.SwiftPreparationMissing")
+            try await runtime.resolve(.swift(.type("ABIBridgeTests.SwiftPreparationMissing")))
         }
-        let type = try await runtime.resolveSwiftType(
-            named: "ABIBridgeTests.SwiftPreparationReceiver"
+        let type = try await runtime.resolve(
+            .swift(.type("ABIBridgeTests.SwiftPreparationReceiver"))
         )
         await #expect(throws: ABIResolutionError.self) {
             try await type.resolve(.swift(.getter("missing", as: (() -> Int64).self)))
@@ -507,7 +506,9 @@ struct RuntimePreparationTests {
         let image = ImageSelector.path(fixture.libraryURL)
         let missing = NativeDeclaration(name: fixture.namespace + "::missing", language: .cxx)
         do {
-            _ = try await runtime.prepare { try $0.resolveAndWait(missing, in: image) }
+            _ = try await runtime.prepare {
+                try $0.resolveAndWait(.cxx(.symbol(missing.name, kind: missing.kind)), in: image)
+            }
             Issue.record("A missing preparation requirement must report its lookup error")
         } catch ABIResolutionError.declarationNotFound(let declaration) {
             #expect(declaration == missing)

@@ -14,6 +14,7 @@ Start with <doc:SymbolLookup> to resolve a declaration by source-level name or e
 - ``ABIRuntime``
 - ``ImageSelector``
 - ``NativeDeclaration``
+- ``NativeSymbolLookupRequest``
 - ``NativeSymbolRequest``
 - ``NativeSymbolNameForm``
 - ``NativeLanguage``

@@ -101,14 +101,14 @@ For symbol-only preparation, `prepare(request)` returns a ``ResolvedSymbol`` wit
 
 ## Describe the declaration
 
-A `NativeDeclaration` combines a source-level name with its language and required storage kind:
+Use a language-qualified symbol request, such as `.cxx(.symbol("Example::Math::add(int, int)"))`, for a single lookup. ``NativeSymbolLookupRequest`` records its name form and required storage kind; the outer language factory selects its source language:
 
 - C names use their ordinary linker spelling, without Mach-O's leading underscore.
 - C++ names use complete demangled declarations, such as `Example::Math::add(int, int)`.
 - Swift names use complete demangled declarations, including module qualification and a return type.
 - Objective-C selectors require an invocation frontend and are not resolved through these symbol-table APIs.
 
-Punctuation spacing is normalized while identifier boundaries remain significant. For C++ vtables, use `NativeDeclaration(vtableFor: "Example::Counter")`. Pass the qualified type name; the library supplies the descriptive symbol spelling. The result is the vtable symbol base, with no inferred address-point offset. Existing complete demangled declarations remain supported.
+Punctuation spacing is normalized while identifier boundaries remain significant. For C++ vtables, use `.cxx(.symbol(vtableFor: "Example::Counter"))`. Pass the qualified type name; the library supplies the descriptive symbol spelling. The result is the vtable symbol base, with no inferred address-point offset. Existing complete demangled declarations remain supported.
 
 Symbol resolution does not reconstruct a function's calling convention. In particular, C++ symbols do not always encode return types, and nontrivial values require layout and ownership information beyond a name.
 
@@ -117,20 +117,16 @@ Symbol resolution does not reconstruct a function's calling convention. In parti
 Prefer ordinary declaration names. When distinct ABI entry points share a demangled declaration, such as C++ destructor variants, use an explicit linker or Mach-O spelling:
 
 ```swift
-let linker = NativeDeclaration(
-    linkerName: "_ZN7Example4Math3addEii", language: .cxx
-)
-let literal = NativeDeclaration(
-    machOName: "__ZN7Example4Math3addEii", language: .cxx
-)
+let linker = NativeRequest.cxx(.symbol(linkerName: "_ZN7Example4Math3addEii"))
+let literal = NativeRequest.cxx(.symbol(machOName: "__ZN7Example4Math3addEii"))
 let symbol = try runtime.resolveAndWait(linker)
 ```
 
-Both declarations identify the same symbol spelling in this example. Linker form adds exactly one Mach-O underscore. Literal Mach-O form uses the supplied name unchanged. The resolver never guesses the form from a prefix, strips an existing underscore, or normalizes punctuation or whitespace in an exact name.
+Both requests identify the same symbol spelling in this example. Linker form adds exactly one Mach-O underscore. Literal Mach-O form uses the supplied name unchanged. The resolver never guesses the form from a prefix, strips an existing underscore, or normalizes punctuation or whitespace in an exact name.
 
 For example, a C linker name `_helper` corresponds to Mach-O spelling `__helper`. A mangled Swift linker name beginning with `$s` corresponds to a Mach-O spelling beginning with `_$s`. The declaration's ``NativeDeclaration/language`` remains available as metadata; exact matching does not reinterpret the name through that language's demangler.
 
-Exact declarations use the same storage checks, image scopes, lookup precedence, ambiguity errors, and image retention as source lookup. They can be mixed with source-level aliases in ``NativeSymbolRequest``. Matching an exact symbol still does not establish an invocation signature.
+``NativeDeclaration`` remains the descriptor returned by a symbol and used to compose aliases and fallbacks. Exact declarations use the same storage checks, image scopes, lookup precedence, ambiguity errors, and image retention as source lookup. They can be mixed with source-level aliases in ``NativeSymbolRequest``. Matching an exact symbol still does not establish an invocation signature.
 
 ## Lookup precedence and failures
 
@@ -209,7 +205,7 @@ See <doc:NativeInspection> for C++ adoption and retention. These operations keep
 
 Call `runtime.removeCachedResults()` to release that runtime's resolver indexes and Swift type cache. Existing image, symbol, and callable handles stay valid, as do resolutions already in progress; subsequent lookups rebuild the required indexes. Results from an older cache generation are not republished after removal. The process-shared native call-interface cache and the image catalog remain available. Known Swift classes reuse their defining image while it remains retained.
 
-A callable ``NativeRequest`` describes what to resolve. It has no public `Hashable` conformance, and saving it does not save a prepared handle. Repeated resolution reuses existing indexes and native call interfaces; it still captures the selected implementation for each handle. Retain the returned handle for repeated invocation. There is no request-keyed handle cache or per-request removal operation.
+A ``NativeRequest`` describes a symbol, type, callable or key path to resolve. It has no public `Hashable` conformance, and saving it does not save a prepared handle. Repeated resolution reuses existing indexes and native call interfaces; callable resolution still captures the selected implementation for each handle. Retain the returned handle for repeated invocation. There is no request-keyed handle cache or per-request removal operation.
 
 Each image load has a process-local generation, so a later image at the same address cannot inherit the previous generation's identity. The native catalog registers process-lifetime dyld observers and pins the image containing their callback code. Executables and dyld shared-cache images already have process lifetime, so their leases do not reopen a filesystem path. Other image leases acquire loader references without loading missing code.
 

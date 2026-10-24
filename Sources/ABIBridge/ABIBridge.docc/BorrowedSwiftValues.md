@@ -16,7 +16,7 @@ nonisolated(nonsending) func visitRecords(
     onFailure: @escaping @Sendable (any Error) -> Void
 ) async throws {
     let runtime = ABIRuntime.shared
-    let type = try await runtime.resolveSwiftType(named: "Example.Record")
+    let type = try await runtime.resolve(.swift(.type("Example.Record")))
     let text = try await type.resolve(.swift(.getter("text", as: (() -> String).self, receiverABI: .opaque(named: type.name))))
     let visit = try await runtime.resolve(.swift(.function(
         "Example.visit((Example.Record) -> ()) -> ()",

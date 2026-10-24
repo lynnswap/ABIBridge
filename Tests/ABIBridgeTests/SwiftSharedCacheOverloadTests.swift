@@ -65,8 +65,8 @@ struct SwiftSharedCacheOverloadTests {
             in: .path(fixture.libraryURL)
         )
         #expect(function.symbol.linkageName.hasSuffix(local[0].name))
-        let type = try await runtime.resolveSwiftType(
-            named: module + ".Counter",
+        let type = try await runtime.resolve(
+            .swift(.type(module + ".Counter")),
             in: .path(fixture.libraryURL)
         )
         let method = try await type.resolve(.swift(.method("value()", as: (() -> String).self)))

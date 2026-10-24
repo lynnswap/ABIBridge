@@ -125,9 +125,8 @@ struct SwiftImportedReplacementTests {
     @MainActor @Test(arguments: [false, true])
     func sendableImportedMembersKeepTheirReceiverAndOriginal(asynchronous: Bool) async throws {
         let fixture = try CompiledSwiftReplacementFixture(); defer { fixture.cleanup() }
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: fixture.module + ".ReplacementValue",
-            as: Int64.self,
+        let type = try await fixture.runtime.resolve(
+            .swift(.type(fixture.module + ".ReplacementValue", as: Int64.self)),
             in: fixture.providerScope
         )
         let target = try await type.resolve(
@@ -371,9 +370,8 @@ struct SwiftImportedReplacementTests {
         #expect(try unsafe textOracle.unsafeInvoke(input) == "replacement:" + input)
         #expect(try unsafe plan.slots[0].original!.unsafeInvoke(input) == "original:" + input)
         try plan.restore()
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: fixture.module + ".ReplacementValue",
-            as: Int64.self,
+        let type = try await fixture.runtime.resolve(
+            .swift(.type(fixture.module + ".ReplacementValue", as: Int64.self)),
             in: fixture.providerScope
         )
         let target = try await type.resolve(

@@ -182,7 +182,7 @@ For a provider with a resilient `Record` and `func makeSnapshot() -> (record: Re
 
 ```swift
 let runtime = ABIRuntime.shared
-let recordType = try runtime.resolveSwiftTypeAndWait(named: "Example.Record")
+let recordType = try runtime.resolveAndWait(.swift(.type("Example.Record")))
 typealias Callback = NativeSwiftClosure<(Int64) -> Int64>
 typealias Snapshot = (record: NativeSwiftValue, callback: Callback)
 

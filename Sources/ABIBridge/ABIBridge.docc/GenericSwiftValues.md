@@ -66,9 +66,7 @@ Pack expansion preserves the formal element pattern and shape. A nominal type su
 For `class Box<Value: Equatable>` with `init(_:)`, a `value` property, and `compare<Other: Equatable>(_:) -> (Value, Other, Bool)`:
 
 ```swift
-let boxType = try runtime.resolveSwiftTypeAndWait(
-    named: "Example.Box", genericArguments: [.type(String.self)]
-)
+let boxType = try runtime.resolveAndWait(.swift(.type("Example.Box", genericArguments: [.type(String.self)])))
 let initialize = try boxType.resolveAndWait(.swift(.initializer(
     "init(_:)", as: ((String) -> AnyObject).self
 )))

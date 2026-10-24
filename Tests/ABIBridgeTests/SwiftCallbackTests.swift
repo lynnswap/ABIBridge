@@ -75,12 +75,12 @@ private func withSwiftVirtualCallback(
     expectedErrors: Int = 0,
     body: (OpaquePointer) throws -> Void
 ) async throws {
-    let type = try await fixture.runtime.resolveSwiftType(
-        named: fixture.module + "." + typeName,
+    let type = try await fixture.runtime.resolve(
+        .swift(.type(fixture.module + "." + typeName)),
         in: fixture.providerScope
     )
     let symbol = try await fixture.runtime.resolve(
-        NativeDeclaration(name: type.name + "." + method, language: .swift),
+        .swift(.symbol(type.name + "." + method)),
         in: fixture.providerScope
     )
     let entry = try await SwiftClassDispatch(

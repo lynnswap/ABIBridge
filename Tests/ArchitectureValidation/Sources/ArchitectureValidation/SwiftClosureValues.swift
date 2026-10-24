@@ -186,9 +186,14 @@ private final class ExtensionClosureCaller {
                 "Consuming a copied escaping borrow preserves the provider's original closure")
         }
         try check(destroyed.count == 1, "Consumed closure copies destroy captures exactly once")
-        let type = try await runtime.resolveSwiftType(
-            named: "SwiftReplacementFixtures.EvaluatedIntegerClosure",
-            as: EvaluatedIntegerClosure.self)
+        let type = try await runtime.resolve(
+            .swift(
+                .type(
+                    "SwiftReplacementFixtures.EvaluatedIntegerClosure",
+                    as: EvaluatedIntegerClosure.self
+                )
+            )
+        )
         let create = try await type.resolve(
             .swift(
                 .initializer(

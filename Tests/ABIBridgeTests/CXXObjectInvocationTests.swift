@@ -214,7 +214,7 @@ struct CXXObjectInvocationTests {
         let storage = try counter(10)
         let object = ABIRuntime.shared.cxxObject(storage, typeNamed: "ABICXXFixture::Counter")
         let adapter = try ABIRuntime.shared.resolveAndWait(
-            .init(name: "ABICXXTransformAdapter", language: .c)
+            .c(.symbol("ABICXXTransformAdapter"))
         )
         let method = try object.resolveAndWait(
             .cxx(
@@ -245,7 +245,7 @@ struct CXXObjectInvocationTests {
         )
         #expect(ABICXXFixtureData == 3)
         let data = try ABIRuntime.shared.resolveAndWait(
-            .init(name: "ABICXXFixtureData", language: .c, kind: .data)
+            .c(.symbol("ABICXXFixtureData", kind: .data))
         )
         #expect(throws: ABIResolutionError.self) {
             _ = try object.resolveAndWait(

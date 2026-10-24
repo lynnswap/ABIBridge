@@ -203,8 +203,8 @@ struct SwiftConstrainedExtensionTests {
         )
         defer { conformance.cleanup() }
         let runtime = ABIRuntime()
-        let baseType = try await runtime.resolveSwiftType(
-            named: baseModule + ".Base",
+        let baseType = try await runtime.resolve(
+            .swift(.type(baseModule + ".Base")),
             in: .path(base.libraryURL)
         )
         for importsConformance in [false, true] {
@@ -238,10 +238,9 @@ struct SwiftConstrainedExtensionTests {
                     + (importsConformance ? [conformance.libraryURL.path] : [])
             )
             defer { provider.cleanup() }
-            let objectType = try await runtime.resolveSwiftType(
-                named: module + ".ObjectBox",
-                in: .path(provider.libraryURL),
-                genericArguments: [.type(baseType)]
+            let objectType = try await runtime.resolve(
+                .swift(.type(module + ".ObjectBox", genericArguments: [.type(baseType)])),
+                in: .path(provider.libraryURL)
             )
             let classScore = try await objectType.resolve(
                 .swift(
@@ -281,10 +280,9 @@ struct SwiftConstrainedExtensionTests {
                     }
                 )
             }
-            let box = try await runtime.resolveSwiftType(
-                named: module + ".Box",
-                in: .path(provider.libraryURL),
-                genericArguments: [.type(baseType)]
+            let box = try await runtime.resolve(
+                .swift(.type(module + ".Box", genericArguments: [.type(baseType)])),
+                in: .path(provider.libraryURL)
             )
             do {
                 _ = try await box.resolve(
@@ -413,8 +411,9 @@ struct SwiftConstrainedExtensionTests {
         try base.rebuild(linkingWith: [])
         try base.load()
         try provider.load()
-        let type = try await ABIRuntime().resolveSwiftType(
-            named: baseModule + ".Base", in: .path(base.libraryURL)
+        let type = try await ABIRuntime().resolve(
+            .swift(.type(baseModule + ".Base")),
+            in: .path(base.libraryURL)
         )
         let declaration =
             "static (extension in \(providerModule)):\(baseModule).Score< where A: \(baseModule).Base>.protocolScore() -> Swift.Int"

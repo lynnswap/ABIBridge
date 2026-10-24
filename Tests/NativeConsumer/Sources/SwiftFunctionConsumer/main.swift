@@ -237,8 +237,8 @@ func validateAsyncHooks(providerPath: String, callerPath: String) async throws {
         error.withUnderlyingError { check(($0 as NSError).domain == "native-async-hook-consumer") }
     }
     errorHook.invalidate()
-    let type = try await runtime.resolveSwiftType(
-        named: "SwiftFunctionFixture.AsyncHookRenderer",
+    let type = try await runtime.resolve(
+        .swift(.type("SwiftFunctionFixture.AsyncHookRenderer")),
         in: provider
     )
     let method = try await type.resolve(
@@ -474,8 +474,8 @@ func validateRuntimeSubscripts(_ path: String) async throws {
     let source = try unsafe make.unsafeInvoke(keyText, 41)
     let key = try unsafe makeKey.unsafeInvoke(keyText)
     let replacement = try unsafe makeReplacement.unsafeInvoke(keyText, 42)
-    let elementType = try await runtime.resolveSwiftType(
-        named: "SwiftFunctionFixture.RuntimeLookupElement",
+    let elementType = try await runtime.resolve(
+        .swift(.type("SwiftFunctionFixture.RuntimeLookupElement")),
         in: scope
     )
     let abis = [
@@ -553,8 +553,8 @@ func prepareRuntimeProjection(
         in: scope
     )
     let value = try unsafe make.unsafeInvoke(41)
-    let bodyType = try await runtime.resolveSwiftType(
-        named: "SwiftFunctionFixture.RuntimeProjectionBody",
+    let bodyType = try await runtime.resolve(
+        .swift(.type("SwiftFunctionFixture.RuntimeProjectionBody")),
         in: scope
     )
     guard
@@ -619,18 +619,14 @@ func prepareRuntimeProjection(
 let path = CommandLine.arguments[1]
 let keyPathRuntime = ABIRuntime()
 let keyPathProvider = ImageSelector.path(URL(fileURLWithPath: path))
-let keyPathRoot = try await keyPathRuntime.resolveSwiftType(
-    named: "SwiftFunctionFixture.RuntimeKeyPathRoot",
+let keyPathRootRequest = NativeRequest.swift(.type("SwiftFunctionFixture.RuntimeKeyPathRoot"))
+let keyPathRoot = try await keyPathRuntime.resolve(keyPathRootRequest, in: keyPathProvider)
+let keyPathPayload = try await keyPathRuntime.resolve(
+    .swift(.type("SwiftFunctionFixture.RuntimeKeyPathPayload")),
     in: keyPathProvider
 )
-let keyPathPayload = try await keyPathRuntime.resolveSwiftType(
-    named: "SwiftFunctionFixture.RuntimeKeyPathPayload",
-    in: keyPathProvider
-)
-let nativeKeyPath = try await keyPathRoot.resolveWritableKeyPath(
-    named: "payload",
-    valueType: keyPathPayload
-)
+let keyPathRequest = NativeRequest.swift(.writableKeyPath("payload", valueType: keyPathPayload))
+let nativeKeyPath = try await keyPathRoot.resolve(keyPathRequest)
 let validateKeyPath = try await keyPathRuntime.resolve(
     .swift(
         .function(
@@ -647,15 +643,13 @@ print(
     "Public writable key paths preserve native identity and writeback without importing provider types"
 )
 
-let observedRoot = try await keyPathRuntime.resolveSwiftType(
-    named: "SwiftFunctionFixture.RuntimeKeyPathObservedRoot",
+let observedRoot = try await keyPathRuntime.resolve(
+    .swift(.type("SwiftFunctionFixture.RuntimeKeyPathObservedRoot")),
     in: keyPathProvider
 )
-let keyPathString = try await keyPathRuntime.resolveSwiftType(named: "Swift.String")
-let observedKeyPath = try await observedRoot.resolveWritableKeyPath(
-    named: "text",
-    valueType: keyPathString,
-    keyValueCodingKey: "nativeText"
+let keyPathString = try await keyPathRuntime.resolve(.swift(.type("Swift.String")))
+let observedKeyPath = try await observedRoot.resolve(
+    .swift(.writableKeyPath("text", valueType: keyPathString, keyValueCodingKey: "nativeText"))
 )
 let validateObservedKeyPath = try await keyPathRuntime.resolve(
     .swift(
@@ -688,8 +682,8 @@ print(
     "Public runtime projections retain enum payload types and MainActor closures without importing provider types"
 )
 
-let enumType = try await keyPathRuntime.resolveSwiftType(
-    named: "SwiftFunctionFixture.RuntimeProjection",
+let enumType = try await keyPathRuntime.resolve(
+    .swift(.type("SwiftFunctionFixture.RuntimeProjection")),
     in: keyPathProvider
 )
 let emptyEnum = try enumType.makeEnumCase(named: "empty")
