@@ -137,7 +137,10 @@ import Synchronization
     initHook.invalidate()
 
     let asynchronous = try await type.resolve(
-        .method(prefix + "asyncRead(_:)", as: ((Int64) async -> Int64).self)
+        .method(
+            prefix + "asyncRead(_:)",
+            as: (nonisolated(nonsending) (Int64) async -> Int64).self
+        )
     )
     let asyncHook = try await unsafe asynchronous.hookVirtualCalls(onFailure: failure) {
         call,
@@ -149,7 +152,7 @@ import Synchronization
     let asyncOracle = try await runtime.resolve(
         .function(
             "SwiftImportCallerControl.witnessAsync(_:_:_:)",
-            as: ((Int64, Int64, Int64) async -> Int64).self
+            as: (nonisolated(nonsending) (Int64, Int64, Int64) async -> Int64).self
         ),
         in: caller
     )
