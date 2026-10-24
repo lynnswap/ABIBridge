@@ -637,10 +637,11 @@ public actor NativeSwiftType: Hashable {
             // Prepares a candidate whose context applies to the request.
             func prepare(
                 _ candidate: SwiftCandidate,
-                _ entry: SwiftEntry
+                _ entry: SwiftEntry,
+                ignoringOwner: Bool = false
             ) throws -> SwiftGenericCallPlan? {
                 if isComplete {
-                    guard query.spells(candidate) else { return nil }
+                    guard query.spells(candidate, ignoringOwner: ignoringOwner) else { return nil }
                 }
                 let plan = try SwiftGenericCallPlan(
                     entry: entry,
@@ -770,7 +771,8 @@ public actor NativeSwiftType: Hashable {
                             conformances: conformances
                         ) { witness in
                             do {
-                                return try prepare(witness, witness.entry) != nil
+                                return try prepare(witness, witness.entry, ignoringOwner: true)
+                                    != nil
                             } catch ABIResolutionError.signatureMismatch {
                                 return false
                             }
