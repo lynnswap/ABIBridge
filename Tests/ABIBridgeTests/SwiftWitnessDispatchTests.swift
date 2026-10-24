@@ -17,6 +17,11 @@ struct SwiftWitnessDispatchTests {
         )
         let name = fixture.module + ".Witnessed.read(_:)"
         let method = try await type.resolve(.method(name, as: ((Int64) -> Int64).self))
+        let construct = try await type.resolve(
+            .initializer("init(seed:)", as: ((Int64) -> NativeSwiftValue).self)
+        )
+        let receiver = try unsafe construct.unsafeInvoke(40)
+        #expect(try unsafe method.unsafeInvoke(on: receiver, 2) == 42)
         let oracle = try await fixture.runtime.resolve(
             .function(
                 fixture.callerModule + ".witnessRead(_:_:_:)",
@@ -32,6 +37,7 @@ struct SwiftWitnessDispatchTests {
         defer { first.invalidate() }
         #expect(try unsafe oracle.unsafeInvoke(0, 40, 2) == 143)
         #expect(try unsafe oracle.unsafeInvoke(1, 40, 2) == 43)
+        #expect(try unsafe method.unsafeInvoke(on: receiver, 2) == 42)
         // Lookup after publication must use immutable identity and join the
         // existing physical slot, even when no Tq symbol exists.
         let again = try await type.resolve(.method(name, as: ((Int64) -> Int64).self))
