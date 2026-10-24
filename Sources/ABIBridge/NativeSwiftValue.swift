@@ -267,7 +267,7 @@ final class SwiftOptionalSourceTransfer {
 struct SwiftRuntimeValuePlan: Sendable {
     let valueType: NativeSwiftType
     let type: CValueType
-    let nativeTuple: SwiftTupleValuePlan?
+    private(set) var nativeTuple: SwiftTupleValuePlan?
     let nativeClosure: SwiftGenericClosurePlan?
     /// How the host represents the native value, when not as a handle of it.
     enum Projection: @unchecked Sendable {
@@ -292,7 +292,7 @@ struct SwiftRuntimeValuePlan: Sendable {
         case .collection(let collection): collection.host.type
         }
     }
-    private let closureConversions: SwiftRuntimeClosureConversions
+    private var closureConversions: SwiftRuntimeClosureConversions
     var hasClosureConversions: Bool { !closureConversions.isEmpty }
     private let size: Int
     private let alignment: Int
@@ -679,6 +679,15 @@ struct SwiftRuntimeValuePlan: Sendable {
             }
         }
         return native
+    }
+
+    func usingTupleStorageConvention(binding: SwiftGenericBinding) throws -> Self {
+        guard let nativeTuple, nativeTuple.hasNestedClosures else { return self }
+        var plan = self
+        plan.nativeTuple = try nativeTuple.usingStorageConvention(binding: binding)
+        plan.closureConversions = try SwiftRuntimeClosureConversions(
+            metadata: valueType.metadata, tuple: plan.nativeTuple, closure: nativeClosure)
+        return plan
     }
 
     func encodeArgument(_ value: Any, convention: SwiftArgumentConvention, asynchronous: Bool) throws -> NativeValueStorage {

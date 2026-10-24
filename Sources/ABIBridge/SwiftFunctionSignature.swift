@@ -340,17 +340,30 @@ struct SwiftCallValues: Sendable {
         parameters: SwiftGenericParameters,
         declaration: SwiftGenericCallPlan?
     ) throws -> [Int: CValueType] {
-        let stated = declaration?.binding.declaration.borrowedInputs
-        guard try resultCanBorrowInputs(declaration: declaration) || stated != nil else {
-            return [:]
-        }
+        try borrowedArgumentTypes(
+            parameters: parameters,
+            formal: declaration?.binding.declaration.arguments,
+            binding: declaration?.binding,
+            stated: declaration?.binding.declaration.borrowedInputs,
+            canBorrow: resultCanBorrowInputs(declaration: declaration)
+        )
+    }
+
+    func borrowedArgumentTypes(
+        parameters: SwiftGenericParameters,
+        formal: [SwiftFormalType]?,
+        binding: SwiftGenericBinding?,
+        stated: Set<SwiftBorrowedInputs.Input>?,
+        canBorrow: Bool
+    ) throws -> [Int: CValueType] {
+        guard canBorrow || stated != nil else { return [:] }
         var addressed: [Int: CValueType] = [:]
         // The arguments of each parameter, with its formal type where a
         // declaration names one. A pack passes its elements through one
         // buffer of their addresses either way, so only whole values count.
         var formals: [Int: SwiftFormalType?] = [:]
         let declared: [SwiftFormalType?] =
-            declaration.map { $0.binding.declaration.arguments.map { $0 } }
+            formal.map { $0.map { $0 } }
             ?? Array(repeating: nil, count: parameters.groups.count)
         var dependencies: [Int: Bool] = [:]
         for (position, pair) in zip(declared, parameters.groups).enumerated() {
@@ -372,6 +385,7 @@ struct SwiftCallValues: Sendable {
                 )
             }
             guard argument.convention == .borrowing else { continue }
+            if parameters.usesStorageConvention { continue }
             guard let formal = formals[index] else { continue }
             let indirect = withExtendedLifetime(argument.type) {
                 ABISwiftValueIsIndirect(argument.type.handle)
@@ -382,7 +396,7 @@ struct SwiftCallValues: Sendable {
                 index,
                 conversion: argument.conversion,
                 formal: formal,
-                binding: declaration?.binding,
+                binding: binding,
                 borrowed: borrowed
             )
             if byAddress {
@@ -400,9 +414,15 @@ struct SwiftCallValues: Sendable {
     }
 
     func resultCanBorrowInputs(declaration: SwiftGenericCallPlan?) throws -> Bool {
+        try resultCanBorrowInputs(
+            binding: declaration?.binding,
+            formal: declaration?.binding.declaration.result
+        )
+    }
+
+    func resultCanBorrowInputs(binding: SwiftGenericBinding?, formal: SwiftFormalType?) throws -> Bool {
         if result.scoped != nil { return true }
-        guard let binding = declaration?.binding else { return false }
-        let formal = binding.declaration.result
+        guard let binding, let formal else { return false }
         guard binding.dependsOnParameters(formal) || !formal.opaqueIndices.isEmpty else {
             return false
         }

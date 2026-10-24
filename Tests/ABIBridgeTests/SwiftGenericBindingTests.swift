@@ -70,6 +70,29 @@ struct SwiftGenericBindingTests {
         #expect(nested.hasDeclaredLifetime)
     }
 
+    @Test func declaredClosureInputsKeepDistinctPhysicalAuthentication() throws {
+        let declaration = SwiftGenericDeclaration(
+            parameters: [.init(name: "A", isPack: false)],
+            requirements: [.invertedProtocols(.named("A", []), 2)],
+            arguments: [], result: .named("A", []), failure: nil,
+            isAsync: false, consumesArguments: false
+        )
+        let binding = try SwiftGenericBinding(declaration: declaration, arguments: [.type(Int64.self)],
+            signature: SwiftFunctionSignature((() -> Int64).self), resolver: .shared)
+        func plan(_ attribute: String) throws -> SwiftGenericClosurePlan {
+            try SwiftGenericCallPlan.closure(
+                SwiftDeclaredSignature(attribute + " (_ text: Swift.String) -> A").function,
+                signature: SwiftFunctionSignature(((String) -> Int64).self), binding: binding
+            )
+        }
+        let borrowed = try plan("@_lifetime(borrow text)")
+        let independent = try plan("@_lifetime(immortal)")
+        #expect(swiftClosureDiscriminator(description: borrowed.authentication) == 55683)
+        #expect(borrowed.authentication != independent.authentication)
+        #expect(!borrowed.hasSameNativeABI(as: independent))
+        #expect(throws: ABIResolutionError.self) { try plan("") }
+    }
+
     @Test func conditionalResultEscapabilityUsesTheDeclaredArguments() throws {
         func query(_ result: String, signature: Any.Type, suppressesEscapable: Bool) throws -> Bool
         {

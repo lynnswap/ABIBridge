@@ -1532,6 +1532,234 @@ struct SwiftInferredValueTests {
         }
     }
 
+    @Test func scopedClosureResultsPreserveErrorsAndDestruction() async throws {
+        let (library, module) = try provider(
+            """
+            nonisolated(unsafe) private var destroyed = 0
+            public enum Failure: Error { case rejected }
+            public struct Number: ~Copyable, ~Escapable {
+                let value: Int64
+                @_lifetime(immortal) init(_ value: Int64) { self.value = value }
+                deinit { destroyed += 1 }
+            }
+            @inline(never) public func read(_ value: borrowing Number) -> Int64 { value.value }
+            @inline(never) public func destructions() -> Int64 { Int64(destroyed) }
+            @inline(never) public func make(_ fail: Bool) -> () throws -> Number {
+                { if fail { throw Failure.rejected }; return Number(42) }
+            }
+            @inline(never) public func makeAsync() -> nonisolated(nonsending) () async -> Number {
+                { await Task.yield(); return Number(43) }
+            }
+            """, arguments: ["-enable-experimental-feature", "Lifetimes"]
+        )
+        defer { library.cleanup() }
+        let scope = ImageSelector.path(library.libraryURL)
+        let number = try await runtime.resolveSwiftType(named: module + ".Number", in: scope)
+        let valueABIs: [NativeSwiftType: NativeType] = [
+            number: try .structure(named: "Number", fields: [.int64])
+        ]
+        let read = try await runtime.resolve(
+            .function(module + ".read(_:)", as: ((NativeSwiftBorrowedValue) -> Int64).self, valueABIs: valueABIs), in: scope
+        )
+        let destructions = try await runtime.resolve(
+            .function(module + ".destructions()", as: (() -> Int64).self), in: scope
+        )
+        let make = try await runtime.resolve(
+            .function(module + ".make(_:)", as: ((Bool) -> NativeSwiftClosure<() throws -> NativeSwiftBorrowedValue>).self, valueABIs: valueABIs), in: scope
+        )
+        let closure = try unsafe make.unsafeInvoke(false)
+        #expect(try unsafe closure.unsafeInvoke(withResult: { try unsafe read.unsafeInvoke($0) }) == 42)
+        #expect(throws: NativeSwiftValueError.valueInUse) {
+            try unsafe closure.unsafeInvoke(withResult: { _ in throw NativeSwiftValueError.valueInUse })
+        }
+        let failure = try unsafe make.unsafeInvoke(true)
+        #expect(throws: NativeSwiftError.self) { try unsafe failure.unsafeInvoke(withResult: { _ in () }) }
+        #expect(try unsafe destructions.unsafeInvoke() == 2)
+        let makeAsync = try await runtime.resolve(
+            .function(module + ".makeAsync()", as: (() -> NativeSwiftClosure<nonisolated(nonsending) () async -> NativeSwiftBorrowedValue>).self, valueABIs: valueABIs), in: scope
+        )
+        let asynchronous = try unsafe makeAsync.unsafeInvoke()
+        #expect(try unsafe await asynchronous.unsafeInvoke(withResult: { value in
+            await Task.yield()
+            return try unsafe read.unsafeInvoke(value)
+        }) == 43)
+        #expect(try unsafe destructions.unsafeInvoke() == 3)
+    }
+
+    #if compiler(>=6.4)
+    @available(macOS 26.0, *)
+    @Test func declaredClosureLifetimesKeepTheirInputStorage() async throws {
+        // Swift 6.4 crashes while lowering a borrowed tuple's projections.
+        // The first body returns the exact incoming tuple address. Its String
+        // remains valid only if invocation and reabstraction preserve that storage.
+        let shim = try FixtureLibrary(cxxSource: """
+            #include <stdint.h>
+            #include <string.h>
+            extern "C" __attribute__((swiftcall)) const void *ABILifetimeTupleAddress(const void *pair) { return pair; }
+            using Stored = __attribute__((swiftcall)) void (*)(__attribute__((swift_indirect_result)) int64_t *, const int64_t *, __attribute__((swift_context)) void *);
+            extern "C" __attribute__((swiftcall)) int64_t ABILifetimeFunctionTuple(const void *pair) {
+                Stored function; void *context;
+                memcpy(&function, static_cast<const char *>(pair) + 16, sizeof(function));
+                memcpy(&context, static_cast<const char *>(pair) + 24, sizeof(context));
+                const int64_t argument = 35;
+                int64_t result;
+                function(&result, &argument, context);
+                return result;
+            }
+            """)
+        defer { shim.cleanup() }
+        let (library, module) = try provider(
+            """
+            @available(macOS 26.0, *)
+            public struct View: ~Escapable {
+                let bytes: Span<UInt8>
+                @_lifetime(copy bytes) init(_ bytes: Span<UInt8>) { self.bytes = bytes }
+            }
+            public struct TupleView: ~Escapable { let text: UnsafePointer<String> }
+            public struct Number: ~Escapable {
+                let value: Int64
+                @_lifetime(immortal) init(_ value: Int64) { self.value = value }
+            }
+            @inline(never) public func readNumber(_ value: borrowing Number) -> Int64 { value.value }
+            public struct Evidence { public var text: String = "evidence" }
+            @available(macOS 26.0, *)
+            @_lifetime(borrow text) @inline(never) public func first(_ text: String, _ other: String) -> View { View(text.utf8Span.span) }
+            @available(macOS 26.0, *)
+            @_lifetime(borrow text) @inline(never) public nonisolated(nonsending) func asyncBody(_ text: String) async -> View {
+                await Task.yield()
+                return View(text.utf8Span.span)
+            }
+            @available(macOS 26.0, *)
+            @inline(never) public func make() -> @_lifetime(borrow text) (_ text: String, _ other: String) -> View {
+                first
+            }
+            @available(macOS 26.0, *)
+            @inline(never) public func makeComposite() -> (Int64, (@_lifetime(borrow text) (_ text: String, _ other: String) -> View)?) {
+                (7, first)
+            }
+            @_silgen_name("ABILifetimeTupleAddress")
+            @_lifetime(borrow pair) public func tupleBody(_ pair: (String, Int64)) -> TupleView
+            @available(macOS 26.0, *)
+            @inline(never) public func makeTuple() -> @_lifetime(borrow pair) (_ pair: (String, Int64)) -> TupleView { tupleBody }
+            @available(macOS 26.0, *)
+            @inline(never) public func makeAsync() -> nonisolated(nonsending) @_lifetime(borrow text) (_ text: String) async -> View {
+                asyncBody
+            }
+            @available(macOS 26.0, *)
+            @inline(never) public func read(_ view: borrowing View) -> Int64 {
+                var number: Int64 = 0
+                for i in view.bytes.indices { number = number * 10 + (Int64(view.bytes[i]) - 48) }
+                return number
+            }
+
+            @inline(never) public func readTuple(_ view: borrowing TupleView) -> Int64 {
+                var number: Int64 = 0
+                for byte in view.text.pointee.utf8 { number = number * 10 + Int64(byte) - 48 }
+                return number
+            }
+
+            @_silgen_name("ABILifetimeFunctionTuple")
+            @_lifetime(borrow pair) public func functionTupleBody(_ pair: (String, (Int64) -> Int64)) -> Number
+            @inline(never) public func makeFunctionTuple() -> @_lifetime(borrow pair) (_ pair: (String, (Int64) -> Int64)) -> Number { functionTupleBody }
+            """,
+            arguments: ["-enable-experimental-feature", "Lifetimes", shim.libraryURL.path]
+        )
+        defer { library.cleanup() }
+        let scope = ImageSelector.path(library.libraryURL)
+        let read = try await runtime.resolve(
+            .function(module + ".read(_:)", as: ((NativeSwiftBorrowedValue) -> Int64).self), in: scope
+        )
+        typealias Borrower = NativeSwiftClosure<(String, String) -> NativeSwiftBorrowedValue>
+        let make = try await runtime.resolve(
+            .function(
+                module + ".make()", as: (() -> Borrower).self,
+                declaredAs: "() -> @_lifetime(borrow text) (_ text: Swift.String, _ other: Swift.String) -> \(module).View"
+            ), in: scope
+        )
+        let closure = try unsafe make.unsafeInvoke()
+        var expired: NativeSwiftBorrowedValue?
+        #expect(try unsafe closure.unsafeInvoke("123", "456", withResult: { value in
+            expired = value
+            return try unsafe read.unsafeInvoke(value)
+        }) == 123)
+        #expect(throws: NativeSwiftBorrowError.expiredBorrow) { try unsafe read.unsafeInvoke(expired!) }
+        await #expect(throws: ABIResolutionError.self) {
+            try await runtime.resolve(.function(module + ".make()", as: (() -> Borrower).self), in: scope)
+        }
+        let makeComposite = try await runtime.resolve(
+            .function(module + ".makeComposite()", as: (() -> (Int64, Borrower?)).self,
+                declaredAs: "() -> (Swift.Int64, (@_lifetime(borrow text) (_ text: Swift.String, _ other: Swift.String) -> \(module).View)?)"), in: scope
+        )
+        let composite = try unsafe makeComposite.unsafeInvoke()
+        let nested = try #require(composite.1)
+        #expect(try unsafe nested.unsafeInvoke("456", "123", withResult: { try unsafe read.unsafeInvoke($0) }) == 456)
+        let readTuple = try await runtime.resolve(
+            .function(module + ".readTuple(_:)", as: ((NativeSwiftBorrowedValue) -> Int64).self), in: scope
+        )
+        typealias TupleBorrower = NativeSwiftClosure<((String, Int64)) -> NativeSwiftBorrowedValue>
+        let tupleDeclaration = "() -> @_lifetime(borrow pair) (_ pair: (Swift.String, Swift.Int64)) -> \(module).TupleView"
+        let makeTuple = try await runtime.resolve(
+            .function(module + ".makeTuple()", as: (() -> TupleBorrower).self, declaredAs: tupleDeclaration), in: scope
+        )
+        let tuple = try unsafe makeTuple.unsafeInvoke()
+        #expect(try unsafe tuple.unsafeInvoke(("456", 7), withResult: { try unsafe readTuple.unsafeInvoke($0) }) == 456)
+        // Erasing the function value changes its ABI to indirect value storage;
+        // the adapter must forward the tuple address that owns these small-string bytes.
+        let erase = try await runtime.resolve(
+            .function(module + ".makeTuple()", as: (() -> NativeSwiftValue).self, declaredAs: tupleDeclaration), in: scope
+        )
+        let erased = try unsafe erase.unsafeInvoke()
+        let stored = try await erased.resolveClosure(as: (((String, Int64)) -> NativeSwiftBorrowedValue).self)
+        #if DEBUG
+        // Compare addresses before reading the borrowed String, so a copying
+        // adapter fails without dereferencing its already-destroyed temporary.
+        guard case .synchronous(let storage, let prepared) = try stored.call.resolved() else {
+            Issue.record("Expected a synchronous stored closure")
+            return
+        }
+        let input = NativeValueStorage(size: MemoryLayout<(String, Int64)>.stride,
+                                       alignment: MemoryLayout<(String, Int64)>.alignment)
+        input.initialize(("789", Int64(7)))
+        let output = NativeValueStorage(size: MemoryLayout<UnsafeRawPointer>.stride,
+                                        alignment: MemoryLayout<UnsafeRawPointer>.alignment)
+        var error: OpaquePointer?
+        let invoked = withExtendedLifetime((stored, storage)) {
+            [Optional(input.address)].withUnsafeBufferPointer { arguments in
+                unsafe ABIUnsafeInvokeSwiftCallInterface(prepared.interface.handle,
+                    storage.implementation.function, output.address, arguments.baseAddress,
+                    storage.value.context.map { UnsafeRawPointer($0) }, &error)
+            }
+        }
+        guard invoked else { throw consumeNativeCallFailure(error, domain: "ABIBridge.ClosureTest") }
+        try #require(output.address.load(as: UnsafeMutableRawPointer.self) == input.address)
+        #endif
+        #expect(try unsafe stored.unsafeInvoke(("789", 7), withResult: { try unsafe readTuple.unsafeInvoke($0) }) == 789)
+        let readNumber = try await runtime.resolve(
+            .function(module + ".readNumber(_:)", as: ((NativeSwiftBorrowedValue) -> Int64).self), in: scope
+        )
+        typealias FunctionTupleBorrower = NativeSwiftClosure<((String, NativeSwiftClosure<(Int64) -> Int64>)) -> NativeSwiftBorrowedValue>
+        let makeFunctionTuple = try await runtime.resolve(
+            .function(module + ".makeFunctionTuple()", as: (() -> FunctionTupleBorrower).self,
+                declaredAs: "() -> @_lifetime(borrow pair) (_ pair: (Swift.String, (Swift.Int64) -> Swift.Int64)) -> \(module).Number"), in: scope
+        )
+        let functionTuple = try unsafe makeFunctionTuple.unsafeInvoke()
+        let transform = try NativeSwiftClosure<(Int64) -> Int64> { $0 + 7 }
+        #expect(try unsafe functionTuple.unsafeInvoke(("123", transform), withResult: { try unsafe readNumber.unsafeInvoke($0) }) == 42)
+        let makeAsync = try await runtime.resolve(
+            .function(
+                module + ".makeAsync()",
+                as: (() -> NativeSwiftClosure<nonisolated(nonsending) (String) async -> NativeSwiftBorrowedValue>).self,
+                declaredAs: "() -> nonisolated(nonsending) @_lifetime(borrow text) (_ text: Swift.String) async -> \(module).View"
+            ), in: scope
+        )
+        let asynchronous = try unsafe makeAsync.unsafeInvoke()
+        #expect(try unsafe await asynchronous.unsafeInvoke("123", withResult: { value in
+            await Task.yield()
+            return try unsafe read.unsafeInvoke(value)
+        }) == 123)
+    }
+    #endif
+
     @available(macOS 26.0, *)
     @Test func declaredLifetimeInputsSelectTheirNativeStorage() async throws {
         let (library, module) = try provider(

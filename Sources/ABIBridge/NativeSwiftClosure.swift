@@ -256,6 +256,64 @@ public struct NativeSwiftClosure<Signature> {
             repeat each values
         )
     }
+    /// Uses the native result while its return storage and input lifetimes remain active. The borrowed view expires and the native result is destroyed before writeback.
+    @unsafe public func unsafeInvoke<Output: ~Copyable, Failure: Error, each Argument>(
+        _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) throws -> Output
+    ) throws -> Output
+    where Signature == (repeat each Argument) throws(Failure) -> NativeSwiftBorrowedValue {
+        guard case .synchronous(let storage, let prepared) = try call.resolved() else {
+            preconditionFailure("A synchronous closure has a synchronous call plan.")
+        }
+        return try unsafe prepared.unsafeInvoke(
+            function: storage.implementation.function,
+            context: storage.value.context.map { UnsafeRawPointer($0) },
+            retaining: storage,
+            retainingCode: storage.codeOwner,
+            repeat each values,
+            withResult: body
+        )
+    }
+
+    /// Uses the native result while its return storage and input lifetimes remain active. The borrowed view expires and the native result is destroyed before writeback.
+    @unsafe public func unsafeInvoke<Output: ~Copyable, Failure: Error, each Argument>(
+        _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) throws -> Output
+    ) throws -> Output
+    where Signature == @Sendable (repeat each Argument) throws(Failure) -> NativeSwiftBorrowedValue {
+        guard case .synchronous(let storage, let prepared) = try call.resolved() else {
+            preconditionFailure("A synchronous closure has a synchronous call plan.")
+        }
+        return try unsafe prepared.unsafeInvoke(
+            function: storage.implementation.function,
+            context: storage.value.context.map { UnsafeRawPointer($0) },
+            retaining: storage,
+            retainingCode: storage.codeOwner,
+            repeat each values,
+            withResult: body
+        )
+    }
+
+    /// Uses the native result while its return storage and input lifetimes remain active. The borrowed view expires and the native result is destroyed before writeback.
+    @MainActor
+    @unsafe public func unsafeInvoke<Output: ~Copyable, Failure: Error, each Argument>(
+        _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) throws -> Output
+    ) throws -> Output
+    where Signature == @MainActor (repeat each Argument) throws(Failure) -> NativeSwiftBorrowedValue {
+        guard case .synchronous(let storage, let prepared) = try call.resolved() else {
+            preconditionFailure("A synchronous closure has a synchronous call plan.")
+        }
+        return try unsafe prepared.unsafeInvoke(
+            function: storage.implementation.function,
+            context: storage.value.context.map { UnsafeRawPointer($0) },
+            retaining: storage,
+            retainingCode: storage.codeOwner,
+            repeat each values,
+            withResult: body
+        )
+    }
+
 }
 
 extension NativeSwiftClosure: SwiftClosureValue {

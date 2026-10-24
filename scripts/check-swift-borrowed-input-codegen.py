@@ -86,6 +86,7 @@ PARAMETERS = {
     "CEnum": (("c", "CFComparisonResult"), KEEPS),
     "COptions": (("c", "CFStringCompareFlags"), UNDECIDED),
     "StringTuple": (("tuple", [("leaf", "String"), ("leaf", "Int64")]), UNDECIDED),
+    "FunctionTuple": (("tuple", [("leaf", "String"), ("function",)]), UNDECIDED),
     "IntTuple": (("tuple", [("leaf", "Int64"), ("leaf", "Int64")]), KEEPS),
     "WideTuple": (("tuple", [("leaf", "String")] + [("leaf", "Int64")] * 3), UNDECIDED),
     "PairInt64": (("instance", "Pair"), UNDECIDED),
@@ -118,7 +119,8 @@ MULTIPLE = {"borrowFirst": [UNDECIDED, UNDECIDED], "borrowSecond": [UNDECIDED, U
             "borrowBoth": [UNDECIDED, UNDECIDED]}
 # With Swift 6.4 and later: the parameter of the closure that
 # `callBorrowing<Case>` takes, compared with the one `call<Case>` takes.
-CLOSURES = {"String": (("leaf", "String"), UNDECIDED), "Plain": (("nominal", "Plain"), KEEPS)}
+CLOSURES = {"String": (("leaf", "String"), UNDECIDED), "Plain": (("nominal", "Plain"), KEEPS),
+            "StringTuple": (("tuple", [("leaf", "String"), ("leaf", "Int64")]), UNDECIDED)}
 
 WEAKENED = {
     "explicit": "a value with a built-in representation or an explicit ABI keeps that convention",
@@ -175,6 +177,7 @@ class Compiled:
 
     def __init__(self, ir, sil):
         self.ir = {}
+        self.bodies = dict(re.findall(r'^define [^@\n]*@"(\$s[^"]+)"[^\n]*\{\n(.*?)^}', ir, re.M | re.S))
         for found in re.finditer(r'^define [^@\n]*@"(\$s[^"]+)"\(', ir, re.M):
             parameters = elements(ir[found.end():group_end(ir, found.end() - 1) - 1])
             # Only the type and whether a pointer addresses a value or is
@@ -388,6 +391,13 @@ def check_facts(compiled, label, require):
         require(len(parameters) == 1 and "@in_guaranteed" in parameters[0][0].split()
                 and compiled.ir[symbol][0] == "ptr noalias",
                 f"{label}: borrow{name} must take its input as one address: {compiled.sil[symbol]}")
+    symbol = compiled.symbol(f"{MODULE}.borrowFunctionTuple")
+    parameters = sil_parameters(compiled.sil[symbol])
+    require(len(parameters) == 1 and parameters[0][0] == "@in_guaranteed"
+            and "@callee_guaranteed @substituted" in parameters[0][1]
+            and "@in_guaranteed" in parameters[0][1] and "@out" in parameters[0][1]
+            and compiled.ir[symbol][0] == "ptr noalias",
+            f"{label}: a whole AFD tuple must store its function field at maximal abstraction")
     # A tuple with a pack expansion is one address where a result borrows
     # from it, and its elements and a pack otherwise, which IR types alone
     # do not tell apart.
@@ -462,6 +472,26 @@ def main():
         check_records(compiled, closures, label, require)
         check_facts(compiled, label, require)
         check_declared_inputs(compiled, label, require)
+        if closures:
+            for name in ["String", "StringTuple"]:
+                parameters = closure_parameters(compiled.sil[compiled.symbol(f"{MODULE}.callBorrowing{name}")])
+                require(len(parameters) == 1 and parameters[0][0] == "@in_guaranteed",
+                        f"{label}: a borrowed closure {name} input must use one native address")
+            if target.startswith("arm64e-"):
+                # SwiftGenericBindingTests checks the corresponding prepared
+                # generic closure's discriminator, even on a non-PAC host.
+                for name, discriminator in {"callBorrowingString": 44719,
+                        "callBorrowingStringTuple": 44719, "callIndependentString": 26340,
+                        "callBorrowingGeneric": 55683}.items():
+                    body = compiled.bodies[compiled.symbol(f"{MODULE}.{name}")]
+                    if name == "callIndependentString" and '"ptrauth"' not in body:
+                        body += compiled.bodies[compiled.symbol(f"{MODULE}.callString")]
+                    require(f'"ptrauth"(i32 0, i64 {discriminator})' in body,
+                            f"{label}: {name} must authenticate its physical input convention with {discriminator}")
+            independent, ordinary = (closure_parameters(compiled.sil[compiled.symbol(f"{MODULE}.{name}")])
+                                     for name in ["callIndependentString", "callString"])
+            require(independent == ordinary,
+                    f"{label}: an explicitly independent closure String input must keep its convention")
         rules = Rules(compiled)
         found = positions(compiled, closures)
         for kind, name, model, expected, position, alike in found:
