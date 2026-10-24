@@ -24,7 +24,7 @@ extension NativeObjCMethodHook {
         let sel = NSSelectorFromString(selector)
         var error: NSError?
         let raw = options.withConsumedArguments { consumed in
-            ABICopyObjCImplementation(type, sel, classMethod,
+            ABICopyCapturedObjCInvocation(type, sel, classMethod,
                 options.returnsRetainedObject.map { $0 ? 1 : 0 } ?? -1,
                 options.consumesReceiver.map { $0 ? 1 : 0 } ?? -1, consumed.baseAddress, consumed.count, &error)
         }

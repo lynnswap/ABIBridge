@@ -1,6 +1,7 @@
 #ifndef ABIBRIDGE_OBJECTIVE_C_HOOKS_H
 #define ABIBRIDGE_OBJECTIVE_C_HOOKS_H
 #include <ABIBridge/Inspection.h>
+#include <ABIBridge/ObjectiveCOwnership.h>
 #include <objc/runtime.h>
 #include <stdbool.h>
 
@@ -26,13 +27,11 @@ typedef struct {
     size_t parameterCount;
 } ABIObjCHookSignature;
 
-/// Zero-initialized options infer selector-family ownership.
-enum { ABIObjCOwnershipAutomatic = 0, ABIObjCOwnershipBorrowed = 1, ABIObjCOwnershipTransferred = 2 };
 typedef struct {
     bool classMethod;
     bool requiresMainThread;
-    int32_t resultOwnership;
-    int32_t receiverOwnership;
+    ABIObjCOwnership resultOwnership;
+    ABIObjCOwnership receiverOwnership;
     /// Optional weak identity filter, for ordinary instance methods only.
     void *object;
     /// Optional live Objective-C owner for first-created fallback code/class. Retained independently of callbacks for the dispatcher's process lifetime.

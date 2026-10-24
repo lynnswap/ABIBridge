@@ -77,17 +77,21 @@ inline void checkReceiverRetainReentry() {
     }
     {
         NSError *error = nil;
-        auto *binding = ABICopyObjCMethod(prototype, @selector(value), @encode(NSInteger), nullptr, 0, -1, -1, nullptr, 0, &error);
+        const ABIObjCSignature signature{@encode(NSInteger), nullptr, 0};
+        auto *implementation = ABICopyObjCImplementation(prototype, @selector(value), &signature, {}, &error);
+        assert(implementation && !error);
+        auto *binding = ABICopyBoundObjCImplementation(implementation, prototype, &error);
+        ABIReleaseObjCImplementation(implementation);
         assert(binding && !error);
-        auto *source = ABICopyObjCMethodImplementation(binding);
-        ABIReleaseObjCMethod(binding);
+        auto *source = ABIBoundObjCImplementationCopyImplementation(binding);
+        ABIReleaseBoundObjCImplementation(binding);
         receiverRetainReentry = [&] { ABIReleaseObjCImplementation(source); source = nullptr; };
-        auto *rebound = ABICopyBoundObjCMethod(source, receiver, &error);
+        auto *rebound = ABICopyBoundObjCImplementation(source, receiver, &error);
         assert(!source && rebound && !error);
         using Getter = NSInteger (*)(id, SEL);
-        assert(reinterpret_cast<Getter>(ABIObjCMethodImplementation(rebound))(
-            (__bridge id)ABIObjCMethodReceiverAddress(rebound), ABIObjCMethodSelector(rebound)) == 42);
-        ABIReleaseObjCMethod(rebound);
+        assert(reinterpret_cast<Getter>(ABIBoundObjCImplementationGetIMP(rebound))(
+            (__bridge id)ABIBoundObjCImplementationGetReceiverAddress(rebound), ABIBoundObjCImplementationGetSelector(rebound)) == 42);
+        ABIReleaseBoundObjCImplementation(rebound);
     }
     [prototype release];
     [receiver release];
@@ -231,12 +235,16 @@ inline void checkReusableCapturedImplementation() {
         auto bound = bound_objc_implementation<NSInteger()>(prototype, "value");
         captured = bound.implementation();
         NSError *error = nil;
-        auto *binding = ABICopyObjCMethod(prototype, @selector(value), @encode(NSInteger), nullptr, 0, -1, -1, nullptr, 0, &error);
+        const ABIObjCSignature signature{@encode(NSInteger), nullptr, 0};
+        auto *implementation = ABICopyObjCImplementation(prototype, @selector(value), &signature, {}, &error);
+        assert(implementation && !error);
+        auto *binding = ABICopyBoundObjCImplementation(implementation, prototype, &error);
+        ABIReleaseObjCImplementation(implementation);
         assert(binding && !error);
-        native.reset(ABICopyObjCMethodImplementation(binding));
-        ABIRetainObjCImplementation(native.get());
+        native.reset(ABIBoundObjCImplementationCopyImplementation(binding));
+        assert(ABIRetainObjCImplementation(native.get()) == native.get());
         ABIReleaseObjCImplementation(native.get());
-        ABIReleaseObjCMethod(binding);
+        ABIReleaseBoundObjCImplementation(binding);
 #if __has_feature(objc_arc)
         prototype = nil;
 #else
@@ -250,14 +258,14 @@ inline void checkReusableCapturedImplementation() {
         [second setValue:42];
         assert(captured->unsafe_invoke(second) == 42);
         NSError *error = nil;
-        assert(ABIValidateObjCImplementationReceiver(native.get(), second, &error));
-        auto *nativeBound = ABICopyBoundObjCMethod(native.get(), second, &error);
+        assert(ABIObjCImplementationValidateReceiver(native.get(), second, &error));
+        auto *nativeBound = ABICopyBoundObjCImplementation(native.get(), second, &error);
         assert(nativeBound && !error);
         native.reset();
         using Getter = NSInteger (*)(id, SEL);
-        assert(reinterpret_cast<Getter>(ABIObjCMethodImplementation(nativeBound))(
-            (__bridge id)ABIObjCMethodReceiverAddress(nativeBound), ABIObjCMethodSelector(nativeBound)) == 42);
-        ABIReleaseObjCMethod(nativeBound);
+        assert(reinterpret_cast<Getter>(ABIBoundObjCImplementationGetIMP(nativeBound))(
+            (__bridge id)ABIBoundObjCImplementationGetReceiverAddress(nativeBound), ABIBoundObjCImplementationGetSelector(nativeBound)) == 42);
+        ABIReleaseBoundObjCImplementation(nativeBound);
         auto rebound = captured->bind(second);
         Method method = class_getInstanceMethod([ConcreteProxy class], @selector(value));
         IMP replacement = imp_implementationWithBlock(^NSInteger(id) { return 99; });

@@ -295,7 +295,7 @@ bool prepare(Class type, const char *name, const ABIObjCHookSignature *signature
     }
     SEL selector = sel_registerName(name);
     NSError *failure = nil;
-    binding.reset(ABICopyObjCImplementation(type, selector, options.classMethod,
+    binding.reset(ABICopyCapturedObjCInvocation(type, selector, options.classMethod,
         options.resultOwnership - 1, options.receiverOwnership - 1,
         options.consumedParameters, options.consumedParameterCount, &failure));
     if (!binding) {

@@ -277,7 +277,7 @@ package final class ObjCReplacement<Result, each Argument> {
         let declaration = objcMethodDeclaration(on: type, selector: selector, classMethod: classMethod)
         var error: NSError?
         let binding = options.withConsumedArguments { consumed in
-            ABICopyObjCImplementation(type, NSSelectorFromString(selector), classMethod,
+            ABICopyCapturedObjCInvocation(type, NSSelectorFromString(selector), classMethod,
                 options.returnsRetainedObject.map { $0 ? 1 : 0 } ?? -1,
                 options.consumesReceiver.map { $0 ? 1 : 0 } ?? -1, consumed.baseAddress, consumed.count, &error)
         }

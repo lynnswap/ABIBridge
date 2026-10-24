@@ -78,7 +78,7 @@ public final class NativeObjCMethodHook: @unchecked Sendable {
         var error: NSError?
         let sel = NSSelectorFromString(selector)
         let binding = options.withConsumedArguments { consumed in
-            ABICopyObjCImplementation(type, sel, classMethod,
+            ABICopyCapturedObjCInvocation(type, sel, classMethod,
                 options.returnsRetainedObject.map { $0 ? 1 : 0 } ?? -1,
                 options.consumesReceiver.map { $0 ? 1 : 0 } ?? -1, consumed.baseAddress, consumed.count, &error)
         }
