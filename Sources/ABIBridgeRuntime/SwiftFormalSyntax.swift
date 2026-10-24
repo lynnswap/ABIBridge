@@ -83,13 +83,22 @@ package enum SwiftFormalSyntax {
     package static func topLevelColon(in text: String) -> String.Index? {
         var depth = 0
         var previous: Character?
+        var extensionColon: String.Index?
         for index in text.indices {
             let character = text[index]
             if "(<[{".contains(character) {
+                // A demangled extension qualifier is part of the type's
+                // identity, including inside tuple fields and dictionary keys.
+                if depth == 0, character == "(", text[index...].hasPrefix("(extension in "),
+                    let closing = matchingClose(in: text, opening: index)
+                {
+                    let next = text.index(after: closing)
+                    if next < text.endIndex, text[next] == ":" { extensionColon = next }
+                }
                 depth += 1
             } else if ")]}".contains(character) || (character == ">" && previous != "-") {
                 depth -= 1
-            } else if character == ":", depth == 0 {
+            } else if character == ":", depth == 0, index != extensionColon {
                 return index
             }
             previous = character

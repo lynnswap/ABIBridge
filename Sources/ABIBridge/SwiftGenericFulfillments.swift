@@ -119,8 +119,13 @@ extension SwiftFormalType {
             return .named(name, arguments.map { $0.substituting(substitutions) })
         case .nominal(let name, let arguments): return .nominal(name, arguments.map { $0.substituting(substitutions) })
         case .reference(let descriptor, let arguments): return .reference(descriptor, arguments.map { $0.substituting(substitutions) })
-        case .nested(let parent, let name, let arguments):
-            return .nested(parent.substituting(substitutions), name, arguments.map { $0.substituting(substitutions) })
+        case .nested(let parent, let name, let arguments, let module):
+            return .nested(
+                parent.substituting(substitutions),
+                name,
+                arguments.map { $0.substituting(substitutions) },
+                extensionModule: module
+            )
         case .associated(let base, let name, let protocolName):
             return .associated(base.substituting(substitutions), name, protocolName: protocolName)
         case .tuple(let elements, let labels): return .tuple(elements.map { $0.substituting(substitutions) }, labels: labels)

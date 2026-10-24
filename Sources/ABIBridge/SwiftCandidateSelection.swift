@@ -14,8 +14,8 @@ struct SwiftCandidateSelection<Value> {
     private(set) var unavailable: (any Error)?
 
     /// - Parameters:
-    ///   - dispatch: Selects the code of a member exported only through its
-    ///     class dispatch thunk. Without it, such candidates are rejected.
+    ///   - dispatch: Captures the implementation selected by a member's
+    ///     dispatch thunk. Without it, class dispatch thunks are rejected.
     ///   - namesDeclaration: Whether the request spells the complete
     ///     declaration of every candidate that `accept` does not skip. A
     ///     mismatch of such a candidate at any position is then reported.
@@ -51,10 +51,10 @@ struct SwiftCandidateSelection<Value> {
             }
             do {
                 let entry: SwiftEntry
-                if candidate.record.runsOwnCode {
-                    entry = candidate.entry
-                } else if let dispatch {
+                if let dispatch, case .dispatchThunk = candidate.record.role {
                     entry = try dispatch(candidate)
+                } else if candidate.record.runsOwnCode {
+                    entry = candidate.entry
                 } else {
                     throw ABIResolutionError.unsupportedDeclaration(
                         "Its code is exported only through its dispatch thunk."
