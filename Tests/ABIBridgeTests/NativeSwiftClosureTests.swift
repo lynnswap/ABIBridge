@@ -826,7 +826,18 @@ struct NativeSwiftClosureTests {
         try check(UnsafeRawPointer?.none)
     }
 
-    #if DEBUG && os(macOS)
+    #if os(macOS)
+    enum AnonymousContextEvidence: CaseIterable, Sendable {
+        /// An image that keeps the local symbols of its private descriptors.
+        case localSymbols
+        /// A stripped -g -Onone image, whose anonymous contexts record the
+        /// declarations they wrap.
+        case recordedNames
+        /// A stripped image of another build.
+        case none
+    }
+
+    #if DEBUG
     @Test func builtInAuthenticationMatchesNativeCompilerCalls() throws {
         let cases: [(Any.Type, String)] = [
             (Bool.self, "Bool"), (Int8.self, "Int8"), (UInt8.self, "UInt8"),
@@ -1253,16 +1264,6 @@ struct NativeSwiftClosureTests {
         }
     }
 
-    enum AnonymousContextEvidence: CaseIterable, Sendable {
-        /// An image that keeps the local symbols of its private descriptors.
-        case localSymbols
-        /// A stripped -g -Onone image, whose anonymous contexts record the
-        /// declarations they wrap.
-        case recordedNames
-        /// A stripped image of another build.
-        case none
-    }
-
     /// A private or fileprivate type is declared in an anonymous context,
     /// which its runtime name spells by address, while the compiler hashes
     /// its declaration with the file's private discriminator. The descriptor
@@ -1517,9 +1518,92 @@ struct NativeSwiftClosureTests {
             return message.contains("no anonymous context records the declaration")
         }
     }
+
     #endif
 
-    #if os(macOS)
+    @Test(arguments: AnonymousContextEvidence.allCases)
+    func privateExistentialArgumentsResolveFromTheirDeclarations(
+        evidence: AnonymousContextEvidence
+    ) async throws {
+        let module =
+            "PrivateExistential_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let source = """
+            private struct Hidden { var value: Int64 }
+            public func hiddenType() -> Any.Type { Hidden.self }
+            public func hiddenCollection() -> Any { [Hidden(value: 42)] }
+            @inline(never) private func echo(_ values: any Collection<Hidden>) -> any Collection<Hidden> {
+                values
+            }
+            public func keepEcho() -> Int { echo([Hidden(value: 42)]).count }
+            """
+        let strip = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString + ".txt")
+        try "_$s*Mn\n".write(to: strip, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: strip) }
+        let library = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: source,
+            linkArguments: ["-parse-as-library", "-swift-version", "6"]
+                + (evidence == .localSymbols
+                    ? [] : ["-Xlinker", "-non_global_symbols_strip_list", "-Xlinker", strip.path])
+                + (evidence == .recordedNames ? ["-g"] : [])
+        )
+        defer { library.cleanup() }
+        let runtime = ABIRuntime()
+        let hiddenType = try runtime.resolveAndWait(
+            .function(module + ".hiddenType()", as: (() -> Any.Type).self),
+            in: .path(library.libraryURL)
+        )
+        let makeCollection = try runtime.resolveAndWait(
+            .function(module + ".hiddenCollection()", as: (() -> Any).self),
+            in: .path(library.libraryURL)
+        )
+        let declaration = try #require(
+            library.definedSymbols().compactMap {
+                DeclarationKey.demangle($0, language: .swift)
+            }.first { $0.contains(".(echo in ") }
+        )
+        func echo<Hidden>(_: Hidden.Type) throws -> Int {
+            let values = try #require(
+                try unsafe makeCollection.unsafeInvoke() as? any Collection<Hidden>
+            )
+            let echo = try runtime.resolveAndWait(
+                .function(
+                    declaration,
+                    as: ((any Collection<Hidden>) -> any Collection<Hidden>).self
+                ),
+                in: .path(library.libraryURL)
+            )
+            return try unsafe echo.unsafeInvoke(values).count
+        }
+        let type = try unsafe hiddenType.unsafeInvoke()
+        guard evidence == .none else {
+            #expect(try _openExistential(type, do: echo) == 1)
+            // A label-only request checks the native types; a complete
+            // declaration also permits host types with compatible lowering.
+            let closing = try #require(declaration.firstIndex(of: ")"))
+            let name = String(declaration[...closing]) + "(_:)"
+            #expect(throws: ABIResolutionError.self) {
+                _ = try runtime.resolveAndWait(
+                    .function(
+                        name,
+                        as: ((any Collection<Int64>) -> any Collection<Int64>).self
+                    ),
+                    in: .path(library.libraryURL)
+                )
+            }
+            return
+        }
+        #expect {
+            try _openExistential(type, do: echo)
+        } throws: { error in
+            guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                return false
+            }
+            return message.contains("no anonymous context records the declaration")
+        }
+    }
+
     /// Only arm64e signs a closure with a discriminator, which hashes the
     /// declaration of each type in the closure's signature, as the type's
     /// local descriptor symbol spells it when its image does not export it.

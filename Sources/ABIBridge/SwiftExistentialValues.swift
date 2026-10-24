@@ -21,6 +21,40 @@ typealias SwiftObjectType = RuntimeObjectType
 
 /// Uses the provider's generalized shape when the caller has no concrete existential metadata. The descriptor owns the signature and witness order.
 struct SwiftExtendedExistentialMetadata {
+    /// The generalized type expression and the identities of its arguments,
+    /// without substituting runtime spellings of private or local types.
+    struct Generalization: Equatable {
+        let shape: [UInt8]
+        let arguments: [NativeSwiftGenericArgument.Identity]
+
+        init(shape: String, arguments: [NativeSwiftGenericArgument]) {
+            self.shape = Array(shape.utf8)
+            self.arguments = arguments.map(\.identity)
+        }
+
+        init(metadata: Any.Type) throws {
+            guard
+                let handle = ABICopySwiftExtendedExistentialTypeSyntax(
+                    unsafeBitCast(metadata, to: UnsafeRawPointer.self)
+                )
+            else {
+                throw ABIResolutionError.metadataUnavailable(
+                    "The extended existential's type expression is unavailable."
+                )
+            }
+            var node = SwiftSyntax(adopting: handle).root
+            var depth = 0
+            while node.kind == "Type" || node.kind == "ExistentialMetatype" {
+                if node.kind == "ExistentialMetatype" { depth += 1 }
+                node = try node.requiredChild(kind: "Type", fallingBackToFirst: true)
+            }
+            self.init(
+                shape: try node.constrainedExistentialShapeName(metatypeDepth: depth),
+                arguments: try SwiftGenericTypeMetadata(metadata: metadata).arguments
+            )
+        }
+    }
+
     static func formalType(_ metadata: Any.Type) throws -> SwiftFormalType {
         try SwiftFormalType(SwiftSyntax.metadataType(metadata))
     }

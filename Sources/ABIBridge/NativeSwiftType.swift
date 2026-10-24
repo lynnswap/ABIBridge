@@ -594,6 +594,7 @@ public actor NativeSwiftType: Hashable {
         var ownerClass: AnyClass? = metadata as? AnyClass
         var ownerImage = image
         var ownerName = try declarationName()
+        let query = query.inContext(of: ownerName)
         var hasUnavailableImages = false
         var preparationFailure: (any Error)?
         // Why a requirement that the request names has no witness for this
@@ -725,7 +726,10 @@ public actor NativeSwiftType: Hashable {
             }
             // The members a type declares hide those its extensions declare.
             for extensionsOnly in [false, true]
-            where extensionsOnly ? missingWitness == nil : query.extensionModule == nil {
+            where extensionsOnly
+                ? missingWitness == nil
+                : query.extensionModule == nil || query.includesOwnerExtension
+            {
                 var selection: SwiftCandidateSelection<SwiftGenericCallPlan>
                 var unserved: [NativeDeclaration]
                 do {
