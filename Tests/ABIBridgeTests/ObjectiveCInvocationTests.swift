@@ -37,9 +37,11 @@ private class Renderer: NSObject {
 struct ObjectiveCInvocationTests {
     @MainActor @Test func asynchronousClassResolutionRunsAwayFromMainActor() async throws {
         let method = try await ABIRuntime().resolve(
-            .implementation(
-                "workerIncrement:",
-                as: ((Int) -> Int).self
+            .objc(
+                .imp(
+                    "workerIncrement:",
+                    as: ((Int) -> Int).self
+                )
             ),
             on: ABIWorkerLookupFixture.self
         )
@@ -53,23 +55,29 @@ struct ObjectiveCInvocationTests {
         let owner = NSObject()
         let selector = #selector(Renderer.increment(_:))
         let bound = try await runtime.object(receiver).resolve(
-            .message(
-                selector,
-                as: ((Int64) -> Int64).self
+            .objc(
+                .method(
+                    selector,
+                    as: ((Int64) -> Int64).self
+                )
             )
         )
         let message = try await runtime.resolve(
-            .message(
-                selector,
-                as: ((Int64) -> Int64).self
+            .objc(
+                .method(
+                    selector,
+                    as: ((Int64) -> Int64).self
+                )
             ),
             on: Renderer.self,
             retaining: owner
         )
         let captured = try await runtime.resolve(
-            .implementation(
-                selector,
-                as: ((Int64) -> Int64).self
+            .objc(
+                .imp(
+                    selector,
+                    as: ((Int64) -> Int64).self
+                )
             ),
             on: Renderer.self,
             retaining: owner
@@ -82,9 +90,11 @@ struct ObjectiveCInvocationTests {
     @MainActor @Test func asynchronousForwardingLookupPreservesReceiverIsolation() async throws {
         let receiver = ABIForwardingFixture()
         let method = try await ABIRuntime().object(receiver).resolve(
-            .message(
-                "answer",
-                as: (() -> Int).self
+            .objc(
+                .method(
+                    "answer",
+                    as: (() -> Int).self
+                )
             )
         )
         #expect(receiver.signatureRequestedOnMainThread)
@@ -110,12 +120,14 @@ struct ObjectiveCInvocationTests {
             _ signature: ((repeat each Argument) -> Result).Type
         ) throws {
             if path == "bound" {
-                _ = try object.resolveAndWait(.message(selector, as: signature))
+                _ = try object.resolveAndWait(.objc(.method(selector, as: signature)))
             } else {
                 _ = try runtime.resolveAndWait(
-                    .implementation(
-                        selector,
-                        as: signature
+                    .objc(
+                        .imp(
+                            selector,
+                            as: signature
+                        )
                     ),
                     on: Renderer.self
                 )
@@ -197,9 +209,11 @@ struct ObjectiveCInvocationTests {
     @Test func missingClassMethodKeepsClassRequest() throws {
         do {
             _ = try ABIRuntime.shared.object(Renderer.self).resolveAndWait(
-                .message(
-                    "missingClassMethod",
-                    as: (() -> Void).self
+                .objc(
+                    .method(
+                        "missingClassMethod",
+                        as: (() -> Void).self
+                    )
                 )
             )
             Issue.record("An absent class method unexpectedly resolved")
@@ -212,9 +226,11 @@ struct ObjectiveCInvocationTests {
         let renderer = Renderer()
         let object = ABIRuntime.shared.object(renderer)
         let setImage = try object.resolveAndWait(
-            .message(
-                "setImage:animated:",
-                as: ((NSObject?, Bool) -> Void).self
+            .objc(
+                .method(
+                    "setImage:animated:",
+                    as: ((NSObject?, Bool) -> Void).self
+                )
             )
         )
         let image = NSObject()
@@ -225,9 +241,11 @@ struct ObjectiveCInvocationTests {
         #expect(renderer.recorded?.0 == nil)
         #expect(renderer.recorded?.1 == false)
         let refresh = try object.resolveAndWait(
-            .message(
-                "refreshAnimated:",
-                as: ((Bool) -> Bool).self
+            .objc(
+                .method(
+                    "refreshAnimated:",
+                    as: ((Bool) -> Bool).self
+                )
             )
         )
         #expect(try unsafe refresh.unsafeInvoke(false))
@@ -235,13 +253,15 @@ struct ObjectiveCInvocationTests {
 
     @Test func zeroAndManyArguments() throws {
         let object = ABIRuntime.shared.object(Renderer())
-        let answer = try object.resolveAndWait(.message("answer", as: (() -> Int).self))
+        let answer = try object.resolveAndWait(.objc(.method("answer", as: (() -> Int).self)))
         #expect(try unsafe answer.unsafeInvoke() == 42)
         let mixed = try object.resolveAndWait(
-            .message(
-                "mixed::::::::::",
-                as: ((Int8, UInt16, Int32, UInt64, Float, Double, Bool, NSObject?, Int, Double)
-                    -> Double).self
+            .objc(
+                .method(
+                    "mixed::::::::::",
+                    as: ((Int8, UInt16, Int32, UInt64, Float, Double, Bool, NSObject?, Int, Double)
+                        -> Double).self
+                )
             )
         )
         #expect(
@@ -252,26 +272,32 @@ struct ObjectiveCInvocationTests {
     @Test func geometryAndRangeValues() throws {
         let object = ABIRuntime.shared.object(Renderer())
         let rect = try object.resolveAndWait(
-            .message(
-                "rectangle:",
-                as: ((CGRect) -> CGRect).self
+            .objc(
+                .method(
+                    "rectangle:",
+                    as: ((CGRect) -> CGRect).self
+                )
             )
         )
         let value = CGRect(x: 1, y: 2, width: 3, height: 4)
         #expect(try unsafe rect.unsafeInvoke(value) == value)
         let point = try object.resolveAndWait(
-            .message(
-                "point:",
-                as: ((CGPoint) -> CGPoint).self
+            .objc(
+                .method(
+                    "point:",
+                    as: ((CGPoint) -> CGPoint).self
+                )
             )
         )
         #expect(try unsafe point.unsafeInvoke(value.origin) == value.origin)
-        let size = try object.resolveAndWait(.message("size:", as: ((CGSize) -> CGSize).self))
+        let size = try object.resolveAndWait(.objc(.method("size:", as: ((CGSize) -> CGSize).self)))
         #expect(try unsafe size.unsafeInvoke(value.size) == value.size)
         let range = try object.resolveAndWait(
-            .message(
-                "range:",
-                as: ((NSRange) -> NSRange).self
+            .objc(
+                .method(
+                    "range:",
+                    as: ((NSRange) -> NSRange).self
+                )
             )
         )
         #expect(
@@ -283,33 +309,41 @@ struct ObjectiveCInvocationTests {
     @Test func objectResultsAndConversions() throws {
         let object = ABIRuntime.shared.object(Renderer())
         let echo = try object.resolveAndWait(
-            .message(
-                "echo:",
-                as: ((NSObject?) -> NSObject?).self
+            .objc(
+                .method(
+                    "echo:",
+                    as: ((NSObject?) -> NSObject?).self
+                )
             )
         )
         let value = NSObject()
         #expect(try unsafe echo.unsafeInvoke(value) === value)
         #expect(try unsafe echo.unsafeInvoke(nil) == nil)
         let bridge = try object.resolveAndWait(
-            .message(
-                "echo:",
-                as: ((String?) -> String?).self
+            .objc(
+                .method(
+                    "echo:",
+                    as: ((String?) -> String?).self
+                )
             )
         )
         #expect(try unsafe bridge.unsafeInvoke("value") == "value")
         #expect(try unsafe bridge.unsafeInvoke(nil) == nil)
         let nonoptional = try object.resolveAndWait(
-            .message(
-                "echo:",
-                as: ((NSObject?) -> NSObject).self
+            .objc(
+                .method(
+                    "echo:",
+                    as: ((NSObject?) -> NSObject).self
+                )
             )
         )
         #expect(throws: ABIInvocationError.self) { try unsafe nonoptional.unsafeInvoke(nil) }
         let mismatch = try object.resolveAndWait(
-            .message(
-                "echo:",
-                as: ((NSObject) -> NSString).self
+            .objc(
+                .method(
+                    "echo:",
+                    as: ((NSObject) -> NSString).self
+                )
             )
         )
         #expect(throws: ABIInvocationError.self) { try unsafe mismatch.unsafeInvoke(value) }
@@ -318,9 +352,11 @@ struct ObjectiveCInvocationTests {
     @Test func pointersAndNil() throws {
         let object = ABIRuntime.shared.object(Renderer())
         let echo = try object.resolveAndWait(
-            .message(
-                "pointer:",
-                as: ((UnsafeMutablePointer<Int>?) -> UnsafeMutablePointer<Int>?).self
+            .objc(
+                .method(
+                    "pointer:",
+                    as: ((UnsafeMutablePointer<Int>?) -> UnsafeMutablePointer<Int>?).self
+                )
             )
         )
         let memory = UnsafeMutablePointer<Int>.allocate(capacity: 1)
@@ -334,9 +370,11 @@ struct ObjectiveCInvocationTests {
         weak var weakReceiver = receiver
         var method: NativeBoundObjCMethod<Int>? = try ABIRuntime.shared.object(receiver!)
             .resolveAndWait(
-                .message(
-                    "answer",
-                    as: (() -> Int).self
+                .objc(
+                    .method(
+                        "answer",
+                        as: (() -> Int).self
+                    )
                 )
             )
         receiver = nil
@@ -349,16 +387,16 @@ struct ObjectiveCInvocationTests {
     @Test func invalidSignaturesThrowBeforeInvocation() throws {
         let object = ABIRuntime.shared.object(Renderer())
         #expect(throws: (any Error).self) {
-            _ = try object.resolveAndWait(.message("absent", as: (() -> Void).self))
+            _ = try object.resolveAndWait(.objc(.method("absent", as: (() -> Void).self)))
         }
         #expect(throws: ABIResolutionError.self) {
-            _ = try object.resolveAndWait(.message("answer", as: ((Int) -> Int).self))
+            _ = try object.resolveAndWait(.objc(.method("answer", as: ((Int) -> Int).self)))
         }
         #expect(throws: ABIResolutionError.self) {
-            _ = try object.resolveAndWait(.message("answer", as: (() -> Double).self))
+            _ = try object.resolveAndWait(.objc(.method("answer", as: (() -> Double).self)))
         }
         #expect(throws: ABIResolutionError.self) {
-            _ = try object.resolveAndWait(.message("answer", as: (() -> UInt).self))
+            _ = try object.resolveAndWait(.objc(.method("answer", as: (() -> UInt).self)))
         }
     }
 
@@ -370,10 +408,12 @@ struct ObjectiveCInvocationTests {
             ("retainedObject", true), ("newBorrowedObject", false),
         ] as [(String, Bool?)] {
             let method = try object.resolveAndWait(
-                .message(
-                    selector,
-                    as: (() -> NSObject).self,
-                    options: .init(returnsRetainedObject: override)
+                .objc(
+                    .method(
+                        selector,
+                        as: (() -> NSObject).self,
+                        options: .init(returnsRetainedObject: override)
+                    )
                 )
             )
             weak var weakResult: NSObject?
@@ -393,9 +433,11 @@ struct ObjectiveCInvocationTests {
             weak var original = receiver
             var method: NativeBoundObjCMethod<ABIInitializerFixture?>? = try ABIRuntime.shared
                 .object(receiver!).resolveAndWait(
-                    .message(
-                        selector,
-                        as: (() -> ABIInitializerFixture?).self
+                    .objc(
+                        .method(
+                            selector,
+                            as: (() -> ABIInitializerFixture?).self
+                        )
                     )
                 )
             receiver = nil
@@ -419,25 +461,31 @@ struct ObjectiveCInvocationTests {
         let options = NativeMethodOptions(consumedArguments: [0])
         let signature = ((NSObject?) -> Int).self
         let bound = try ABIRuntime.shared.object(fixture).resolveAndWait(
-            .message(
-                "consume:",
-                as: signature,
-                options: options
+            .objc(
+                .method(
+                    "consume:",
+                    as: signature,
+                    options: options
+                )
             )
         )
         let message = try ABIRuntime.shared.resolveAndWait(
-            .message(
-                "consume:",
-                as: signature,
-                options: options
+            .objc(
+                .method(
+                    "consume:",
+                    as: signature,
+                    options: options
+                )
             ),
             on: ABIOwnershipFixture.self
         )
         let captured = try ABIRuntime.shared.resolveAndWait(
-            .implementation(
-                "consume:",
-                as: signature,
-                options: options
+            .objc(
+                .imp(
+                    "consume:",
+                    as: signature,
+                    options: options
+                )
             ),
             on: ABIOwnershipFixture.self
         )
@@ -468,10 +516,12 @@ struct ObjectiveCInvocationTests {
     @Test func consumedArgumentsAreNotTransferredBeforeConversionSucceeds() throws {
         let fixture = ABIOwnershipFixture()
         let method = try ABIRuntime.shared.object(fixture).resolveAndWait(
-            .message(
-                "consume:withClass:",
-                as: ((NSObject, NSObject) -> Int).self,
-                options: .init(consumedArguments: [0])
+            .objc(
+                .method(
+                    "consume:withClass:",
+                    as: ((NSObject, NSObject) -> Int).self,
+                    options: .init(consumedArguments: [0])
+                )
             )
         )
         weak var observed: NSObject?
@@ -492,20 +542,24 @@ struct ObjectiveCInvocationTests {
         for index in [-1, 1] {
             #expect(throws: ABIResolutionError.self) {
                 _ = try object.resolveAndWait(
-                    .message(
-                        "consume:",
-                        as: ((NSObject?) -> Int).self,
-                        options: .init(consumedArguments: [index])
+                    .objc(
+                        .method(
+                            "consume:",
+                            as: ((NSObject?) -> Int).self,
+                            options: .init(consumedArguments: [index])
+                        )
                     )
                 )
             }
         }
         #expect(throws: ABIResolutionError.self) {
             _ = try object.resolveAndWait(
-                .message(
-                    "negateCharacterBoolean:",
-                    as: ((Bool) -> Bool).self,
-                    options: .init(consumedArguments: [0])
+                .objc(
+                    .method(
+                        "negateCharacterBoolean:",
+                        as: ((Bool) -> Bool).self,
+                        options: .init(consumedArguments: [0])
+                    )
                 )
             )
         }
@@ -518,17 +572,21 @@ struct ObjectiveCInvocationTests {
         let blocks = ABIBlockFixture()
         let options = NativeMethodOptions(consumedArguments: [0])
         let bound = try ABIRuntime.shared.object(blocks).resolveAndWait(
-            .message(
-                "consumeBlock:value:",
-                as: ((Block?, Int32) -> Int32).self,
-                options: options
+            .objc(
+                .method(
+                    "consumeBlock:value:",
+                    as: ((Block?, Int32) -> Int32).self,
+                    options: options
+                )
             )
         )
         let captured = try ABIRuntime.shared.resolveAndWait(
-            .implementation(
-                "consumeBlock:value:",
-                as: ((Block?, Int32) -> Int32).self,
-                options: options
+            .objc(
+                .imp(
+                    "consumeBlock:value:",
+                    as: ((Block?, Int32) -> Int32).self,
+                    options: options
+                )
             ),
             on: ABIBlockFixture.self
         )
@@ -546,10 +604,12 @@ struct ObjectiveCInvocationTests {
             }
             let receiver = ABIInitializerFixture()
             let initialize = try ABIRuntime.shared.object(receiver).resolveAndWait(
-                .message(
-                    "initConsuming:",
-                    as: ((NSObject?) -> ABIInitializerFixture?).self,
-                    options: options
+                .objc(
+                    .method(
+                        "initConsuming:",
+                        as: ((NSObject?) -> ABIInitializerFixture?).self,
+                        options: options
+                    )
                 )
             )
             #expect(try unsafe initialize.unsafeInvoke(value) === receiver)
@@ -561,9 +621,11 @@ struct ObjectiveCInvocationTests {
     @Test func unmanagedCoreFoundationReferencesUsePointerEncoding() throws {
         let fixture = ABIOwnershipFixture()
         let echo = try ABIRuntime.shared.object(fixture).resolveAndWait(
-            .message(
-                "echoCFValue:",
-                as: ((Unmanaged<NSObject>?) -> Unmanaged<NSObject>?).self
+            .objc(
+                .method(
+                    "echoCFValue:",
+                    as: ((Unmanaged<NSObject>?) -> Unmanaged<NSObject>?).self
+                )
             )
         )
         weak var observed: NSObject?
@@ -580,24 +642,30 @@ struct ObjectiveCInvocationTests {
     @Test func characterBooleanClassAndSelector() throws {
         let object = ABIRuntime.shared.object(ABIOwnershipFixture())
         let negate = try object.resolveAndWait(
-            .message(
-                "negateCharacterBoolean:",
-                as: ((Bool) -> Bool).self
+            .objc(
+                .method(
+                    "negateCharacterBoolean:",
+                    as: ((Bool) -> Bool).self
+                )
             )
         )
         #expect(try unsafe negate.unsafeInvoke(false))
         #expect(try unsafe !negate.unsafeInvoke(true))
         let cls = try object.resolveAndWait(
-            .message(
-                "echoClass:",
-                as: ((AnyClass) -> AnyClass).self
+            .objc(
+                .method(
+                    "echoClass:",
+                    as: ((AnyClass) -> AnyClass).self
+                )
             )
         )
         #expect(try unsafe cls.unsafeInvoke(NSString.self) === NSString.self)
         let sel = try object.resolveAndWait(
-            .message(
-                "echoSelector:",
-                as: ((Selector) -> Selector).self
+            .objc(
+                .method(
+                    "echoSelector:",
+                    as: ((Selector) -> Selector).self
+                )
             )
         )
         let selector = NSSelectorFromString("answer")
@@ -608,19 +676,23 @@ struct ObjectiveCInvocationTests {
         let object = ABIRuntime.shared.object(ABIOwnershipFixture())
         #expect(throws: ABIResolutionError.self) {
             _ = try object.resolveAndWait(
-                .message(
-                    "unionValue",
-                    as: (() -> ABIUnionFixture).self
+                .objc(
+                    .method(
+                        "unionValue",
+                        as: (() -> ABIUnionFixture).self
+                    )
                 )
             )
         }
         #expect(throws: ABIResolutionError.self) {
             _ = try object.resolveAndWait(
-                .message(
-                    "unionPointer:",
-                    as: ((UnsafeMutablePointer<ABIUnionFixture>) -> UnsafeMutablePointer<
-                        ABIUnionFixture
-                    >).self
+                .objc(
+                    .method(
+                        "unionPointer:",
+                        as: ((UnsafeMutablePointer<ABIUnionFixture>) -> UnsafeMutablePointer<
+                            ABIUnionFixture
+                        >).self
+                    )
                 )
             )
         }
@@ -630,17 +702,21 @@ struct ObjectiveCInvocationTests {
         let fixture = ABIOwnershipFixture()
         let object = ABIRuntime.shared.object(fixture)
         let typed = try object.resolveAndWait(
-            .message(
-                "echoClass:",
-                as: ((NSString.Type?) -> NSString.Type?).self
+            .objc(
+                .method(
+                    "echoClass:",
+                    as: ((NSString.Type?) -> NSString.Type?).self
+                )
             )
         )
         #expect(try unsafe typed.unsafeInvoke(NSString.self) === NSString.self)
         #expect(try unsafe typed.unsafeInvoke(nil) == nil)
         let invalidArgument = try object.resolveAndWait(
-            .message(
-                "echoClass:",
-                as: ((NSObject) -> AnyClass).self
+            .objc(
+                .method(
+                    "echoClass:",
+                    as: ((NSObject) -> AnyClass).self
+                )
             )
         )
         let calls = fixture.classCalls
@@ -649,17 +725,21 @@ struct ObjectiveCInvocationTests {
         }
         #expect(fixture.classCalls == calls)
         let invalidScalar = try object.resolveAndWait(
-            .message(
-                "echoClass:",
-                as: ((Int) -> AnyClass).self
+            .objc(
+                .method(
+                    "echoClass:",
+                    as: ((Int) -> AnyClass).self
+                )
             )
         )
         #expect(throws: ABIInvocationError.self) { try unsafe invalidScalar.unsafeInvoke(42) }
         #expect(fixture.classCalls == calls)
         let invalidResult = try object.resolveAndWait(
-            .message(
-                "echoClass:",
-                as: ((AnyClass) -> NSObject).self
+            .objc(
+                .method(
+                    "echoClass:",
+                    as: ((AnyClass) -> NSObject).self
+                )
             )
         )
         #expect(throws: ABIInvocationError.self) {
@@ -669,9 +749,11 @@ struct ObjectiveCInvocationTests {
 
     @Test func forwardingUsesNormalDispatch() throws {
         let method = try ABIRuntime.shared.object(ABIForwardingFixture()).resolveAndWait(
-            .message(
-                "answer",
-                as: (() -> Int).self
+            .objc(
+                .method(
+                    "answer",
+                    as: (() -> Int).self
+                )
             )
         )
         #expect(try unsafe method.unsafeInvoke() == 61)
@@ -680,9 +762,11 @@ struct ObjectiveCInvocationTests {
     @Test func forwardedInvocationsRemainIndependentAfterLaterCalls() throws {
         let fixture = ABIEscapingForwardingFixture()
         let method = try ABIRuntime.shared.object(fixture).resolveAndWait(
-            .message(
-                "remember:",
-                as: ((Int) -> Int).self
+            .objc(
+                .method(
+                    "remember:",
+                    as: ((Int) -> Int).self
+                )
             )
         )
         #expect(try unsafe method.unsafeInvoke(10) == 11)
@@ -701,9 +785,11 @@ struct ObjectiveCInvocationTests {
         // Registered classes and their implementations live for this test process.
         let receiver = try #require(class_createInstance(cls, 0))
         let answer = try ABIRuntime.shared.object(receiver as AnyObject).resolveAndWait(
-            .message(
-                "dynamicAnswer",
-                as: (() -> Int).self
+            .objc(
+                .method(
+                    "dynamicAnswer",
+                    as: (() -> Int).self
+                )
             )
         )
         #expect(try unsafe answer.unsafeInvoke() == 73)

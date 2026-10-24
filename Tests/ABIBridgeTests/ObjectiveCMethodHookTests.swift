@@ -33,10 +33,12 @@ struct ObjectiveCMethodHookTests {
             consumesReceiver: false
         )
         let method = try runtime.object(object).resolveAndWait(
-            .message(
-                selector,
-                as: (() -> NSObject).self,
-                options: options
+            .objc(
+                .method(
+                    selector,
+                    as: (() -> NSObject).self,
+                    options: options
+                )
             )
         )
         #expect(try unsafe method.unsafeInvoke() === object.value)

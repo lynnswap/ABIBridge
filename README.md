@@ -121,10 +121,10 @@ For a `renderer` exposing `setImage:animated:`, pass ordinary Swift values:
 ```swift
 import UIKit
 
-let setImage = try runtime.object(renderer).resolveAndWait(.message(
+let setImage = try runtime.object(renderer).resolveAndWait(.objc(.method(
     "setImage:animated:",
     as: ((UIImage?, Bool) -> Void).self
-))
+)))
 try unsafe setImage.unsafeInvoke(image, true)
 try unsafe setImage.unsafeInvoke(nil, false)
 ```

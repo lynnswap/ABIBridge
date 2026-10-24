@@ -399,9 +399,11 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         ) { call, value in try call.proceed(value * 2) }
         defer { first.invalidate(); second.invalidate() }
         let saved = try runtime.resolveAndWait(
-            .implementation(
-                "adding:",
-                as: ((Int32) -> Int32).self
+            .objc(
+                .imp(
+                    "adding:",
+                    as: ((Int32) -> Int32).self
+                )
             ),
             on: ArchitectureHookReceiver.self
         )
@@ -679,9 +681,11 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         )
         let objcReceiver = ArchitectureObjCReceiver()
         let objcMethod = try runtime.object(objcReceiver).resolveAndWait(
-            .message(
-                "adding:",
-                as: ((Int32) -> Int32).self
+            .objc(
+                .method(
+                    "adding:",
+                    as: ((Int32) -> Int32).self
+                )
             )
         )
         try check(

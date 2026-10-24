@@ -37,9 +37,9 @@ let hook = try unsafe runtime.hookMethod(
     as: ((AnyObject) -> Void).self,
     onFailure: { print($0) }
 ) { call, argument in
-    let setScale = try runtime.object(argument).resolveAndWait(.message(
+    let setScale = try runtime.object(argument).resolveAndWait(.objc(.method(
         "setScale:", as: ((Double) -> Void).self
-    ))
+    )))
     try unsafe setScale.unsafeInvoke(2)
     try call.proceed(argument)
 }

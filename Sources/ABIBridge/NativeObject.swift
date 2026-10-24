@@ -228,17 +228,17 @@ public final class NativeObject {
     /// - Throws: A resolution error for a missing selector or incompatible
     ///   signature.
     public func resolveAndWait<Result, each Argument>(
-        _ request: NativeObjCMessageRequest<Result, repeat each Argument>
+        _ request: NativeRequest<NativeObjCMessageRequest<Result, repeat each Argument>>
     ) throws -> NativeBoundObjCMethod<Result, repeat each Argument> {
         let binding = try objcInvocationBinding(
-            selector: request.query.selector,
-            options: request.query.options,
+            selector: request.declaration.query.selector,
+            options: request.declaration.query.options,
             prepareImages: true
         )
         return try NativeBoundObjCMethod(
             binding: binding,
-            variadicFrom: request.query.variadicFrom,
-            reportsErrors: request.query.reportsErrors
+            variadicFrom: request.declaration.query.variadicFrom,
+            reportsErrors: request.declaration.query.reportsErrors
         )
     }
 
@@ -256,9 +256,9 @@ public final class NativeObject {
     /// - Returns: A method retaining this receiver.
     /// - Throws: The same resolution errors as synchronous resolution.
     public nonisolated(nonsending) func resolve<Result, each Argument>(
-        _ request: NativeObjCMessageRequest<Result, repeat each Argument>
+        _ request: NativeRequest<NativeObjCMessageRequest<Result, repeat each Argument>>
     ) async throws -> NativeBoundObjCMethod<Result, repeat each Argument> {
-        let query = request.query
+        let query = request.declaration.query
         let binding = try objcInvocationBinding(
             selector: query.selector,
             options: query.options,

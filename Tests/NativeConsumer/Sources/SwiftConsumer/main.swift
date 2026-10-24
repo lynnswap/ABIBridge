@@ -37,9 +37,11 @@ struct SwiftConsumer {
         try await MainActor.run {
             let factory = try ABIRuntime.shared.object(NSData.self as AnyObject)
                 .resolveAndWait(
-                    .message(
-                        "data",
-                        as: (() -> NSData).self
+                    .objc(
+                        .method(
+                            "data",
+                            as: (() -> NSData).self
+                        )
                     )
                 )
             let data = try unsafe factory.unsafeInvoke()
@@ -48,9 +50,11 @@ struct SwiftConsumer {
             let object = ABIRuntime.shared.object(receiver)
             do {
                 _ = try object.resolveAndWait(
-                    .message(
-                        "missingHandler",
-                        as: (() -> Void).self
+                    .objc(
+                        .method(
+                            "missingHandler",
+                            as: (() -> Void).self
+                        )
                     )
                 )
                 preconditionFailure("Missing selectors must fail lookup")
@@ -61,9 +65,11 @@ struct SwiftConsumer {
             }
             do {
                 _ = try object.resolveAndWait(
-                    .message(
-                        "setHandler:",
-                        as: ((Int32) -> Void).self
+                    .objc(
+                        .method(
+                            "setHandler:",
+                            as: ((Int32) -> Void).self
+                        )
                     )
                 )
                 preconditionFailure("An integer cannot describe a block parameter")
@@ -73,21 +79,27 @@ struct SwiftConsumer {
                 precondition(details.expected == "Swift.Int32" && details.found == ["@?"])
             }
             let setter = try object.resolveAndWait(
-                .message(
-                    "setHandler:",
-                    as: ((ConsumerBlock?) -> Void).self
+                .objc(
+                    .method(
+                        "setHandler:",
+                        as: ((ConsumerBlock?) -> Void).self
+                    )
                 )
             )
             let getter = try object.resolveAndWait(
-                .message(
-                    "handler",
-                    as: (() -> ConsumerBlock?).self
+                .objc(
+                    .method(
+                        "handler",
+                        as: (() -> ConsumerBlock?).self
+                    )
                 )
             )
             let unboundSetter = try ABIRuntime.shared.resolveAndWait(
-                .message(
-                    #selector(setter: BlockReceiver.handler),
-                    as: ((ConsumerBlock?) -> Void).self
+                .objc(
+                    .method(
+                        #selector(setter: BlockReceiver.handler),
+                        as: ((ConsumerBlock?) -> Void).self
+                    )
                 ),
                 on: BlockReceiver.self
             )
@@ -103,9 +115,11 @@ struct SwiftConsumer {
                 let temporary = BlockReceiver()
                 observedOriginal = temporary
                 return try ABIRuntime.shared.object(temporary).resolveAndWait(
-                    .message(
-                        #selector(getter: BlockReceiver.handler),
-                        as: (() -> ConsumerBlock?).self
+                    .objc(
+                        .method(
+                            #selector(getter: BlockReceiver.handler),
+                            as: (() -> ConsumerBlock?).self
+                        )
                     )
                 ).method
             }
@@ -119,9 +133,11 @@ struct SwiftConsumer {
             let cleared = try unsafe getter.unsafeInvoke()
             precondition(cleared == nil)
             let capturedGetter = try ABIRuntime.shared.resolveAndWait(
-                .implementation(
-                    #selector(getter: BlockReceiver.handler),
-                    as: (() -> ConsumerBlock?).self
+                .objc(
+                    .imp(
+                        #selector(getter: BlockReceiver.handler),
+                        as: (() -> ConsumerBlock?).self
+                    )
                 ),
                 on: BlockReceiver.self
             )
@@ -134,9 +150,11 @@ struct SwiftConsumer {
             let nilIvar = try object.value(forIvar: "handler", as: ConsumerBlock?.self)
             precondition(nilIvar == nil)
             let capturedFactory = try ABIRuntime.shared.resolveAndWait(
-                .implementation(
-                    "data",
-                    as: (() -> NSData).self
+                .objc(
+                    .imp(
+                        "data",
+                        as: (() -> NSData).self
+                    )
                 ),
                 on: NSData.self,
                 classMethod: true

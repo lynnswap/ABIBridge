@@ -61,11 +61,13 @@ private final class InvocationTimingReceiver: NSObject {
         as: ((Int32) -> Int32).self
     )
     let object = runtime.object(InvocationTimingReceiver())
-    let method = try object.resolveAndWait(.message("adding:", as: ((Int32) -> Int32).self))
+    let method = try object.resolveAndWait(.objc(.method("adding:", as: ((Int32) -> Int32).self)))
     let echo = try object.resolveAndWait(
-        .message(
-            "echo:",
-            as: ((NSObject?) -> NSObject?).self
+        .objc(
+            .method(
+                "echo:",
+                as: ((NSObject?) -> NSObject?).self
+            )
         )
     )
     let value = NSObject()
