@@ -26,17 +26,21 @@ struct ObjectiveCImplementationTests {
         typealias Signature = (NSString, Float, Int8, NSString) -> NSString
         let receiver: AnyObject = NSString.self
         let message = try runtime.object(receiver).resolveAndWait(
-            .message(
-                "stringWithFormat:",
-                as: Signature.self,
-                variadicFrom: 1
+            .objc(
+                .method(
+                    "stringWithFormat:",
+                    as: Signature.self,
+                    variadicFrom: 1
+                )
             )
         )
         let captured = try runtime.resolveAndWait(
-            .implementation(
-                "stringWithFormat:",
-                as: Signature.self,
-                variadicFrom: 1
+            .objc(
+                .imp(
+                    "stringWithFormat:",
+                    as: Signature.self,
+                    variadicFrom: 1
+                )
             ),
             on: NSString.self,
             classMethod: true
@@ -60,10 +64,12 @@ struct ObjectiveCImplementationTests {
         let runtime = ABIRuntime()
         let receiver: AnyObject = NSArray.self
         let make = try runtime.object(receiver).resolveAndWait(
-            .message(
-                "arrayWithObjects:",
-                as: ((NSObject?, NSObject?, NSObject?) -> NSArray).self,
-                variadicFrom: 1
+            .objc(
+                .method(
+                    "arrayWithObjects:",
+                    as: ((NSObject?, NSObject?, NSObject?) -> NSArray).self,
+                    variadicFrom: 1
+                )
             )
         )
         let first = NSObject(), second = NSObject()
@@ -71,10 +77,12 @@ struct ObjectiveCImplementationTests {
         #expect(value.count == 2)
         #expect(value[0] as AnyObject === first && value[1] as AnyObject === second)
         let emptyTail = try runtime.object(NSString.self as AnyObject).resolveAndWait(
-            .message(
-                "stringWithFormat:",
-                as: ((NSString) -> NSString).self,
-                variadicFrom: 1
+            .objc(
+                .method(
+                    "stringWithFormat:",
+                    as: ((NSString) -> NSString).self,
+                    variadicFrom: 1
+                )
             )
         )
         #expect(try unsafe emptyTail.unsafeInvoke("literal") == "literal")
@@ -86,25 +94,31 @@ struct ObjectiveCImplementationTests {
         let receiver = ABIVariadicFixture()
         let selector = NSSelectorFromString("sum:")
         let current = try runtime.object(receiver).resolveAndWait(
-            .message(
-                selector,
-                as: ((Int, Int, Int) -> Int).self,
-                variadicFrom: 1
+            .objc(
+                .method(
+                    selector,
+                    as: ((Int, Int, Int) -> Int).self,
+                    variadicFrom: 1
+                )
             )
         )
         let captured = try runtime.resolveAndWait(
-            .implementation(
-                selector,
-                as: ((Int, Int, Int) -> Int).self,
-                variadicFrom: 1
+            .objc(
+                .imp(
+                    selector,
+                    as: ((Int, Int, Int) -> Int).self,
+                    variadicFrom: 1
+                )
             ),
             on: ABIVariadicFixture.self
         )
         let unbound = try runtime.resolveAndWait(
-            .message(
-                selector,
-                as: ((Int, Int, Int) -> Int).self,
-                variadicFrom: 1
+            .objc(
+                .method(
+                    selector,
+                    as: ((Int, Int, Int) -> Int).self,
+                    variadicFrom: 1
+                )
             ),
             on: ABIVariadicFixture.self
         )
@@ -128,17 +142,21 @@ struct ObjectiveCImplementationTests {
         let runtime = ABIRuntime()
         let receiver = ABIVariadicFixture()
         let message = try runtime.object(receiver).resolveAndWait(
-            .message(
-                "sum:",
-                as: ((Int, Int, Int) -> Int).self,
-                variadicFrom: 1
+            .objc(
+                .method(
+                    "sum:",
+                    as: ((Int, Int, Int) -> Int).self,
+                    variadicFrom: 1
+                )
             )
         )
         let captured = try runtime.resolveAndWait(
-            .implementation(
-                "sum:",
-                as: ((Int, Int, Int) -> Int).self,
-                variadicFrom: 1
+            .objc(
+                .imp(
+                    "sum:",
+                    as: ((Int, Int, Int) -> Int).self,
+                    variadicFrom: 1
+                )
             ),
             on: ABIVariadicFixture.self
         )
@@ -157,10 +175,12 @@ struct ObjectiveCImplementationTests {
     @Test func variadicBoundariesMustMatchTheRuntimeFixedPrefix() throws {
         #expect(throws: ABIResolutionError.self) {
             try ABIRuntime().object(NSString.self as AnyObject).resolveAndWait(
-                .message(
-                    "stringWithFormat:",
-                    as: ((NSString, Float) -> NSString).self,
-                    variadicFrom: 0
+                .objc(
+                    .method(
+                        "stringWithFormat:",
+                        as: ((NSString, Float) -> NSString).self,
+                        variadicFrom: 0
+                    )
                 )
             )
         }
@@ -172,9 +192,11 @@ struct ObjectiveCImplementationTests {
             let original = ImplementationReceiver(1)
             observedOriginal = original
             return try runtime.object(original).resolveAndWait(
-                .message(
-                    "add:",
-                    as: ((Int) -> Int).self
+                .objc(
+                    .method(
+                        "add:",
+                        as: ((Int) -> Int).self
+                    )
                 )
             ).method
         }
@@ -199,9 +221,11 @@ struct ObjectiveCImplementationTests {
             let original = ABIForwardingFixture()
             observed = original
             return try ABIRuntime.shared.object(original).resolveAndWait(
-                .message(
-                    "answer",
-                    as: (() -> Int).self
+                .objc(
+                    .method(
+                        "answer",
+                        as: (() -> Int).self
+                    )
                 )
             ).method
         }
@@ -223,9 +247,11 @@ struct ObjectiveCImplementationTests {
     @Test func extractedClassMessagesKeepTheirReceiverKindAndOwnershipOverrides() throws {
         let classMessage = try ABIRuntime.shared.object(ImplementationReceiver.self as AnyObject)
             .resolveAndWait(
-                .message(
-                    "capturedClassName",
-                    as: (() -> String).self
+                .objc(
+                    .method(
+                        "capturedClassName",
+                        as: (() -> String).self
+                    )
                 )
             ).method
         #expect(
@@ -236,10 +262,12 @@ struct ObjectiveCImplementationTests {
             try unsafe classMessage.unsafeInvoke(on: ImplementationReceiver(0))
         }
         let owned = try ABIRuntime.shared.object(ABIOwnershipFixture()).resolveAndWait(
-            .message(
-                "retainedObject",
-                as: (() -> NSObject).self,
-                options: .init(returnsRetainedObject: true)
+            .objc(
+                .method(
+                    "retainedObject",
+                    as: (() -> NSObject).self,
+                    options: .init(returnsRetainedObject: true)
+                )
             )
         ).method
         let fixture = ABIOwnershipFixture()
@@ -256,9 +284,11 @@ struct ObjectiveCImplementationTests {
         var owner: ImplementationCodeOwner? = ImplementationCodeOwner()
         weak var observedOwner = owner
         var message: NativeObjCMethod<Int, Int>? = try ABIRuntime.shared.resolveAndWait(
-            .message(
-                "add:",
-                as: ((Int) -> Int).self
+            .objc(
+                .method(
+                    "add:",
+                    as: ((Int) -> Int).self
+                )
             ),
             on: ImplementationReceiver.self,
             retaining: owner
@@ -289,9 +319,11 @@ struct ObjectiveCImplementationTests {
 
     @Test func unboundClassMethodsAndReceiverValidation() throws {
         let method = try ABIRuntime.shared.resolveAndWait(
-            .message(
-                "capturedClassName",
-                as: (() -> String).self
+            .objc(
+                .method(
+                    "capturedClassName",
+                    as: (() -> String).self
+                )
             ),
             on: ImplementationReceiver.self,
             classMethod: true
@@ -308,17 +340,21 @@ struct ObjectiveCImplementationTests {
         let forwarding = ABIForwardingFixture()
         #expect(throws: ABIResolutionError.self) {
             _ = try ABIRuntime.shared.resolveAndWait(
-                .message(
-                    "answer",
-                    as: (() -> Int).self
+                .objc(
+                    .method(
+                        "answer",
+                        as: (() -> Int).self
+                    )
                 ),
                 on: ABIForwardingFixture.self
             )
         }
         let bound = try ABIRuntime.shared.object(forwarding).resolveAndWait(
-            .message(
-                "answer",
-                as: (() -> Int).self
+            .objc(
+                .method(
+                    "answer",
+                    as: (() -> Int).self
+                )
             )
         )
         #expect(try unsafe bound.unsafeInvoke() == 61)
@@ -330,10 +366,12 @@ struct ObjectiveCImplementationTests {
             ("object", nil), ("copyObject", nil), ("retainedObject", true),
         ] as [(String, Bool?)] {
             let method = try ABIRuntime.shared.resolveAndWait(
-                .message(
-                    selector,
-                    as: (() -> NSObject).self,
-                    options: .init(returnsRetainedObject: retained)
+                .objc(
+                    .method(
+                        selector,
+                        as: (() -> NSObject).self,
+                        options: .init(returnsRetainedObject: retained)
+                    )
                 ),
                 on: ABIOwnershipFixture.self
             )
@@ -347,9 +385,11 @@ struct ObjectiveCImplementationTests {
         }
         for selector in ["initWithReplacement", "initReturningNil"] {
             let method = try ABIRuntime.shared.resolveAndWait(
-                .message(
-                    selector,
-                    as: (() -> ABIInitializerFixture?).self
+                .objc(
+                    .method(
+                        selector,
+                        as: (() -> ABIInitializerFixture?).self
+                    )
                 ),
                 on: ABIInitializerFixture.self
             )
@@ -416,9 +456,11 @@ struct ObjectiveCImplementationTests {
         try autoreleasepool {
             let receiver = try #require(class_createInstance(child, 0)) as AnyObject
             let numberMethod = try ABIRuntime.shared.resolveAndWait(
-                .message(
-                    "number:",
-                    as: ((Int) -> Int).self
+                .objc(
+                    .method(
+                        "number:",
+                        as: ((Int) -> Int).self
+                    )
                 ),
                 on: base
             )
@@ -427,9 +469,11 @@ struct ObjectiveCImplementationTests {
             }
             #expect(throws: ABIResolutionError.self) { try numberMethod.bind(to: receiver) }
             let sizeMethod = try ABIRuntime.shared.resolveAndWait(
-                .message(
-                    "size:",
-                    as: ((CGSize) -> CGSize).self
+                .objc(
+                    .method(
+                        "size:",
+                        as: ((CGSize) -> CGSize).self
+                    )
                 ),
                 on: base
             )
@@ -444,23 +488,29 @@ struct ObjectiveCImplementationTests {
         let second = ImplementationReceiver(20)
         let selector = NSSelectorFromString("add:")
         let original = try runtime.resolveAndWait(
-            .implementation(
-                "add:",
-                as: ((Int) -> Int).self
+            .objc(
+                .imp(
+                    "add:",
+                    as: ((Int) -> Int).self
+                )
             ),
             on: ImplementationReceiver.self
         )
         let dynamic = try runtime.object(first).resolveAndWait(
-            .message(
-                "add:",
-                as: ((Int) -> Int).self
+            .objc(
+                .method(
+                    "add:",
+                    as: ((Int) -> Int).self
+                )
             )
         )
         let extracted = dynamic.method
         let unbound = try runtime.resolveAndWait(
-            .message(
-                "add:",
-                as: ((Int) -> Int).self
+            .objc(
+                .method(
+                    "add:",
+                    as: ((Int) -> Int).self
+                )
             ),
             on: ImplementationReceiver.self
         )
@@ -483,9 +533,11 @@ struct ObjectiveCImplementationTests {
         let child = ImplementationChild(30)
         #expect(try unsafe original.unsafeInvoke(on: child, 1) == 31)
         let childMessage = try runtime.object(child).resolveAndWait(
-            .message(
-                "add:",
-                as: ((Int) -> Int).self
+            .objc(
+                .method(
+                    "add:",
+                    as: ((Int) -> Int).self
+                )
             )
         )
         #expect(try unsafe childMessage.unsafeInvoke(1) == 1001)
@@ -494,9 +546,11 @@ struct ObjectiveCImplementationTests {
 
     @MainActor @Test func inheritedImplementationsAndStructures() throws {
         let size = try ABIRuntime.shared.resolveAndWait(
-            .implementation(
-                "size:",
-                as: ((CGSize) -> CGSize).self
+            .objc(
+                .imp(
+                    "size:",
+                    as: ((CGSize) -> CGSize).self
+                )
             ),
             on: ImplementationChild.self
         )
@@ -515,9 +569,11 @@ struct ObjectiveCImplementationTests {
 
     @Test func classMethodsRequireCompatibleClassObjects() throws {
         let method = try ABIRuntime.shared.resolveAndWait(
-            .implementation(
-                "capturedClassName",
-                as: (() -> String).self
+            .objc(
+                .imp(
+                    "capturedClassName",
+                    as: (() -> String).self
+                )
             ),
             on: ImplementationReceiver.self,
             classMethod: true
@@ -543,9 +599,11 @@ struct ObjectiveCImplementationTests {
         weak var observedOwner = owner
         var implementation: NativeObjCImplementation<Int, Int>? = try ABIRuntime.shared
             .resolveAndWait(
-                .implementation(
-                    "add:",
-                    as: ((Int) -> Int).self
+                .objc(
+                    .imp(
+                        "add:",
+                        as: ((Int) -> Int).self
+                    )
                 ),
                 on: ImplementationReceiver.self,
                 retaining: owner
@@ -570,10 +628,12 @@ struct ObjectiveCImplementationTests {
             ("object", nil), ("copyObject", nil), ("retainedObject", true),
         ] as [(String, Bool?)] {
             let method = try ABIRuntime.shared.resolveAndWait(
-                .implementation(
-                    selector,
-                    as: (() -> NSObject).self,
-                    options: .init(returnsRetainedObject: retained)
+                .objc(
+                    .imp(
+                        selector,
+                        as: (() -> NSObject).self,
+                        options: .init(returnsRetainedObject: retained)
+                    )
                 ),
                 on: ABIOwnershipFixture.self
             )
@@ -587,9 +647,11 @@ struct ObjectiveCImplementationTests {
         }
         for selector in ["initWithReplacement", "initReturningNil"] {
             let method = try ABIRuntime.shared.resolveAndWait(
-                .implementation(
-                    selector,
-                    as: (() -> ABIInitializerFixture?).self
+                .objc(
+                    .imp(
+                        selector,
+                        as: (() -> ABIInitializerFixture?).self
+                    )
                 ),
                 on: ABIInitializerFixture.self
             )
@@ -612,18 +674,22 @@ struct ObjectiveCImplementationTests {
     @Test func capturedBlocksAndCharacterBooleans() throws {
         typealias Block = @convention(block) (Int32) -> Int32
         let apply = try ABIRuntime.shared.resolveAndWait(
-            .implementation(
-                "apply:using:",
-                as: ((Int32, Block?) -> Int32).self
+            .objc(
+                .imp(
+                    "apply:using:",
+                    as: ((Int32, Block?) -> Int32).self
+                )
             ),
             on: ABIBlockFixture.self
         )
         let block: Block = { $0 + 2 }
         #expect(try unsafe apply.unsafeInvoke(on: ABIBlockFixture(), 40, block) == 42)
         let negate = try ABIRuntime.shared.resolveAndWait(
-            .implementation(
-                "negateCharacterBoolean:",
-                as: ((Bool) -> Bool).self
+            .objc(
+                .imp(
+                    "negateCharacterBoolean:",
+                    as: ((Bool) -> Bool).self
+                )
             ),
             on: ABIOwnershipFixture.self
         )
@@ -633,27 +699,33 @@ struct ObjectiveCImplementationTests {
     @Test func missingForwardingAndMismatchedSignaturesFailBeforeCalling() throws {
         #expect(throws: ABIResolutionError.self) {
             _ = try ABIRuntime.shared.resolveAndWait(
-                .implementation(
-                    "answer",
-                    as: (() -> Int).self
+                .objc(
+                    .imp(
+                        "answer",
+                        as: (() -> Int).self
+                    )
                 ),
                 on: ABIForwardingFixture.self
             )
         }
         #expect(throws: ABIResolutionError.self) {
             _ = try ABIRuntime.shared.resolveAndWait(
-                .implementation(
-                    "absent",
-                    as: (() -> Void).self
+                .objc(
+                    .imp(
+                        "absent",
+                        as: (() -> Void).self
+                    )
                 ),
                 on: ImplementationReceiver.self
             )
         }
         #expect(throws: ABIResolutionError.self) {
             _ = try ABIRuntime.shared.resolveAndWait(
-                .implementation(
-                    "add:",
-                    as: (() -> Int).self
+                .objc(
+                    .imp(
+                        "add:",
+                        as: (() -> Int).self
+                    )
                 ),
                 on: ImplementationReceiver.self
             )

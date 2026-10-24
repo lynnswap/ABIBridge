@@ -1,6 +1,28 @@
 import Foundation
 import ObjectiveC
 
+extension NativeRequest {
+    /// Describes an Objective-C method called through ordinary message dispatch.
+    ///
+    /// Resolve on a ``NativeObject`` to bind its receiver, or with an `ABIRuntime`
+    /// and class to take a receiver at each call.
+    public static func objc<Result, each Argument>(
+        _ declaration: NativeObjCMessageRequest<Result, repeat each Argument>
+    ) -> Self where Declaration == NativeObjCMessageRequest<Result, repeat each Argument> {
+        Self(declaration: declaration)
+    }
+
+    /// Describes an Objective-C implementation to capture during resolution.
+    ///
+    /// Resolve with an `ABIRuntime` and class to get a fixed IMP, independent
+    /// of subsequent method replacement.
+    public static func objc<Result, each Argument>(
+        _ declaration: NativeObjCImplementationRequest<Result, repeat each Argument>
+    ) -> Self where Declaration == NativeObjCImplementationRequest<Result, repeat each Argument> {
+        Self(declaration: declaration)
+    }
+}
+
 /// The selector, convention, and ownership of an Objective-C message request.
 struct ObjCMessageQuery: Sendable {
     let selector: String
@@ -14,10 +36,11 @@ struct ObjCMessageQuery: Sendable {
 
 /// An Objective-C message to prepare for calls.
 ///
-/// Resolve a request on a ``NativeObject`` to get a ``NativeBoundObjCMethod``
-/// for that receiver, or with `ABIRuntime`'s `resolveAndWait(_:on:classMethod:retaining:)`
-/// to get a ``NativeObjCMethod`` that takes its receiver at each call. Both
-/// send the message through ordinary dispatch.
+/// Wrap the declaration with `NativeRequest.objc`, then resolve on a
+/// ``NativeObject`` to get a ``NativeBoundObjCMethod`` for that receiver, or
+/// with `ABIRuntime`'s `resolveAndWait(_:on:classMethod:retaining:)` to get a
+/// ``NativeObjCMethod`` that takes its receiver at each call. Both send the
+/// message through ordinary dispatch.
 ///
 /// The signature describes explicit arguments, including any anonymous tail,
 /// and the result, excluding the receiver and selector. For structures, the
@@ -38,7 +61,7 @@ public struct NativeObjCMessageRequest<Result, each Argument>: Sendable {
     ///   - variadicFrom: The index of the first anonymous argument, or nil for
     ///     a fixed signature.
     ///   - options: Ownership overrides absent from runtime encodings.
-    public static func message(
+    public static func method(
         _ selector: String,
         as signature: ((repeat each Argument) -> Result).Type,
         variadicFrom: Int? = nil,
@@ -70,7 +93,7 @@ public struct NativeObjCMessageRequest<Result, each Argument>: Sendable {
     ///   - signature: Explicit arguments without the error parameter, and the
     ///     result.
     ///   - options: Ownership overrides absent from runtime encodings.
-    public static func message(
+    public static func method(
         _ selector: String,
         as signature: ((repeat each Argument) throws -> Result).Type,
         options: NativeMethodOptions = .init()
@@ -80,13 +103,13 @@ public struct NativeObjCMessageRequest<Result, each Argument>: Sendable {
 
     /// Describes a message with an ordinary Swift function type, by its
     /// `Selector`.
-    public static func message(
+    public static func method(
         _ selector: Selector,
         as signature: ((repeat each Argument) -> Result).Type,
         variadicFrom: Int? = nil,
         options: NativeMethodOptions = .init()
     ) -> Self {
-        .message(
+        .method(
             NSStringFromSelector(selector),
             as: signature,
             variadicFrom: variadicFrom,
@@ -96,21 +119,22 @@ public struct NativeObjCMessageRequest<Result, each Argument>: Sendable {
 
     /// Describes a message that reports failure through a trailing
     /// `NSError **` parameter, by its `Selector`.
-    public static func message(
+    public static func method(
         _ selector: Selector,
         as signature: ((repeat each Argument) throws -> Result).Type,
         options: NativeMethodOptions = .init()
     ) -> Self {
-        .message(NSStringFromSelector(selector), as: signature, options: options)
+        .method(NSStringFromSelector(selector), as: signature, options: options)
     }
 }
 
 /// An Objective-C implementation to capture from a class.
 ///
-/// Resolve a request with `ABIRuntime`'s `resolveAndWait(_:on:classMethod:retaining:)`
-/// to get a ``NativeObjCImplementation``, which calls the IMP found during
-/// lookup instead of sending the message. Dynamic method resolution may run
-/// during lookup, but forwarding-only selectors cannot be captured.
+/// Wrap the declaration with `NativeRequest.objc`, then use `ABIRuntime`'s
+/// `resolveAndWait(_:on:classMethod:retaining:)` to get a
+/// ``NativeObjCImplementation``, which calls the IMP found during lookup
+/// instead of sending the message. Dynamic method resolution may run during
+/// lookup, but forwarding-only selectors cannot be captured.
 public struct NativeObjCImplementationRequest<Result, each Argument>: Sendable {
     let query: ObjCMessageQuery
 
@@ -126,14 +150,14 @@ public struct NativeObjCImplementationRequest<Result, each Argument>: Sendable {
     ///   - variadicFrom: The index of the first anonymous argument, or nil for
     ///     a fixed signature.
     ///   - options: Ownership overrides absent from runtime encodings.
-    public static func implementation(
+    public static func imp(
         _ selector: String,
         as signature: ((repeat each Argument) -> Result).Type,
         variadicFrom: Int? = nil,
         options: NativeMethodOptions = .init()
     ) -> Self {
         Self(
-            NativeObjCMessageRequest.message(
+            NativeObjCMessageRequest.method(
                 selector,
                 as: signature,
                 variadicFrom: variadicFrom,
@@ -145,23 +169,23 @@ public struct NativeObjCImplementationRequest<Result, each Argument>: Sendable {
     /// Describes an implementation that reports failure through a trailing
     /// `NSError **` parameter, with the convention of a throwing
     /// ``NativeObjCMessageRequest``.
-    public static func implementation(
+    public static func imp(
         _ selector: String,
         as signature: ((repeat each Argument) throws -> Result).Type,
         options: NativeMethodOptions = .init()
     ) -> Self {
-        Self(NativeObjCMessageRequest.message(selector, as: signature, options: options).query)
+        Self(NativeObjCMessageRequest.method(selector, as: signature, options: options).query)
     }
 
     /// Describes an implementation with an ordinary Swift function type, by
     /// its `Selector`.
-    public static func implementation(
+    public static func imp(
         _ selector: Selector,
         as signature: ((repeat each Argument) -> Result).Type,
         variadicFrom: Int? = nil,
         options: NativeMethodOptions = .init()
     ) -> Self {
-        .implementation(
+        .imp(
             NSStringFromSelector(selector),
             as: signature,
             variadicFrom: variadicFrom,
@@ -171,11 +195,11 @@ public struct NativeObjCImplementationRequest<Result, each Argument>: Sendable {
 
     /// Describes an implementation that reports failure through a trailing
     /// `NSError **` parameter, by its `Selector`.
-    public static func implementation(
+    public static func imp(
         _ selector: Selector,
         as signature: ((repeat each Argument) throws -> Result).Type,
         options: NativeMethodOptions = .init()
     ) -> Self {
-        .implementation(NSStringFromSelector(selector), as: signature, options: options)
+        .imp(NSStringFromSelector(selector), as: signature, options: options)
     }
 }

@@ -32,9 +32,25 @@ Replace saved values constructed as `NativeSwiftFunctionRequest<Signature>.funct
 
 Prepared handle types, invocation, ownership, error propagation, and async isolation keep their existing contracts. Requests have no public `Hashable` conformance and do not automatically cache returned handles. Retain a prepared handle for repeated calls; existing cache controls are described in <doc:SymbolLookup#Cache-and-loader-lifetime>.
 
+## Qualify Objective-C callable requests
+
+Replace `.message(...)` with `.objc(.method(...))` for ordinary message dispatch, and `.implementation(...)` with `.objc(.imp(...))` for a captured implementation:
+
+| Before | After |
+| --- | --- |
+| `runtime.resolve(.message(s, as: t), on: c)` | `runtime.resolve(.objc(.method(s, as: t)), on: c)` |
+| `object.resolveAndWait(.message(s, as: t))` | `object.resolveAndWait(.objc(.method(s, as: t)))` |
+| `runtime.resolve(.implementation(s, as: t), on: c)` | `runtime.resolve(.objc(.imp(s, as: t)), on: c)` |
+| `NativeObjCMessageRequest<R, A>.message(s, as: t)` | `NativeRequest.objc(.method(s, as: t))` |
+| `NativeObjCImplementationRequest<R, A>.implementation(s, as: t)` | `NativeRequest.objc(.imp(s, as: t))` |
+
+The concrete declaration types remain ``NativeObjCMessageRequest`` and ``NativeObjCImplementationRequest``. Their factories are now `method` and `imp`, respectively, and their wrapped requests resolve with either `resolve` or `resolveAndWait`. `String` and `Selector` overloads, native error conversion through a `throws` signature, ownership options, and typed variadic arguments retain their existing contracts. Keep `as:`, `variadicFrom:`, and `options:` inside the declaration; keep `on:`, `classMethod:`, and `retaining:` on runtime resolution.
+
+A method request resolves on `ABIRuntime` with a class for an explicit receiver at invocation, or on `NativeObject` for a bound receiver. An IMP request resolves on `ABIRuntime` with a class and captures the implementation at that resolution. See <doc:ObjectiveCInvocation> for saved request examples, forwarding, and receiver isolation. Hook request APIs such as `NativeObjCHookRequest.method(...)` retain their own spelling.
+
 ## Migrate earlier per-kind resolution functions
 
-Swift functions and members and Objective-C messages are described by request values and prepared by one `resolve` and `resolveAndWait` pair. The per-kind functions, such as `resolveGetter`, `resolveStaticMethod`, `resolveSwiftFunction`, and `resolveObjCMethod`, are removed without compatibility aliases. A request holds no scope, so one request resolves on a ``NativeSwiftType`` or on a ``NativeObject`` with the same options:
+Swift functions and members and Objective-C messages are described by request values and prepared by one `resolve` and `resolveAndWait` pair. The per-kind functions, such as `resolveGetter`, `resolveStaticMethod`, `resolveSwiftFunction`, and `resolveObjCMethod`, are removed without compatibility aliases. Requests keep their declaration options separate from their resolution destination. A Swift member request resolves on a ``NativeSwiftType`` or a ``NativeObject`` with the same options:
 
 | Before | After |
 | --- | --- |
@@ -48,9 +64,9 @@ Swift functions and members and Objective-C messages are described by request va
 | `object.resolveMethod(named:)`, `resolveGetter`, `resolveSetter` | `object.resolve(.swift(.method(…)))`, `.swift(.getter(…))`, `.swift(.setter(…))` |
 | `mutating: true`, `consuming: true` | `receiver: .mutating`, `receiver: .consuming` |
 | `mutating: false` on a setter | `receiver: .borrowing` |
-| `runtime.resolveObjCMethod(on: c, selector: s, as: t, variadicFrom: v, classMethod: m, options: o, retaining: w)` | `runtime.resolve(.message(s, as: t, variadicFrom: v, options: o), on: c, classMethod: m, retaining: w)` |
-| `runtime.resolveObjCImplementation(on: c, selector: s, …)` | `runtime.resolve(.implementation(s, …), on: c, …)` |
-| `object.resolveMethod(selector: s, as: t, …)` | `object.resolve(.message(s, as: t, …))` |
+| `runtime.resolveObjCMethod(on: c, selector: s, as: t, variadicFrom: v, classMethod: m, options: o, retaining: w)` | `runtime.resolve(.objc(.method(s, as: t, variadicFrom: v, options: o)), on: c, classMethod: m, retaining: w)` |
+| `runtime.resolveObjCImplementation(on: c, selector: s, …)` | `runtime.resolve(.objc(.imp(s, …)), on: c, …)` |
+| `object.resolveMethod(selector: s, as: t, …)` | `object.resolve(.objc(.method(s, as: t, …)))` |
 
 Each `…AndWait` function becomes `resolveAndWait` with the same request. The handles they return are unchanged.
 
@@ -110,7 +126,7 @@ let read = try await type.resolve(.swift(.method("read()", as: (() -> Int64).sel
 
 Use `resolveAndWait` without `await` for synchronous lookup, including inside an async function. It can block during cold lookup or while joining preparation. Bound member lookup keeps the receiver in the caller's isolation domain; see <doc:SwiftFunctionInvocation> and <doc:SwiftMemberInvocation>.
 
-`ABIRuntime` and `NativeSwiftType` remain actors. Replace the earlier C/C++ `cFunction` and `cxxFunction` factories with `resolveCFunction` and `resolveCXXFunction`, or their `AndWait` variants. The same rename applies to `images`, `lazyLibraries`, C++ `method` and `virtualMethod`, and named vtable `entry`. Earlier `objcMethod`, `objcImplementation`, and Objective-C `method(selector:)` calls become message and implementation requests. Earlier synchronous raw `resolve` calls become `resolveAndWait`, or add `await` to use async resolution. The old factory names have no compatibility aliases.
+`ABIRuntime` and `NativeSwiftType` remain actors. Replace the earlier C/C++ `cFunction` and `cxxFunction` factories with `resolveCFunction` and `resolveCXXFunction`, or their `AndWait` variants. The same rename applies to `images`, `lazyLibraries`, C++ `method` and `virtualMethod`, and named vtable `entry`. Earlier `objcMethod`, `objcImplementation`, and Objective-C `method(selector:)` calls become `.objc(.method(...))` or `.objc(.imp(...))` requests. Earlier synchronous raw `resolve` calls become `resolveAndWait`, or add `await` to use async resolution. The old factory names have no compatibility aliases.
 
 For C or C++ lookup from `MainActor`, call the async factory directly:
 

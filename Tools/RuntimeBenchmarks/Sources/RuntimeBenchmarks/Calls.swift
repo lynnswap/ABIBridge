@@ -165,15 +165,19 @@ struct Benchmark {
         }
         let receiver = ABIPerfReceiver()
         let objc = try runtime.object(receiver).resolveAndWait(
-            .message(
-                "add:right:",
-                as: ((Int64, Int64) -> Int64).self
+            .objc(
+                .method(
+                    "add:right:",
+                    as: ((Int64, Int64) -> Int64).self
+                )
             )
         )
         let captured = try runtime.resolveAndWait(
-            .implementation(
-                "add:right:",
-                as: ((Int64, Int64) -> Int64).self
+            .objc(
+                .imp(
+                    "add:right:",
+                    as: ((Int64, Int64) -> Int64).self
+                )
             ),
             on: ABIPerfReceiver.self
         )
@@ -184,9 +188,11 @@ struct Benchmark {
             try unsafe captured.unsafeInvoke(on: receiver, $0, 7)
         }
         let size = try runtime.resolveAndWait(
-            .implementation(
-                "shiftSize:",
-                as: ((CGSize) -> CGSize).self
+            .objc(
+                .imp(
+                    "shiftSize:",
+                    as: ((CGSize) -> CGSize).self
+                )
             ),
             on: ABIPerfReceiver.self
         )
@@ -197,9 +203,11 @@ struct Benchmark {
             )
         }
         let echo = try runtime.resolveAndWait(
-            .implementation(
-                "echoObject:",
-                as: ((NSString) -> NSString).self
+            .objc(
+                .imp(
+                    "echoObject:",
+                    as: ((NSString) -> NSString).self
+                )
             ),
             on: ABIPerfReceiver.self
         )

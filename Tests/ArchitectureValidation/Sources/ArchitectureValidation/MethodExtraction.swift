@@ -106,9 +106,11 @@ private final class ExtractedCounterOwner {
         let object = MethodExtractionObject(1)
         originalObject = object
         return try runtime.object(object).resolveAndWait(
-            .message(
-                "adding:",
-                as: ((Int64) -> Int64).self
+            .objc(
+                .method(
+                    "adding:",
+                    as: ((Int64) -> Int64).self
+                )
             )
         ).method
     }
@@ -116,9 +118,11 @@ private final class ExtractedCounterOwner {
     let object = MethodExtractionObject(35)
     let rebound = try message.bind(to: object)
     let captured = try runtime.resolveAndWait(
-        .implementation(
-            "adding:",
-            as: ((Int64) -> Int64).self
+        .objc(
+            .imp(
+                "adding:",
+                as: ((Int64) -> Int64).self
+            )
         ),
         on: MethodExtractionObject.self
     )

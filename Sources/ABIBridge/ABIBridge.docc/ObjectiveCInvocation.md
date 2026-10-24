@@ -4,17 +4,17 @@ Bind an existing receiver to invoke selectors using Swift function types or read
 
 ## Look up a method
 
-The receiver must expose the selector to the Objective-C runtime. A Swift class can expose a method with `@objc`; a method using only the Swift ABI requires a different invocation backend.
+Use `.objc(.method(...))` for ordinary Objective-C message dispatch, or `.objc(.imp(...))` to capture a fixed implementation. The receiver must expose the selector to the Objective-C runtime. A Swift class can expose a method with `@objc`; a method using only the Swift ABI requires a different invocation backend.
 
 ```swift
 import ABIBridge
 import UIKit
 
 let object = ABIRuntime.shared.object(renderer)
-let setImage = try object.resolveAndWait(.message(
+let setImage = try object.resolveAndWait(.objc(.method(
     "setImage:animated:",
     as: ((UIImage?, Bool) -> Void).self
-))
+)))
 
 try unsafe setImage.unsafeInvoke(image, true)
 try unsafe setImage.unsafeInvoke(nil, false)
@@ -24,14 +24,14 @@ The function type describes only explicit arguments. ABIBridge supplies the rece
 
 Keep a method handle to reuse its decoded signature. Each invocation builds an independent call frame and uses normal Objective-C message dispatch, including forwarding. A replacement implementation must preserve the signature and ownership contract captured during lookup.
 
-Pass a `Selector`, including a compiler-checked `#selector`, when the declaration is importable. String names support declarations unavailable to the compiler, without the warnings a string literal converted to `Selector` produces. Both forms share the same invocation and hook contracts. One ``NativeObjCMessageRequest`` resolves on an object or on `ABIRuntime` with the class that declares the method:
+Pass a `Selector`, including a compiler-checked `#selector`, when the declaration is importable. String names support declarations unavailable to the compiler, without the warnings a string literal converted to `Selector` produces. Both forms share the same invocation and hook contracts. The inner ``NativeObjCMessageRequest`` is wrapped in `.objc(...)` and resolves on an object or on `ABIRuntime` with the class that declares the method:
 
 ```swift
 let append = try runtime.resolveAndWait(
-    .message(
+    .objc(.method(
         #selector(NSMutableString.append(_:)),
         as: ((String) -> Void).self
-    ),
+    )),
     on: NSMutableString.self
 )
 ```
@@ -43,11 +43,11 @@ A compiler-checked selector verifies spelling. The function type and ownership o
 Describe the concrete anonymous tail in the Swift signature and set `variadicFrom:` to the number of named arguments. Bound messages, receiver-independent messages, and captured implementations share this contract:
 
 ```swift
-let format = try runtime.object(NSString.self as AnyObject).resolveAndWait(.message(
+let format = try runtime.object(NSString.self as AnyObject).resolveAndWait(.objc(.method(
     "stringWithFormat:",
     as: ((NSString, Float, Int8, NSString) -> NSString).self,
     variadicFrom: 1
-))
+)))
 let text = try unsafe format.unsafeInvoke("%.1f/%d/%@", 1.5, -3, "value")
 ```
 
@@ -57,22 +57,21 @@ Variadic messages resolve the receiver's current concrete IMP on each call; capt
 
 ## Prepare a message without retaining a receiver
 
-Resolve a message request on `ABIRuntime` with a class when a coordinator or other owner needs to cache a signature independently of the objects receiving its messages:
+Save a message declaration with `NativeRequest.objc(.method(...))`. Resolve it on `ABIRuntime` with a class when a coordinator or other owner needs to keep a prepared signature independently of the objects receiving its messages:
 
 ```swift
-let append = try runtime.resolveAndWait(
-    .message(
-        "appendString:",
-        as: ((String) -> Void).self
-    ),
-    on: NSMutableString.self
-)
+let request = NativeRequest.objc(.method(
+    "appendString:", as: ((String) -> Void).self
+))
+let append = try runtime.resolveAndWait(request, on: NSMutableString.self)
 let text = NSMutableString(string: "Hello")
 try unsafe append.unsafeInvoke(on: text, " world")
 
-let bound = try append.bind(to: text)
+let bound = try runtime.object(text).resolveAndWait(request)
 try unsafe bound.unsafeInvoke("!")
 ```
+
+The same saved request resolves on an object to retain and bind that receiver. Creating a request performs no lookup or ABI preparation; it stores the selector, signature, variadic boundary, and ownership options. Class selection, `classMethod:`, and an explicit code owner passed through `retaining:` belong to runtime resolution. The wrapper is `Sendable` when its declaration is `Sendable`; both Objective-C declaration types are `Sendable`. Save a prepared handle to reuse its signature for repeated calls, following <doc:SymbolLookup#Cache-and-loader-lifetime>.
 
 `NativeObjCMethod` validates each supplied receiver's class, method kind, and current ABI representation before message dispatch. Compatible subclass overrides and later replacements participate. Aggregate names may differ when layouts agree. Runtime encodings omit ownership attributes, so every implementation must honor the prepared ownership contract.
 
@@ -91,9 +90,9 @@ Class-based preparation requires a concrete signature, possibly supplied by dyna
 Extract `method` from a bound handle to reuse its signature and code owner without retaining the original receiver or repeating lookup:
 
 ```swift
-let bound = try runtime.object(firstRenderer).resolveAndWait(.message(
+let bound = try runtime.object(firstRenderer).resolveAndWait(.objc(.method(
     "setImage:animated:", as: ((UIImage?, Bool) -> Void).self
-))
+)))
 let setImage = bound.method
 try unsafe setImage.unsafeInvoke(on: secondRenderer, image, true)
 let secondBound = try setImage.bind(to: secondRenderer)
@@ -104,20 +103,17 @@ The new receiver must have the lookup class or a subclass, or be a compatible cl
 
 ## Capture an implementation for original calls
 
-Resolve a ``NativeObjCImplementationRequest`` when a method replacement needs to call the implementation selected before replacement:
+Use `.objc(.imp(...))`, whose inner declaration is a ``NativeObjCImplementationRequest``, when a method replacement needs to call the implementation selected before replacement. Save it with `NativeRequest.objc(...)` or pass it inline:
 
 ```swift
-let original = try ABIRuntime.shared.resolveAndWait(
-    .implementation(
-        "sizeThatFits:",
-        as: ((CGSize) -> CGSize).self
-    ),
-    on: UIView.self
-)
+let request = NativeRequest.objc(.imp(
+    "sizeThatFits:", as: ((CGSize) -> CGSize).self
+))
+let original = try ABIRuntime.shared.resolveAndWait(request, on: UIView.self)
 let measured = try unsafe original.unsafeInvoke(on: view, proposedSize)
 ```
 
-The handle keeps a fixed IMP and signature without an instance. Supply a compatible receiver on each call; subclass instances use the captured IMP. Forwarding-only selectors cannot be captured.
+The handle keeps a fixed IMP and signature without an instance. Supply a compatible receiver on each call; subclass instances use the captured IMP. Forwarding-only selectors cannot be captured. Resolving the saved request again captures the current IMP; an earlier handle continues to call its earlier target.
 
 For a class method, pass the ordinary class with `classMethod: true` and invoke with the class object, such as `SomeClass.self as AnyObject`. A subclass class object is also valid. Wrong receiver kinds and unrelated classes fail before calling native code.
 
@@ -130,10 +126,10 @@ Captured calls share the value conversions and ownership options below and prese
 A Cocoa method that reports failure through a trailing `NSError **` parameter can be prepared with a Swift `throws` signature that omits that parameter, as the Swift importer does. A `Void` result corresponds to a `BOOL` method that fails with `NO`; another result corresponds to an object method that fails with `nil`:
 
 ```swift
-let open = try object.resolveAndWait(.message(
+let open = try object.resolveAndWait(.objc(.method(
     "openDocument:error:",
     as: ((URL) throws -> NSDocument).self
-))
+)))
 do {
     let document = try unsafe open.unsafeInvoke(url)
 } catch let error as NSError {
@@ -153,7 +149,7 @@ A signature mismatch carries `ABIResolutionError.SignatureMismatch`. Its `declar
 
 ```swift
 do {
-    _ = try object.resolveAndWait(.message("increment:", as: ((Double) -> Int64).self))
+    _ = try object.resolveAndWait(.objc(.method("increment:", as: ((Double) -> Int64).self)))
 } catch let ABIResolutionError.declarationNotFound(request) {
     // Only known absence should select a consumer-defined alternative.
     print("Unavailable:", request.name)
@@ -205,9 +201,9 @@ There is no fixed argument-count limit. Structure layouts come from runtime enco
 For example, a method declared with UIEdgeInsets can use the SDK type directly:
 
 ```swift
-let adjusted = try runtime.object(receiver).resolveAndWait(.message(
+let adjusted = try runtime.object(receiver).resolveAndWait(.objc(.method(
     "adjustInsets:", as: ((UIEdgeInsets) -> UIEdgeInsets).self
-))
+)))
 let result = try unsafe adjusted.unsafeInvoke(insets)
 ```
 
@@ -226,14 +222,14 @@ Declare the block's Objective-C calling convention explicitly, then use the type
 ```swift
 typealias Transform = @convention(block) (Int32) -> Int32
 
-let apply = try object.resolveAndWait(.message(
+let apply = try object.resolveAndWait(.objc(.method(
     "apply:using:",
     as: ((Int32, Transform?) -> Int32).self
-))
+)))
 let transform: Transform = { $0 + 1 }
 let answer = try unsafe apply.unsafeInvoke(41, transform)
 
-let getter = try object.resolveAndWait(.message("handler", as: (() -> Transform?).self))
+let getter = try object.resolveAndWait(.objc(.method("handler", as: (() -> Transform?).self)))
 let returned = try unsafe getter.unsafeInvoke()
 let next = returned?(42)
 ```
@@ -253,22 +249,22 @@ ABIBridge infers retained results from Objective-C method families such as `copy
 Runtime type encodings omit ownership attributes. For a method declared with `ns_returns_retained` outside a retained method family:
 
 ```swift
-let result = try object.resolveAndWait(.message(
+let result = try object.resolveAndWait(.objc(.method(
     "makeResult",
     as: (() -> NSObject).self,
     options: .init(returnsRetainedObject: true)
-))
+)))
 let value = try unsafe result.unsafeInvoke()
 ```
 
 Use ``NativeMethodOptions`` to override retained-result or consumed-receiver inference when the declaration requires it. Set `consumedArguments` to the zero-based explicit parameter indexes annotated `ns_consumed`; indexes exclude `self` and `_cmd`:
 
 ```swift
-let consume = try object.resolveAndWait(.message(
+let consume = try object.resolveAndWait(.objc(.method(
     "consumeObject:",
     as: ((NSObject?) -> Void).self,
     options: .init(consumedArguments: [0])
-))
+)))
 try unsafe consume.unsafeInvoke(value)
 ```
 
@@ -283,9 +279,9 @@ For a MainActor UI object, resolve and invoke from MainActor. Async bound lookup
 ```swift
 @MainActor
 func updateImage(_ image: UIImage?, on renderer: AnyObject) async throws {
-    let setImage = try await ABIRuntime.shared.object(renderer).resolve(.message(
+    let setImage = try await ABIRuntime.shared.object(renderer).resolve(.objc(.method(
         "setImage:animated:", as: ((UIImage?, Bool) -> Void).self
-    ))
+    )))
     try unsafe setImage.unsafeInvoke(image, true)
 }
 ```

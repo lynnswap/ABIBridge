@@ -81,14 +81,18 @@ extension ABIRuntime {
     /// - Throws: A lookup, signature, unsupported-implementation, or image
     ///   error.
     public nonisolated func resolveAndWait<Result, each Argument>(
-        _ request: NativeObjCImplementationRequest<Result, repeat each Argument>,
+        _ request: NativeRequest<NativeObjCImplementationRequest<Result, repeat each Argument>>,
         on type: AnyClass,
         classMethod: Bool = false,
         retaining owner: Any? = nil
     ) throws -> NativeObjCImplementation<Result, repeat each Argument> {
         let prepared:
             (ObjCInvocationPlan, ObjCCallSignature<Result, repeat each Argument>, CCallInterface) =
-                try prepareObjCImplementation(request.query, on: type, classMethod: classMethod)
+                try prepareObjCImplementation(
+                    request.declaration.query,
+                    on: type,
+                    classMethod: classMethod
+                )
         return NativeObjCImplementation(
             binding: ObjCInvocationBinding(plan: prepared.0),
             signature: prepared.1,
@@ -116,12 +120,12 @@ extension ABIRuntime {
     ///   instance.
     /// - Throws: The same errors as synchronous resolution.
     public nonisolated(nonsending) func resolve<Result, each Argument>(
-        _ request: NativeObjCImplementationRequest<Result, repeat each Argument>,
+        _ request: NativeRequest<NativeObjCImplementationRequest<Result, repeat each Argument>>,
         on type: AnyClass,
         classMethod: Bool = false,
         retaining owner: Any? = nil
     ) async throws -> NativeObjCImplementation<Result, repeat each Argument> {
-        let query = request.query
+        let query = request.declaration.query
         let prepared:
             (ObjCInvocationPlan, ObjCCallSignature<Result, repeat each Argument>, CCallInterface) =
                 try await NativePreparation.run {
