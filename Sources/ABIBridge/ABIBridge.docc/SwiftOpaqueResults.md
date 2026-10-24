@@ -113,7 +113,7 @@ The enum must be Escapable, but it need not be Copyable. A missing or ambiguous 
 For a case with associated values, pass an owned runtime payload obtained from a native call or another enum:
 
 ```swift
-if let payload = try await result.resolveEnumPayload(forCase: "item") {
+if let payload = try await result.copyEnumPayload(forCase: "item") {
     let item = try await result.type.makeEnumCase(named: "item", payload: payload)
 }
 ```
@@ -128,14 +128,14 @@ A case without associated values, a mismatched payload type, or unavailable fiel
 
 An enum, tuple, or existential can contain a value whose type is unavailable to the consumer. Copy that value into another ``NativeSwiftValue`` and use its retained type for member lookup:
 
-- `resolveEnumPayload(forCase:valueABIs:)` returns the specified case's entire runtime payload and prepares any function values for owned runtime storage. A different active case or a case without a payload returns `nil`. An unknown or ambiguous case name throws. Use `resolveEnumPayloadAndWait(forCase:valueABIs:)` for synchronous resolution.
+- `copyEnumPayload(forCase:valueABIs:)` returns the specified case's entire runtime payload and prepares any function values for owned runtime storage. A different active case or a case without a payload returns `nil`. An unknown or ambiguous case name throws. Use `copyEnumPayloadAndWait(forCase:valueABIs:)` to copy synchronously.
 - `copyTupleElement(at:)` copies the actual tuple element at a zero-based index. A non-tuple value or an out-of-range index throws.
 - `copyUnderlyingValue()` opens an existential such as `Any` or `any P`. Nested existential containers are opened until the concrete type is reached. An Optional, enum, or other concrete container keeps its own type. A nonexistential receiver throws.
 
 For a native enum with `case item(any Payload)` whose concrete payload is a resilient value implementing `read() -> Int64`:
 
 ```swift
-if let payload = try await result.resolveEnumPayload(forCase: "item") {
+if let payload = try await result.copyEnumPayload(forCase: "item") {
     let concrete = try payload.copyUnderlyingValue()
     let read = try await concrete.type.resolve(.swift(.method(
         "read()", as: (() -> Int64).self,

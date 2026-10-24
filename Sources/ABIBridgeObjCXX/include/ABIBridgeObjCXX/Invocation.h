@@ -38,6 +38,9 @@ FOUNDATION_EXPORT ABIObjCInvocation * _Nullable ABICopyObjCDispatch(
 /// Retains a receiver after validating its signature against an unbound plan. The result retains the prepared plan until after releasing its receiver.
 FOUNDATION_EXPORT ABIObjCInvocation * _Nullable ABICopyBoundObjCInvocation(
     ABIObjCInvocation *plan, id receiver, NSError * _Nullable * _Nullable error);
+/// Validates a receiver against a captured plan without selecting another implementation or inspecting its current signature.
+FOUNDATION_EXPORT BOOL ABIValidateCapturedObjCInvocationReceiver(
+    ABIObjCInvocation *plan, id receiver, NSError * _Nullable * _Nullable error);
 /// Returns an owned reference to the prepared plan without retaining a binding. Bound handles created by this backend always have a receiver-independent parent.
 FOUNDATION_EXPORT ABIObjCInvocation *ABICopyObjCInvocationPlan(ABIObjCInvocation *invocation);
 FOUNDATION_EXPORT void ABIReleaseObjCInvocation(ABIObjCInvocation *invocation);

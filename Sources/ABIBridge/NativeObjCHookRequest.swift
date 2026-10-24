@@ -15,7 +15,9 @@ struct ObjCHookValidation {
 extension NativeObjCMethodHook {
     static func validation<Result, each Argument>(
         type: AnyClass, selector: String, signature: ((repeat each Argument) -> Result).Type,
-        classMethod: Bool, options: NativeMethodOptions, initializer: Bool
+        classMethod: Bool,
+        options: NativeObjCMethodOptions,
+        initializer: Bool
     ) throws -> ObjCHookValidation {
         guard !selector.utf8.contains(0) else {
             throw ABIResolutionError.unsupportedDeclaration("A selector cannot contain a NUL byte.")
@@ -69,7 +71,9 @@ public struct NativeObjCHookRequest {
     ///   - body: The typed callback and scoped continuation.
     @unsafe public static func method<Result, each Argument>(
         on type: AnyClass, selector: String, as signature: ((repeat each Argument) -> Result).Type,
-        classMethod: Bool = false, options: NativeMethodOptions = .init(), retaining owner: Any? = nil,
+        classMethod: Bool = false,
+        options: NativeObjCMethodOptions = .init(),
+        retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body: @escaping @Sendable (NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
     ) -> Self {
@@ -85,7 +89,8 @@ public struct NativeObjCHookRequest {
     /// Describes dedicated initializer preparation and postprocessing. Parameters and unsafe requirements match `ABIRuntime.hookInitializer`.
     @unsafe public static func initializer<Result, each Argument>(
         on type: AnyClass, selector: String, as signature: ((repeat each Argument) -> Result).Type,
-        options: NativeMethodOptions = .init(), retaining owner: Any? = nil,
+        options: NativeObjCMethodOptions = .init(),
+        retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         transformingArguments: (@Sendable (repeat each Argument) throws -> (repeat each Argument))? = nil,
         before: (@Sendable (repeat each Argument) throws -> Void)? = nil,
@@ -103,7 +108,8 @@ public struct NativeObjCHookRequest {
     /// Describes a weak identity-filtered ordinary instance hook. The request retains its object until the request is released; the installed registration itself uses weak identity, just like `NativeObject.hookMethod`.
     @unsafe public static func objectMethod<Result, each Argument>(
         on object: AnyObject, selector: String, as signature: ((repeat each Argument) -> Result).Type,
-        options: NativeMethodOptions = .init(), retaining owner: Any? = nil,
+        options: NativeObjCMethodOptions = .init(),
+        retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body: @escaping @Sendable (NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
     ) -> Self {
@@ -119,7 +125,9 @@ public struct NativeObjCHookRequest {
     /// Describes a method callback with the direct MainActor-hook contract. Preparation itself does not execute the callback or infer future isolation.
     @unsafe @MainActor public static func mainActorMethod<Result, each Argument>(
         on type: AnyClass, selector: String, as signature: ((repeat each Argument) -> Result).Type,
-        classMethod: Bool = false, options: NativeMethodOptions = .init(), retaining owner: Any? = nil,
+        classMethod: Bool = false,
+        options: NativeObjCMethodOptions = .init(),
+        retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body: @escaping @MainActor @Sendable (NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
     ) -> Self {
@@ -137,7 +145,8 @@ public struct NativeObjCHookRequest {
     /// Describes initializer phases with the direct MainActor-initializer contract.
     @unsafe @MainActor public static func mainActorInitializer<Result, each Argument>(
         on type: AnyClass, selector: String, as signature: ((repeat each Argument) -> Result).Type,
-        options: NativeMethodOptions = .init(), retaining owner: Any? = nil,
+        options: NativeObjCMethodOptions = .init(),
+        retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         transformingArguments: (@MainActor @Sendable (repeat each Argument) throws -> (repeat each Argument))? = nil,
         before: (@MainActor @Sendable (repeat each Argument) throws -> Void)? = nil,

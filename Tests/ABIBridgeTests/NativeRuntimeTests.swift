@@ -89,7 +89,7 @@ struct NativeRuntimeTests {
         let symbol = try ABIRuntime.shared.resolveAndWait(
             .objc(.symbol(machOName: "_OBJC_CLASS_$_NSObject", kind: .data))
         )
-        #expect(symbol.declaration.language == .objectiveC)
+        #expect(symbol.declaration.language == .objc)
         #expect(unsafe symbol.withUnsafeAddress { $0 == UnsafeRawPointer(expected) })
     }
 

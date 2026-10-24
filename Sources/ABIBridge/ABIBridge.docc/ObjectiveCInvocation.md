@@ -24,7 +24,7 @@ The function type describes only explicit arguments. ABIBridge supplies the rece
 
 Keep a method handle to reuse its decoded signature. Each invocation builds an independent call frame and uses normal Objective-C message dispatch, including forwarding. A replacement implementation must preserve the signature and ownership contract captured during lookup.
 
-Pass a `Selector`, including a compiler-checked `#selector`, when the declaration is importable. String names support declarations unavailable to the compiler, without the warnings a string literal converted to `Selector` produces. Both forms share the same invocation and hook contracts. The inner ``NativeObjCMessageRequest`` is wrapped in `.objc(...)` and resolves on an object or on `ABIRuntime` with the class that declares the method:
+Pass a `Selector`, including a compiler-checked `#selector`, when the declaration is importable. String names support declarations unavailable to the compiler, without the warnings a string literal converted to `Selector` produces. Both forms share the same invocation and hook contracts. The inner ``NativeObjCMethodRequest`` is wrapped in `.objc(...)` and resolves on an object or on `ABIRuntime` with the class that declares the method:
 
 ```swift
 let append = try runtime.resolveAndWait(
@@ -82,6 +82,7 @@ The same saved request resolves on an object to retain and bind that receiver. C
 | `NativeObjCMethod` | Supplied for each call | Current Objective-C message dispatch |
 | `NativeBoundObjCMethod` | Retained by the handle | Current Objective-C message dispatch |
 | `NativeObjCImplementation` | Supplied for each call | Captured IMP |
+| `NativeBoundObjCImplementation` | Retained by the handle | Captured IMP |
 
 Class-based preparation requires a concrete signature, possibly supplied by dynamic method resolution. For receiver-specific forwarding, resolve the request on `object(receiver)`. Class-based lookup constructs no receiver. Async class-based lookup runs dynamic resolution and signature preparation on a worker; its synchronous variant runs on the caller's thread. Keep dynamic classes and generated code valid through their final use.
 
@@ -112,6 +113,15 @@ let request = NativeRequest.objc(.imp(
 let original = try ABIRuntime.shared.resolveAndWait(request, on: UIView.self)
 let measured = try unsafe original.unsafeInvoke(on: view, proposedSize)
 ```
+
+Use `original.bind(to: view)` for repeated calls on a retained receiver. Its `implementation` property returns the same captured IMP without retaining the receiver. To capture and bind in one lookup, resolve the request on `runtime.object(view)`:
+
+```swift
+let bound = try await runtime.object(view).resolve(request)
+let measured = try unsafe bound.unsafeInvoke(proposedSize)
+```
+
+Binding checks the receiver's class and method kind against the captured declaration. It does not consult the receiver's current method signature or select an override. Both bound and unbound handles keep their captured implementation after replacement.
 
 The handle keeps a fixed IMP and signature without an instance. Supply a compatible receiver on each call; subclass instances use the captured IMP. Forwarding-only selectors cannot be captured. Resolving the saved request again captures the current IMP; an earlier handle continues to call its earlier target.
 
@@ -170,8 +180,8 @@ Use the literal runtime ivar name, including any underscore; this is not a prope
 
 ```swift
 let object = ABIRuntime.shared.object(renderer)
-let image = try object.value(forIvar: "_image", as: UIImage?.self)
-let type = try object.value(forIvar: "_rendererClass", as: AnyClass?.self)
+let image = try object.value(forObjCIvar: "_image", as: UIImage?.self)
+let type = try object.value(forObjCIvar: "_rendererClass", as: AnyClass?.self)
 ```
 
 Lookup searches the receiver's Objective-C class hierarchy and checks the ivar encoding before reading. The special isa field is decoded through the runtime rather than read as a raw class pointer. Object values can use ordinary Swift bridging, such as `NSString` to `String` or `NSArray` to an array. Class ivars return metatypes. Typed block ivars use `@convention(block)`; the caller must know the inner signature.
@@ -257,7 +267,7 @@ let result = try object.resolveAndWait(.objc(.method(
 let value = try unsafe result.unsafeInvoke()
 ```
 
-Use ``NativeMethodOptions`` to override retained-result or consumed-receiver inference when the declaration requires it. Set `consumedArguments` to the zero-based explicit parameter indexes annotated `ns_consumed`; indexes exclude `self` and `_cmd`:
+Use ``NativeObjCMethodOptions`` to override retained-result or consumed-receiver inference when the declaration requires it. Set `consumedArguments` to the zero-based explicit parameter indexes annotated `ns_consumed`; indexes exclude `self` and `_cmd`:
 
 ```swift
 let consume = try object.resolveAndWait(.objc(.method(

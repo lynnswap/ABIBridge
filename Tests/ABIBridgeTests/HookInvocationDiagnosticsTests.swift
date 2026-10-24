@@ -51,7 +51,7 @@ struct HookInvocationDiagnosticsTests {
         ) { call, request in
             saved.set(call)
             #expect(call.declaration.name == "-[ABIDiagnosticRenderer edit:]")
-            #expect(call.declaration.language == .objectiveC)
+            #expect(call.declaration.language == .objc)
             #expect(
                 ObjectIdentifier(call.signature)
                     == ObjectIdentifier(((DiagnosticRequest) -> Int32).self)

@@ -6,7 +6,7 @@ import ObjectiveC
 /// Ownership overrides for Objective-C declarations with nonstandard annotations.
 ///
 /// The default follows Objective-C method-family conventions. Set an override when the declaration uses an ownership attribute that runtime encodings omit.
-public struct NativeMethodOptions: Sendable {
+public struct NativeObjCMethodOptions: Sendable {
     /// Whether the method returns an object at +1 instead of +0 ownership.
     public var returnsRetainedObject: Bool?
 
@@ -51,7 +51,7 @@ public enum ABIInvocationError: Error, Sendable, Equatable {
 /// The receiver and bound method handles remain in the caller's isolation domain. This type does not make an object safe to use from another actor or thread.
 public final class NativeObject {
     private(set) var receiver: AnyObject?
-    private let runtime: ABIRuntime
+    let runtime: ABIRuntime
 
     init(_ receiver: AnyObject, runtime: ABIRuntime) {
         self.receiver = receiver
@@ -96,7 +96,7 @@ public final class NativeObject {
     ///   - valueType: The desired Swift object, bridgeable value, class, or block type.
     /// - Returns: The converted value, or nil for an optional result with a nil ivar.
     /// - Throws: A missing-ivar, unsupported-storage, metadata, or conversion error.
-    public func value<Value>(forIvar name: String, as valueType: Value.Type) throws -> Value {
+    public func value<Value>(forObjCIvar name: String, as valueType: Value.Type) throws -> Value {
         let object = receiver!
         let type: AnyClass = object_getClass(object)!
         guard !name.utf8.contains(0) else {
@@ -228,7 +228,7 @@ public final class NativeObject {
     /// - Throws: A resolution error for a missing selector or incompatible
     ///   signature.
     public func resolveAndWait<Result, each Argument>(
-        _ request: NativeRequest<NativeObjCMessageRequest<Result, repeat each Argument>>
+        _ request: NativeRequest<NativeObjCMethodRequest<Result, repeat each Argument>>
     ) throws -> NativeBoundObjCMethod<Result, repeat each Argument> {
         let binding = try objcInvocationBinding(
             selector: request.declaration.query.selector,
@@ -256,7 +256,7 @@ public final class NativeObject {
     /// - Returns: A method retaining this receiver.
     /// - Throws: The same resolution errors as synchronous resolution.
     public nonisolated(nonsending) func resolve<Result, each Argument>(
-        _ request: NativeRequest<NativeObjCMessageRequest<Result, repeat each Argument>>
+        _ request: NativeRequest<NativeObjCMethodRequest<Result, repeat each Argument>>
     ) async throws -> NativeBoundObjCMethod<Result, repeat each Argument> {
         let query = request.declaration.query
         let binding = try objcInvocationBinding(
@@ -286,7 +286,7 @@ public final class NativeObject {
 
     private func objcInvocationBinding(
         selector: String,
-        options: NativeMethodOptions,
+        options: NativeObjCMethodOptions,
         prepareImages: Bool
     ) throws -> ObjCInvocationBinding {
         let receiverType = object_getClass(receiver!)!

@@ -34,9 +34,9 @@ The selector must resolve to a concrete implementation. The function type contai
 
 Calls must use Objective-C dispatch to enter the hook. Swift calls to an `@objc` method can bypass it unless the declaration uses `dynamic` or the caller performs Objective-C dispatch.
 
-Installation is an unsafe operation because runtime encodings do not describe every ownership annotation, block signature, pointee lifetime, or actor requirement. Supply `NativeMethodOptions` when result ownership differs from the method family or explicit parameters are annotated `ns_consumed`. Registrations on one managed entry must agree on ownership and native signature. Initializers use the dedicated operation in <doc:ObjectiveCInitializerHooks>. Foreign exception unwinding, allocation, retain/release, and lifecycle methods are outside the ordinary-method API.
+Installation is an unsafe operation because runtime encodings do not describe every ownership annotation, block signature, pointee lifetime, or actor requirement. Supply `NativeObjCMethodOptions` when result ownership differs from the method family or explicit parameters are annotated `ns_consumed`. Registrations on one managed entry must agree on ownership and native signature. Initializers use the dedicated operation in <doc:ObjectiveCInitializerHooks>. Foreign exception unwinding, allocation, retain/release, and lifecycle methods are outside the ordinary-method API.
 
-A method declared with `objc_method_family(none)` can use an `init`- or `alloc`-like selector without those lifecycle semantics. For an ordinary +0 object result and borrowed self, supply `NativeMethodOptions(returnsRetainedObject: false, consumesReceiver: false)` to describe that contract explicitly. Default initializer and allocation ownership still require their dedicated contracts.
+A method declared with `objc_method_family(none)` can use an `init`- or `alloc`-like selector without those lifecycle semantics. For an ordinary +0 object result and borrowed self, supply `NativeObjCMethodOptions(returnsRetainedObject: false, consumesReceiver: false)` to describe that contract explicitly. Default initializer and allocation ownership still require their dedicated contracts.
 
 ## Continue, replace, and recover from failures
 

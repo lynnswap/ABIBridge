@@ -6,7 +6,7 @@ public enum NativeLanguage: Sendable, Hashable {
     /// A Swift declaration, including its module qualification.
     case swift
     /// An Objective-C selector, interpreted through the Objective-C runtime.
-    case objectiveC
+    case objc
     /// A C linker name, without the leading Mach-O underscore.
     case c
     /// A demangled C++ declaration.
@@ -136,53 +136,6 @@ public struct NativeDeclaration: Sendable, Hashable {
     /// - Parameter typeName: A qualified C++ type name, such as `Example::Renderer`.
     public init(vtableFor typeName: String) {
         self.init(name: "vtable for \(typeName)", language: .cxx, kind: .vtable)
-    }
-}
-
-/// The ownership contract associated with a native result.
-///
-/// These labels describe a contract; they do not implement retain, copy, or destruction operations.
-public enum NativeOwnership: Sendable, Hashable {
-    /// Valid only within a lifetime established by another owner.
-    case borrowed
-    /// Transfers responsibility for releasing the result to the caller.
-    case owned
-    /// Does not transfer ownership or extend the result's lifetime.
-    case unowned
-    /// Requires a caller-supplied ownership implementation.
-    case custom
-}
-
-/// Describes the basic shape of a native call.
-///
-/// This model does not resolve a function, verify its ABI, or invoke it.
-public struct NativeCallPlan: Sendable, Hashable {
-    /// The source language whose ABI is being described.
-    public let language: NativeLanguage
-    /// The result's ownership contract.
-    public let resultOwnership: NativeOwnership
-    /// Whether the call requires an instance receiver.
-    public let hasReceiver: Bool
-    /// Whether the caller supplies storage for an indirect result.
-    public let hasIndirectResult: Bool
-
-    /// Records the call shape and result ownership.
-    ///
-    /// - Parameters:
-    ///   - language: The declaration's source language.
-    ///   - resultOwnership: Ownership of the returned value.
-    ///   - hasReceiver: Whether an instance receiver is required.
-    ///   - hasIndirectResult: Whether the result uses caller-provided storage.
-    public init(
-        language: NativeLanguage,
-        resultOwnership: NativeOwnership = .borrowed,
-        hasReceiver: Bool = false,
-        hasIndirectResult: Bool = false
-    ) {
-        self.language = language
-        self.resultOwnership = resultOwnership
-        self.hasReceiver = hasReceiver
-        self.hasIndirectResult = hasIndirectResult
     }
 }
 

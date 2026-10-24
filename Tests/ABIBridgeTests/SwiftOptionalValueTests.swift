@@ -915,7 +915,7 @@ struct SwiftOptionalValueTests {
         let consume = try #require(try consumer.withCopy { $0 as? (Increment?) -> Int64 })
         #expect(consume({ $0 + 41 }) == 42)
         #expect(consume(nil) == -1)
-        let invoke = try consumer.resolveClosureAndWait(
+        let invoke = try consumer.copyClosureAndWait(
             as: ((NativeSwiftClosure<Increment>?) -> Int64).self
         )
         #expect(try unsafe invoke.unsafeInvoke(NativeSwiftClosure<Increment> { $0 + 41 }) == 42)

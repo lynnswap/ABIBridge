@@ -3,7 +3,10 @@ import ABIBridgeObjCXX
 import Foundation
 
 func objcMethodDeclaration(on type: AnyClass, selector: String, classMethod: Bool) -> NativeDeclaration {
-    .init(name: "\(classMethod ? "+" : "-")[\(NSStringFromClass(type)) \(selector)]", language: .objectiveC)
+    .init(
+        name: "\(classMethod ? "+" : "-")[\(NSStringFromClass(type)) \(selector)]",
+        language: .objc
+    )
 }
 
 // Translate only this boundary's known failures. Other NSError domains and

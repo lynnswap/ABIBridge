@@ -176,11 +176,11 @@ struct SwiftRuntimeValueProjectionTests {
 
     @Test func enumCaseSelectionPreservesNilAndLookupFailures() async throws {
         let value = try await runtimeProjectionChoice(1)
-        let payload = try #require(try await value.resolveEnumPayload(forCase: "text"))
+        let payload = try #require(try await value.copyEnumPayload(forCase: "text"))
         #expect(try payload.take(as: String.self) == "payload")
-        #expect(try await value.resolveEnumPayload(forCase: "empty") == nil)
+        #expect(try await value.copyEnumPayload(forCase: "empty") == nil)
         #expect(throws: NativeSwiftValueError.enumCaseNotFound(name: "missing")) {
-            try value.resolveEnumPayloadAndWait(forCase: "missing")
+            try value.copyEnumPayloadAndWait(forCase: "missing")
         }
         #expect(!value.isConsumed)
         guard case .text(let text) = try value.take(as: RuntimeProjectionChoice.self) else {
@@ -189,11 +189,11 @@ struct SwiftRuntimeValueProjectionTests {
         }
         #expect(text == "payload")
         let empty = try await runtimeProjectionChoice(0)
-        #expect(try await empty.resolveEnumPayload(forCase: "empty") == nil)
-        #expect(try await empty.resolveEnumPayload(forCase: "text") == nil)
+        #expect(try await empty.copyEnumPayload(forCase: "empty") == nil)
+        #expect(try await empty.copyEnumPayload(forCase: "text") == nil)
         let overloaded = try await runtimeProjectionChoice(7)
         #expect(throws: NativeSwiftValueError.ambiguousEnumCase(name: "repeated")) {
-            try overloaded.resolveEnumPayloadAndWait(forCase: "repeated")
+            try overloaded.copyEnumPayloadAndWait(forCase: "repeated")
         }
         #expect(!overloaded.isConsumed)
     }
@@ -201,7 +201,7 @@ struct SwiftRuntimeValueProjectionTests {
     @MainActor @Test
     func payloadConstructionPreservesTheInputAndPassesNativeCalls() async throws {
         let original = try await runtimeProjectionChoice(1)
-        let payload = try #require(try await original.resolveEnumPayload(forCase: "text"))
+        let payload = try #require(try await original.copyEnumPayload(forCase: "text"))
         let value = try await original.type.makeEnumCase(named: "text", payload: payload)
         let copy = try await ABIRuntime.shared.resolve(
             .swift(
@@ -251,7 +251,7 @@ struct SwiftRuntimeValueProjectionTests {
                 indirect
                 ? source
                 : try #require(
-                    try await source.resolveEnumPayload(forCase: "large")
+                    try await source.copyEnumPayload(forCase: "large")
                 )
             constructed = try source.type.makeEnumCaseAndWait(
                 named: indirect ? "indirect" : "large",
@@ -320,7 +320,7 @@ struct SwiftRuntimeValueProjectionTests {
     func tuplePayloadsKeepTheRuntimeShape(_ kind: Int64) async throws {
         let value = try await runtimeProjectionChoice(kind)
         let payload = try #require(
-            try await value.resolveEnumPayload(forCase: kind == 2 ? "tuple" : "values")
+            try await value.copyEnumPayload(forCase: kind == 2 ? "tuple" : "values")
         )
         let constructed = try await value.type.makeEnumCase(
             named: kind == 2 ? "tuple" : "values",
@@ -406,7 +406,7 @@ struct SwiftRuntimeValueProjectionTests {
 
     @Test func labeledSingleValuesKeepTheirOuterTuple() async throws {
         let value = try await runtimeProjectionChoice(4)
-        let payload = try #require(try await value.resolveEnumPayload(forCase: "labeled"))
+        let payload = try #require(try await value.copyEnumPayload(forCase: "labeled"))
         let nested = try payload.copyTupleElement(at: 0)
         #expect(throws: NativeSwiftValueError.tupleElementIndexOutOfBounds(index: 1, count: 1)) {
             try payload.copyTupleElement(at: 1)
@@ -429,12 +429,12 @@ struct SwiftRuntimeValueProjectionTests {
             )
             let container: NativeSwiftValue
             if indirect {
-                container = try #require(try await value.resolveEnumPayload(forCase: "indirect"))
+                container = try #require(try await value.copyEnumPayload(forCase: "indirect"))
                 #expect(container.type.name == value.type.name)
             } else {
                 container = value
             }
-            copied = try #require(try await container.resolveEnumPayload(forCase: "large"))
+            copied = try #require(try await container.copyEnumPayload(forCase: "large"))
             #expect(!value.isConsumed && !container.isConsumed)
         }
         #expect(counts.destructions == 0)
@@ -458,7 +458,7 @@ struct SwiftRuntimeValueProjectionTests {
             )
         )
         let value = try unsafe make.unsafeInvoke("generic payload")
-        let payload = try #require(try await value.resolveEnumPayload(forCase: "value"))
+        let payload = try #require(try await value.copyEnumPayload(forCase: "value"))
         #expect(try payload.take(as: String.self) == "generic payload")
         #expect(!value.isConsumed)
         let optional = try await ABIRuntime.shared.resolve(
@@ -471,12 +471,12 @@ struct SwiftRuntimeValueProjectionTests {
         )
         let some = try unsafe optional.unsafeInvoke(true)
         #expect(
-            try #require(try await some.resolveEnumPayload(forCase: "some")).take(as: Int64.self)
+            try #require(try await some.copyEnumPayload(forCase: "some")).take(as: Int64.self)
                 == 42
         )
         let none = try unsafe optional.unsafeInvoke(false)
-        #expect(try await none.resolveEnumPayload(forCase: "none") == nil)
-        #expect(try await none.resolveEnumPayload(forCase: "some") == nil)
+        #expect(try await none.copyEnumPayload(forCase: "none") == nil)
+        #expect(try await none.copyEnumPayload(forCase: "some") == nil)
     }
 
     @Test func projectedGenericValuesResolveTheirUninstantiatedGetterOwner() async throws {
@@ -491,7 +491,7 @@ struct SwiftRuntimeValueProjectionTests {
             )
         )
         let container = try unsafe make.unsafeInvoke(Box(42))
-        let payload = try #require(try await container.resolveEnumPayload(forCase: "value"))
+        let payload = try #require(try await container.copyEnumPayload(forCase: "value"))
         #expect(payload.type.name == String(reflecting: Box.self))
         let getter = try await payload.type.resolve(
             .swift(
@@ -517,12 +517,12 @@ struct SwiftRuntimeValueProjectionTests {
         )
         let value = try unsafe make.unsafeInvoke(42)
         #expect(throws: ABIResolutionError.self) {
-            try value.resolveEnumPayloadAndWait(forCase: "some")
+            try value.copyEnumPayloadAndWait(forCase: "some")
         }
         #expect(throws: ABIResolutionError.self) { try value.copyTupleElement(at: 0) }
         #expect(throws: ABIResolutionError.self) { try value.copyUnderlyingValue() }
         #expect(throws: ABIResolutionError.self) {
-            try value.resolveClosureAndWait(as: (() -> Int64).self)
+            try value.copyClosureAndWait(as: (() -> Int64).self)
         }
         #expect(try value.take(as: Int64.self) == 42)
         #expect(throws: NativeSwiftValueError.consumedValue) { try value.copyUnderlyingValue() }
@@ -537,7 +537,7 @@ struct SwiftRuntimeValueProjectionTests {
         )
         let owned = try unsafe move.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
         #expect(throws: NativeSwiftValueError.noncopyableType) {
-            try owned.resolveEnumPayloadAndWait(forCase: "ticket")
+            try owned.copyEnumPayloadAndWait(forCase: "ticket")
         }
         #expect(!owned.isConsumed && counts.destructions == 0)
         do {
@@ -672,7 +672,7 @@ struct SwiftRuntimeValueProjectionTests {
             )
             let name = ["direct", "tuple", "optional"][Int(kind)]
             do {
-                _ = try value.resolveEnumPayloadAndWait(forCase: name)
+                _ = try value.copyEnumPayloadAndWait(forCase: name)
                 Issue.record("A payload with unsupported class-error storage was copied")
             } catch ABIResolutionError.unsupportedDeclaration {}
             #expect(!value.isConsumed && counts.destructions == 0)
@@ -711,7 +711,7 @@ struct SwiftRuntimeValueProjectionTests {
         do {
             let value = try unsafe make.unsafeInvoke(3, ErrorLifetimeToken { counts.destroyed() })
             do {
-                _ = try await value.resolveEnumPayload(forCase: "closure")
+                _ = try await value.copyEnumPayload(forCase: "closure")
                 Issue.record("A closure with unsupported class-error result storage was resolved")
             } catch ABIResolutionError.unsupportedDeclaration {}
             #expect(!value.isConsumed && counts.destructions == 0)
@@ -759,7 +759,7 @@ struct SwiftRuntimeValueProjectionTests {
         var constructed: NativeSwiftValue?
         do {
             let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken { counts.destroyed() })
-            let payload = try #require(try await value.resolveEnumPayload(forCase: "preview"))
+            let payload = try #require(try await value.copyEnumPayload(forCase: "preview"))
             let existential = try payload.copyTupleElement(at: 0)
             let source = try existential.copyUnderlyingValue()
             #expect(existential.type.name != source.type.name)
@@ -781,7 +781,7 @@ struct SwiftRuntimeValueProjectionTests {
                 .swift(.type("ManagedSwiftFixtures.RuntimeProjectionBody"))
             )
             let associated = try #require(
-                try await preview.resolveEnumPayload(
+                try await preview.copyEnumPayload(
                     forCase: "singlePreview",
                     valueABIs: [bodyType: .opaque(named: bodyType.name)]
                 )
@@ -792,10 +792,10 @@ struct SwiftRuntimeValueProjectionTests {
                 valueABIs: [bodyType: .opaque(named: bodyType.name)]
             )
             let function = try associated.copyTupleElement(at: 0)
-            closure = try await function.resolveClosure(as: Signature.self)
+            closure = try await function.copyClosure(as: Signature.self)
             #expect(!function.isConsumed && !value.isConsumed && !source.isConsumed)
             #expect(throws: ABIResolutionError.self) {
-                try function.resolveClosureAndWait(as: (() -> NativeSwiftValue).self)
+                try function.copyClosureAndWait(as: (() -> NativeSwiftValue).self)
             }
         }
         #expect(counts.destructions == 0)
@@ -827,7 +827,7 @@ struct SwiftRuntimeValueProjectionTests {
             )
         )
         let container = try unsafe make.unsafeInvoke(ErrorLifetimeToken())
-        let payload = try #require(try await container.resolveEnumPayload(forCase: "singlePreview"))
+        let payload = try #require(try await container.copyEnumPayload(forCase: "singlePreview"))
         let constructed = try container.type.makeEnumCaseAndWait(
             named: "singlePreview",
             payload: payload
@@ -838,7 +838,7 @@ struct SwiftRuntimeValueProjectionTests {
         guard case .singlePreview(let makeBody) = native else { return }
         #expect(makeBody().number == 42)
         let function = try payload.copyTupleElement(at: 0)
-        let closure = try await function.resolveClosure(
+        let closure = try await function.copyClosure(
             as: (@MainActor () -> NativeSwiftValue).self
         )
         let result = try unsafe closure.unsafeInvoke()
@@ -860,7 +860,7 @@ struct SwiftRuntimeValueProjectionTests {
             )
         )
         let value = try unsafe make.unsafeInvoke(ErrorLifetimeToken())
-        let closure = try value.resolveClosureAndWait(as: Signature.self)
+        let closure = try value.copyClosureAndWait(as: Signature.self)
         let result = try unsafe await closure.unsafeInvoke(false)
         #expect(try result.take(as: RuntimeProjectionBody.self).number == 42)
         do {
@@ -870,12 +870,12 @@ struct SwiftRuntimeValueProjectionTests {
             #expect(error.withUnderlyingError { ($0 as? ScalarFailure)?.code } == 42)
         }
         #expect(throws: ABIResolutionError.self) {
-            try value.resolveClosureAndWait(
+            try value.copyClosureAndWait(
                 as: (@MainActor (Bool) throws(ScalarFailure) -> NativeSwiftValue).self
             )
         }
         #expect(throws: ABIResolutionError.self) {
-            try value.resolveClosureAndWait(
+            try value.copyClosureAndWait(
                 as: (@MainActor (Bool) async -> NativeSwiftValue).self
             )
         }
@@ -898,11 +898,11 @@ struct SwiftRuntimeValueProjectionTests {
         for labeled in [false, true] {
             let name = labeled ? "labeled" : "handler"
             let value = try unsafe make.unsafeInvoke(1, labeled)
-            let payload = try #require(try await value.resolveEnumPayload(forCase: name))
+            let payload = try #require(try await value.copyEnumPayload(forCase: name))
             let body = labeled ? try payload.copyTupleElement(at: 1) : payload
             #expect(try body.withCopy { ($0 as? Increment?)??(41) } == 42, "\(name)")
             let empty = try unsafe make.unsafeInvoke(nil, labeled)
-            let none = try #require(try await empty.resolveEnumPayload(forCase: name))
+            let none = try #require(try await empty.copyEnumPayload(forCase: name))
             let nilBody = labeled ? try none.copyTupleElement(at: 1) : none
             #expect(try nilBody.withCopy { ($0 as? Increment?).map { $0 == nil } } == true)
             // A case built from the payload holds the case's convention again.
@@ -926,10 +926,10 @@ struct SwiftRuntimeValueProjectionTests {
             )
         )
         let function = try unsafe make.unsafeInvoke(false)
-        let pointer = try #require(try await function.resolveEnumPayload(forCase: "function"))
+        let pointer = try #require(try await function.copyEnumPayload(forCase: "function"))
         #expect(try pointer.withCopy { ($0 as? (@convention(c) (Int64) -> Int64)?)??(41) } == 42)
         let block = try unsafe make.unsafeInvoke(true)
-        let body = try #require(try await block.resolveEnumPayload(forCase: "block"))
+        let body = try #require(try await block.copyEnumPayload(forCase: "block"))
         #expect(try body.withCopy { ($0 as? (@convention(block) (Int64) -> Int64)?)??(40) } == 42)
         let rebuilt = try await block.type.makeEnumCase(named: "block", payload: body)
         guard case .block(let native) = try rebuilt.take(as: RuntimeProjectionForeignHandler.self)
@@ -951,7 +951,7 @@ struct SwiftRuntimeValueProjectionTests {
             )
         )
         let synchronous = try unsafe make.unsafeInvoke(7)
-        let closure = try synchronous.resolveClosureAndWait(as: ((Int64) -> Int64).self)
+        let closure = try synchronous.copyClosureAndWait(as: ((Int64) -> Int64).self)
         #expect(try unsafe closure.unsafeInvoke(35) == 42)
         let makeAsync = try await runtime.resolve(
             .swift(
@@ -962,24 +962,24 @@ struct SwiftRuntimeValueProjectionTests {
             )
         )
         let asynchronous = try unsafe makeAsync.unsafeInvoke(7)
-        let asyncClosure = try await asynchronous.resolveClosure(
+        let asyncClosure = try await asynchronous.copyClosure(
             as: (nonisolated(nonsending) (Int64) async -> Int64).self
         )
         #expect(try unsafe await asyncClosure.unsafeInvoke(35) == 42)
         #expect(throws: ABIResolutionError.self) {
-            try synchronous.resolveClosureAndWait(as: ((String) -> String).self)
+            try synchronous.copyClosureAndWait(as: ((String) -> String).self)
         }
         #expect(throws: ABIResolutionError.self) {
-            try asynchronous.resolveClosureAndWait(as: ((Int64) -> Int64).self)
+            try asynchronous.copyClosureAndWait(as: ((Int64) -> Int64).self)
         }
         #expect(!synchronous.isConsumed && !asynchronous.isConsumed)
         let native = try synchronous.take(as: ((Int64) -> Int64).self)
         #expect(native(35) == 42)
         #expect(throws: NativeSwiftValueError.consumedValue) {
-            try synchronous.resolveClosureAndWait(as: ((Int64) -> Int64).self)
+            try synchronous.copyClosureAndWait(as: ((Int64) -> Int64).self)
         }
         await #expect(throws: NativeSwiftValueError.consumedValue) {
-            _ = try await synchronous.resolveClosure(as: ((Int64) -> Int64).self)
+            _ = try await synchronous.copyClosure(as: ((Int64) -> Int64).self)
         }
         #expect(try unsafe closure.unsafeInvoke(35) == 42)
     }
@@ -1008,9 +1008,9 @@ struct SwiftRuntimeValueProjectionTests {
         )
         let consumerValue = try unsafe makeConsumer.unsafeInvoke(RuntimeTicket.self)
         #expect(throws: ABIResolutionError.self) {
-            try consumerValue.resolveClosureAndWait(as: ((NativeSwiftValue) -> Int64).self)
+            try consumerValue.copyClosureAndWait(as: ((NativeSwiftValue) -> Int64).self)
         }
-        let consume = try consumerValue.resolveClosureAndWait(
+        let consume = try consumerValue.copyClosureAndWait(
             as: ((NativeSwiftConsuming<NativeSwiftValue>) -> Int64).self
         )
         #expect(
@@ -1029,7 +1029,7 @@ struct SwiftRuntimeValueProjectionTests {
             )
         )
         let swapValue = try unsafe makeSwap.unsafeInvoke(Int64.self)
-        let swap = try await swapValue.resolveClosure(
+        let swap = try await swapValue.copyClosure(
             as: ((NativeSwiftInout<NativeSwiftValue>, NativeSwiftInout<NativeSwiftValue>) -> Void)
                 .self
         )
@@ -1094,7 +1094,7 @@ struct SwiftRuntimeValueProjectionTests {
         }
         let result: Result<NativeSwiftValue, any Error>
         do {
-            result = .success(try #require(try await container.resolveEnumPayload(forCase: "body")))
+            result = .success(try #require(try await container.copyEnumPayload(forCase: "body")))
         } catch {
             result = .failure(error)
         }
@@ -1102,9 +1102,9 @@ struct SwiftRuntimeValueProjectionTests {
         let prepared = try await preparation.value
         let value = try result.get()
         #else
-        let value = try #require(try await container.resolveEnumPayload(forCase: "body"))
+        let value = try #require(try await container.copyEnumPayload(forCase: "body"))
         #endif
-        let closure = try await value.resolveClosure(as: Signature.self)
+        let closure = try await value.copyClosure(as: Signature.self)
         #if DEBUG
         guard case .synchronous(_, let call) = closure.call else {
             Issue.record("Expected the stored synchronous closure's prepared call interface")
@@ -1153,9 +1153,9 @@ struct SwiftRuntimeValueProjectionTests {
             )
         )
         let generic = try unsafe makeGeneric.unsafeInvoke(7)
-        let genericValue = try #require(try generic.resolveEnumPayloadAndWait(forCase: "value"))
+        let genericValue = try #require(try generic.copyEnumPayloadAndWait(forCase: "value"))
         #expect(concreteType == genericValue.type)
-        let genericClosure = try genericValue.resolveClosureAndWait(as: Signature.self)
+        let genericClosure = try genericValue.copyClosureAndWait(as: Signature.self)
         #expect(try invokeProjectionPreparation(genericClosure) == 42)
         try genericValue.withCopy { copied in
             let native = try #require(copied as? Signature)
@@ -1267,7 +1267,7 @@ struct SwiftRuntimeValueProjectionTests {
         #expect(!metadata.isSendable)
         let host = try RuntimeFunctionMetadata((@MainActor (Int64) -> Int64).self)
         #expect(host.isSendable)
-        let closure = try await value.resolveClosure(as: (@MainActor (Int64) -> Int64).self)
+        let closure = try await value.copyClosure(as: (@MainActor (Int64) -> Int64).self)
         #expect(try unsafe closure.unsafeInvoke(35) == 42)
         MainActor.assertIsolated()
     }

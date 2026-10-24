@@ -137,27 +137,6 @@ public actor ABIRuntime {
         await NativePreparation.run { self.resolveAndWait(requests) }
     }
 
-    /// Resolves a requirement early, warming the indexes used by later searches.
-    ///
-    /// Preparation is optional. Ordinary searches perform missing work and share any index construction already in progress. Preparation runs on an independent worker; awaiting it does not occupy the caller's actor. Ordinary synchronous searches may block their caller while preparing. This prepares symbol lookup, while typed factories prepare their call ABI.
-    /// - Parameter request: The declarations and image scopes to prepare.
-    /// - Returns: The resolved symbol, retaining its image.
-    /// - Throws: The same lookup failures as ordinary resolution.
-    public nonisolated func prepare(_ request: NativeSymbolRequest) async throws -> ResolvedSymbol {
-        try await resolve(request)
-    }
-
-    /// Prepares independent requirements, preserving input order and partial success.
-    ///
-    /// Each requirement shares the indexes used by ordinary searches. A search can reuse a completed index before this entire batch finishes.
-    /// - Parameter requests: Requirements to prepare, or an empty array.
-    /// - Returns: One owned symbol or lookup error for each input requirement.
-    public nonisolated func prepare(
-        _ requests: [NativeSymbolRequest]
-    ) async -> [Result<ResolvedSymbol, any Error>] {
-        await resolve(requests)
-    }
-
     /// Prepares typed handles using the synchronous lookup APIs.
     ///
     /// The operation runs on a worker and shares this runtime's indexes and native call interfaces. Other lookups can reuse completed preparation or join the work they need before the whole operation finishes. Lookup may load images and run their initializers on that worker. Calling a prepared function remains an explicit operation.

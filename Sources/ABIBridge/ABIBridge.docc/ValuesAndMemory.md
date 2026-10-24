@@ -39,6 +39,4 @@ Use <doc:NativeValueAdapters> when a call needs a custom foreign representation 
 
 ### Call contracts and errors
 
-- ``NativeCallPlan``
-- ``NativeOwnership``
 - ``ABIInvocationError``

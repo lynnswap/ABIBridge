@@ -7,7 +7,7 @@ extension NativeObject {
     @unsafe public func hookMethod<Result, each Argument>(
         selector: Selector,
         as signature: ((repeat each Argument) -> Result).Type,
-        options: NativeMethodOptions = .init(),
+        options: NativeObjCMethodOptions = .init(),
         retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body:
@@ -29,7 +29,7 @@ extension NativeObject {
     @unsafe @MainActor public func hookMainActorMethod<Result, each Argument>(
         selector: Selector,
         as signature: ((repeat each Argument) -> Result).Type,
-        options: NativeMethodOptions = .init(),
+        options: NativeObjCMethodOptions = .init(),
         retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body:
@@ -55,7 +55,7 @@ extension ABIRuntime {
         on type: AnyClass,
         selector: Selector,
         as signature: ((repeat each Argument) -> Result).Type,
-        options: NativeMethodOptions = .init(),
+        options: NativeObjCMethodOptions = .init(),
         retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         transformingArguments: (
@@ -82,7 +82,7 @@ extension ABIRuntime {
         on type: AnyClass,
         selector: Selector,
         as signature: ((repeat each Argument) -> Result).Type,
-        options: NativeMethodOptions = .init(),
+        options: NativeObjCMethodOptions = .init(),
         retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         transformingArguments: (
@@ -110,7 +110,7 @@ extension ABIRuntime {
         selector: Selector,
         as signature: ((repeat each Argument) -> Result).Type,
         classMethod: Bool = false,
-        options: NativeMethodOptions = .init(),
+        options: NativeObjCMethodOptions = .init(),
         retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body:
@@ -136,7 +136,7 @@ extension ABIRuntime {
         selector: Selector,
         as signature: ((repeat each Argument) -> Result).Type,
         classMethod: Bool = false,
-        options: NativeMethodOptions = .init(),
+        options: NativeObjCMethodOptions = .init(),
         retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body:
@@ -164,7 +164,7 @@ extension NativeObjCHookRequest {
         selector: Selector,
         as signature: ((repeat each Argument) -> Result).Type,
         classMethod: Bool = false,
-        options: NativeMethodOptions = .init(),
+        options: NativeObjCMethodOptions = .init(),
         retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body:
@@ -189,7 +189,7 @@ extension NativeObjCHookRequest {
         on type: AnyClass,
         selector: Selector,
         as signature: ((repeat each Argument) -> Result).Type,
-        options: NativeMethodOptions = .init(),
+        options: NativeObjCMethodOptions = .init(),
         retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         transformingArguments: (
@@ -216,7 +216,7 @@ extension NativeObjCHookRequest {
         on object: AnyObject,
         selector: Selector,
         as signature: ((repeat each Argument) -> Result).Type,
-        options: NativeMethodOptions = .init(),
+        options: NativeObjCMethodOptions = .init(),
         retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body:
@@ -241,7 +241,7 @@ extension NativeObjCHookRequest {
         selector: Selector,
         as signature: ((repeat each Argument) -> Result).Type,
         classMethod: Bool = false,
-        options: NativeMethodOptions = .init(),
+        options: NativeObjCMethodOptions = .init(),
         retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body:
@@ -266,7 +266,7 @@ extension NativeObjCHookRequest {
         on type: AnyClass,
         selector: Selector,
         as signature: ((repeat each Argument) -> Result).Type,
-        options: NativeMethodOptions = .init(),
+        options: NativeObjCMethodOptions = .init(),
         retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         transformingArguments: (

@@ -32,7 +32,7 @@ struct RuntimePreparationTests {
             in: [.path(fixture.libraryURL)]
         )
 
-        let prepared = try await runtime.prepare(request)
+        let prepared = try await runtime.resolve(request)
         let resolved = try runtime.resolveAndWait(request)
         #expect(prepared.declaration == request.declaration)
         #expect(prepared.image.identity == resolved.image.identity)
@@ -49,7 +49,7 @@ struct RuntimePreparationTests {
         #expect(unsafe rebuilt.withUnsafeAddress { $0.load(as: Int32.self) } == 42)
     }
 
-    @Test func batchPreparationPreservesOrderAndPartialSuccess() async throws {
+    @Test func batchResolutionPreservesOrderAndPartialSuccess() async throws {
         let fixture = try FixtureLibrary(load: false)
         defer { fixture.cleanup() }
         let runtime = ABIRuntime()
@@ -67,7 +67,7 @@ struct RuntimePreparationTests {
         let add = NativeDeclaration(name: fixture.namespace + "::add(int, int)", language: .cxx)
         let requests = [counter, missing, add].map { NativeSymbolRequest($0, in: [scope]) }
 
-        let results = await runtime.prepare(requests)
+        let results = await runtime.resolve(requests)
         #expect(results.count == requests.count)
         let preparedCounter = try results[0].get()
         #expect(preparedCounter.declaration == counter)
@@ -79,10 +79,10 @@ struct RuntimePreparationTests {
             #expect(declaration == missing)
         }
         #expect(try results[2].get().declaration == add)
-        #expect(await runtime.prepare([NativeSymbolRequest]()).isEmpty)
+        #expect(await runtime.resolve([NativeSymbolRequest]()).isEmpty)
     }
 
-    @Test func preparationAndDemandLookupCanRunConcurrently() async throws {
+    @Test func asynchronousAndDemandLookupCanRunConcurrently() async throws {
         let fixture = try FixtureLibrary(load: false)
         defer { fixture.cleanup() }
         let runtime = ABIRuntime()
@@ -91,7 +91,7 @@ struct RuntimePreparationTests {
             in: [.path(fixture.libraryURL)]
         )
 
-        async let preparation = runtime.prepare(request)
+        async let preparation = runtime.resolve(request)
         async let lookup = runtime.resolve(request)
         let (prepared, resolved) = try await (preparation, lookup)
 
@@ -128,7 +128,7 @@ struct RuntimePreparationTests {
 
         let symbol: ResolvedSymbol
         if lookup == "prepare" {
-            symbol = try await runtime.prepare(request)
+            symbol = try await runtime.prepare { try $0.resolveAndWait(request) }
         } else if lookup == "async" {
             symbol = try await runtime.resolve(request)
         } else {

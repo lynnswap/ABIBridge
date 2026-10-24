@@ -563,6 +563,11 @@ ABIObjCInvocation *ABICopyBoundObjCInvocation(ABIObjCInvocation *plan, id receiv
     return bound.release();
 }
 
+BOOL ABIValidateCapturedObjCInvocationReceiver(ABIObjCInvocation *plan, id receiver, NSError **error) {
+    if (error) *error = nil;
+    return validateReceiver(plan, receiver, error);
+}
+
 void ABIRetainObjCInvocation(ABIObjCInvocation *invocation) { ++invocation->references; }
 void ABIReleaseObjCInvocation(ABIObjCInvocation *invocation) {
     if (invocation && --invocation->references == 0) delete invocation;

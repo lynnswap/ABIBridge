@@ -7,7 +7,7 @@ extension ABIRuntime {
     ///
     /// Later registrations wrap earlier ones. A failure before continuation bypasses this hook with its original arguments. A result-conversion or `after` failure preserves the initialized native result. `onFailure` runs synchronously on the caller's thread.
     ///
-    /// For explicit `ns_consumed` arguments, set ``NativeMethodOptions/consumedArguments`` to their zero-based positions, excluding the receiver and selector. The bridge owns incoming references and transfers independent references for final initialization, including transformed arguments.
+    /// For explicit `ns_consumed` arguments, set ``NativeObjCMethodOptions/consumedArguments`` to their zero-based positions, excluding the receiver and selector. The bridge owns incoming references and transfers independent references for final initialization, including transformed arguments.
     ///
     /// Honor declaration ownership, pointer and block lifetimes, execution isolation, and external-writer coordination. Foreign exceptions, cancellation, replacement construction, and repeated initialization are unsupported. See <doc:ObjectiveCInitializerHooks>.
     ///
@@ -25,7 +25,8 @@ extension ABIRuntime {
     /// - Throws: A lookup, signature, ownership, preparation, or displacement error.
     @unsafe public nonisolated func hookInitializer<Result, each Argument>(
         on type: AnyClass, selector: String, as signature: ((repeat each Argument) -> Result).Type,
-        options: NativeMethodOptions = .init(), retaining owner: Any? = nil,
+        options: NativeObjCMethodOptions = .init(),
+        retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         transformingArguments: (@Sendable (repeat each Argument) throws -> (repeat each Argument))? = nil,
         before: (@Sendable (repeat each Argument) throws -> Void)? = nil,
@@ -44,7 +45,8 @@ extension ABIRuntime {
     /// The argument and result callbacks run synchronously on MainActor without an executor hop. Background entry reports `wrongThread` and bypasses the hook before decoding arguments; `onFailure` must be safe on background threads. Other parameters and unsafe requirements match ``hookInitializer(on:selector:as:options:retaining:onFailure:transformingArguments:before:after:)-(_,String,_,_,_,_,_,_,_)``.
     @unsafe @MainActor public func hookMainActorInitializer<Result, each Argument>(
         on type: AnyClass, selector: String, as signature: ((repeat each Argument) -> Result).Type,
-        options: NativeMethodOptions = .init(), retaining owner: Any? = nil,
+        options: NativeObjCMethodOptions = .init(),
+        retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         transformingArguments: (@MainActor @Sendable (repeat each Argument) throws -> (repeat each Argument))? = nil,
         before: (@MainActor @Sendable (repeat each Argument) throws -> Void)? = nil,

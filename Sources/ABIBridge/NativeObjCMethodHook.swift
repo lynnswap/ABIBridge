@@ -54,7 +54,10 @@ public final class NativeObjCMethodHook: @unchecked Sendable {
 
     static func install<Result, each Argument>(
         on type: AnyClass, selector: String, as: ((repeat each Argument) -> Result).Type,
-        classMethod: Bool, options: NativeMethodOptions, object: AnyObject?, owner: Any?,
+        classMethod: Bool,
+        options: NativeObjCMethodOptions,
+        object: AnyObject?,
+        owner: Any?,
         requiresMainThread: Bool,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body: @escaping @Sendable (NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
@@ -68,7 +71,11 @@ public final class NativeObjCMethodHook: @unchecked Sendable {
 
     static func prepare<Result, each Argument>(
         on type: AnyClass, selector: String, as: ((repeat each Argument) -> Result).Type,
-        classMethod: Bool, options: NativeMethodOptions, object: AnyObject?, owner: Any?, initializer: Bool,
+        classMethod: Bool,
+        options: NativeObjCMethodOptions,
+        object: AnyObject?,
+        owner: Any?,
+        initializer: Bool,
         callback: (ObjCMethodSignature<Result, repeat each Argument>) -> ObjCReplacementCallback
     ) throws -> NativeObjCMethodHook {
         guard !selector.utf8.contains(0) else {
@@ -116,9 +123,9 @@ extension ABIRuntime {
     ///
     /// The callback runs on the caller's thread. If it throws before proceeding, its original arguments continue to the next hook. If it throws after a completed continuation, that result is preserved without repeating the call. `onFailure` receives the error synchronously on the same thread.
     ///
-    /// For explicit `ns_consumed` arguments, set ``NativeMethodOptions/consumedArguments`` to their zero-based positions, excluding the receiver and selector. Each native continuation receives a fresh owned reference; unused incoming references are released, including during failure recovery. Callback values use ordinary Swift ownership.
+    /// For explicit `ns_consumed` arguments, set ``NativeObjCMethodOptions/consumedArguments`` to their zero-based positions, excluding the receiver and selector. Each native continuation receives a fresh owned reference; unused incoming references are released, including during failure recovery. Callback values use ordinary Swift ownership.
     ///
-    /// Set ``NativeMethodOptions/returnsRetainedObject`` when result ownership differs from the method family. All registrations on one entry must agree on ownership and signature.
+    /// Set ``NativeObjCMethodOptions/returnsRetainedObject`` when result ownership differs from the method family. All registrations on one entry must agree on ownership and signature.
     ///
     /// The caller supplies correct ownership and block declarations, keeps pointees valid, honors execution isolation, and coordinates external method-table writers. Foreign exceptions, allocation, and lifecycle methods are unsupported. Initializers use <doc:ObjectiveCInitializerHooks>; see <doc:ObjectiveCMethodHooks> for chaining and lifetime details.
     ///
@@ -135,7 +142,9 @@ extension ABIRuntime {
     /// - Throws: A lookup, signature, ownership, preparation, or displaced-entry error.
     @unsafe public nonisolated func hookMethod<Result, each Argument>(
         on type: AnyClass, selector: String, as signature: ((repeat each Argument) -> Result).Type,
-        classMethod: Bool = false, options: NativeMethodOptions = .init(), retaining owner: Any? = nil,
+        classMethod: Bool = false,
+        options: NativeObjCMethodOptions = .init(),
+        retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body: @escaping @Sendable (NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
     ) throws -> NativeObjCMethodHook {
@@ -149,7 +158,9 @@ extension ABIRuntime {
     /// This declaration is a caller-supplied contract. The callback is synchronous; it does not hop executors. Background entry reports `wrongThread` and passes through to the next hook before decoding Swift arguments. `onFailure` must therefore be safe on background threads. Other parameters and unsafe requirements match ``hookMethod(on:selector:as:classMethod:options:retaining:onFailure:body:)-(_,String,_,_,_,_,_,_)``.
     @unsafe @MainActor public func hookMainActorMethod<Result, each Argument>(
         on type: AnyClass, selector: String, as signature: ((repeat each Argument) -> Result).Type,
-        classMethod: Bool = false, options: NativeMethodOptions = .init(), retaining owner: Any? = nil,
+        classMethod: Bool = false,
+        options: NativeObjCMethodOptions = .init(),
+        retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body: @escaping @MainActor @Sendable (NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
     ) throws -> NativeObjCMethodHook {
@@ -173,7 +184,8 @@ extension NativeObject {
     /// Parameters, failure behavior, and unsafe requirements match ``ABIRuntime/hookMethod(on:selector:as:classMethod:options:retaining:onFailure:body:)-(_,String,_,_,_,_,_,_)``. The target is an instance method of the receiver's current runtime class.
     @unsafe public func hookMethod<Result, each Argument>(
         selector: String, as signature: ((repeat each Argument) -> Result).Type,
-        options: NativeMethodOptions = .init(), retaining owner: Any? = nil,
+        options: NativeObjCMethodOptions = .init(),
+        retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body: @escaping @Sendable (NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
     ) throws -> NativeObjCMethodHook {
@@ -188,7 +200,8 @@ extension NativeObject {
     /// Combines ``hookMethod(selector:as:options:retaining:onFailure:body:)-(String,_,_,_,_,_)`` scope with ``ABIRuntime/hookMainActorMethod(on:selector:as:classMethod:options:retaining:onFailure:body:)-(_,String,_,_,_,_,_,_)`` isolation.
     @unsafe @MainActor public func hookMainActorMethod<Result, each Argument>(
         selector: String, as signature: ((repeat each Argument) -> Result).Type,
-        options: NativeMethodOptions = .init(), retaining owner: Any? = nil,
+        options: NativeObjCMethodOptions = .init(),
+        retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body: @escaping @MainActor @Sendable (NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
     ) throws -> NativeObjCMethodHook {

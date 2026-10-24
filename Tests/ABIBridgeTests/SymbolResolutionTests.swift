@@ -504,7 +504,7 @@ struct SymbolResolutionTests {
             kind: .data
         )
         let missing = NativeDeclaration(linkerName: "ABIBridgeLazyMissing", language: .cxx)
-        let unsupported = NativeDeclaration(name: "selector:", language: .objectiveC)
+        let unsupported = NativeDeclaration(name: "selector:", language: .objc)
         let scopes: [ImageSelector] = [.path(first.libraryURL), .path(second.libraryURL)]
         let results = runtime.resolveAndWait([
             NativeSymbolRequest(exact, fallbacks: [firstCounter, unsupported], in: scopes),

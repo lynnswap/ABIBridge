@@ -17,12 +17,12 @@ extension RuntimeEnumMetadata {
 }
 
 extension NativeSwiftValue {
-    /// Resolves an independently owned copy of the named enum case's entire payload.
+    /// Copies an independently owned copy of the named enum case's entire payload.
     ///
     /// Returns nil when this value inhabits another case or the named case has no payload. Multiple associated values use their native tuple payload; a single tuple associated value has that same tuple representation. Case names must be unique in the runtime field metadata. The enum and its payload must be Copyable, and the returned payload must be Escapable. The original value is neither modified nor consumed.
     ///
     /// Required closure ABI preparation runs away from the caller's executor and joins shared preparation already in progress. Copying and binding captured contexts run on the caller's executor. Function values in the payload are adapted to the convention used by owned runtime values. Supply `valueABIs` for closed nominal types in their parameters or results whose ABI cannot be inferred from runtime metadata.
-    public nonisolated(nonsending) func resolveEnumPayload(
+    public nonisolated(nonsending) func copyEnumPayload(
         forCase caseName: String,
         valueABIs: [NativeSwiftType: NativeType] = [:]
     ) async throws -> NativeSwiftValue? {
@@ -39,10 +39,10 @@ extension NativeSwiftValue {
         return copyEnumPayload(payload, prepared: prepared)
     }
 
-    /// Resolves an independently owned enum payload synchronously on the caller's thread.
+    /// Copies an independently owned enum payload synchronously on the caller's thread.
     ///
-    /// This has the same payload and ownership contract as `resolveEnumPayload(forCase:valueABIs:)`. It performs or joins required ABI preparation before returning, which can block the caller's thread.
-    public func resolveEnumPayloadAndWait(
+    /// This has the same payload and ownership contract as `copyEnumPayload(forCase:valueABIs:)`. It performs or joins required ABI preparation before returning, which can block the caller's thread.
+    public func copyEnumPayloadAndWait(
         forCase caseName: String,
         valueABIs: [NativeSwiftType: NativeType] = [:]
     ) throws -> NativeSwiftValue? {
