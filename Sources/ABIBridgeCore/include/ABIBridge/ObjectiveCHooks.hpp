@@ -61,7 +61,7 @@ public:
     static objc_hook_handle retain(ABIObjCMethodHook *borrowed) { return adopt(ABIRetainObjCMethodHook(borrowed)); }
     ABIObjCMethodHook *native_handle() const noexcept { return handle_.get(); }
     explicit operator bool() const noexcept { return bool(handle_); }
-    objc_hook_status status() const noexcept { return static_cast<objc_hook_status>(ABIObjCMethodHookStatus(handle_.get())); }
+    objc_hook_status status() const noexcept { return static_cast<objc_hook_status>(ABIObjCMethodHookGetStatus(handle_.get())); }
     void invalidate() const noexcept { ABIInvalidateObjCMethodHook(handle_.get()); }
 private:
     explicit objc_hook_handle(ABIObjCMethodHook *owned) : handle_(owned, ABIReleaseObjCMethodHook) {}
@@ -154,7 +154,7 @@ public:
     objc_hook_invocation(objc_hook_invocation&&) = delete;
     id receiver() const {
         ABIResolutionFailure *error = nullptr;
-        void *value = ABIObjCHookReceiver(call_, &error);
+        void *value = ABIObjCHookInvocationGetReceiver(call_, &error);
         detail::hook_require(error == nullptr, error);
 #ifdef __OBJC__
         return (__bridge id)value;
@@ -166,12 +166,12 @@ public:
     R proceed(A... arguments) const {
         const std::array<const void *, sizeof...(A)> pointers{std::addressof(arguments)...};
         ABIResolutionFailure *error = nullptr;
-        const bool success = ABIObjCHookProceed(call_, pointers.data(), pointers.size(), &error);
+        const bool success = ABIObjCHookInvocationProceed(call_, pointers.data(), pointers.size(), &error);
         detail::hook_require(success, error);
         if constexpr (!std::is_void_v<R>) {
             return detail::hook_read<R>([&](void *value, size_t size) {
                 ABIResolutionFailure *error = nullptr;
-                const bool success = ABIObjCHookReadResult(call_, value, size, &error);
+                const bool success = ABIObjCHookInvocationReadResult(call_, value, size, &error);
                 detail::hook_require(success, error);
             });
         }
@@ -195,7 +195,7 @@ template <typename R, typename... A> struct hook_installer<R(A...)> {
             objc_hook_invocation<R(A...)> call(raw);
             return std::invoke(body, call, hook_read<A>([&](void *value, size_t size) {
                 ABIResolutionFailure *error = nullptr;
-                const bool success = ABIObjCHookReadArgument(raw, I, value, size, &error);
+                const bool success = ABIObjCHookInvocationReadArgument(raw, I, value, size, &error);
                 hook_require(success, error);
             })...);
         }
@@ -206,10 +206,10 @@ template <typename R, typename... A> struct hook_installer<R(A...)> {
                 bool success;
                 if constexpr (std::is_void_v<R>) {
                     state.invoke(call, std::index_sequence_for<A...>{});
-                    success = ABIObjCHookSetResult(call, nullptr, 0, &failure);
+                    success = ABIObjCHookInvocationSetResult(call, nullptr, 0, &failure);
                 } else {
                     R result = state.invoke(call, std::index_sequence_for<A...>{});
-                    success = ABIObjCHookSetResult(call, &result, sizeof(R), &failure);
+                    success = ABIObjCHookInvocationSetResult(call, &result, sizeof(R), &failure);
                 }
                 hook_require(success, failure);
             }, error);
@@ -241,7 +241,7 @@ template <typename R, typename... A> struct hook_installer<R(A...)> {
             if constexpr (!std::is_same_v<Before, std::nullptr_t>) {
                 auto values = std::tuple<A...>{hook_read<A>([&](void *value, size_t size) {
                     ABIResolutionFailure *error = nullptr;
-                    const bool success = ABIObjCInitializerReadArgument(arguments, I, value, size, &error);
+                    const bool success = ABIObjCInitializerArgumentsReadArgument(arguments, I, value, size, &error);
                     hook_require(success, error);
                 })...};
                 using Output = std::invoke_result_t<Before&, A...>;
@@ -256,7 +256,7 @@ template <typename R, typename... A> struct hook_installer<R(A...)> {
         }
         template <typename T> static void set(ABIObjCInitializerArguments *arguments, size_t index, const T& value) {
             ABIResolutionFailure *error = nullptr;
-            const bool success = ABIObjCInitializerSetArgument(arguments, index, &value, sizeof(T), &error);
+            const bool success = ABIObjCInitializerArgumentsSetArgument(arguments, index, &value, sizeof(T), &error);
             hook_require(success, error);
         }
         static bool preparing(void *context, ABIObjCInitializerArguments *arguments, ABIResolutionFailure **error) noexcept {
@@ -387,12 +387,12 @@ inline std::vector<objc_hook_handle> install_objc_hooks(const std::vector<objc_h
         ABIInstallObjCHooks(native.data(), native.size()), ABIReleaseObjCHookInstallation);
     std::vector<objc_hook_handle> handles;
     try {
-        for (size_t index = 0; index < ABIObjCHookInstallationCount(installation.get()); ++index)
-            handles.push_back(objc_hook_handle::retain(ABIObjCHookInstallationGet(installation.get(), index)));
+        for (size_t index = 0; index < ABIObjCHookInstallationGetCount(installation.get()); ++index)
+            handles.push_back(objc_hook_handle::retain(ABIObjCHookInstallationGetHook(installation.get(), index)));
     } catch (...) { ABIInvalidateObjCHookInstallation(installation.get()); throw; }
-    if (const auto *error = ABIObjCHookInstallationFailure(installation.get())) {
-        throw objc_hook_installation_error(ABIObjCHookInstallationFailedIndex(installation.get()),
-            ABIObjCHookInstallationPhase(installation.get()),
+    if (const auto *error = ABIObjCHookInstallationGetFailure(installation.get())) {
+        throw objc_hook_installation_error(ABIObjCHookInstallationGetFailedIndex(installation.get()),
+            ABIObjCHookInstallationGetPhase(installation.get()),
             resolution_error(ABIResolutionFailureGetCode(error), ABIResolutionFailureGetMessage(error)), std::move(handles));
     }
     return handles;

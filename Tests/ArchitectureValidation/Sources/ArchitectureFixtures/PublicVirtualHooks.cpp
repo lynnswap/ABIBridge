@@ -8,13 +8,13 @@
 namespace {
 bool doubleResult(void *,ABIVirtualInvocation *call,ABIResolutionFailure **error) {
     int value=0;
-    if(!ABIVirtualReadArgument(call,0,&value,sizeof(value),error)) return false;
+    if(!ABIVirtualInvocationReadArgument(call,0,&value,sizeof(value),error)) return false;
     void *arguments[]={&value};
-    if(!ABIVirtualProceed(call,arguments,1,error)) return false;
+    if(!ABIVirtualInvocationProceed(call,arguments,1,error)) return false;
     int result=0;
-    if(!ABIVirtualCopyResult(call,&result,sizeof(result),error)) return false;
+    if(!ABIVirtualInvocationReadResult(call,&result,sizeof(result),error)) return false;
     result*=2;
-    return ABIVirtualSetResult(call,&result,sizeof(result),error);
+    return ABIVirtualInvocationSetResult(call,&result,sizeof(result),error);
 }
 }
 const char *ABIValidatePublicVirtualHooks(bool requireWritable,bool *published) {
@@ -43,7 +43,7 @@ const char *ABIValidatePublicVirtualHooks(bool requireWritable,bool *published) 
         auto raw=virtual_hook_handle::adopt(ABIInstallSharedVirtualHook(entry.native_info(),nullptr,nullptr,
             integer.get(),parameters,1,&errors,doubleResult,
             [](void *context,const ABIResolutionFailure*) { ++*static_cast<int*>(context); },[](void*) {}));
-        if(ABIVirtualHookFailure(raw.native_handle())) throw virtual_hook_installation_error(raw);
+        if(ABIVirtualHookGetFailure(raw.native_handle())) throw virtual_hook_installation_error(raw);
         if(ABIVTable::primaryOracle(&first,2)!=106 || raw.slot()->mutation.didWrite) return "C/C++ callbacks did not share one entry";
         primary.invalidate();
         if(ABIVTable::primaryOracle(&first,2)!=84) return "C++ independent invalidation failed";

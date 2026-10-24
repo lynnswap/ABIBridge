@@ -80,14 +80,18 @@ public final class NativeVirtualHook: @unchecked Sendable {
     public var slot: Slot? {
         guard ABIVirtualHookHasEntry(handle) else { return nil }
         let status: Status
-        switch ABIVirtualHookStatus(handle) {
+        switch ABIVirtualHookGetStatus(handle) {
         case 0: status = .invalidated
         case 1: status = .active
         case 2: status = .displaced
         default: status = .unreadable
         }
-        return Slot(address: ABIVirtualHookSlot(handle), status: status,
-            mutation: Mutation(ABIVirtualHookMutation(handle)), rollback: Mutation(ABIVirtualHookRollback(handle)))
+        return Slot(
+            address: ABIVirtualHookGetSlot(handle),
+            status: status,
+            mutation: Mutation(ABIVirtualHookGetMutation(handle)),
+            rollback: Mutation(ABIVirtualHookGetRollback(handle))
+        )
     }
     /// Removes this callback from future snapshots without waiting or restoring the slot. A pointer copied after publication stays callable as pass-through.
     public func invalidate() { ABIInvalidateVirtualHook(handle) }
@@ -122,18 +126,27 @@ extension NativeVTable.Entry {
         let box = FunctionCallbackBox(result: prepared.result.type, parameters: types, invoke: { pointer in
             let frame = FunctionCallbackFrame(pointer); defer { frame.expire() }
             var error: OpaquePointer?
-            guard let receiver = ABIVirtualInvocationReceiver(pointer, &error) else {
-                if let error { throw consumeNativeCallFailure(error) }
+                guard let receiver = ABIVirtualInvocationGetReceiver(pointer, &error) else {
+                    if let error { throw consumeNativeCallFailure(error) }
                 throw ABIResolutionError.invalidAddress
             }
             let values = try prepared.decodeArguments(pointer, startingAt: 1)
             let output = try body(.init(declaration: declaration, description: description, receiver: receiver, frame: frame, callSignature: prepared), repeat each values)
             if Result.self == Void.self {
-                guard ABIVirtualSetResult(pointer, nil, 0, &error) else { throw consumeNativeCallFailure(error) }
-            } else {
+                    guard ABIVirtualInvocationSetResult(pointer, nil, 0, &error) else {
+                        throw consumeNativeCallFailure(error)
+                    }
+                } else {
                 let result = try prepared.result.encode(output)
-                guard ABIVirtualSetResult(pointer, result.address, prepared.result.type.size, &error) else { throw consumeNativeCallFailure(error) }
-            }
+                    guard
+                        ABIVirtualInvocationSetResult(
+                            pointer,
+                            result.address,
+                            prepared.result.type.size,
+                            &error
+                        )
+                    else { throw consumeNativeCallFailure(error) }
+                }
         }, failure: onFailure)
         let parameters: [OpaquePointer?] = types.map(\.handle)
         let context = Unmanaged.passRetained(box).toOpaque()
@@ -151,7 +164,7 @@ extension NativeVTable.Entry {
             }
         } }
         let registration = NativeVirtualHook(hook)
-        if let error = ABIVirtualHookFailure(hook) {
+        if let error = ABIVirtualHookGetFailure(hook) {
             throw NativeVirtualHookInstallationError(underlyingError: virtualHookFailure(error), registration: registration)
         }
         return registration

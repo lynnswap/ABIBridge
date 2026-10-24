@@ -60,11 +60,20 @@ public final class NativeImportedFunctionHook: @unchecked Sendable {
     init(_ handle: OpaquePointer) { self.handle=handle }
     /// Snapshots remain available after invalidation or external displacement.
     public var slots: [Slot] {
-        (0..<ABIImportedHookCount(handle)).map { index in
+        (0..<ABIImportedHookGetSlotCount(handle)).map { index in
             let status: Status
-            switch ABIImportedHookStatus(handle,index) { case 0: status = .invalidated; case 1: status = .active; case 2: status = .displaced; default: status = .unreadable }
-            return Slot(address: ABIImportedHookSlot(handle,index),status: status,
-                mutation: Mutation(ABIImportedHookMutation(handle,index)),rollback: Mutation(ABIImportedHookRollback(handle,index)))
+            switch ABIImportedHookGetSlotStatus(handle, index) {
+            case 0: status = .invalidated;
+            case 1: status = .active;
+            case 2: status = .displaced;
+            default: status = .unreadable
+            }
+            return Slot(
+                address: ABIImportedHookGetSlot(handle, index),
+                status: status,
+                mutation: Mutation(ABIImportedHookGetMutation(handle, index)),
+                rollback: Mutation(ABIImportedHookGetRollback(handle, index))
+            )
         }
     }
     /// Idempotently removes this callback without waiting for incoming calls. Does not restore import pointers or free published callable storage.
@@ -96,11 +105,20 @@ func prepareImportedCallback<Result, each Argument>(
         let output = try body(.init(frame: frame, callSignature: prepared, declaration: declaration, description: description),repeat each values)
         var error: OpaquePointer?
         if Result.self == Void.self {
-            guard ABIImportedSetResult(pointer,nil,0,&error) else { throw consumeNativeCallFailure(error) }
-        } else {
+                guard ABIImportedInvocationSetResult(pointer, nil, 0, &error) else {
+                    throw consumeNativeCallFailure(error)
+                }
+            } else {
             let storage = try prepared.result.encode(output)
-            guard ABIImportedSetResult(pointer,storage.address,prepared.result.type.size,&error) else { throw consumeNativeCallFailure(error) }
-        }
+                guard
+                    ABIImportedInvocationSetResult(
+                        pointer,
+                        storage.address,
+                        prepared.result.type.size,
+                        &error
+                    )
+                else { throw consumeNativeCallFailure(error) }
+            }
     }, failure: onFailure)
 }
 
@@ -141,8 +159,8 @@ extension ABIRuntime {
             }
         }
         let hook = NativeImportedFunctionHook(handle)
-        if let error = ABIImportedHookFailure(handle) {
-            let index=ABIImportedHookFailedIndex(handle)
+        if let error = ABIImportedHookGetFailure(handle) {
+            let index = ABIImportedHookGetFailedIndex(handle)
             throw NativeImportedHookInstallationError(underlyingError: NSError(domain: "ABIBridge.ImportedHook",code: Int(ABIResolutionFailureGetCode(error)),
                 userInfo: [NSLocalizedDescriptionKey: String(cString: ABIResolutionFailureGetMessage(error))]),
                 failedIndex: index < 0 ? nil : index, registration: hook)

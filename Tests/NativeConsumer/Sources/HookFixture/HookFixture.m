@@ -41,18 +41,18 @@ static void mixedFailure(void *value, const ABIResolutionFailure *failure) {
 static bool mixedMethod(void *value, ABIObjCHookInvocation *call, ABIResolutionFailure **error) {
     MixedContext *context = value;
     context->event(context->context, 20);
-    if (!ABIObjCHookProceed(call, NULL, 0, error)) return false;
+    if (!ABIObjCHookInvocationProceedWithOriginalArguments(call, error)) return false;
     int32_t result = 0;
-    if (!ABIObjCHookReadResult(call, &result, sizeof(result), error)) return false;
+    if (!ABIObjCHookInvocationReadResult(call, &result, sizeof(result), error)) return false;
     ++result; context->event(context->context, -20);
-    return ABIObjCHookSetResult(call, &result, sizeof(result), error);
+    return ABIObjCHookInvocationSetResult(call, &result, sizeof(result), error);
 }
 static bool mixedBefore(void *value, ABIObjCInitializerArguments *arguments, ABIResolutionFailure **error) {
     MixedContext *context = value; context->event(context->context, 30);
     int32_t seed = 0;
-    if (!ABIObjCInitializerReadArgument(arguments, 0, &seed, sizeof(seed), error)) return false;
+    if (!ABIObjCInitializerArgumentsReadArgument(arguments, 0, &seed, sizeof(seed), error)) return false;
     if (seed >= 0) ++seed;
-    return ABIObjCInitializerSetArgument(arguments, 0, &seed, sizeof(seed), error);
+    return ABIObjCInitializerArgumentsSetArgument(arguments, 0, &seed, sizeof(seed), error);
 }
 static bool mixedAfter(void *value, void *initialized, ABIResolutionFailure **error) {
     (void)error; MixedContext *context = value; context->event(context->context, -30);

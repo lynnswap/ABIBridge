@@ -39,7 +39,7 @@ public final class NativeObjCMethodHook: @unchecked Sendable {
 
     /// A snapshot of the token state; inspection does not reinstall a displaced entry.
     public var status: Status {
-        switch ABIObjCMethodHookStatus(handle) {
+        switch ABIObjCMethodHookGetStatus(handle) {
         case 0: .invalidated
         case 1: .active
         default: .displaced

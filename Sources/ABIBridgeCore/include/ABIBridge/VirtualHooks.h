@@ -11,6 +11,7 @@ typedef struct ABIVirtualInvocation ABIVirtualInvocation;
 typedef bool (*ABIVirtualCallback)(void *, ABIVirtualInvocation *, ABIResolutionFailure **);
 typedef void (*ABIVirtualFailureHandler)(void *, const ABIResolutionFailure *);
 typedef void (*ABIVirtualContextRelease)(void *);
+typedef int32_t ABIVirtualHookState;
 enum { ABIVirtualInactive = 0, ABIVirtualActive = 1, ABIVirtualDisplaced = 2, ABIVirtualUnreadable = 3 };
 
 /// Intercepts one absolute entry shared by all objects dispatching through this table. Parameters describe explicit C-compatible arguments, excluding this. The incoming subobject and captured adjustment thunk are preserved by proceed. The caller establishes the signature, table format, bounds and schema. Native exceptions, nontrivial C++ values and construction/destruction dispatch need compiled adapters; direct/devirtualized calls bypass the table.
@@ -29,23 +30,26 @@ void ABIInvalidateVirtualHook(ABIVirtualHook *hook);
 /// Last-owner release invalidates the registration. Null is accepted.
 void ABIReleaseVirtualHook(ABIVirtualHook *hook);
 /// Borrowed install failure; null means installation completed.
-const ABIResolutionFailure *ABIVirtualHookFailure(const ABIVirtualHook *hook);
+const ABIResolutionFailure *ABIVirtualHookGetFailure(const ABIVirtualHook *hook);
 /// False when preparation failed before a slot was selected.
 bool ABIVirtualHookHasEntry(const ABIVirtualHook *hook);
 /// Require HasEntry; copied address, current state and immutable effect records.
-uintptr_t ABIVirtualHookSlot(const ABIVirtualHook *hook);
-int32_t ABIVirtualHookStatus(const ABIVirtualHook *hook);
-ABIPointerSlotResult ABIVirtualHookMutation(const ABIVirtualHook *hook);
-ABIPointerSlotResult ABIVirtualHookRollback(const ABIVirtualHook *hook);
+uintptr_t ABIVirtualHookGetSlot(const ABIVirtualHook *hook);
+ABIVirtualHookState ABIVirtualHookGetStatus(const ABIVirtualHook *hook);
+ABIPointerSlotResult ABIVirtualHookGetMutation(const ABIVirtualHook *hook);
+ABIPointerSlotResult ABIVirtualHookGetRollback(const ABIVirtualHook *hook);
 
 /// Invocation pointers and receiver/pointees are borrowed only on the incoming callback's thread. Never use them after callback return. A failed callback passes through with original arguments, or keeps its latest proceed result.
-void *ABIVirtualInvocationReceiver(ABIVirtualInvocation *, ABIResolutionFailure **);
+void *ABIVirtualInvocationGetReceiver(ABIVirtualInvocation *, ABIResolutionFailure **);
 /// Reads an explicit argument (index zero excludes this).
-bool ABIVirtualReadArgument(ABIVirtualInvocation *, size_t index, void *bytes, size_t size, ABIResolutionFailure **);
-/// Calls the next callback/predecessor, preserving the incoming subobject pointer.
-bool ABIVirtualProceed(ABIVirtualInvocation *, void *const *arguments, size_t count, ABIResolutionFailure **);
-bool ABIVirtualCopyResult(ABIVirtualInvocation *, void *bytes, size_t size, ABIResolutionFailure **);
-bool ABIVirtualSetResult(ABIVirtualInvocation *, const void *bytes, size_t size, ABIResolutionFailure **);
+bool ABIVirtualInvocationReadArgument(ABIVirtualInvocation *, size_t index, void *bytes, size_t size, ABIResolutionFailure **);
+/// Calls the next callback/predecessor with every explicit argument, preserving the incoming subobject pointer. NULL/zero is valid only for a zero-argument signature.
+bool ABIVirtualInvocationProceed(ABIVirtualInvocation *, const void *const *arguments, size_t count, ABIResolutionFailure **);
+/// Calls the next implementation with the unchanged incoming arguments.
+bool ABIVirtualInvocationProceedWithOriginalArguments(ABIVirtualInvocation *, ABIResolutionFailure **);
+/// Reads the most recent downstream result. Pointer values remain borrowed for the callback.
+bool ABIVirtualInvocationReadResult(ABIVirtualInvocation *, void *bytes, size_t size, ABIResolutionFailure **);
+bool ABIVirtualInvocationSetResult(ABIVirtualInvocation *, const void *bytes, size_t size, ABIResolutionFailure **);
 #ifdef __cplusplus
 }
 #endif

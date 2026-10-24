@@ -106,7 +106,7 @@ bool process(const std::shared_ptr<Monitor>& monitor, const ABIImageList *snapsh
                     behavior.failure(behavior.context, error);
                 }, [](void *context) { delete static_cast<std::shared_ptr<Behavior> *>(context); });
             result->hook = Hook(installed, ABIReleaseImportedHook);
-            if (auto failure = ABIImportedHookFailure(installed)) {
+            if (auto failure = ABIImportedHookGetFailure(installed)) {
                 result->state = ABIImportedImageFailed;
                 result->failure = Failure(ABICreateResolutionFailure(ABIResolutionFailureGetCode(failure), ABIResolutionFailureGetMessage(failure)), ABIReleaseResolutionFailure);
             } else result->state = ABIImportedImageInstalled;

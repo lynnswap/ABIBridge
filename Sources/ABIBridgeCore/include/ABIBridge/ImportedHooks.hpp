@@ -14,8 +14,8 @@ public:
     static imported_hook_handle adopt(ABIImportedHook *value) { return imported_hook_handle(value); }
     ABIImportedHook *native_handle() const noexcept { return value_.get(); }
     void invalidate() const { ABIInvalidateImportedHook(value_.get()); }
-    size_t size() const { return ABIImportedHookCount(value_.get()); }
-    int32_t status(size_t i) const { return ABIImportedHookStatus(value_.get(),i); }
+    size_t size() const { return ABIImportedHookGetSlotCount(value_.get()); }
+    int32_t status(size_t i) const { return ABIImportedHookGetSlotStatus(value_.get(),i); }
 private:
     explicit imported_hook_handle(ABIImportedHook *value):value_(value,ABIReleaseImportedHook) {}
     std::shared_ptr<ABIImportedHook> value_;
@@ -24,8 +24,8 @@ private:
 class imported_hook_installation_error : public std::runtime_error {
 public:
     explicit imported_hook_installation_error(imported_hook_handle handle):std::runtime_error(
-        ABIResolutionFailureGetMessage(ABIImportedHookFailure(handle.native_handle()))),handle_(std::move(handle)) {}
-    size_t failed_index() const { return ABIImportedHookFailedIndex(handle_.native_handle()); }
+        ABIResolutionFailureGetMessage(ABIImportedHookGetFailure(handle.native_handle()))),handle_(std::move(handle)) {}
+    size_t failed_index() const { return ABIImportedHookGetFailedIndex(handle_.native_handle()); }
     const imported_hook_handle& registration() const noexcept { return handle_; }
 private:
     imported_hook_handle handle_;
@@ -38,13 +38,13 @@ public:
     imported_hook_invocation(const imported_hook_invocation&)=delete;
     imported_hook_invocation& operator=(const imported_hook_invocation&)=delete;
     R proceed(A... values) {
-        std::array<void*,sizeof...(A)> pointers{static_cast<void*>(&values)...};
+        std::array<const void*,sizeof...(A)> pointers{static_cast<const void*>(&values)...};
         ABIResolutionFailure *error=nullptr;
-        const bool ok=ABIImportedProceed(call_,pointers.data(),pointers.size(),&error);
+        const bool ok=ABIImportedInvocationProceed(call_,pointers.data(),pointers.size(),&error);
         detail::callback_require(ok,error);
         if constexpr(!std::is_void_v<R>) {
             R result{}; error=nullptr;
-            const bool copied=ABIImportedCopyResult(call_,&result,sizeof(R),&error);
+            const bool copied=ABIImportedInvocationReadResult(call_,&result,sizeof(R),&error);
             detail::callback_require(copied,error);
             return result;
         }
@@ -56,7 +56,7 @@ private:
 namespace detail {
 template<class T> T imported_read(ABIImportedInvocation *call,size_t index) {
     T value{}; ABIResolutionFailure *error=nullptr;
-    const bool ok=ABIImportedReadArgument(call,index,&value,sizeof(T),&error);
+    const bool ok=ABIImportedInvocationReadArgument(call,index,&value,sizeof(T),&error);
     callback_require(ok,error); return value;
 }
 template<class Signature,class Body,class OnFailure> struct imported_callback_state;
@@ -69,10 +69,10 @@ struct imported_callback_state<R(A...), Body, OnFailure> {
             auto values=[&]<size_t... I>(std::index_sequence<I...>) { return std::tuple<A...>{imported_read<A>(call,I)...}; }(std::index_sequence_for<A...>{});
             if constexpr(std::is_void_v<R>) {
                 std::apply([&](auto... args){ self.body(invocation,args...); },values);
-                return ABIImportedSetResult(call,nullptr,0,error);
+                return ABIImportedInvocationSetResult(call,nullptr,0,error);
             } else {
                 R output=std::apply([&](auto... args){ return self.body(invocation,args...); },values);
-                return ABIImportedSetResult(call,&output,sizeof(output),error);
+                return ABIImportedInvocationSetResult(call,&output,sizeof(output),error);
             }
         } catch(const resolution_error& e) { *error=ABICreateResolutionFailure(e.code(),e.what()); }
         catch(const std::exception& e) { *error=ABICreateResolutionFailure(ABIFailureOther,e.what()); }
@@ -99,7 +99,7 @@ template<class R,class... A> struct imported_installer<R(A...)> {
                 static_cast<State*>(context)->failure(resolution_error(ABIResolutionFailureGetCode(error),ABIResolutionFailureGetMessage(error)));
             },[](void *context){ delete static_cast<State*>(context); });
         auto owned=imported_hook_handle::adopt(handle);
-        if(ABIImportedHookFailure(handle)) throw imported_hook_installation_error(owned);
+        if(ABIImportedHookGetFailure(handle)) throw imported_hook_installation_error(owned);
         return owned;
     }
 };

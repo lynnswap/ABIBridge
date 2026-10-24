@@ -46,38 +46,41 @@ ABIVirtualHook *ABIInstallSharedVirtualHook(ABIVirtualEntryInfo entry,
 ABIVirtualHook *ABIRetainVirtualHook(ABIVirtualHook *hook) { return reinterpret_cast<ABIVirtualHook*>(ABIRetainImportedHook(transport(hook))); }
 void ABIInvalidateVirtualHook(ABIVirtualHook *hook) { ABIInvalidateImportedHook(transport(hook)); }
 void ABIReleaseVirtualHook(ABIVirtualHook *hook) { ABIReleaseImportedHook(transport(hook)); }
-const ABIResolutionFailure *ABIVirtualHookFailure(const ABIVirtualHook *hook) { return ABIImportedHookFailure(transport(hook)); }
-bool ABIVirtualHookHasEntry(const ABIVirtualHook *hook) { return ABIImportedHookCount(transport(hook)) != 0; }
-uintptr_t ABIVirtualHookSlot(const ABIVirtualHook *hook) { return ABIImportedHookSlot(transport(hook),0); }
-int32_t ABIVirtualHookStatus(const ABIVirtualHook *hook) { return ABIImportedHookStatus(transport(hook),0); }
-ABIPointerSlotResult ABIVirtualHookMutation(const ABIVirtualHook *hook) { return ABIImportedHookMutation(transport(hook),0); }
-ABIPointerSlotResult ABIVirtualHookRollback(const ABIVirtualHook *hook) { return ABIImportedHookRollback(transport(hook),0); }
-void *ABIVirtualInvocationReceiver(ABIVirtualInvocation *call,ABIResolutionFailure **error) {
+const ABIResolutionFailure *ABIVirtualHookGetFailure(const ABIVirtualHook *hook) { return ABIImportedHookGetFailure(transport(hook)); }
+bool ABIVirtualHookHasEntry(const ABIVirtualHook *hook) { return ABIImportedHookGetSlotCount(transport(hook)) != 0; }
+uintptr_t ABIVirtualHookGetSlot(const ABIVirtualHook *hook) { return ABIImportedHookGetSlot(transport(hook),0); }
+int32_t ABIVirtualHookGetStatus(const ABIVirtualHook *hook) { return ABIImportedHookGetSlotStatus(transport(hook),0); }
+ABIPointerSlotResult ABIVirtualHookGetMutation(const ABIVirtualHook *hook) { return ABIImportedHookGetMutation(transport(hook),0); }
+ABIPointerSlotResult ABIVirtualHookGetRollback(const ABIVirtualHook *hook) { return ABIImportedHookGetRollback(transport(hook),0); }
+void *ABIVirtualInvocationGetReceiver(ABIVirtualInvocation *call,ABIResolutionFailure **error) {
     void *receiver=nullptr;
-    ABIImportedReadArgument(transport(call),0,&receiver,sizeof(receiver),error);
+    ABIImportedInvocationReadArgument(transport(call),0,&receiver,sizeof(receiver),error);
     return receiver;
 }
-bool ABIVirtualReadArgument(ABIVirtualInvocation *call,size_t index,void *bytes,size_t size,ABIResolutionFailure **error) {
+bool ABIVirtualInvocationReadArgument(ABIVirtualInvocation *call,size_t index,void *bytes,size_t size,ABIResolutionFailure **error) {
     if (index == SIZE_MAX) {
         if (error) *error=ABICreateResolutionFailure(ABIFailureInvalidRequest,"Virtual argument index overflow.");
         return false;
     }
-    return ABIImportedReadArgument(transport(call),index+1,bytes,size,error);
+    return ABIImportedInvocationReadArgument(transport(call),index+1,bytes,size,error);
 }
-bool ABIVirtualProceed(ABIVirtualInvocation *call,void *const *arguments,size_t count,ABIResolutionFailure **error) {
+bool ABIVirtualInvocationProceed(ABIVirtualInvocation *call,const void *const *arguments,size_t count,ABIResolutionFailure **error) {
     if ((count && !arguments) || count >= UINT_MAX) {
         if (error) *error=ABICreateResolutionFailure(ABIFailureInvalidRequest,"Invalid explicit virtual arguments.");
         return false;
     }
     void *receiver=nullptr;
-    if (!ABIImportedReadArgument(transport(call),0,&receiver,sizeof(receiver),error)) return false;
-    std::vector<void*> all{&receiver};
+    if (!ABIImportedInvocationReadArgument(transport(call),0,&receiver,sizeof(receiver),error)) return false;
+    std::vector<const void*> all{&receiver};
     if (count) all.insert(all.end(),arguments,arguments+count);
-    return ABIImportedProceed(transport(call),all.data(),all.size(),error);
+    return ABIImportedInvocationProceed(transport(call),all.data(),all.size(),error);
 }
-bool ABIVirtualCopyResult(ABIVirtualInvocation *call,void *bytes,size_t size,ABIResolutionFailure **error) {
-    return ABIImportedCopyResult(transport(call),bytes,size,error);
+bool ABIVirtualInvocationProceedWithOriginalArguments(ABIVirtualInvocation *call, ABIResolutionFailure **error) {
+    return ABIImportedInvocationProceedWithOriginalArguments(transport(call),error);
 }
-bool ABIVirtualSetResult(ABIVirtualInvocation *call,const void *bytes,size_t size,ABIResolutionFailure **error) {
-    return ABIImportedSetResult(transport(call),bytes,size,error);
+bool ABIVirtualInvocationReadResult(ABIVirtualInvocation *call,void *bytes,size_t size,ABIResolutionFailure **error) {
+    return ABIImportedInvocationReadResult(transport(call),bytes,size,error);
+}
+bool ABIVirtualInvocationSetResult(ABIVirtualInvocation *call,const void *bytes,size_t size,ABIResolutionFailure **error) {
+    return ABIImportedInvocationSetResult(transport(call),bytes,size,error);
 }

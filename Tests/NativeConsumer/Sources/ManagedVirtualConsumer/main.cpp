@@ -7,11 +7,11 @@
 
 static bool increment(void *context, ABIImportedInvocation *call, ABIResolutionFailure **error) {
     int32_t *receiver=nullptr; int32_t value=0;
-    if (!ABIImportedReadArgument(call,0,&receiver,sizeof(receiver),error)
-        || !ABIImportedReadArgument(call,1,&value,sizeof(value),error)) return false;
+    if (!ABIImportedInvocationReadArgument(call,0,&receiver,sizeof(receiver),error)
+        || !ABIImportedInvocationReadArgument(call,1,&value,sizeof(value),error)) return false;
     value+=*static_cast<int*>(context);
     void *arguments[]={&receiver,&value};
-    return ABIImportedProceed(call,arguments,2,error) && ABIImportedSetResult(call,nullptr,0,error);
+    return ABIImportedInvocationProceed(call,arguments,2,error) && ABIImportedInvocationSetResult(call,nullptr,0,error);
 }
 static void failed(void *,const ABIResolutionFailure *) { assert(false && "Unexpected overlap callback failure"); }
 static void release(void *context) { delete static_cast<int*>(context); }
@@ -33,11 +33,11 @@ static void overlappingImports(const char *path) {
     ABIReleaseImportSelection(selection);
     auto *imported=ABIInstallImportedFunctionHook(runtime.native_handle(),&declaration,scope,nullptr,output,parameters,2,
         new int(1),increment,failed,release);
-    assert(imported && !ABIImportedHookFailure(imported));
+    assert(imported && !ABIImportedHookGetFailure(imported));
     ABIManagedVirtualEntry entry{reinterpret_cast<const void*>(slot.slot),1,0,slot.key,slot.discriminator,slot.addressDiversity};
     auto *virtualHook=ABICreateManagedVirtualHook(entry,nullptr,nullptr,output,parameters,2,new int(2),increment,failed,release);
-    assert(virtualHook && !ABIImportedHookFailure(virtualHook));
-    assert(!ABIImportedHookMutation(virtualHook,0).didWrite);
+    assert(virtualHook && !ABIImportedHookGetFailure(virtualHook));
+    assert(!ABIImportedHookGetMutation(virtualHook,0).didWrite);
     int32_t value=0; call(&value,39); assert(value==42);
     ABIInvalidateImportedHook(imported); call(&value,40); assert(value==42);
     ABIInvalidateImportedHook(virtualHook); call(&value,42); assert(value==42);

@@ -169,25 +169,31 @@ struct ABIObjCInitializerArguments : Scope {
         : Scope(state, call), replacements(state.parameters.size()) {}
 };
 
-void *ABIObjCHookReceiver(ABIObjCHookInvocation *invocation, ABIResolutionFailure **error) {
+void *ABIObjCHookInvocationGetReceiver(ABIObjCHookInvocation *invocation, ABIResolutionFailure **error) {
     if (!check(invocation, error)) return nullptr;
     return ABIObjCReplacementReceiver(invocation->call);
 }
-bool ABIObjCHookReadArgument(ABIObjCHookInvocation *invocation, size_t index,
+bool ABIObjCHookInvocationReadArgument(ABIObjCHookInvocation *invocation, size_t index,
     void *value, size_t size, ABIResolutionFailure **error) {
     return readArgument(invocation, index, value, size, error);
 }
-bool ABIObjCHookProceed(ABIObjCHookInvocation *invocation, const void *const *arguments,
+bool ABIObjCHookInvocationProceed(ABIObjCHookInvocation *invocation, const void *const *arguments,
     size_t count, ABIResolutionFailure **error) {
     if (!check(invocation, error)) return false;
-    if ((!arguments && count) || (arguments && count != invocation->state.parameters.size()))
-        return fail(error, ABIFailureInvalidRequest, "Supply all explicit arguments, or null/zero to reuse the incoming arguments.");
+    if (count != invocation->state.parameters.size() || (count && !arguments))
+        return fail(error, ABIFailureInvalidRequest, "Supply the full explicit argument list.");
     for (size_t index = 0; index < count; ++index)
         if (!arguments[index]) return fail(error, ABIFailureInvalidRequest, "Each argument needs value storage.");
     NSError *failure = nil;
     return ABIObjCReplacementProceed(invocation->call, arguments, &failure) || fail(error, failure);
 }
-bool ABIObjCHookReadResult(ABIObjCHookInvocation *invocation, void *value, size_t size, ABIResolutionFailure **error) {
+bool ABIObjCHookInvocationProceedWithOriginalArguments(ABIObjCHookInvocation *invocation,
+    ABIResolutionFailure **error) {
+    if (!check(invocation, error)) return false;
+    NSError *failure = nil;
+    return ABIObjCReplacementProceed(invocation->call, nullptr, &failure) || fail(error, failure);
+}
+bool ABIObjCHookInvocationReadResult(ABIObjCHookInvocation *invocation, void *value, size_t size, ABIResolutionFailure **error) {
     if (!check(invocation, error)) return false;
     const auto& info = invocation->state.result;
     if (size != info.size || (size && !value)) return fail(error, ABIFailureInvalidRequest, "Result storage must match the declared size.");
@@ -203,14 +209,14 @@ bool ABIObjCHookReadResult(ABIObjCHookInvocation *invocation, void *value, size_
     if (info.boolean) *static_cast<uint8_t *>(value) = *static_cast<uint8_t *>(value) != 0;
     return true;
 }
-bool ABIObjCHookSetResult(ABIObjCHookInvocation *invocation, const void *value, size_t size, ABIResolutionFailure **error) {
+bool ABIObjCHookInvocationSetResult(ABIObjCHookInvocation *invocation, const void *value, size_t size, ABIResolutionFailure **error) {
     if (!check(invocation, error)) return false;
     auto pending = copyValue(invocation->state.result, value, size, error);
     if (!pending) return false;
     invocation->pending = std::move(pending);
     return true;
 }
-bool ABIObjCInitializerReadArgument(ABIObjCInitializerArguments *arguments, size_t index,
+bool ABIObjCInitializerArgumentsReadArgument(ABIObjCInitializerArguments *arguments, size_t index,
     void *value, size_t size, ABIResolutionFailure **error) {
     if (!check(arguments, error)) return false;
     if (index >= arguments->state.parameters.size() || !value || size != arguments->state.parameters[index].size)
@@ -221,7 +227,7 @@ bool ABIObjCInitializerReadArgument(ABIObjCInitializerArguments *arguments, size
     }
     return readArgument(arguments, index, value, size, error);
 }
-bool ABIObjCInitializerSetArgument(ABIObjCInitializerArguments *arguments, size_t index,
+bool ABIObjCInitializerArgumentsSetArgument(ABIObjCInitializerArguments *arguments, size_t index,
     const void *value, size_t size, ABIResolutionFailure **error) {
     if (!check(arguments, error)) return false;
     if (index >= arguments->state.parameters.size()) return fail(error, ABIFailureInvalidRequest, "Argument index exceeds the signature.");
@@ -460,8 +466,8 @@ void ABIInvalidateObjCHookInstallation(ABIObjCHookInstallation *installation) {
     if (installation) for (auto *hook : installation->hooks) ABIInvalidateObjCMethodHook(hook);
 }
 void ABIReleaseObjCHookInstallation(ABIObjCHookInstallation *installation) { delete installation; }
-size_t ABIObjCHookInstallationCount(const ABIObjCHookInstallation *installation) { return installation->hooks.size(); }
-ABIObjCMethodHook *ABIObjCHookInstallationGet(const ABIObjCHookInstallation *installation, size_t index) { return installation->hooks[index]; }
-const ABIResolutionFailure *ABIObjCHookInstallationFailure(const ABIObjCHookInstallation *installation) { return installation->failure.get(); }
-size_t ABIObjCHookInstallationFailedIndex(const ABIObjCHookInstallation *installation) { return installation->failedIndex; }
-int32_t ABIObjCHookInstallationPhase(const ABIObjCHookInstallation *installation) { return installation->phase; }
+size_t ABIObjCHookInstallationGetCount(const ABIObjCHookInstallation *installation) { return installation->hooks.size(); }
+ABIObjCMethodHook *ABIObjCHookInstallationGetHook(const ABIObjCHookInstallation *installation, size_t index) { return installation->hooks[index]; }
+const ABIResolutionFailure *ABIObjCHookInstallationGetFailure(const ABIObjCHookInstallation *installation) { return installation->failure.get(); }
+size_t ABIObjCHookInstallationGetFailedIndex(const ABIObjCHookInstallation *installation) { return installation->failedIndex; }
+int32_t ABIObjCHookInstallationGetPhase(const ABIObjCHookInstallation *installation) { return installation->phase; }

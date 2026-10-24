@@ -514,7 +514,7 @@ void ABIReleaseObjCMethodHook(ABIObjCMethodHook *hook) {
     ABIInvalidateObjCMethodHook(hook);
     delete hook;
 }
-int32_t ABIObjCMethodHookStatus(const ABIObjCMethodHook *hook) {
+int32_t ABIObjCMethodHookGetStatus(const ABIObjCMethodHook *hook) {
     if (!hook || !hook->active.load()) return 0;
     return ownsMethod(*hook->entry) ? 1 : 2;
 }

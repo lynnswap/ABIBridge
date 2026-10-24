@@ -117,29 +117,37 @@ bool check(ABIImportedInvocation *call, ABIResolutionFailure **error) {
 }
 }
 
-bool ABIImportedReadArgument(ABIImportedInvocation *call, size_t index, void *bytes, size_t size, ABIResolutionFailure **error) {
+bool ABIImportedInvocationReadArgument(ABIImportedInvocation *call, size_t index, void *bytes, size_t size, ABIResolutionFailure **error) {
     if (!check(call,error)) return false;
     if (index >= call->entry.parameterSizes.size() || size != call->entry.parameterSizes[index] || (size && !bytes))
         return fail(error, ABIFailureInvalidRequest, "Argument storage does not match the signature.");
     if (size) std::memcpy(bytes, call->arguments[index], size);
     return true;
 }
-bool ABIImportedProceed(ABIImportedInvocation *call, void *const *args, size_t count, ABIResolutionFailure **error) {
+bool ABIImportedInvocationProceed(ABIImportedInvocation *call, const void *const *args, size_t count, ABIResolutionFailure **error) {
     if (!check(call,error)) return false;
-    if (args && count != call->entry.parameterSizes.size()) return fail(error, ABIFailureInvalidRequest, "Argument count does not match.");
-    if (args) for (size_t i=0; i<count; ++i) if (!args[i]) return fail(error, ABIFailureInvalidRequest, "Argument storage is missing.");
-    if (!args && count) return fail(error, ABIFailureInvalidRequest, "Use null/zero to preserve original arguments.");
-    invoke(call->entry, call->chain, call->next, args ? args : call->arguments, call->result.data());
+    if (count != call->entry.parameterSizes.size() || (count && !args))
+        return fail(error, ABIFailureInvalidRequest, "Supply the full explicit argument list.");
+    for (size_t i=0; i<count; ++i)
+        if (!args[i]) return fail(error, ABIFailureInvalidRequest, "Argument storage is missing.");
+    // libffi reads argument storage through its mutable pointer-array API.
+    invoke(call->entry, call->chain, call->next, const_cast<void *const *>(args), call->result.data());
     call->proceeded = true;
     return true;
 }
-bool ABIImportedCopyResult(ABIImportedInvocation *call, void *bytes, size_t size, ABIResolutionFailure **error) {
+bool ABIImportedInvocationProceedWithOriginalArguments(ABIImportedInvocation *call, ABIResolutionFailure **error) {
+    if (!check(call,error)) return false;
+    invoke(call->entry, call->chain, call->next, call->arguments, call->result.data());
+    call->proceeded = true;
+    return true;
+}
+bool ABIImportedInvocationReadResult(ABIImportedInvocation *call, void *bytes, size_t size, ABIResolutionFailure **error) {
     if (!check(call,error)) return false;
     if (!call->proceeded || size != call->entry.resultSize || (size && !bytes)) return fail(error, ABIFailureInvalidRequest, "A completed continuation and matching result storage are required.");
     if (size) std::memcpy(bytes, call->result.data(), size);
     return true;
 }
-bool ABIImportedSetResult(ABIImportedInvocation *call, const void *bytes, size_t size, ABIResolutionFailure **error) {
+bool ABIImportedInvocationSetResult(ABIImportedInvocation *call, const void *bytes, size_t size, ABIResolutionFailure **error) {
     if (!check(call,error)) return false;
     if (size != call->entry.resultSize || (size && !bytes)) return fail(error, ABIFailureInvalidRequest, "Result storage does not match.");
     if (size) std::memcpy(call->candidate.data(),bytes,size);
@@ -338,16 +346,16 @@ void ABIInvalidateImportedHook(ABIImportedHook *hook) {
     }
 }
 void ABIReleaseImportedHook(ABIImportedHook *hook) { if(hook && --hook->references==0) { ABIInvalidateImportedHook(hook); delete hook; } }
-const ABIResolutionFailure *ABIImportedHookFailure(const ABIImportedHook *h) { return h->failure.get(); }
-size_t ABIImportedHookFailedIndex(const ABIImportedHook *h) { return h->failedIndex; }
-size_t ABIImportedHookCount(const ABIImportedHook *h) { return h->slots.size(); }
-uintptr_t ABIImportedHookSlot(const ABIImportedHook *h,size_t i) { return h->slots[i].description.slot; }
-int32_t ABIImportedHookStatus(const ABIImportedHook *h,size_t i) {
+const ABIResolutionFailure *ABIImportedHookGetFailure(const ABIImportedHook *h) { return h->failure.get(); }
+size_t ABIImportedHookGetFailedIndex(const ABIImportedHook *h) { return h->failedIndex; }
+size_t ABIImportedHookGetSlotCount(const ABIImportedHook *h) { return h->slots.size(); }
+uintptr_t ABIImportedHookGetSlot(const ABIImportedHook *h,size_t i) { return h->slots[i].description.slot; }
+int32_t ABIImportedHookGetSlotStatus(const ABIImportedHook *h,size_t i) {
     auto *hook=const_cast<ABIImportedHook*>(h); std::lock_guard lock(hook->mutex);
     if(!hook->active) return ABIImportedInactive;
     uintptr_t bits=0; auto *entry=h->slots[i].entry;
     if(!entry || !readBits(*entry,bits)) return ABIImportedUnreadable;
     return bits==entry->installed ? ABIImportedActive : ABIImportedDisplaced;
 }
-ABIPointerSlotResult ABIImportedHookMutation(const ABIImportedHook *h,size_t i) { return h->slots[i].mutation; }
-ABIPointerSlotResult ABIImportedHookRollback(const ABIImportedHook *h,size_t i) { return h->slots[i].rollback; }
+ABIPointerSlotResult ABIImportedHookGetMutation(const ABIImportedHook *h,size_t i) { return h->slots[i].mutation; }
+ABIPointerSlotResult ABIImportedHookGetRollback(const ABIImportedHook *h,size_t i) { return h->slots[i].rollback; }
