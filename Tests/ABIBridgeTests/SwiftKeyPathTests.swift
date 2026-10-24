@@ -307,18 +307,20 @@ struct SwiftKeyPathTests {
     }
 
     @Test func extensionPropertiesOfOtherModulesDoNotHideSharedCacheDescriptors() async throws {
-        let module = "VisibleKeyPath_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let module = "VisibleKeyPath_KeyPath"
+        let source = """
+            extension String {
+                public var sharedName: String {
+                    get { self + "!" }
+                    set {}
+                }
+            }
+            """
+        let arguments = ["-parse-as-library", "-enable-library-evolution"]
         let fixture = try FixtureLibrary(
             swiftModule: module,
-            swiftSource: """
-                extension String {
-                    public var sharedName: String {
-                        get { self + "!" }
-                        set {}
-                    }
-                }
-                """,
-            linkArguments: ["-parse-as-library", "-enable-library-evolution"]
+            swiftSource: source,
+            linkArguments: arguments
         )
         defer { fixture.cleanup() }
         let image = try #require(
@@ -332,10 +334,18 @@ struct SwiftKeyPathTests {
             }
         )
         let other = "Other" + module
+        let otherFixture = try FixtureLibrary(
+            load: false,
+            swiftModule: other,
+            swiftSource: source,
+            linkArguments: arguments
+        )
+        defer { otherFixture.cleanup() }
+        let localName = try #require(
+            try otherFixture.exportedSymbols().first { $0.hasSuffix("10sharedNameSSvpMV") }
+        )
         let local = (
-            name: exported.name.replacingOccurrences(
-                of: "\(module.count)\(module)E", with: "\(other.count)\(other)E"
-            ),
+            name: localName,
             address: exported.address
         )
         #expect(local.name != exported.name)

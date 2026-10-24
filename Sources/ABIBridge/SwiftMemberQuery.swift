@@ -123,20 +123,25 @@ struct SwiftMemberQuery {
     /// requirements of the candidate's context. Records decide static-ness
     /// and which initializer entry a symbol is, so neither spelling's
     /// `static` or `__allocating_init` takes part.
-    func spells(_ candidate: SwiftCandidate) -> Bool {
+    func spells(_ candidate: SwiftCandidate, ignoringOwner: Bool = false) -> Bool {
         let names = [candidate.declaration.name, candidate.memberName]
         let spellings = names + names.compactMap(SymbolIndex.operatorAlias)
-        guard qualifier == nil else {
+        guard qualifier == nil || ignoringOwner else {
             let key = DeclarationKey.make(Self.withoutStatic(request.name), language: .swift)
             return spellings.contains {
                 DeclarationKey.make(Self.withoutStatic($0), language: .swift) == key
             }
         }
+        return spellings.contains { spellsMember($0) }
+    }
+
+    /// Whether a declaration spells this member's signature independently of
+    /// its owner, as a requirement inherited from another protocol does.
+    func spellsMember(_ declaration: String) -> Bool {
         // A destructor spells nothing after its name.
         guard let key = SwiftMemberLookup.signatureKey(member) else { return true }
-        return spellings.contains {
-            SwiftMemberLookup.member(of: $0).flatMap(SwiftMemberLookup.signatureKey) == key
-        }
+        return SwiftMemberLookup.member(of: declaration).flatMap(SwiftMemberLookup.signatureKey)
+            == key
     }
 
     /// Whether `record` belongs to the extension context that the name

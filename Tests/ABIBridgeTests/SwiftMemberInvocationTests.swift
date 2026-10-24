@@ -859,6 +859,10 @@ struct SwiftMemberInvocationTests {
                     @inline(never) public func read() -> Int64 { -1 }
                     public var label: String { "gauge" }
                 }
+                public protocol Calibrated: Gauge {}
+                extension Calibrated {
+                    @inline(never) public func read() -> Int64 { -2 }
+                }
                 public protocol Tagged { associatedtype Tag }
                 extension Tagged {
                     @inline(never) public func tagName() -> String { "tagged" }
@@ -870,7 +874,7 @@ struct SwiftMemberInvocationTests {
                 extension Equatable {
                     @inline(never) public static func kindName() -> String { "equatable" }
                 }
-                public final class Meter: Gauge, Tagged, Resettable, Equatable {
+                public final class Meter: Calibrated, Tagged, Resettable, Equatable {
                     public typealias Tag = Int64
                     public static func == (lhs: Meter, rhs: Meter) -> Bool { lhs === rhs }
                     public init() {}
@@ -904,6 +908,17 @@ struct SwiftMemberInvocationTests {
                 return false
             }
             return message.contains("whether it is one of them is not established")
+        }
+        await #expect {
+            _ = try await meter.resolve(
+                .method(module + ".Calibrated.read()", as: (() -> Int64).self)
+            )
+        } throws: { error in
+            guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                return false
+            }
+            return message.contains(module + ".Gauge")
+                && message.contains("whether it is one of them is not established")
         }
         // Gauge has no getter requirement, so its extension's getter applies.
         let label = try await meter.resolve(
@@ -946,6 +961,99 @@ struct SwiftMemberInvocationTests {
             )
         )
         #expect(try unsafe read.unsafeInvoke(on: make.unsafeInvoke()) == -1)
+        let calibratedRead = try await meter.resolve(
+            .method(
+                "(extension in \(module)):\(module).Calibrated.read() -> Swift.Int64",
+                as: (() -> Int64).self
+            )
+        )
+        #expect(try unsafe calibratedRead.unsafeInvoke(on: make.unsafeInvoke()) == -2)
+    }
+
+    @Test(arguments: [false, true])
+    func inheritedRequirementsDoNotResolveToExtensionMembers(libraryEvolution: Bool) async throws {
+        let module = "Inherited_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let library = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                public protocol Root {
+                    func read(_ value: Int64) -> Int64
+                    var value: Int64 { get }
+                    static func code() -> Int64
+                }
+                public protocol Middle: Root {}
+                public protocol Leaf: Middle {}
+                extension Leaf {
+                    @inline(never) public func read(_ value: Int64) -> Int64 { -value }
+                    @inline(never) public func read(_ value: String) -> String { "leaf " + value }
+                    public var value: Int64 { -1 }
+                    @inline(never) public static func code() -> Int64 { -2 }
+                    @inline(never) public func label() -> String { "leaf" }
+                }
+                public final class Meter: Leaf {
+                    public init() {}
+                    public func read(_ value: Int64) -> Int64 { value + 1 }
+                    public var value: Int64 { 7 }
+                    public static func code() -> Int64 { 8 }
+                }
+                public func makeMeter() -> AnyObject { Meter() }
+                """,
+            linkArguments: ["-O"] + (libraryEvolution ? ["-enable-library-evolution"] : [])
+        )
+        defer { library.cleanup() }
+        let runtime = ABIRuntime()
+        let scope = ImageSelector.path(library.libraryURL)
+        let type = try await runtime.resolveSwiftType(named: module + ".Meter", in: scope)
+        let make = try await runtime.resolve(
+            .function(module + ".makeMeter()", as: (() -> AnyObject).self),
+            in: scope
+        )
+        let object = try unsafe make.unsafeInvoke()
+        for name in [module + ".Leaf.read(_:)", module + ".Leaf.read(Swift.Int64) -> Swift.Int64"] {
+            await #expect {
+                _ = try await type.resolve(.method(name, as: ((Int64) -> Int64).self))
+            } throws: { error in
+                guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                    return false
+                }
+                return message.contains(module + ".Root.read") && message.contains("requirement")
+            }
+        }
+        await #expect {
+            _ = try await type.resolve(.getter(module + ".Leaf.value", as: (() -> Int64).self))
+        } throws: { error in
+            guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                return false
+            }
+            return message.contains(module + ".Root")
+        }
+        await #expect {
+            _ = try await type.resolve(
+                .staticMethod(module + ".Leaf.code()", as: (() -> Int64).self)
+            )
+        } throws: { error in
+            guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                return false
+            }
+            return message.contains(module + ".Root")
+        }
+        let read = try await type.resolve(
+            .method(
+                "(extension in \(module)):\(module).Leaf.read(Swift.Int64) -> Swift.Int64",
+                as: ((Int64) -> Int64).self
+            )
+        )
+        #expect(try unsafe read.unsafeInvoke(on: object, 4) == -4)
+        for name in [
+            module + ".Leaf.read(_:)", module + ".Leaf.read(Swift.String) -> Swift.String",
+        ] {
+            let text = try await type.resolve(.method(name, as: ((String) -> String).self))
+            #expect(try unsafe text.unsafeInvoke(on: object, "a") == "leaf a")
+        }
+        let label = try await type.resolve(
+            .method(module + ".Leaf.label()", as: (() -> String).self)
+        )
+        #expect(try unsafe label.unsafeInvoke(on: object) == "leaf")
     }
 
     @Test func objectiveCProtocolExtensionMembersResolveWithoutRequirementChecks() async throws {
