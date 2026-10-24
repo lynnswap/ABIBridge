@@ -64,12 +64,8 @@ class objc_implementation<Result(Arguments...)> final {
     using signature = Result(Arguments...);
 public:
     /// Uses an existing object to discover and validate a concrete implementation.
-    objc_implementation(id prototype, SEL selector, objc_method_options options = {}) {
-        auto method = std::unique_ptr<ABIObjCMethod, decltype(&ABIReleaseObjCMethod)>(
-            copy_method(prototype, selector, options), ABIReleaseObjCMethod);
-        implementation_ = std::shared_ptr<ABIObjCImplementation>(
-            ABICopyObjCMethodImplementation(method.get()), ABIReleaseObjCImplementation);
-    }
+    objc_implementation(id prototype, SEL selector, objc_method_options options = {})
+        : implementation_(copy_implementation(prototype, selector, options), ABIReleaseObjCImplementation) {}
     objc_implementation(id prototype, std::string_view name, objc_method_options options = {})
         : objc_implementation(prototype, selector_named(name), options) {}
 
@@ -82,16 +78,16 @@ private:
     Result invoke_with_tail(__unsafe_unretained id receiver, Arguments... arguments, Tail&&... tail) const {
         const auto implementation = implementation_;
         NSError* error = nil;
-        if (!ABIValidateObjCImplementationReceiver(implementation.get(), receiver, &error)) {
+        if (!ABIObjCImplementationValidateReceiver(implementation.get(), receiver, &error)) {
             throw resolution_error(static_cast<std::int32_t>(error.code), error.localizedDescription.UTF8String);
         }
         std::array<bool, sizeof...(Arguments)> parameters{};
         for (std::size_t index = 0; index < parameters.size(); ++index)
-            parameters[index] = ABIObjCImplementationConsumesParameter(implementation.get(), index);
-        return invoke_owned<Variadic>(receiver, ABIObjCImplementationSelector(implementation.get()),
-            ABIObjCImplementationIMP(implementation.get()),
-            ABIObjCImplementationConsumesReceiver(implementation.get()),
-            ABIObjCImplementationReturnsRetained(implementation.get()), parameters, std::forward<Arguments>(arguments)..., std::forward<Tail>(tail)...);
+            parameters[index] = ABIObjCImplementationGetConsumesParameter(implementation.get(), index);
+        return invoke_owned<Variadic>(receiver, ABIObjCImplementationGetSelector(implementation.get()),
+            ABIObjCImplementationGetIMP(implementation.get()),
+            ABIObjCImplementationGetConsumesReceiver(implementation.get()),
+            ABIObjCImplementationGetReturnsRetained(implementation.get()), parameters, std::forward<Arguments>(arguments)..., std::forward<Tail>(tail)...);
     }
 
 public:
@@ -106,18 +102,33 @@ private:
     explicit objc_implementation(ABIObjCImplementation* owned)
         : implementation_(owned, ABIReleaseObjCImplementation) {}
 
-    static ABIObjCMethod* copy_method(id receiver, SEL selector, objc_method_options options) {
+    static ABIObjCImplementation* copy_implementation(id prototype, SEL selector, objc_method_options options) {
         const std::array<const char*, sizeof...(Arguments)> parameters{@encode(Arguments)...};
+        const ABIObjCSignature signature{@encode(Result), parameters.data(), parameters.size()};
+        const auto ownership = [](std::optional<bool> value) -> ABIObjCOwnership {
+            return value ? (*value ? ABIObjCOwnershipTransferred : ABIObjCOwnershipBorrowed)
+                         : ABIObjCOwnershipAutomatic;
+        };
+        const ABIObjCMethodOptions native_options{
+            ownership(options.returns_retained), ownership(options.consumes_receiver),
+            options.consumed_parameters.data(), options.consumed_parameters.size()};
         NSError* error = nil;
-        auto* method = ABICopyObjCMethod(receiver, selector, @encode(Result),
-            parameters.data(), parameters.size(),
-            options.returns_retained ? (*options.returns_retained ? 1 : 0) : -1,
-            options.consumes_receiver ? (*options.consumes_receiver ? 1 : 0) : -1,
-            options.consumed_parameters.data(), options.consumed_parameters.size(), &error);
-        if (!method) {
+        auto* implementation = ABICopyObjCImplementation(prototype, selector, &signature, native_options, &error);
+        if (!implementation) {
             throw resolution_error(static_cast<std::int32_t>(error.code), error.localizedDescription.UTF8String);
         }
-        return method;
+        return implementation;
+    }
+
+    static ABIBoundObjCImplementation* copy_method(id receiver, SEL selector, objc_method_options options) {
+        std::unique_ptr<ABIObjCImplementation, decltype(&ABIReleaseObjCImplementation)> implementation(
+            copy_implementation(receiver, selector, options), ABIReleaseObjCImplementation);
+        NSError* error = nil;
+        auto* binding = ABICopyBoundObjCImplementation(implementation.get(), receiver, &error);
+        if (!binding) {
+            throw resolution_error(static_cast<std::int32_t>(error.code), error.localizedDescription.UTF8String);
+        }
+        return binding;
     }
 
     static SEL selector_named(std::string_view name) {
@@ -213,7 +224,7 @@ class bound_objc_implementation<Result(Arguments...)> final {
     using implementation_type = objc_implementation<signature>;
 public:
     bound_objc_implementation(id receiver, SEL selector, objc_method_options options = {})
-        : method_(implementation_type::copy_method(receiver, selector, options), ABIReleaseObjCMethod) {}
+        : method_(implementation_type::copy_method(receiver, selector, options), ABIReleaseBoundObjCImplementation) {}
     bound_objc_implementation(id receiver, std::string_view name, objc_method_options options = {})
         : bound_objc_implementation(receiver, implementation_type::selector_named(name), options) {}
 
@@ -225,36 +236,36 @@ private:
     template <bool Variadic, typename... Tail>
     Result invoke_with_tail(Arguments... arguments, Tail&&... tail) const {
         const auto method = method_;
-        __unsafe_unretained id receiver = (__bridge id)ABIObjCMethodReceiverAddress(method.get());
+        __unsafe_unretained id receiver = (__bridge id)ABIBoundObjCImplementationGetReceiverAddress(method.get());
         std::array<bool, sizeof...(Arguments)> parameters{};
         for (std::size_t index = 0; index < parameters.size(); ++index)
-            parameters[index] = ABIObjCMethodConsumesParameter(method.get(), index);
+            parameters[index] = ABIBoundObjCImplementationGetConsumesParameter(method.get(), index);
         return implementation_type::template invoke_owned<Variadic>(receiver,
-            ABIObjCMethodSelector(method.get()), ABIObjCMethodImplementation(method.get()),
-            ABIObjCMethodConsumesReceiver(method.get()), ABIObjCMethodReturnsRetained(method.get()), parameters,
+            ABIBoundObjCImplementationGetSelector(method.get()), ABIBoundObjCImplementationGetIMP(method.get()),
+            ABIBoundObjCImplementationGetConsumesReceiver(method.get()), ABIBoundObjCImplementationGetReturnsRetained(method.get()), parameters,
             std::forward<Arguments>(arguments)..., std::forward<Tail>(tail)...);
     }
 
 public:
     /// Copies the captured implementation without retaining this receiver binding.
     implementation_type implementation() const {
-        return implementation_type(ABICopyObjCMethodImplementation(method_.get()));
+        return implementation_type(ABIBoundObjCImplementationCopyImplementation(method_.get()));
     }
 
 private:
     template <typename> friend class objc_implementation;
     template <typename> friend class bound_objc_implementation;
     bound_objc_implementation(const implementation_type& implementation, __unsafe_unretained id receiver)
-        : method_(copy_binding(implementation, receiver), ABIReleaseObjCMethod) {}
-    static ABIObjCMethod* copy_binding(const implementation_type& implementation, __unsafe_unretained id receiver) {
+        : method_(copy_binding(implementation, receiver), ABIReleaseBoundObjCImplementation) {}
+    static ABIBoundObjCImplementation* copy_binding(const implementation_type& implementation, __unsafe_unretained id receiver) {
         NSError* error = nil;
-        auto* method = ABICopyBoundObjCMethod(implementation.implementation_.get(), receiver, &error);
+        auto* method = ABICopyBoundObjCImplementation(implementation.implementation_.get(), receiver, &error);
         if (!method) {
             throw resolution_error(static_cast<std::int32_t>(error.code), error.localizedDescription.UTF8String);
         }
         return method;
     }
-    std::shared_ptr<ABIObjCMethod> method_;
+    std::shared_ptr<ABIBoundObjCImplementation> method_;
 };
 
 /// A variadic IMP using runtime-validated fixed arguments and compiler promotions.

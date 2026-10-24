@@ -155,7 +155,7 @@ extension ABIRuntime {
         )
         var error: NSError?
         let handle = options.withConsumedArguments { consumed in
-            ABICopyObjCImplementation(
+            ABICopyCapturedObjCInvocation(
                 type,
                 NSSelectorFromString(selector),
                 classMethod,

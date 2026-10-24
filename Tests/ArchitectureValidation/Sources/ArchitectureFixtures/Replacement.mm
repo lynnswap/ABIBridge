@@ -49,7 +49,7 @@ using Entry = std::unique_ptr<ABIObjCReplacement, decltype(&ABIReleaseObjCReplac
 
 Entry prepare(SEL selector, State& state) {
     NSError *error = nil;
-    auto *binding = ABICopyObjCImplementation(ABIReplacementArchitectureReceiver.class, selector, NO, -1, -1, nullptr, 0, &error);
+    auto *binding = ABICopyCapturedObjCInvocation(ABIReplacementArchitectureReceiver.class, selector, NO, -1, -1, nullptr, 0, &error);
     if (!binding) return {nullptr, ABIReleaseObjCReplacement};
     auto *pointer = ABICreateScalarType(ABIValuePointer, nullptr);
     auto *integer = ABICreateScalarType(ABIValueInt32, nullptr);

@@ -62,19 +62,46 @@ consume.unsafe_invoke(value);
 
 The wrapper supplies a separate owned reference for each selected object or block input, preserving the caller's ARC or MRC ownership. Bound and receiver-independent calls share this contract. Runtime encodings cannot prove these ownership annotations, so invocation is explicitly unsafe.
 
-The C constructor `ABICopyObjCMethod` accepts an index array and count after the receiver/result ownership overrides; use `nullptr, 0` when there are no consumed parameters. The constructor copies this metadata. `ABIObjCMethodConsumesParameter` and `ABIObjCImplementationConsumesParameter` expose the prepared contract. Calling the raw IMP still requires the caller to provide the declared ownership.
+For Objective-C callers, `ABIObjCSignature` groups the result and explicit parameter encodings. `ABIObjCMethodOptions` holds result and receiver ownership plus the consumed-parameter indexes, which capture copies. Zero-initialized options infer selector-family ownership; `ABIObjCOwnershipBorrowed` and `ABIObjCOwnershipTransferred` explicitly override it. Hooks use the same ownership values. `ABIBoundObjCImplementationGetConsumesParameter` and `ABIObjCImplementationGetConsumesParameter` expose the prepared contract. Calling the raw IMP still requires the caller to provide the declared ownership.
 
 ## Handle binding failures
 
 The C++ interface throws `abi_bridge::resolution_error`, with an owned message and an `ABIFailure` category. Missing concrete declarations report `ABIFailureDeclarationNotFound`; a forwarded-only signature or forwarding IMP reports `ABIFailureUnsupportedDeclaration`; incompatible signatures report `ABIFailureSignatureMismatch`. A fast-forwarded selector without a method signature is treated as an absent concrete declaration. Objective-C exceptions raised by application code during lookup or invocation are not converted into C++ exceptions.
 
-The lower-level interface returns an owned `ABIObjCMethod *` or an NSError in `ABIObjCInvocationErrorDomain`. Release the binding with `ABIReleaseObjCMethod`. Selector, IMP, and `ABIObjCMethodReceiverAddress` results borrow from it; bridge the receiver address to `id` only while the binding lives. Raw IMP calls require the typed interface's signature and ownership contract.
+The Foundation-aware interface returns an owned captured implementation or receiver binding, or an NSError in `ABIObjCInvocationErrorDomain`. Release the binding with `ABIReleaseBoundObjCImplementation`. Selector, IMP, and `ABIBoundObjCImplementationGetReceiverAddress` results borrow from it; bridge the receiver address to `id` only while the binding lives. Raw IMP calls require the typed interface's signature and ownership contract.
 
-## Use receiver-independent C ownership
+## Capture and bind from Objective-C
 
-`ABICopyObjCMethodImplementation` returns an owned `ABIObjCImplementation *` independently of an existing `ABIObjCMethod` binding. `ABIRetainObjCImplementation` adds a reference and `ABIReleaseObjCImplementation` releases it. Selector/IMP/ownership getters borrow their values from that live handle; keep it alive through invocation. The IMP getter preserves its signed function-pointer representation.
+`ObjectiveCInvocation.h` also works in ordinary `.m` files under ARC or manual reference counting:
 
-`ABIValidateObjCImplementationReceiver` checks class and method kind. `ABICopyBoundObjCMethod` creates an owned binding and reports incompatible receivers through NSError. The binding releases its receiver before the plan's images. The caller still supplies the actual invocation signature and ownership annotations.
+```objective-c
+const ABIObjCSignature signature = {@encode(NSInteger), NULL, 0};
+NSError *error = nil;
+ABIObjCImplementation *implementation = ABICopyObjCImplementation(
+    renderer, @selector(itemCount), &signature, (ABIObjCMethodOptions){0}, &error);
+if (!implementation) {
+    NSLog(@"%@", error);
+    return;
+}
+ABIBoundObjCImplementation *binding = ABICopyBoundObjCImplementation(
+    implementation, renderer, &error);
+ABIReleaseObjCImplementation(implementation);
+if (!binding) {
+    NSLog(@"%@", error);
+    return;
+}
+typedef NSInteger (*ItemCount)(id, SEL);
+NSInteger count = ((ItemCount)ABIBoundObjCImplementationGetIMP(binding))(
+    (__bridge id)ABIBoundObjCImplementationGetReceiverAddress(binding),
+    ABIBoundObjCImplementationGetSelector(binding));
+ABIReleaseBoundObjCImplementation(binding);
+```
+
+Capture validates the supplied encoding, retains the class and discoverable images, and leaves the prototype receiver unretained. A binding validates and retains a compatible receiver while keeping the same IMP. Calls through the raw IMP require the caller's actual signature and native ownership; ordinary C-style opaque handles are released explicitly under both ARC and MRC.
+
+`ABIBoundObjCImplementationCopyImplementation` returns an owned `ABIObjCImplementation *` independently of an existing `ABIBoundObjCImplementation` binding. `ABIRetainObjCImplementation` adds a reference and returns the same handle and `ABIReleaseObjCImplementation` releases it. Selector/IMP/ownership getters borrow their values from that live handle; keep it alive through invocation. The IMP getter preserves its signed function-pointer representation.
+
+`ABIObjCImplementationValidateReceiver` checks class and method kind. `ABICopyBoundObjCImplementation` creates an owned binding and reports incompatible receivers through NSError. The binding releases its receiver before the plan's images. The caller still supplies the actual invocation signature and ownership annotations.
 
 ## Invoke a variadic implementation
 

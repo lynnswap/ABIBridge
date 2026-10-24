@@ -60,6 +60,11 @@ xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
 xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
     --scratch-path "$task_build" SwiftFunctionConsumer "$task_fixture/libSwiftFixture.dylib" "$task_fixture/libSwiftExtensionFixture.dylib"
 
+for task_objc_consumer in ObjCImplementationConsumer MRCImplementationConsumer; do
+    xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
+        --scratch-path "$task_build" "$task_objc_consumer"
+done
+
 if [[ "$task_mode" == focused ]]; then exit; fi
 
 bash "$task_root/scripts/test-codegen.sh"

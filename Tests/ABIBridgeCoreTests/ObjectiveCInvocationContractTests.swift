@@ -14,7 +14,7 @@ struct ObjectiveCInvocationContractTests {
         var error: NSError?
         let handle: OpaquePointer?
         if capturedImplementation {
-            handle = ABICopyObjCImplementation(
+            handle = ABICopyCapturedObjCInvocation(
                 ABIReplacementFixture.self,
                 selector,
                 false,

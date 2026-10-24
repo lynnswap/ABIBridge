@@ -33,13 +33,13 @@ struct ABIObjCImplementation {
     std::vector<ImageLease> images;
 };
 
-struct ABIObjCMethod {
+struct ABIBoundObjCImplementation {
     CFTypeRef receiver;
     ABIObjCImplementation *plan;
 
-    ABIObjCMethod(id object, ABIObjCImplementation *plan)
+    ABIBoundObjCImplementation(id object, ABIObjCImplementation *plan)
         : receiver(CFBridgingRetain(object)), plan(plan) {}
-    ~ABIObjCMethod() {
+    ~ABIBoundObjCImplementation() {
         CFRelease(receiver);
         ABIReleaseObjCImplementation(plan);
     }
@@ -198,19 +198,29 @@ static bool validateReceiver(const Plan *plan, __unsafe_unretained id receiver, 
     return true;
 }
 
-ABIObjCMethod *ABICopyObjCMethod(
-    id receiver, SEL selector, const char *resultType,
-    const char *const *parameterTypes, size_t parameterCount,
-    int32_t returnsRetained, int32_t consumesReceiver,
-    const size_t *consumedParameters, size_t consumedParameterCount, NSError **error)
+ABIObjCImplementation *ABICopyObjCImplementation(
+    id receiver, SEL selector, const ABIObjCSignature *signature,
+    ABIObjCMethodOptions options, NSError **error)
 {
     if (error) *error = nil;
-    if (!receiver || !selector || !resultType || (parameterCount && !parameterTypes)
-        || returnsRetained < -1 || returnsRetained > 1
-        || consumesReceiver < -1 || consumesReceiver > 1) {
+    if (!receiver || !selector || !signature || !signature->resultType
+        || (signature->parameterCount && !signature->parameterTypes)
+        || options.resultOwnership < ABIObjCOwnershipAutomatic
+        || options.resultOwnership > ABIObjCOwnershipTransferred
+        || options.receiverOwnership < ABIObjCOwnershipAutomatic
+        || options.receiverOwnership > ABIObjCOwnershipTransferred) {
         fail(error, ABIFailureInvalidRequest, @"A receiver, selector, and valid call contract are required.");
         return nullptr;
     }
+    const auto resultType = signature->resultType;
+    const auto parameterTypes = signature->parameterTypes;
+    const auto parameterCount = signature->parameterCount;
+    const auto overrideOwnership = [](ABIObjCOwnership ownership) {
+        return ownership == ABIObjCOwnershipAutomatic ? -1
+            : ownership == ABIObjCOwnershipTransferred ? 1 : 0;
+    };
+    const auto returnsRetained = overrideOwnership(options.resultOwnership);
+    const auto consumesReceiver = overrideOwnership(options.receiverOwnership);
     Class cls = object_getClass(receiver);
     // Unlike class_getInstanceMethod, this performs +initialize and dynamic
     // method resolution before returning the callable implementation.
@@ -261,7 +271,7 @@ ABIObjCMethod *ABICopyObjCMethod(
 
     const auto ownership = ownershipFor(resultType, cls, selector, returnsRetained, consumesReceiver, error);
     if (!ownership) return nullptr;
-    auto parameters = consumedParametersFor(parameterCount, consumedParameters, consumedParameterCount,
+    auto parameters = consumedParametersFor(parameterCount, options.consumedParameters, options.consumedParameterCount,
         [&](size_t index) { return parameterTypes[index]; }, error);
     if (!parameters) return nullptr;
     auto plan = std::make_unique<ABIObjCImplementation>();
@@ -278,48 +288,49 @@ ABIObjCMethod *ABICopyObjCMethod(
 #endif
     if (!retainImplementationImage(*plan, address, nullptr, error) ||
         !retainImplementationImage(*plan, nullptr, class_getImageName(plan->receiverType), error)) return nullptr;
-    auto binding = std::make_unique<ABIObjCMethod>(receiver, plan.get());
-    plan.release();
-    return binding.release();
+    return plan.release();
 }
 
-void ABIReleaseObjCMethod(ABIObjCMethod *method) { delete method; }
-const void *ABIObjCMethodReceiverAddress(const ABIObjCMethod *method) { return method->receiver; }
-SEL ABIObjCMethodSelector(const ABIObjCMethod *method) { return method->plan->selector; }
-IMP ABIObjCMethodImplementation(const ABIObjCMethod *method) { return method->plan->implementation; }
-BOOL ABIObjCMethodReturnsRetained(const ABIObjCMethod *method) { return method->plan->returnsRetained; }
-BOOL ABIObjCMethodConsumesReceiver(const ABIObjCMethod *method) { return method->plan->consumesReceiver; }
-BOOL ABIObjCMethodConsumesParameter(const ABIObjCMethod *method, size_t index) {
+void ABIReleaseBoundObjCImplementation(ABIBoundObjCImplementation *method) { delete method; }
+const void *ABIBoundObjCImplementationGetReceiverAddress(const ABIBoundObjCImplementation *method) { return method->receiver; }
+SEL ABIBoundObjCImplementationGetSelector(const ABIBoundObjCImplementation *method) { return method->plan->selector; }
+IMP ABIBoundObjCImplementationGetIMP(const ABIBoundObjCImplementation *method) { return method->plan->implementation; }
+BOOL ABIBoundObjCImplementationGetReturnsRetained(const ABIBoundObjCImplementation *method) { return method->plan->returnsRetained; }
+BOOL ABIBoundObjCImplementationGetConsumesReceiver(const ABIBoundObjCImplementation *method) { return method->plan->consumesReceiver; }
+BOOL ABIBoundObjCImplementationGetConsumesParameter(const ABIBoundObjCImplementation *method, size_t index) {
     return method->plan->consumedParameters[index] != 0;
 }
 
-ABIObjCImplementation *ABICopyObjCMethodImplementation(const ABIObjCMethod *method) {
+ABIObjCImplementation *ABIBoundObjCImplementationCopyImplementation(const ABIBoundObjCImplementation *method) {
     ABIRetainObjCImplementation(method->plan);
     return method->plan;
 }
-void ABIRetainObjCImplementation(ABIObjCImplementation *implementation) { ++implementation->references; }
+ABIObjCImplementation *ABIRetainObjCImplementation(ABIObjCImplementation *implementation) {
+    ++implementation->references;
+    return implementation;
+}
 void ABIReleaseObjCImplementation(ABIObjCImplementation *implementation) {
     if (implementation && --implementation->references == 0) delete implementation;
 }
-BOOL ABIValidateObjCImplementationReceiver(const ABIObjCImplementation *implementation, __unsafe_unretained id receiver, NSError **error) {
+BOOL ABIObjCImplementationValidateReceiver(const ABIObjCImplementation *implementation, __unsafe_unretained id receiver, NSError **error) {
     if (error) *error = nil;
     return validateReceiver(implementation, receiver, error);
 }
-ABIObjCMethod *ABICopyBoundObjCMethod(ABIObjCImplementation *implementation, __unsafe_unretained id receiver, NSError **error) {
+ABIBoundObjCImplementation *ABICopyBoundObjCImplementation(ABIObjCImplementation *implementation, __unsafe_unretained id receiver, NSError **error) {
     // A custom receiver retain can reenter and release the source implementation.
     ABIRetainObjCImplementation(implementation);
     std::unique_ptr<ABIObjCImplementation, decltype(&ABIReleaseObjCImplementation)> owned(
         implementation, ABIReleaseObjCImplementation);
-    if (!ABIValidateObjCImplementationReceiver(implementation, receiver, error)) return nullptr;
-    auto binding = std::make_unique<ABIObjCMethod>(receiver, owned.get());
+    if (!ABIObjCImplementationValidateReceiver(implementation, receiver, error)) return nullptr;
+    auto binding = std::make_unique<ABIBoundObjCImplementation>(receiver, owned.get());
     owned.release();
     return binding.release();
 }
-SEL ABIObjCImplementationSelector(const ABIObjCImplementation *implementation) { return implementation->selector; }
-IMP ABIObjCImplementationIMP(const ABIObjCImplementation *implementation) { return implementation->implementation; }
-BOOL ABIObjCImplementationReturnsRetained(const ABIObjCImplementation *implementation) { return implementation->returnsRetained; }
-BOOL ABIObjCImplementationConsumesReceiver(const ABIObjCImplementation *implementation) { return implementation->consumesReceiver; }
-BOOL ABIObjCImplementationConsumesParameter(const ABIObjCImplementation *implementation, size_t index) {
+SEL ABIObjCImplementationGetSelector(const ABIObjCImplementation *implementation) { return implementation->selector; }
+IMP ABIObjCImplementationGetIMP(const ABIObjCImplementation *implementation) { return implementation->implementation; }
+BOOL ABIObjCImplementationGetReturnsRetained(const ABIObjCImplementation *implementation) { return implementation->returnsRetained; }
+BOOL ABIObjCImplementationGetConsumesReceiver(const ABIObjCImplementation *implementation) { return implementation->consumesReceiver; }
+BOOL ABIObjCImplementationGetConsumesParameter(const ABIObjCImplementation *implementation, size_t index) {
     return implementation->consumedParameters[index] != 0;
 }
 
@@ -495,7 +506,7 @@ static ABIObjCInvocation *copyClassInvocation(
 }
 
 
-ABIObjCInvocation *ABICopyObjCImplementation(
+ABIObjCInvocation *ABICopyCapturedObjCInvocation(
     Class type, SEL selector, BOOL classMethod, int32_t returnsRetained,
     int32_t consumesReceiver, const size_t *consumedParameters, size_t consumedParameterCount,
     NSError **error) {
