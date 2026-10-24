@@ -1023,41 +1023,33 @@ struct SwiftGenericBinding: Sendable {
                 boundTypes.metadata.withLock { $0[ObjectIdentifier(metadata)] = retained }
                 return metadata
             }
-            for metadata in knownTypes.values {
-                guard
-                    runtimeMetadataKind(metadata) == .extendedExistential
-                else { continue }
-                var actual = try SwiftExtendedExistentialMetadata.formalType(metadata)
-                var actualDepth = 0
-                while case .existentialMetatype(let instance) = actual {
-                    actual = instance; actualDepth += 1
-                }
-                guard actualDepth == metatypeDepth,
-                    case .constrainedExistential(
-                        let actualBase,
-                        let actualSuperclass,
-                        let actualConstraints,
-                        _
-                    ) = actual,
-                    try Self.key(base) == Self.key(actualBase),
-                    constraints.count == actualConstraints.count,
-                    try actualSuperclass.map({ try types($0, packIndex: packIndex)[0] })
-                        == expectedSuperclass
-                else { continue }
-                let matches = try zip(constraints, expected).allSatisfy { constraint, expected in
-                    let candidates = actualConstraints.filter { actual in
-                        actual.subject == constraint.subject
-                            || (constraint.subject.split(separator: ".").count == 2
-                                && actual.subject.split(separator: ".").last
-                                    == constraint.subject.split(separator: ".").last)
-                    }
-                    return try candidates.count == 1
-                        && types(candidates[0].value, packIndex: packIndex)[0] == expected
-                }
-                if matches { return metadata }
-            }
             let superclassMetadata = try expectedSuperclass.map {
                 try SwiftGenericTypeMetadata(metadata: $0)
+            }
+            let shapeName: String
+            if metatypeDepth == 0 {
+                shapeName = shape
+            } else {
+                let syntax = try SwiftSyntax(symbol: shape)
+                let node = try syntax.root.requiredChild().requiredChild().requiredChild(
+                    kind: "Type"
+                ).requiredChild()
+                shapeName = try node.constrainedExistentialShapeName(metatypeDepth: metatypeDepth)
+            }
+            let generalization = SwiftExtendedExistentialMetadata.Generalization(
+                shape: shapeName,
+                arguments: (superclassMetadata?.arguments ?? [])
+                    + expected.map {
+                        .type($0)
+                    }
+            )
+            for metadata in knownTypes.values
+            where runtimeMetadataKind(metadata) == .extendedExistential {
+                if try SwiftExtendedExistentialMetadata.Generalization(metadata: metadata)
+                    == generalization
+                {
+                    return metadata
+                }
             }
             let superclassArguments: [Any.Type] =
                 try superclassMetadata?.arguments.map {
@@ -1069,16 +1061,6 @@ struct SwiftGenericBinding: Sendable {
                     return type
                 } ?? []
             let generalizedArguments = superclassArguments + expected
-            let shapeName: String
-            if metatypeDepth == 0 {
-                shapeName = shape
-            } else {
-                let syntax = try SwiftSyntax(symbol: shape)
-                let node = try syntax.root.requiredChild().requiredChild().requiredChild(
-                    kind: "Type"
-                ).requiredChild()
-                shapeName = try node.constrainedExistentialShapeName(metatypeDepth: metatypeDepth)
-            }
             let request = NativeDeclaration(linkerName: shapeName, language: .swift, kind: .data)
             if let image = images.first {
                 do {
