@@ -71,6 +71,9 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
     }
     package let isStatic: Bool
     package let context: Context
+    /// The declared type that owns this member, including the contexts that
+    /// declare that type. An extension of that type does not change its identity.
+    package let ownerIdentity: RuntimeSwiftTypeIdentity?
     /// Whether a class declares the declaration, rather than an extension of
     /// the class or another type.
     package let isClassMember: Bool
@@ -146,6 +149,7 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
         if case .witness = role, owner.kind != "Protocol" { return nil }
         self.kind = kind
         self.isStatic = isStatic
+        ownerIdentity = RuntimeSwiftTypeIdentity(node: owner.pointer)
         isClassMember = owner.kind == "Class"
         if role == .propertyDescriptor {
             describedGetter =
@@ -253,6 +257,65 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
                 as: UTF8.self
             )
         }
+    }
+}
+
+/// A nominal declaration's identity, as the remangler spells its type tree.
+/// Instantiation arguments and an immediate member extension are not part of
+/// the declaration; extension contexts within the nominal type's ancestry are.
+package struct RuntimeSwiftTypeIdentity: Hashable, Sendable {
+    private let mangled: String
+
+    fileprivate init?(node: OpaquePointer) {
+        var node = node
+        while true {
+            let kind = String(cString: ABISwiftSyntaxNodeKind(node))
+            let child: Int
+            switch kind {
+            case "Type", "BoundGenericStructure", "BoundGenericEnum", "BoundGenericClass",
+                "BoundGenericTypeAlias", "BoundGenericOtherNominalType":
+                child = 0
+            case "Extension": child = 1
+            default:
+                guard
+                    ["Structure", "Enum", "Class", "Protocol", "TypeAlias", "OtherNominalType"]
+                        .contains(kind),
+                    let name = ABICopySwiftSyntaxNodeMangledName(node)
+                else { return nil }
+                defer { ABIFreeString(name) }
+                mangled = String(cString: name)
+                return
+            }
+            guard let next = ABISwiftSyntaxNodeChild(node, child) else { return nil }
+            node = next
+        }
+    }
+
+    package init(
+        metadata: Any.Type,
+        in image: RuntimeImage,
+        resolver: RuntimeSymbolResolver
+    ) throws {
+        let pointer = unsafeBitCast(metadata, to: UnsafeRawPointer.self)
+        let declared = ABISwiftTypeDescriptor(pointer).flatMap {
+            resolver.swiftTypeDeclaration(at: UInt64(UInt(bitPattern: $0)), in: image)
+        }
+        guard let mangled = declared ?? _mangledTypeName(metadata),
+            let syntax = mangled.utf8CString.withUnsafeBufferPointer({
+                ABICopySwiftTypeSyntax($0.baseAddress, $0.count - 1)
+            })
+        else {
+            throw RuntimeResolutionError.metadataUnavailable(
+                "The member owner's type declaration is unavailable."
+            )
+        }
+        defer { ABIReleaseSwiftSyntax(syntax) }
+        guard let root = ABISwiftSyntaxRoot(syntax), let identity = Self(node: root) else {
+            throw RuntimeResolutionError.metadataUnavailable(
+                "The member owner's type declaration cannot be decoded."
+            )
+        }
+        self = identity
     }
 }
 
