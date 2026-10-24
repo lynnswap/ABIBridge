@@ -45,9 +45,13 @@ import Foundation
     )
     for pass in ["cold", "warm"] {
         try await measure("C++ first member \(pass)", repetitions: pass == "warm" ? 100 : 1) {
-            let method = try object.resolveMethodAndWait(
-                named: "add(int)",
-                as: ((Int32) -> Int32).self
+            let method = try object.resolveAndWait(
+                .cxx(
+                    .method(
+                        "add(int)",
+                        as: ((Int32) -> Int32).self
+                    )
+                )
             )
             guard try unsafe method.unsafeInvoke(0) == 40 else {
                 throw ArchitectureValidationFailure(
@@ -57,9 +61,13 @@ import Foundation
         }
     }
     try await measure("C++ another member of the same class") {
-        let method = try object.resolveMethodAndWait(
-            named: "current() const",
-            as: (() -> Int32).self
+        let method = try object.resolveAndWait(
+            .cxx(
+                .method(
+                    "current() const",
+                    as: (() -> Int32).self
+                )
+            )
         )
         guard try unsafe method.unsafeInvoke() == 40 else {
             throw ArchitectureValidationFailure(

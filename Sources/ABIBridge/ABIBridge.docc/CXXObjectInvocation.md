@@ -15,10 +15,10 @@ let storage = unsafe NativeValue(
 let counter = ABIRuntime.shared.cxxObject(
     storage, typeNamed: "Example::Counter"
 )
-let add = try counter.resolveMethodAndWait(
-    named: "add(int)",
+let add = try counter.resolveAndWait(.cxx(.method(
+    "add(int)",
     as: ((Int32) -> Int32).self
-)
+)))
 let result = try unsafe add.unsafeInvoke(5)
 ```
 
@@ -30,28 +30,41 @@ A direct method handle calls the resolved implementation. For a virtual override
 
 ## Resolve without blocking the caller
 
-Await `resolveMethod` to search and prepare on a worker. Its `AndWait` counterpart performs the same work synchronously. Both prepare on demand and join only required work already started by optional earlier `prepare`:
+Await `resolve(.cxx(.method(...)))` to search and prepare on a worker. `resolveAndWait` takes the same request and performs the work synchronously. Both prepare on demand and join only required work already started by optional earlier `prepare`:
 
 ```swift
 @MainActor
 func increment(_ counter: NativeCXXObject) async throws -> Int32 {
-    let add = try await counter.resolveMethod(
-        named: "add(int)", as: ((Int32) -> Int32).self
-    )
+    let add = try await counter.resolve(.cxx(.method(
+        "add(int)", as: ((Int32) -> Int32).self
+    )))
     return try unsafe add.unsafeInvoke(5)
 }
 ```
 
-The receiver remains in the caller's isolation domain. `resolveVirtualMethod` follows the same pattern: it captures the slot in that domain, then acquires implementation images and prepares the call interface on a worker. Named table selection uses `resolveEntry`; `resolveEntryAndWait` searches synchronously. Creating `cxxObject` scopes, binding prepared methods, and selecting explicit `entry(at:authentication:)` slots remain synchronous because they perform no search or call preparation.
+The receiver remains in the caller's isolation domain. `resolve(.cxx(.virtualMethod(...)))` follows the same pattern: it captures the slot in that domain, then acquires implementation images and prepares the call interface on a worker. Named table selection uses `resolveEntry`; `resolveEntryAndWait` searches synchronously. Creating `cxxObject` scopes, binding prepared methods, and selecting explicit `entry(at:authentication:)` slots remain synchronous because they perform no search or call preparation.
+
+## Save a declaration request
+
+Save a direct declaration without binding a receiver or doing lookup:
+
+```swift
+let request = NativeRequest.cxx(.method(
+    "add(int)", as: ((Int32) -> Int32).self
+))
+let add = try await counter.resolve(request)
+```
+
+Direct requests are Sendable. Virtual requests retain their table and remain in the caller's isolation domain. Their construction performs no slot reads or bounds, authentication, or adapter validation; unsafe resolution performs those operations. If a saved table was read from a receiver, saving its request also retains that receiver. Reuse it only with the same live table and corresponding receiver/subobject contract.
 
 ## Reuse a prepared implementation with another receiver
 
 Object lookup returns `NativeBoundCXXMethod`, which retains its receiver storage. Its `method` property returns `NativeCXXMethod`, sharing the prepared target, adapter, and call signature without retaining that binding.
 
 ```swift
-let bound = try counter.resolveMethodAndWait(
-    named: "add(int)", as: ((Int32) -> Int32).self
-)
+let bound = try counter.resolveAndWait(.cxx(.method(
+    "add(int)", as: ((Int32) -> Int32).self
+)))
 let add = bound.method
 let result = try unsafe add.unsafeInvoke(on: anotherStorage, 2)
 let anotherBound = add.bind(to: anotherStorage)
@@ -87,18 +100,18 @@ let table = try unsafe NativeVTable(
     entryCount: layout.entryCount,
     authentication: layout.vtableAuthentication
 )
-let current = try unsafe counter.resolveVirtualMethodAndWait(
+let current = try unsafe counter.resolveAndWait(.cxx(.virtualMethod(
     at: layout.currentSlot,
     in: table,
     authentication: layout.currentAuthentication,
     as: (() -> Int32).self
-)
+)))
 let value = try unsafe current.unsafeInvoke()
 ```
 
 An absolute table's address point starts at its first function slot, excluding RTTI and offset-to-top headers. Bounds and null entries are checked. Readability, executable targets, and the matching native signature remain caller requirements. Relative tables require an adapter.
 
-Lookup captures the selected function pointer and retains its implementation image when loader metadata is available. It also retains the supplied table owner, including any generated-code owner. Later table changes do not modify an existing handle.
+Lookup captures the selected function pointer and retains its implementation image when loader metadata is available. It also retains the supplied table owner, including any generated-code owner. Later table changes do not modify an existing handle. Resolving the same saved request again captures the current slot; it does not reuse the earlier target.
 
 ## Select by implementation name
 
@@ -108,13 +121,14 @@ When the table's image has recoverable original chained fixups and symbols, sele
 let entry = try table.resolveEntryAndWait(
     named: "Example::Derived::current() const"
 )
-let current = try unsafe counter.resolveVirtualMethodAndWait(
+let request = NativeRequest.cxx(.virtualMethod(
     entry, as: (() -> Int32).self
-)
+))
+let current = try unsafe counter.resolveAndWait(request)
 let value = try unsafe current.unsafeInvoke()
 ```
 
-Supply the known address point, entry count, and subobject view as before. Name an override with the derived method's qualified declaration. Selection matches receiver-adjustment and covariant-return thunks to their implementing method and preserves the original authentication schema. It reads original file metadata, so a hooked slot still has the same identity; method capture then reads that slot's current pointer.
+Supply the known address point, entry count, and subobject view as before. Name an override with the derived method's qualified declaration. Selection matches receiver-adjustment and covariant-return thunks to their implementing method and preserves the original authentication schema. It reads original file metadata, so a hooked slot still has the same identity; method capture then reads that slot's current pointer. A named-entry request retains the original entry image even if its current target belongs to another image. An explicit `at:in:authentication:` request retains the supplied table's existing owners and does not acquire an additional entry image.
 
 Queries share per-image metadata through `ABIRuntime.shared`; pass `using:` for an independent runtime. Missing files, stripped identities, or unsupported fixups throw `metadataUnavailable`; multiple matching slots or folded aliases throw `ambiguousDeclaration`. For shared-cache rewritten tables or relative layouts, use an explicit adapter:
 
@@ -145,11 +159,11 @@ Nontrivial C++ parameters and results can require copy constructors, destructors
 let adapter = try ABIRuntime.shared.resolveAndWait(
     NativeDeclaration(name: "ExampleInvokeTransform", language: .c)
 )
-let transform = try counter.resolveMethodAndWait(
-    named: "transform(Example::Token) const",
+let transform = try counter.resolveAndWait(.cxx(.method(
+    "transform(Example::Token) const",
     as: ((Token) -> Token).self,
     using: adapter
-)
+)))
 ```
 
 Here the Swift function type describes the adapter's explicit arguments and result. Its native calling contract has two preceding parameters: a generic C function pointer (`void (*)(void)`) for the original implementation, then the receiver pointer. A C++ adapter casts that function pointer to the correct typed entry point and lets the compiler handle native value construction, copying, and destruction.

@@ -160,7 +160,7 @@ private final class ExtractedCounterOwner {
         originalCounter = owner
         let storage = try owner.storage()
         let counter = runtime.cxxObject(storage, typeNamed: "ABIArchitecture::Counter")
-        direct = try counter.resolveMethodAndWait(named: "add(int)", as: ((Int32) -> Int32).self)
+        direct = try counter.resolveAndWait(.cxx(.method("add(int)", as: ((Int32) -> Int32).self)))
             .method
         let table = try unsafe NativeVTable(
             readingFrom: storage,
@@ -171,8 +171,10 @@ private final class ExtractedCounterOwner {
             named: "ABIArchitecture::Counter::current() const",
             using: runtime
         )
-        virtual = try unsafe counter.resolveVirtualMethodAndWait(entry, as: (() -> Int32).self)
-            .method
+        virtual = try unsafe counter.resolveAndWait(
+            .cxx(.virtualMethod(entry, as: (() -> Int32).self))
+        )
+        .method
     }
     try check(
         originalCounter == nil,

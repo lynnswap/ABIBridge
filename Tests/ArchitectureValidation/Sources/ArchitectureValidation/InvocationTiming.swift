@@ -59,9 +59,13 @@ private final class InvocationTimingReceiver: NSObject {
         unsafe NativeValue(borrowing: counter, as: try .opaque(named: "ABIArchitecture::Counter")),
         typeNamed: "ABIArchitecture::Counter"
     )
-    let cxxMethod = try cxxObject.resolveMethodAndWait(
-        named: "add(int)",
-        as: ((Int32) -> Int32).self
+    let cxxMethod = try cxxObject.resolveAndWait(
+        .cxx(
+            .method(
+                "add(int)",
+                as: ((Int32) -> Int32).self
+            )
+        )
     )
     let object = runtime.object(InvocationTimingReceiver())
     let method = try object.resolveAndWait(.objc(.method("adding:", as: ((Int32) -> Int32).self)))

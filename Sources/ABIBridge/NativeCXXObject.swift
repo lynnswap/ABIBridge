@@ -1,5 +1,110 @@
 import ABIBridgeCore
 
+/// A direct C++ member declaration and its C-compatible call adapter.
+///
+/// Wrap with `NativeRequest.cxx`, then resolve on a ``NativeCXXObject``.
+/// Names are relative to that object's type, such as `add(int)` or
+/// `current() const`. Construction performs no lookup or call preparation.
+public struct NativeCXXMethodRequest<Result, each Argument>: Sendable {
+    let name: String
+    let adapter: ResolvedSymbol?
+
+    /// Describes a direct member implementation.
+    ///
+    /// - Parameters:
+    ///   - name: The declaration relative to the receiver's C++ type name.
+    ///   - signature: Explicit Swift arguments and result, excluding `this`.
+    ///   - adapter: An optional C-compatible bridge receiving a signed generic
+    ///     function pointer, the receiver pointer, then explicit arguments.
+    public static func method(
+        _ name: String,
+        as signature: ((repeat each Argument) -> Result).Type,
+        using adapter: ResolvedSymbol? = nil
+    ) -> Self {
+        Self(name: name, adapter: adapter)
+    }
+}
+
+/// A virtual C++ slot, signature, and owners, inspected when resolved.
+///
+/// Wrap with `NativeRequest.cxx`, then use unsafe resolution on a
+/// ``NativeCXXObject``. Construction does not read or validate the slot.
+/// Each resolution reads its current target. The table and its storage owner
+/// remain retained while this request is saved, including a receiver retained
+/// by a receiver-backed table. The request stays in the caller's isolation
+/// domain and is not Sendable.
+public struct NativeCXXVirtualMethodRequest<Result, each Argument> {
+    let table: NativeVTable
+    let index: Int
+    let authentication: NativePointerAuthentication
+    let adapter: ResolvedSymbol?
+    let image: NativeImage?
+
+    /// Describes a selected entry with its original image and authentication.
+    ///
+    /// - Parameters:
+    ///   - entry: A named or explicitly described table entry for the live
+    ///     receiver/subobject supplied when resolving this request.
+    ///   - signature: Explicit Swift arguments and result, excluding `this`.
+    ///   - adapter: An optional C-compatible bridge, as for a direct method.
+    public static func virtualMethod(
+        _ entry: NativeVTable.Entry,
+        as signature: ((repeat each Argument) -> Result).Type,
+        using adapter: ResolvedSymbol? = nil
+    ) -> Self {
+        Self(
+            table: entry.table,
+            index: entry.index,
+            authentication: entry.authentication,
+            adapter: adapter,
+            image: entry.image
+        )
+    }
+
+    /// Describes an absolute table slot without acquiring an image owner.
+    ///
+    /// The table's existing storage and code owners remain retained. Bounds
+    /// and target validation occur during resolution.
+    ///
+    /// - Parameters:
+    ///   - index: A zero-based function slot within the supplied table.
+    ///   - table: A live, bounded absolute function-pointer table.
+    ///   - authentication: The slot's target-specific authentication schema.
+    ///   - signature: Explicit Swift arguments and result, excluding `this`.
+    ///   - adapter: An optional C-compatible bridge, as for a direct method.
+    public static func virtualMethod(
+        at index: Int,
+        in table: NativeVTable,
+        authentication: NativePointerAuthentication,
+        as signature: ((repeat each Argument) -> Result).Type,
+        using adapter: ResolvedSymbol? = nil
+    ) -> Self {
+        Self(
+            table: table,
+            index: index,
+            authentication: authentication,
+            adapter: adapter,
+            image: nil
+        )
+    }
+}
+
+extension NativeRequest {
+    /// Describes a direct C++ member resolved on a ``NativeCXXObject``.
+    public static func cxx<Result, each Argument>(
+        _ declaration: NativeCXXMethodRequest<Result, repeat each Argument>
+    ) -> Self where Declaration == NativeCXXMethodRequest<Result, repeat each Argument> {
+        Self(declaration: declaration)
+    }
+
+    /// Describes a C++ virtual slot captured by unsafe resolution on a ``NativeCXXObject``.
+    public static func cxx<Result, each Argument>(
+        _ declaration: NativeCXXVirtualMethodRequest<Result, repeat each Argument>
+    ) -> Self where Declaration == NativeCXXVirtualMethodRequest<Result, repeat each Argument> {
+        Self(declaration: declaration)
+    }
+}
+
 private enum CXXImageScope: Sendable {
     case selector(ImageSelector)
     case image(NativeImage)
@@ -65,21 +170,20 @@ public final class NativeCXXObject {
 
     /// Resolves a direct member implementation and binds this receiver.
     ///
-    /// Include parameter types and qualifiers in the relative declaration, such as add(int) or current() const. Lookup reuses the runtime's owner indexes. Use resolveVirtualMethod or resolveVirtualMethodAndWait for a vtable-selected implementation. Search and call preparation run synchronously on the caller's thread and join required work already in progress.
+    /// The request names a member relative to the class, including parameter
+    /// types and qualifiers. Search and call preparation run synchronously
+    /// on the caller's thread and join required work already in progress.
+    /// Use a virtual-method request to capture a vtable-selected target.
     ///
-    /// - Parameters:
-    ///   - name: The member declaration relative to the class name.
-    ///   - signature: Explicit Swift arguments and result, excluding this.
-    ///   - adapter: An optional C-compatible native bridge. It receives a signed
-    ///     generic C function pointer, the receiver pointer, then explicit arguments.
+    /// - Parameter request: The direct declaration, signature, and optional
+    ///   C-compatible adapter.
     /// - Returns: A method retaining its receiver and implementation images.
     /// - Throws: A resolution, adapter, or call-signature error.
-    public nonisolated func resolveMethodAndWait<Result, each Argument>(
-        named name: String,
-        as signature: ((repeat each Argument) -> Result).Type,
-        using adapter: ResolvedSymbol? = nil
+    public nonisolated func resolveAndWait<Result, each Argument>(
+        _ request: NativeRequest<NativeCXXMethodRequest<Result, repeat each Argument>>
     ) throws -> NativeBoundCXXMethod<Result, repeat each Argument> {
-        let declaration = NativeDeclaration(name: typeName + "::" + name, language: .cxx)
+        let member = request.declaration
+        let declaration = NativeDeclaration(name: typeName + "::" + member.name, language: .cxx)
         let symbol: ResolvedSymbol
         switch scope {
         case .selector(let selector):
@@ -89,20 +193,21 @@ public final class NativeCXXObject {
         }
         let method = try NativeCXXMethod<Result, repeat each Argument>(
             target: .symbol(symbol),
-            adapter: adapter
+            adapter: member.adapter
         )
         return method.bind(to: storage)
     }
 
     /// Resolves a direct member without blocking the caller's executor.
     ///
-    /// Search and call preparation run on a worker and join required work already in progress. The receiver and bound handle remain in the caller's isolation domain; resolution does not invoke the member.
-    public nonisolated(nonsending) func resolveMethod<Result, each Argument>(
-        named name: String,
-        as signature: ((repeat each Argument) -> Result).Type,
-        using adapter: ResolvedSymbol? = nil
+    /// Search and call preparation run on a worker and join required work
+    /// already in progress. The receiver and bound handle remain in the
+    /// caller's isolation domain; resolution does not invoke the member.
+    public nonisolated(nonsending) func resolve<Result, each Argument>(
+        _ request: NativeRequest<NativeCXXMethodRequest<Result, repeat each Argument>>
     ) async throws -> NativeBoundCXXMethod<Result, repeat each Argument> {
-        let declaration = NativeDeclaration(name: typeName + "::" + name, language: .cxx)
+        let member = request.declaration
+        let declaration = NativeDeclaration(name: typeName + "::" + member.name, language: .cxx)
         let runtime = runtime
         let scope = scope
         let loading = loading
@@ -115,109 +220,58 @@ public final class NativeCXXObject {
                 symbol = try runtime.resolveAndWait(declaration, in: image, loading: loading)
             }
             let call: CFunctionCall<Result, repeat each Argument> = try prepareCXXCall(
-                adapter: adapter
+                adapter: member.adapter
             )
             return (symbol, call)
         }
         return NativeCXXMethod<Result, repeat each Argument>(
             target: .symbol(prepared.0),
-            adapter: adapter,
+            adapter: member.adapter,
             call: prepared.1
         ).bind(to: storage)
     }
 
-    /// Captures a selected virtual entry and binds this receiver/subobject.
+    /// Captures a selected virtual slot and binds this receiver/subobject.
     ///
-    /// Image acquisition and call preparation run synchronously on the caller's thread and join required ABI preparation already in progress. The entry retains its original adjustment thunk and authentication schema; the caller must supply the corresponding live base-subobject view.
-    @unsafe public func resolveVirtualMethodAndWait<Result, each Argument>(
-        _ entry: NativeVTable.Entry,
-        as signature: ((repeat each Argument) -> Result).Type,
-        using adapter: ResolvedSymbol? = nil
+    /// The table, authentication, receiver adjustment, and signature must
+    /// match the target ABI. Bounds, null-entry, image acquisition, and call
+    /// preparation checks occur here. Authentication failure can fault.
+    /// A named entry retains its original image and adjustment thunk.
+    ///
+    /// - Parameter request: A selected entry or explicit table slot, signature,
+    ///   and optional C-compatible adapter.
+    /// - Returns: A method retaining its selected target, code owners, and receiver.
+    @unsafe public func resolveAndWait<Result, each Argument>(
+        _ request: NativeRequest<NativeCXXVirtualMethodRequest<Result, repeat each Argument>>
     ) throws -> NativeBoundCXXMethod<Result, repeat each Argument> {
-        try NativeCXXMethod<Result, repeat each Argument>(
+        let member = request.declaration
+        return try NativeCXXMethod<Result, repeat each Argument>(
             target: .virtual(
-                entry.table.target(
-                    at: entry.index,
-                    authentication: entry.authentication,
-                    retaining: entry.image
+                member.table.target(
+                    at: member.index,
+                    authentication: member.authentication,
+                    retaining: member.image
                 )
             ),
-            adapter: adapter
+            adapter: member.adapter
         ).bind(to: storage)
     }
 
-    /// Resolves a selected virtual entry without blocking the caller's executor.
+    /// Resolves a virtual slot without blocking the caller's executor.
     ///
-    /// The slot is captured in the caller's isolation domain. Image acquisition and call preparation run on a worker; the receiver and explicit code owner remain with the caller.
-    @unsafe public nonisolated(nonsending) func resolveVirtualMethod<Result, each Argument>(
-        _ entry: NativeVTable.Entry,
-        as signature: ((repeat each Argument) -> Result).Type,
-        using adapter: ResolvedSymbol? = nil
+    /// The current slot and original authentication address are captured on
+    /// the caller. Image acquisition and call preparation run on a worker;
+    /// the receiver, table, and code owners remain with the caller. The same
+    /// unsafe table, subobject, and signature contract applies as for
+    /// synchronous resolution.
+    @unsafe public nonisolated(nonsending) func resolve<Result, each Argument>(
+        _ request: NativeRequest<NativeCXXVirtualMethodRequest<Result, repeat each Argument>>
     ) async throws -> NativeBoundCXXMethod<Result, repeat each Argument> {
-        try unsafe await resolveVirtualMethod(
-            at: entry.index,
-            in: entry.table,
-            authentication: entry.authentication,
-            as: signature,
-            using: adapter,
-            retaining: entry.image
-        )
-    }
-
-    /// Captures an absolute virtual-function entry and binds this receiver.
-    ///
-    /// Image acquisition and call preparation run synchronously on the caller's thread and join required ABI preparation already in progress. The slot, authentication schema, receiver adjustment, and C-compatible signature must match the target ABI. Authentication failure can fault; it is not a recoverable Swift error.
-    ///
-    /// - Parameters:
-    ///   - index: A function-slot index within the declared table.
-    ///   - table: A bounded absolute function-pointer table.
-    ///   - authentication: The slot's authentication schema.
-    ///   - signature: Explicit arguments and result, excluding this.
-    ///   - adapter: A C-compatible bridge receiving target, receiver, and arguments.
-    /// - Returns: A method retaining the selected entry's image, code owner, and receiver.
-    /// - Throws: A slot-bounds, null-entry, image-lifetime, or signature error.
-    @unsafe public func resolveVirtualMethodAndWait<Result, each Argument>(
-        at index: Int,
-        in table: NativeVTable,
-        authentication: NativePointerAuthentication,
-        as signature: ((repeat each Argument) -> Result).Type,
-        using adapter: ResolvedSymbol? = nil
-    ) throws -> NativeBoundCXXMethod<Result, repeat each Argument> {
-        try NativeCXXMethod<Result, repeat each Argument>(
-            target: .virtual(table.target(at: index, authentication: authentication)),
-            adapter: adapter
-        ).bind(to: storage)
-    }
-
-    /// Resolves an absolute virtual-function entry without blocking the caller's executor.
-    ///
-    /// The original slot address remains the authentication identity. The caller supplies the table bounds, live subobject, and C-compatible signature, as for synchronous resolution.
-    @unsafe public nonisolated(nonsending) func resolveVirtualMethod<Result, each Argument>(
-        at index: Int,
-        in table: NativeVTable,
-        authentication: NativePointerAuthentication,
-        as signature: ((repeat each Argument) -> Result).Type,
-        using adapter: ResolvedSymbol? = nil
-    ) async throws -> NativeBoundCXXMethod<Result, repeat each Argument> {
-        try unsafe await resolveVirtualMethod(
-            at: index,
-            in: table,
-            authentication: authentication,
-            as: signature,
-            using: adapter,
-            retaining: nil
-        )
-    }
-
-    @unsafe private nonisolated(nonsending) func resolveVirtualMethod<Result, each Argument>(
-        at index: Int,
-        in table: NativeVTable,
-        authentication: NativePointerAuthentication,
-        as signature: ((repeat each Argument) -> Result).Type,
-        using adapter: ResolvedSymbol?,
-        retaining image: NativeImage?
-    ) async throws -> NativeBoundCXXMethod<Result, repeat each Argument> {
-        let slot = try table.slot(at: index)
+        let member = request.declaration
+        let table = member.table
+        let slot = try table.slot(at: member.index)
+        let authentication = member.authentication
+        let adapter = member.adapter
         let prepared = try await NativePreparation.run {
             let implementation = try NativeVTable.prepareTarget(
                 slot,
@@ -228,7 +282,7 @@ public final class NativeCXXObject {
             )
             return (implementation, call)
         }
-        let target = table.target(capturing: prepared.0, retaining: image)
+        let target = table.target(capturing: prepared.0, retaining: member.image)
         return NativeCXXMethod<Result, repeat each Argument>(
             target: .virtual(target),
             adapter: adapter,

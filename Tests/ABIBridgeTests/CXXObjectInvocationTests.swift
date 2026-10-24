@@ -60,11 +60,15 @@ struct CXXObjectInvocationTests {
             let original = try counter(1)
             observedOriginal = original
             let object = runtime.cxxObject(original, typeNamed: "ABICXXFixture::Counter")
-            add = try object.resolveMethodAndWait(named: "add(int)", as: ((Int32) -> Int32).self)
+            add = try object.resolveAndWait(.cxx(.method("add(int)", as: ((Int32) -> Int32).self)))
                 .method
-            address = try object.resolveMethodAndWait(
-                named: "address()",
-                as: (() -> BorrowedCounterValue).self
+            address = try object.resolveAndWait(
+                .cxx(
+                    .method(
+                        "address()",
+                        as: (() -> BorrowedCounterValue).self
+                    )
+                )
             )
             .method
         }
@@ -123,13 +127,17 @@ struct CXXObjectInvocationTests {
             method = try unsafe await ABIRuntime.shared.cxxObject(
                 view,
                 typeNamed: "ABICXXFixture::Secondary"
-            ).resolveVirtualMethod(
-                at: 0,
-                in: table,
-                authentication: .cxxVirtualFunction(
-                    discriminator: ABICXXSecondarySlotDiscriminator()
-                ),
-                as: (() -> Int32).self
+            ).resolve(
+                .cxx(
+                    .virtualMethod(
+                        at: 0,
+                        in: table,
+                        authentication: .cxxVirtualFunction(
+                            discriminator: ABICXXSecondarySlotDiscriminator()
+                        ),
+                        as: (() -> Int32).self
+                    )
+                )
             ).method
         }
         codeOwner = nil
@@ -160,16 +168,26 @@ struct CXXObjectInvocationTests {
     @MainActor @Test func directMethodsSupplyReceiverAndKeepCallerIsolation() async throws {
         let storage = try counter(10)
         let object = ABIRuntime.shared.cxxObject(storage, typeNamed: "ABICXXFixture::Counter")
-        let add = try await object.resolveMethod(named: "add(int)", as: ((Int32) -> Int32).self)
-        let current = try await object.resolveMethod(
-            named: "current() const",
-            as: (() -> Int32).self
+        let request = NativeRequest.cxx(.method("add(int)", as: ((Int32) -> Int32).self))
+        let add = try await object.resolve(request)
+        let current = try await object.resolve(
+            .cxx(
+                .method(
+                    "current() const",
+                    as: (() -> Int32).self
+                )
+            )
         )
         #expect(try unsafe add.unsafeInvoke(5) == 15)
         #expect(try unsafe current.unsafeInvoke() == 15)
-        let many = try await object.resolveMethod(
-            named: "many(int, int, int, int, int, int, int, int, double) const",
-            as: ((Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Double) -> Double).self
+        let many = try await object.resolve(
+            .cxx(
+                .method(
+                    "many(int, int, int, int, int, int, int, int, double) const",
+                    as: ((Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Double) -> Double)
+                        .self
+                )
+            )
         )
         let result = try unsafe many.unsafeInvoke(1, 2, 3, 4, 5, 6, 7, 8, 2)
         #expect(result == 102)
@@ -181,7 +199,7 @@ struct CXXObjectInvocationTests {
         var method: NativeBoundCXXMethod<BorrowedCounterValue>? = try ABIRuntime.shared.cxxObject(
             storage!,
             typeNamed: "ABICXXFixture::Counter"
-        ).resolveMethodAndWait(named: "address()", as: (() -> BorrowedCounterValue).self)
+        ).resolveAndWait(.cxx(.method("address()", as: (() -> BorrowedCounterValue).self)))
         var result: BorrowedCounterValue? = try unsafe method!.unsafeInvoke()
         storage = nil
         method = nil
@@ -198,10 +216,14 @@ struct CXXObjectInvocationTests {
         let adapter = try ABIRuntime.shared.resolveAndWait(
             .init(name: "ABICXXTransformAdapter", language: .c)
         )
-        let method = try object.resolveMethodAndWait(
-            named: "transform(ABICXXFixture::Token) const",
-            as: ((CXXToken) -> CXXToken).self,
-            using: adapter
+        let method = try object.resolveAndWait(
+            .cxx(
+                .method(
+                    "transform(ABICXXFixture::Token) const",
+                    as: ((CXXToken) -> CXXToken).self,
+                    using: adapter
+                )
+            )
         )
         var input: CXXToken? = try CXXToken(7)
         var result: CXXToken? = try unsafe method.unsafeInvoke(input!)
@@ -226,10 +248,14 @@ struct CXXObjectInvocationTests {
             .init(name: "ABICXXFixtureData", language: .c, kind: .data)
         )
         #expect(throws: ABIResolutionError.self) {
-            _ = try object.resolveMethodAndWait(
-                named: "current() const",
-                as: (() -> Int32).self,
-                using: data
+            _ = try object.resolveAndWait(
+                .cxx(
+                    .method(
+                        "current() const",
+                        as: (() -> Int32).self,
+                        using: data
+                    )
+                )
             )
         }
     }
@@ -246,9 +272,13 @@ struct CXXObjectInvocationTests {
             release: { ABICXXDeleteDerived($0) }
         )
         let primary = ABIRuntime.shared.cxxObject(storage, typeNamed: "ABICXXFixture::Base")
-        let direct = try primary.resolveMethodAndWait(
-            named: "value() const",
-            as: (() -> Int32).self
+        let direct = try primary.resolveAndWait(
+            .cxx(
+                .method(
+                    "value() const",
+                    as: (() -> Int32).self
+                )
+            )
         )
         #expect(try unsafe direct.unsafeInvoke() == 10)
         let table = try unsafe NativeVTable(
@@ -256,11 +286,17 @@ struct CXXObjectInvocationTests {
             entryCount: 1,
             authentication: .cxxVTablePointer(discriminator: ABICXXBaseVTableDiscriminator())
         )
-        let virtual = try unsafe await primary.resolveVirtualMethod(
-            at: 0,
-            in: table,
-            authentication: .cxxVirtualFunction(discriminator: ABICXXBaseSlotDiscriminator()),
-            as: (() -> Int32).self
+        let virtual = try unsafe await primary.resolve(
+            .cxx(
+                .virtualMethod(
+                    at: 0,
+                    in: table,
+                    authentication: .cxxVirtualFunction(
+                        discriminator: ABICXXBaseSlotDiscriminator()
+                    ),
+                    as: (() -> Int32).self
+                )
+            )
         )
         #expect(try unsafe virtual.unsafeInvoke() == ABICXXBaseOracle(address))
         let offset = ABICXXSecondaryOffset(address)
@@ -274,9 +310,13 @@ struct CXXObjectInvocationTests {
             )
         )
         let secondary = ABIRuntime.shared.cxxObject(view, typeNamed: "ABICXXFixture::Secondary")
-        let other = try secondary.resolveMethodAndWait(
-            named: "other() const",
-            as: (() -> Int32).self
+        let other = try secondary.resolveAndWait(
+            .cxx(
+                .method(
+                    "other() const",
+                    as: (() -> Int32).self
+                )
+            )
         )
         #expect(try unsafe other.unsafeInvoke() == 20)
         let secondaryTable = try unsafe NativeVTable(
@@ -284,11 +324,17 @@ struct CXXObjectInvocationTests {
             entryCount: 1,
             authentication: .cxxVTablePointer(discriminator: ABICXXSecondaryVTableDiscriminator())
         )
-        let secondaryVirtual = try unsafe secondary.resolveVirtualMethodAndWait(
-            at: 0,
-            in: secondaryTable,
-            authentication: .cxxVirtualFunction(discriminator: ABICXXSecondarySlotDiscriminator()),
-            as: (() -> Int32).self
+        let secondaryVirtual = try unsafe secondary.resolveAndWait(
+            .cxx(
+                .virtualMethod(
+                    at: 0,
+                    in: secondaryTable,
+                    authentication: .cxxVirtualFunction(
+                        discriminator: ABICXXSecondarySlotDiscriminator()
+                    ),
+                    as: (() -> Int32).self
+                )
+            )
         )
         #expect(try unsafe secondaryVirtual.unsafeInvoke() == ABICXXSecondaryOracle(address))
     }
@@ -316,14 +362,19 @@ struct CXXObjectInvocationTests {
             entryCount: 1,
             retaining: owner
         )
-        var method: NativeBoundCXXMethod<Int32>? = try unsafe object.resolveVirtualMethodAndWait(
-            at: 0,
-            in: table!,
-            authentication: .cxxVirtualFunction(discriminator: ABICXXBaseSlotDiscriminator()),
-            as: (() -> Int32).self
+        var request: NativeRequest<NativeCXXVirtualMethodRequest<Int32>>? = .cxx(
+            .virtualMethod(
+                at: 0,
+                in: table!,
+                authentication: .cxxVirtualFunction(discriminator: ABICXXBaseSlotDiscriminator()),
+                as: (() -> Int32).self
+            )
         )
         owner = nil
         table = nil
+        #expect(weakOwner != nil)
+        var method: NativeBoundCXXMethod<Int32>? = try unsafe object.resolveAndWait(request!)
+        request = nil
         #expect(weakOwner != nil)
         #expect(try unsafe method!.unsafeInvoke() == 110)
         method = nil
@@ -339,29 +390,38 @@ struct CXXObjectInvocationTests {
             try unsafe NativeVTable(borrowing: $0.baseAddress!, entryCount: 1, retaining: cell)
         }
         let object = ABIRuntime.shared.cxxObject(cell, typeNamed: "Unused")
-        #expect(throws: NativeDispatchError.entryOutOfBounds(index: 1, count: 1)) {
-            try unsafe object.resolveVirtualMethodAndWait(
+        let pastEnd = NativeRequest.cxx(
+            .virtualMethod(
                 at: 1,
                 in: table,
                 authentication: .unsigned,
                 as: (() -> Void).self
             )
+        )
+        #expect(throws: NativeDispatchError.entryOutOfBounds(index: 1, count: 1)) {
+            try unsafe object.resolveAndWait(pastEnd)
         }
-        #expect(throws: NativeDispatchError.entryOutOfBounds(index: -1, count: 1)) {
-            try unsafe object.resolveVirtualMethodAndWait(
+        let negative = NativeRequest.cxx(
+            .virtualMethod(
                 at: -1,
                 in: table,
                 authentication: .unsigned,
                 as: (() -> Void).self
             )
+        )
+        #expect(throws: NativeDispatchError.entryOutOfBounds(index: -1, count: 1)) {
+            try unsafe object.resolveAndWait(negative)
         }
-        #expect(throws: (any Error).self) {
-            try unsafe object.resolveVirtualMethodAndWait(
+        let null = NativeRequest.cxx(
+            .virtualMethod(
                 at: 0,
                 in: table,
                 authentication: .unsigned,
                 as: (() -> Void).self
             )
+        )
+        #expect(throws: (any Error).self) {
+            try unsafe object.resolveAndWait(null)
         }
         _ = unsafe cell.withUnsafeBytes { bytes in
             #expect(throws: NativeDispatchError.invalidEntryCount(Int.max)) {

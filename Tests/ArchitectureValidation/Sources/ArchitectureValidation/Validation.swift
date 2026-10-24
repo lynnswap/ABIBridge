@@ -137,9 +137,13 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
                         onFailure: { errors.append($0) }
                     ) { call in try call.proceed() }
                     defer { hook.invalidate() }
-                    let method = try unsafe object.resolveVirtualMethodAndWait(
-                        entry,
-                        as: (() -> UnsafeMutableRawPointer?).self
+                    let method = try unsafe object.resolveAndWait(
+                        .cxx(
+                            .virtualMethod(
+                                entry,
+                                as: (() -> UnsafeMutableRawPointer?).self
+                            )
+                        )
                     )
                     try check(
                         try unsafe method.unsafeInvoke() == receiver,
@@ -151,9 +155,13 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
                         onFailure: { errors.append($0) }
                     ) { call, value in try call.proceed(value + 1) + 10 }
                     defer { hook.invalidate() }
-                    let method = try unsafe object.resolveVirtualMethodAndWait(
-                        entry,
-                        as: ((Int32) -> Int32).self
+                    let method = try unsafe object.resolveAndWait(
+                        .cxx(
+                            .virtualMethod(
+                                entry,
+                                as: ((Int32) -> Int32).self
+                            )
+                        )
                     )
                     try check(
                         try unsafe method.unsafeInvoke(2) == (kind == 0 ? 53 : 73),
@@ -203,18 +211,26 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
                 typeNamed: "ABIVTable::Derived"
             )
             if slot == 1 {
-                let method = try unsafe object.resolveVirtualMethodAndWait(
-                    entry,
-                    as: (() -> UnsafeMutableRawPointer?).self
+                let method = try unsafe object.resolveAndWait(
+                    .cxx(
+                        .virtualMethod(
+                            entry,
+                            as: (() -> UnsafeMutableRawPointer?).self
+                        )
+                    )
                 )
                 try check(
                     try unsafe method.unsafeInvoke() == receiver,
                     "Named covariant thunk preserves the secondary return pointer"
                 )
             } else {
-                let method = try unsafe object.resolveVirtualMethodAndWait(
-                    entry,
-                    as: ((Int32) -> Int32).self
+                let method = try unsafe object.resolveAndWait(
+                    .cxx(
+                        .virtualMethod(
+                            entry,
+                            as: ((Int32) -> Int32).self
+                        )
+                    )
                 )
                 try check(
                     try unsafe method.unsafeInvoke(2) == (kind == 0 ? 42 : 62),
@@ -659,7 +675,9 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
             release: { ABIValidationDeleteCounter($0) }
         )
         let object = runtime.cxxObject(storage, typeNamed: "ABIArchitecture::Counter")
-        let method = try object.resolveMethodAndWait(named: "add(int)", as: ((Int32) -> Int32).self)
+        let method = try object.resolveAndWait(
+            .cxx(.method("add(int)", as: ((Int32) -> Int32).self))
+        )
         let directResult = try unsafe method.unsafeInvoke(2)
         try check(
             directResult == 42 && directResult == ABIValidationCounterOracle(address),
@@ -670,11 +688,17 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
             entryCount: 1,
             authentication: .cxxVTablePointer(discriminator: ABIValidationTableDiscriminator())
         )
-        let virtual = try unsafe object.resolveVirtualMethodAndWait(
-            at: 0,
-            in: table,
-            authentication: .cxxVirtualFunction(discriminator: ABIValidationSlotDiscriminator()),
-            as: (() -> Int32).self
+        let virtual = try unsafe object.resolveAndWait(
+            .cxx(
+                .virtualMethod(
+                    at: 0,
+                    in: table,
+                    authentication: .cxxVirtualFunction(
+                        discriminator: ABIValidationSlotDiscriminator()
+                    ),
+                    as: (() -> Int32).self
+                )
+            )
         )
         try check(
             try unsafe virtual.unsafeInvoke() == ABIValidationCounterOracle(address),
@@ -683,10 +707,14 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         let adapter = try runtime.resolveAndWait(
             .init(name: "ABIValidationCounterAdapter", language: .c)
         )
-        let adapted = try object.resolveMethodAndWait(
-            named: "add(int)",
-            as: ((Int32) -> Int32).self,
-            using: adapter
+        let adapted = try object.resolveAndWait(
+            .cxx(
+                .method(
+                    "add(int)",
+                    as: ((Int32) -> Int32).self,
+                    using: adapter
+                )
+            )
         )
         let adaptedResult = try unsafe adapted.unsafeInvoke(3)
         try check(
