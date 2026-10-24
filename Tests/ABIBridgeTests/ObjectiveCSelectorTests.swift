@@ -94,32 +94,28 @@ struct ObjectiveCSelectorTests {
         let token: NativeObjCMethodHook
         switch path {
         case 0:
-            token = try unsafe runtime.hookMethod(
+            token = try unsafe runtime.hookCalls(
+                .objc(.method(selector, as: ((Int) -> Int).self)),
                 on: SelectorReceiver.self,
-                selector: selector,
-                as: ((Int) -> Int).self,
                 onFailure: { Issue.record($0) },
                 body: body
             )
         case 1:
-            token = try unsafe runtime.hookMainActorMethod(
+            token = try unsafe runtime.hookMainActorCalls(
+                .objc(.method(selector, as: ((Int) -> Int).self)),
                 on: SelectorReceiver.self,
-                selector: selector,
-                as: ((Int) -> Int).self,
                 onFailure: { Issue.record($0) },
                 body: actorBody
             )
         case 2:
-            token = try unsafe runtime.object(receiver).hookMethod(
-                selector: selector,
-                as: ((Int) -> Int).self,
+            token = try unsafe runtime.object(receiver).hookCalls(
+                .objc(.method(selector, as: ((Int) -> Int).self)),
                 onFailure: { Issue.record($0) },
                 body: body
             )
         case 3:
-            token = try unsafe runtime.object(receiver).hookMainActorMethod(
-                selector: selector,
-                as: ((Int) -> Int).self,
+            token = try unsafe runtime.object(receiver).hookMainActorCalls(
+                .objc(.method(selector, as: ((Int) -> Int).self)),
                 onFailure: { Issue.record($0) },
                 body: actorBody
             )
@@ -127,25 +123,22 @@ struct ObjectiveCSelectorTests {
             let request: NativeObjCHookRequest
             if path == 4 {
                 request = unsafe .method(
+                    .objc(.method(selector, as: ((Int) -> Int).self)),
                     on: SelectorReceiver.self,
-                    selector: selector,
-                    as: ((Int) -> Int).self,
                     onFailure: { Issue.record($0) },
                     body: body
                 )
             } else if path == 5 {
                 request = unsafe .mainActorMethod(
+                    .objc(.method(selector, as: ((Int) -> Int).self)),
                     on: SelectorReceiver.self,
-                    selector: selector,
-                    as: ((Int) -> Int).self,
                     onFailure: { Issue.record($0) },
                     body: actorBody
                 )
             } else {
                 request = unsafe .objectMethod(
+                    .objc(.method(selector, as: ((Int) -> Int).self)),
                     on: receiver,
-                    selector: selector,
-                    as: ((Int) -> Int).self,
                     onFailure: { Issue.record($0) },
                     body: body
                 )
@@ -177,17 +170,15 @@ struct ObjectiveCSelectorTests {
         switch path {
         case 0:
             token = try unsafe runtime.hookInitializer(
+                .objc(.method(selector, as: ((Int) -> SelectorReceiver).self)),
                 on: SelectorReceiver.self,
-                selector: selector,
-                as: ((Int) -> SelectorReceiver).self,
                 onFailure: { Issue.record($0) },
                 after: after
             )
         case 1:
             token = try unsafe runtime.hookMainActorInitializer(
+                .objc(.method(selector, as: ((Int) -> SelectorReceiver).self)),
                 on: SelectorReceiver.self,
-                selector: selector,
-                as: ((Int) -> SelectorReceiver).self,
                 onFailure: { Issue.record($0) },
                 after: actorAfter
             )
@@ -195,17 +186,15 @@ struct ObjectiveCSelectorTests {
             let request: NativeObjCHookRequest
             if path == 2 {
                 request = unsafe .initializer(
+                    .objc(.method(selector, as: ((Int) -> SelectorReceiver).self)),
                     on: SelectorReceiver.self,
-                    selector: selector,
-                    as: ((Int) -> SelectorReceiver).self,
                     onFailure: { Issue.record($0) },
                     after: after
                 )
             } else {
                 request = unsafe .mainActorInitializer(
+                    .objc(.method(selector, as: ((Int) -> SelectorReceiver).self)),
                     on: SelectorReceiver.self,
-                    selector: selector,
-                    as: ((Int) -> SelectorReceiver).self,
                     onFailure: { Issue.record($0) },
                     after: actorAfter
                 )

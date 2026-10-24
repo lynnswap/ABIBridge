@@ -22,7 +22,7 @@ public struct NativeImportedImageUpdate: Sendable {
     /// Installation or removal outcome when this value was produced.
     public let state: State
 
-    init(_ value: ABIImportedImageUpdate) {
+    init(_ value: ABIImportedImageUpdate, declaration: NativeDeclaration) {
         let snapshot = ImageSnapshot(value.image)
         image = snapshot.identity; path = snapshot.path
         switch value.state {
@@ -31,7 +31,7 @@ public struct NativeImportedImageUpdate: Sendable {
         case Int32(ABIImportedImageNoMatch): state = .noMatchingImports
         case Int32(ABIImportedImageRemoved): state = .removed
         default:
-            let error = importedHookFailure(value.failure!)
+            let error = importedHookFailure(value.failure!, declaration: declaration)
             if let handle = value.hook {
                 let hook = NativeImportedFunctionHook(ABIRetainImportedHook(handle)!)
                 let index = ABIImportedHookGetFailedIndex(handle)
@@ -52,14 +52,20 @@ public struct NativeImportedImageUpdate: Sendable {
 /// Owns asynchronous registration on current and subsequently loaded images. Drop the last owner or call `invalidate()` to stop applying its callback. Each acquirable selected load is attempted once; per-image failures remain observable. Images still initializing are acquired asynchronously when ready.
 public final class NativeImportedFunctionMonitor: @unchecked Sendable {
     let handle: OpaquePointer
-    init(_ handle: OpaquePointer) { self.handle = handle }
+    let declaration: NativeDeclaration
+    init(_ handle: OpaquePointer, declaration: NativeDeclaration) {
+        self.handle = handle; self.declaration = declaration
+    }
 
     /// Copies the latest observed selected-image outcomes. Active monitors prune removed generations; invalidated monitors keep their final snapshot. Short-lived images can disappear before observation, so this is not an exhaustive event history.
     public var images: [NativeImportedImageUpdate] {
         let snapshot = ABIImportedHookMonitorCopyImages(handle)!
         defer { ABIReleaseImportedImageList(snapshot) }
         return (0..<ABIImportedImageListGetCount(snapshot)).map {
-            NativeImportedImageUpdate(ABIImportedImageListGetImage(snapshot, $0))
+            NativeImportedImageUpdate(
+                ABIImportedImageListGetImage(snapshot, $0),
+                declaration: declaration
+            )
         }
     }
 
@@ -70,12 +76,14 @@ public final class NativeImportedFunctionMonitor: @unchecked Sendable {
 
 private final class ImportedMonitorCallbacks {
     let callback: FunctionCallbackBox
+    let declaration: NativeDeclaration
     let update: @Sendable (NativeImportedImageUpdate) -> Void
     init(
         _ callback: FunctionCallbackBox,
+        declaration: NativeDeclaration,
         update: @escaping @Sendable (NativeImportedImageUpdate) -> Void
     ) {
-        self.callback = callback; self.update = update
+        self.callback = callback; self.update = update; self.declaration = declaration
     }
 }
 
@@ -84,10 +92,38 @@ extension ABIRuntime {
     ///
     /// Initial and subsequent image application runs asynchronously, with results delivered to `onImageUpdate` on a serial queue. An unloaded explicit scope is valid. Neither selector loads missing images. Updates may begin before this method returns. Installation failures do not stop other images.
     ///
-    /// Invocation callbacks and `onFailure` retain the calling-thread and C ABI contracts of `hookImportedFunction`. Constructor calls and calls made before asynchronous application completes are not guaranteed interception. An unresolved lazy import can fail its one attempt for that generation; bind it normally before creating a new monitor to retry.
-    @unsafe public func monitorImportedFunction<Result, each Argument>(
-        _ declaration: NativeDeclaration,
-        as signature: ((repeat each Argument) -> Result).Type,
+    /// Invocation callbacks and `onFailure` retain the calling-thread and C ABI contracts of `hookImportedCalls`. Constructor calls and calls made before asynchronous application completes are not guaranteed interception. An unresolved lazy import can fail its one attempt for that generation; bind it normally before creating a new monitor to retry.
+    ///
+    /// Registration preparation runs on a worker without blocking the caller's executor. The request must describe a fixed signature.
+    @unsafe public nonisolated func monitorImportedCalls<Result, each Argument>(
+        _ request: NativeRequest<NativeFunctionRequest<Result, repeat each Argument>>,
+        in importer: ImageSelector,
+        from provider: ImageSelector? = nil,
+        onFailure: @escaping @Sendable (any Error) -> Void,
+        onImageUpdate: @escaping @Sendable (NativeImportedImageUpdate) -> Void,
+        body:
+            @escaping @Sendable (
+                NativeImportedFunctionInvocation<Result, repeat each Argument>, repeat each Argument
+            ) throws -> Result
+    ) async throws -> NativeImportedFunctionMonitor {
+        try await NativePreparation.run {
+            try unsafe self.monitorImportedCallsAndWait(
+                request,
+                in: importer,
+                from: provider,
+                onFailure: onFailure,
+                onImageUpdate: onImageUpdate,
+                body: body
+            )
+        }
+    }
+
+    /// Prepares an imported-call registration synchronously on the caller's thread.
+    ///
+    /// Image selection, incoming-thread callbacks, lifetime, and failures follow
+    /// `monitorImportedCalls`. Returning does not wait for asynchronous image application.
+    @unsafe public nonisolated func monitorImportedCallsAndWait<Result, each Argument>(
+        _ request: NativeRequest<NativeFunctionRequest<Result, repeat each Argument>>,
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
@@ -97,6 +133,13 @@ extension ABIRuntime {
                 NativeImportedFunctionInvocation<Result, repeat each Argument>, repeat each Argument
             ) throws -> Result
     ) throws -> NativeImportedFunctionMonitor {
+        let declaration = request.declaration.nativeDeclaration
+        let signature = ((repeat each Argument) -> Result).self
+        guard request.declaration.variadicFrom == nil else {
+            throw ABIResolutionError.unsupportedDeclaration(
+                "Imported-call hooks require a fixed C ABI signature."
+            )
+        }
         let query = try withRuntimeErrors {
             try RuntimeImportedFunctionQuery(
                 declaration: declaration.runtimeValue,
@@ -111,7 +154,7 @@ extension ABIRuntime {
             body: body
         )
         let context = Unmanaged.passRetained(
-            ImportedMonitorCallbacks(callback, update: onImageUpdate)
+            ImportedMonitorCallbacks(callback, declaration: declaration, update: onImageUpdate)
         ).toOpaque()
         let parameters: [OpaquePointer?] = callback.parameters.map(\.handle)
         var error: OpaquePointer?
@@ -132,11 +175,14 @@ extension ABIRuntime {
                     },
                     { context, error in
                         Unmanaged<ImportedMonitorCallbacks>.fromOpaque(context!)
-                            .takeUnretainedValue().callback.failure(importedHookFailure(error!))
+                            .takeUnretainedValue().callback.reportNativeFailure(error!)
                     },
                     { context, update in
-                        Unmanaged<ImportedMonitorCallbacks>.fromOpaque(context!)
-                            .takeUnretainedValue().update(NativeImportedImageUpdate(update))
+                        let callbacks = Unmanaged<ImportedMonitorCallbacks>.fromOpaque(context!)
+                            .takeUnretainedValue()
+                        callbacks.update(
+                            NativeImportedImageUpdate(update, declaration: callbacks.declaration)
+                        )
                     },
                     { context in Unmanaged<ImportedMonitorCallbacks>.fromOpaque(context!).release()
                     },
@@ -144,7 +190,7 @@ extension ABIRuntime {
                 )
             }
         }
-        guard let handle else { throw consumeNativeCallFailure(error) }
-        return NativeImportedFunctionMonitor(handle)
+        guard let handle else { throw consumeImportedHookFailure(error, declaration: declaration) }
+        return NativeImportedFunctionMonitor(handle, declaration: declaration)
     }
 }

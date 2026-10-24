@@ -43,7 +43,6 @@ private final class ImportHookFixture {
 }
 
 private final class HookSentinel: @unchecked Sendable {}
-private enum HookFailure: Error { case expected }
 
 @Suite(.serialized)
 struct ImportedFunctionHookTests {
@@ -52,9 +51,8 @@ struct ImportedFunctionHookTests {
         let runtime = ABIRuntime(), call = try await fixture.call(ABIRuntime())
         let errors = Mutex<[String]>([])
         let expectedDeclaration = fixture.declaration
-        let first = try await unsafe runtime.hookImportedFunction(
-            fixture.declaration,
-            as: ((Int32, Int32) -> Int32).self,
+        let first = try await unsafe runtime.hookImportedCalls(
+            .cxx(.function(fixture.declaration.name, as: ((Int32, Int32) -> Int32).self)),
             in: fixture.scope,
             onFailure: { e in errors.withLock { $0.append(String(describing: e)) } }
         ) { call, a, b in
@@ -65,9 +63,8 @@ struct ImportedFunctionHookTests {
             #expect(call.description.contains(expectedDeclaration.name))
             return try call.proceed(a, b) + 1
         }
-        let second = try await unsafe runtime.hookImportedFunction(
-            fixture.declaration,
-            as: ((Int32, Int32) -> Int32).self,
+        let second = try await unsafe runtime.hookImportedCalls(
+            .cxx(.function(fixture.declaration.name, as: ((Int32, Int32) -> Int32).self)),
             in: fixture.scope,
             from: .path(fixture.provider.libraryURL),
             onFailure: { Issue.record($0) }
@@ -84,16 +81,16 @@ struct ImportedFunctionHookTests {
         let fixture = try ImportHookFixture(); defer { fixture.cleanup() }
         let runtime = ABIRuntime(), call = try await fixture.call(ABIRuntime())
         let failures = Mutex(0)
-        let hook = try await unsafe runtime.hookImportedFunction(
-            fixture.declaration,
-            as: ((Int32, Int32) -> Int32).self,
+        let expected = NSError(domain: "UserHookFailure", code: 42)
+        let hook = try await unsafe runtime.hookImportedCalls(
+            .cxx(.function(fixture.declaration.name, as: ((Int32, Int32) -> Int32).self)),
             in: fixture.scope,
             onFailure: { error in
-                #expect(error is HookFailure)
+                #expect(error as NSError === expected)
                 failures.withLock { $0 += 1 }
             }
         ) { call, a, b in
-            if a > 0 { _ = try call.proceed(a, b) }; throw HookFailure.expected
+            if a > 0 { _ = try call.proceed(a, b) }; throw expected
         }
         #expect(try unsafe call.unsafeInvoke(20, 22) == 42)
         #expect(try unsafe call.unsafeInvoke(-1, 43) == 42)
@@ -113,9 +110,8 @@ struct ImportedFunctionHookTests {
         let hook: NativeImportedFunctionHook
         do {
             let sentinel = HookSentinel(); weakSentinel = sentinel
-            hook = try await unsafe runtime.hookImportedFunction(
-                fixture.declaration,
-                as: ((Int32, Int32) -> Int32).self,
+            hook = try await unsafe runtime.hookImportedCalls(
+                .cxx(.function(fixture.declaration.name, as: ((Int32, Int32) -> Int32).self)),
                 in: fixture.scope,
                 onFailure: { Issue.record($0) }
             ) { call, a, b in
@@ -133,9 +129,8 @@ struct ImportedFunctionHookTests {
         #expect(saved(20, 21) == 42 && weakSentinel != nil)
         hook.invalidate(); hook.invalidate()
         #expect(weakSentinel == nil && saved(20, 22) == 42)
-        let next = try await unsafe runtime.hookImportedFunction(
-            fixture.declaration,
-            as: ((Int32, Int32) -> Int32).self,
+        let next = try await unsafe runtime.hookImportedCalls(
+            .cxx(.function(fixture.declaration.name, as: ((Int32, Int32) -> Int32).self)),
             in: fixture.scope,
             onFailure: { Issue.record($0) }
         ) { call, a, b in try call.proceed(a, b) + 2 }
@@ -151,9 +146,8 @@ struct ImportedFunctionHookTests {
             var call: NativeImportedFunctionInvocation<Int32, Int32, Int32>?
         }
         let saved = Saved()
-        let hook = try await unsafe runtime.hookImportedFunction(
-            fixture.declaration,
-            as: ((Int32, Int32) -> Int32).self,
+        let hook = try await unsafe runtime.hookImportedCalls(
+            .cxx(.function(fixture.declaration.name, as: ((Int32, Int32) -> Int32).self)),
             in: fixture.scope,
             onFailure: { Issue.record($0) }
         ) { invocation, a, b in
@@ -183,9 +177,8 @@ struct ImportedFunctionHookTests {
             in: fixture.scope
         )
         let original = unsafe slot.withUnsafeAddress { $0.load(as: UInt.self) }
-        let hook = try await unsafe runtime.hookImportedFunction(
-            fixture.declaration,
-            as: ((Int32, Int32) -> Int32).self,
+        let hook = try await unsafe runtime.hookImportedCalls(
+            .cxx(.function(fixture.declaration.name, as: ((Int32, Int32) -> Int32).self)),
             in: fixture.scope,
             onFailure: { Issue.record($0) }
         ) { call, a, b in try call.proceed(a, b) + 1 }
@@ -200,22 +193,25 @@ struct ImportedFunctionHookTests {
     @Test func rejectsAConflictingSignatureWithoutChangingEarlierHooks() async throws {
         let fixture = try ImportHookFixture(); defer { fixture.cleanup() }
         let runtime = ABIRuntime(), call = try await fixture.call(ABIRuntime())
-        let hook = try await unsafe runtime.hookImportedFunction(
-            fixture.declaration,
-            as: ((Int32, Int32) -> Int32).self,
+        let hook = try await unsafe runtime.hookImportedCalls(
+            .cxx(.function(fixture.declaration.name, as: ((Int32, Int32) -> Int32).self)),
             in: fixture.scope,
             onFailure: { Issue.record($0) }
         ) { call, a, b in try call.proceed(a, b) + 1 }
         do {
-            _ = try await unsafe runtime.hookImportedFunction(
-                fixture.declaration,
-                as: ((Int64, Int64) -> Int64).self,
+            _ = try await unsafe runtime.hookImportedCalls(
+                .cxx(.function(fixture.declaration.name, as: ((Int64, Int64) -> Int64).self)),
                 in: fixture.scope,
                 onFailure: { Issue.record($0) }
             ) { call, a, b in try call.proceed(a, b) }
             Issue.record("Expected signature mismatch")
         } catch let error as NativeImportedHookInstallationError {
             #expect(error.failedIndex == 0)
+            guard case ABIResolutionError.signatureMismatch(let mismatch) = error.underlyingError
+            else {
+                Issue.record("Expected preserved signature-mismatch category"); return
+            }
+            #expect(mismatch.declaration == fixture.declaration)
         }
         #expect(try unsafe call.unsafeInvoke(20, 21) == 42)
         hook.invalidate()
@@ -229,9 +225,8 @@ struct ImportedFunctionHookTests {
         let hook: NativeImportedFunctionHook
         do {
             let sentinel = HookSentinel(); observed = sentinel
-            hook = try await unsafe runtime.hookImportedFunction(
-                fixture.declaration,
-                as: ((Int32, Int32) -> Int32).self,
+            hook = try await unsafe runtime.hookImportedCalls(
+                .cxx(.function(fixture.declaration.name, as: ((Int32, Int32) -> Int32).self)),
                 in: fixture.scope,
                 onFailure: { Issue.record($0) }
             ) { next, a, b in
@@ -298,9 +293,8 @@ struct ImportedFunctionHookTests {
         }
         let runtime = ABIRuntime()
         do {
-            let hooks = try await unsafe runtime.hookImportedFunction(
-                fixture.declaration,
-                as: ((Int32, Int32) -> Int32).self,
+            let hooks = try await unsafe runtime.hookImportedCalls(
+                .cxx(.function(fixture.declaration.name, as: ((Int32, Int32) -> Int32).self)),
                 in: .framework(named: framework),
                 onFailure: { Issue.record($0) }
             ) { next, a, b in try next.proceed(a, b) + 1 }
@@ -317,17 +311,15 @@ struct ImportedFunctionHookTests {
             #expect(
                 error.registration.slots[failed].mutation.systemErrorCode == KERN_PROTECTION_FAILURE
             )
-            let retry = try await unsafe runtime.hookImportedFunction(
-                fixture.declaration,
-                as: ((Int32, Int32) -> Int32).self,
+            let retry = try await unsafe runtime.hookImportedCalls(
+                .cxx(.function(fixture.declaration.name, as: ((Int32, Int32) -> Int32).self)),
                 in: .path(paths[0]),
                 onFailure: { Issue.record($0) }
             ) { next, a, b in try next.proceed(a, b) + 1 }
             #expect(retry.slots.allSatisfy { $0.status == .active })
             do {
-                _ = try await unsafe runtime.hookImportedFunction(
-                    fixture.declaration,
-                    as: ((Int32, Int32) -> Int32).self,
+                _ = try await unsafe runtime.hookImportedCalls(
+                    .cxx(.function(fixture.declaration.name, as: ((Int32, Int32) -> Int32).self)),
                     in: .framework(named: framework),
                     onFailure: { Issue.record($0) }
                 ) { next, a, b in try next.proceed(a, b) + 2 }
@@ -366,15 +358,33 @@ struct ImportedFunctionHookTests {
         )
         defer { consumer.cleanup() }
         let runtime = ABIRuntime(), scope = ImageSelector.path(consumer.libraryURL)
-        let narrow = try await unsafe runtime.hookImportedFunction(
-            .init(name: "ABIImportedNarrow", language: .c),
-            as: ((Int8) -> Int8).self,
+        let narrowRequest = NativeRequest.c(
+            .function(linkerName: "ABIImportedNarrow", as: ((Int8) -> Int8).self)
+        )
+        let sizeRequest = NativeRequest.c(
+            .function(machOName: "_ABIImportedSize", as: ((CGSize) -> CGSize).self)
+        )
+        let nativeNarrow = try runtime.resolveAndWait(narrowRequest, in: .path(provider.libraryURL))
+        let nativeSize = try await runtime.resolve(sizeRequest, in: .path(provider.libraryURL))
+        #expect(try unsafe nativeNarrow.unsafeInvoke(-41) == -41)
+        #expect(
+            try unsafe nativeSize.unsafeInvoke(CGSize(width: 40, height: 39))
+                == CGSize(width: 41, height: 41)
+        )
+        #expect(throws: ABIResolutionError.self) {
+            try unsafe runtime.hookImportedCallsAndWait(
+                .c(.function("ABIImportedNarrow", as: ((Int8) -> Int8).self, variadicFrom: 0)),
+                in: scope,
+                onFailure: { Issue.record($0) }
+            ) { next, value in try next.proceed(value) }
+        }
+        let narrow = try unsafe runtime.hookImportedCallsAndWait(
+            narrowRequest,
             in: scope,
             onFailure: { Issue.record($0) }
         ) { call, value in try call.proceed(value) - 1 }
-        let size = try await unsafe runtime.hookImportedFunction(
-            .init(name: "ABIImportedSize", language: .c),
-            as: ((CGSize) -> CGSize).self,
+        let size = try await unsafe runtime.hookImportedCalls(
+            sizeRequest,
             in: scope,
             onFailure: { Issue.record($0) }
         ) { call, value in
@@ -420,9 +430,8 @@ struct ImportedFunctionHookTests {
         let runtime = ABIRuntime(), scope = ImageSelector.path(consumer.libraryURL)
         let query = NativeDeclaration(name: "\(namespace)::value(int)", language: .cxx)
         do {
-            let first = try await unsafe runtime.hookImportedFunction(
-                query,
-                as: ((Int32) -> Int32).self,
+            let first = try await unsafe runtime.hookImportedCalls(
+                .cxx(.function(query.name, as: ((Int32) -> Int32).self)),
                 in: scope,
                 onFailure: { Issue.record($0) }
             ) { call, value in try call.proceed(value) + 1 }
@@ -440,9 +449,8 @@ struct ImportedFunctionHookTests {
             in: scope
         )
         #expect(try unsafe call.unsafeInvoke(42) == 42)
-        let hook = try await unsafe runtime.hookImportedFunction(
-            query,
-            as: ((Int32) -> Int32).self,
+        let hook = try await unsafe runtime.hookImportedCalls(
+            .cxx(.function(query.name, as: ((Int32) -> Int32).self)),
             in: scope,
             onFailure: { Issue.record($0) }
         ) { next, value in try next.proceed(value) + 1 }
@@ -455,9 +463,8 @@ struct ImportedFunctionHookTests {
         let fixture = try ImportHookFixture(); defer { fixture.cleanup() }
         let runtime = ABIRuntime(), call = try await fixture.call(ABIRuntime())
         let owner = Mutex<NativeImportedFunctionHook?>(nil)
-        let hook = try await unsafe runtime.hookImportedFunction(
-            fixture.declaration,
-            as: ((Int32, Int32) -> Int32).self,
+        let hook = try await unsafe runtime.hookImportedCalls(
+            .cxx(.function(fixture.declaration.name, as: ((Int32, Int32) -> Int32).self)),
             in: fixture.scope,
             onFailure: { Issue.record($0) }
         ) { next, a, b in
@@ -478,9 +485,8 @@ struct ImportedFunctionHookTests {
         let hooks = try await withThrowingTaskGroup(of: NativeImportedFunctionHook.self) { group in
             for _ in 0..<8 {
                 group.addTask {
-                    try await unsafe ABIRuntime().hookImportedFunction(
-                        declaration,
-                        as: ((Int32, Int32) -> Int32).self,
+                    try await unsafe ABIRuntime().hookImportedCalls(
+                        .cxx(.function(declaration.name, as: ((Int32, Int32) -> Int32).self)),
                         in: scope,
                         onFailure: { Issue.record($0) }
                     ) { next, a, b in try next.proceed(a, b) + 1 }

@@ -166,11 +166,9 @@ import UIKit
             "Unmanaged Core Foundation references use their native pointer representation"
         )
         let failures = AggregateHookFailures()
-        let hook = try unsafe runtime.hookMethod(
+        let hook = try unsafe runtime.hookCalls(
+            .objc(.method("consume:", as: ((NSObject?) -> Int).self, options: options)),
             on: ABIValidationOwnershipFixture.self,
-            selector: "consume:",
-            as: ((NSObject?) -> Int).self,
-            options: options,
             onFailure: { failures.append($0) }
         ) { call, input in
             try call.proceed(input) + call.proceed(input)
@@ -298,10 +296,9 @@ import UIKit
         "NSDirectionalEdgeInsets shares the same generic structure path"
     )
     let failures = AggregateHookFailures()
-    let hook = try unsafe runtime.hookMethod(
+    let hook = try unsafe runtime.hookCalls(
+        .objc(.method("insets:", as: ((UIEdgeInsets) -> UIEdgeInsets).self)),
         on: InsetsReceiver.self,
-        selector: "insets:",
-        as: ((UIEdgeInsets) -> UIEdgeInsets).self,
         onFailure: { failures.append($0) }
     ) { call, value in
         var result = try call.proceed(value)

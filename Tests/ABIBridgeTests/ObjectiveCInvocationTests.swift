@@ -169,9 +169,8 @@ struct ObjectiveCInvocationTests {
         func prepare() throws {
             if coordinated {
                 let request = unsafe NativeObjCHookRequest.method(
+                    .objc(.method(selector, as: ((Double) -> Int64).self)),
                     on: Renderer.self,
-                    selector: selector,
-                    as: ((Double) -> Int64).self,
                     onFailure: { Issue.record($0) },
                     body: { call, value in try call.proceed(value) }
                 )
@@ -184,10 +183,9 @@ struct ObjectiveCInvocationTests {
                     throw error.underlyingError
                 }
             } else {
-                let token = try unsafe runtime.hookMethod(
+                let token = try unsafe runtime.hookCalls(
+                    .objc(.method(selector, as: ((Double) -> Int64).self)),
                     on: Renderer.self,
-                    selector: selector,
-                    as: ((Double) -> Int64).self,
                     onFailure: { Issue.record($0) },
                     body: { call, value in try call.proceed(value) }
                 )

@@ -43,11 +43,9 @@ struct ObjectiveCMethodHookTests {
         )
         #expect(try unsafe method.unsafeInvoke() === object.value)
         let calls = HookBox(0)
-        let hook = try unsafe runtime.hookMethod(
+        let hook = try unsafe runtime.hookCalls(
+            .objc(.method(selector, as: (() -> NSObject).self, options: options)),
             on: ABIAnnotatedHookFixture.self,
-            selector: selector,
-            as: (() -> NSObject).self,
-            options: options,
             onFailure: { Issue.record($0) }
         ) { call in
             calls.update { $0 += 1 }
@@ -60,20 +58,23 @@ struct ObjectiveCMethodHookTests {
 
     @Test func allocationDefaultsAndLifecycleOverridesRemainUnsupported() throws {
         #expect(throws: NativeObjCMethodHookError.unsupportedMethod) {
-            try unsafe runtime.hookMethod(
+            try unsafe runtime.hookCalls(
+                .objc(.method("alloc", as: (() -> NSObject).self)),
                 on: ABIAnnotatedHookFixture.self,
-                selector: "alloc",
-                as: (() -> NSObject).self,
                 classMethod: true,
                 onFailure: { Issue.record($0) }
             ) { call in try call.proceed() }
         }
         #expect(throws: NativeObjCMethodHookError.unsupportedMethod) {
-            try unsafe runtime.hookMethod(
+            try unsafe runtime.hookCalls(
+                .objc(
+                    .method(
+                        "dealloc",
+                        as: (() -> Void).self,
+                        options: .init(returnsRetainedObject: false, consumesReceiver: false)
+                    )
+                ),
                 on: ABIAnnotatedHookFixture.self,
-                selector: "dealloc",
-                as: (() -> Void).self,
-                options: .init(returnsRetainedObject: false, consumesReceiver: false),
                 onFailure: { Issue.record($0) }
             ) { call in try call.proceed() }
         }
@@ -82,10 +83,9 @@ struct ObjectiveCMethodHookTests {
     @Test func orderingMiddleRemovalAndStableEntry() throws {
         let trace = HookBox<[Int]>([])
         func install(_ number: Int, increment: Int32) throws -> NativeObjCMethodHook {
-            try unsafe runtime.hookMethod(
+            try unsafe runtime.hookCalls(
+                .objc(.method("add:to:", as: ((Int32, Int32) -> Int32).self)),
                 on: ABIManagedHookFixture.self,
-                selector: "add:to:",
-                as: ((Int32, Int32) -> Int32).self,
                 onFailure: { Issue.record($0) }
             ) { call, a, b in
                 trace.update { $0.append(number) }
@@ -120,10 +120,9 @@ struct ObjectiveCMethodHookTests {
     }
 
     @Test func ordinaryMethodsCanSkipOrRepeatContinuation() throws {
-        let hook = try unsafe runtime.hookMethod(
+        let hook = try unsafe runtime.hookCalls(
+            .objc(.method("add:to:", as: ((Int32, Int32) -> Int32).self)),
             on: ABIManagedHookFixture.self,
-            selector: "add:to:",
-            as: ((Int32, Int32) -> Int32).self,
             onFailure: { Issue.record($0) }
         ) { call, a, b in
             if a == 0 { return 99 }
@@ -136,19 +135,17 @@ struct ObjectiveCMethodHookTests {
     }
 
     @Test func inheritedPassThroughFollowsCurrentSuperclass() throws {
-        let child = try unsafe runtime.hookMethod(
+        let child = try unsafe runtime.hookCalls(
+            .objc(.method("value", as: (() -> Int).self)),
             on: ABIHookChild.self,
-            selector: "value",
-            as: (() -> Int).self,
             onFailure: { Issue.record($0) }
         ) { call in try call.proceed() + 1 }
         defer { child.invalidate() }
         #expect(ABIHookChild().value() == 21)
         #expect(ABIHookParent().value() == 20 && ABIHookSibling().value() == 20)
-        let parent = try unsafe runtime.hookMethod(
+        let parent = try unsafe runtime.hookCalls(
+            .objc(.method("value", as: (() -> Int).self)),
             on: ABIHookParent.self,
-            selector: "value",
-            as: (() -> Int).self,
             onFailure: { Issue.record($0) }
         ) { call in try call.proceed() + 10 }
         defer { parent.invalidate() }
@@ -157,10 +154,9 @@ struct ObjectiveCMethodHookTests {
         #expect(ABIHookChild().value() == 30)
         parent.invalidate()
         #expect(ABIHookChild().value() == 20)
-        let classHook = try unsafe runtime.hookMethod(
+        let classHook = try unsafe runtime.hookCalls(
+            .objc(.method("value", as: (() -> Int).self)),
             on: ABIHookChild.self,
-            selector: "value",
-            as: (() -> Int).self,
             classMethod: true,
             onFailure: { Issue.record($0) }
         ) { call in
@@ -172,16 +168,14 @@ struct ObjectiveCMethodHookTests {
     }
 
     @Test func accessorsAndNestedSelectorDispatch() throws {
-        let setter = try unsafe runtime.hookMethod(
+        let setter = try unsafe runtime.hookCalls(
+            .objc(.method("setNumber:", as: ((Int) -> Void).self)),
             on: ABIManagedHookFixture.self,
-            selector: "setNumber:",
-            as: ((Int) -> Void).self,
             onFailure: { Issue.record($0) }
         ) { call, value in try call.proceed(value + 1) }
-        let getter = try unsafe runtime.hookMethod(
+        let getter = try unsafe runtime.hookCalls(
+            .objc(.method("number", as: (() -> Int).self)),
             on: ABIManagedHookFixture.self,
-            selector: "number",
-            as: (() -> Int).self,
             onFailure: { Issue.record($0) }
         ) { call in try call.proceed() * 2 }
         defer { setter.invalidate(); getter.invalidate() }
@@ -189,10 +183,9 @@ struct ObjectiveCMethodHookTests {
         object.number = 20
         #expect(object.number == 42)
         let calls = HookBox(0)
-        let recursive = try unsafe runtime.hookMethod(
+        let recursive = try unsafe runtime.hookCalls(
+            .objc(.method("sumThrough:", as: ((Int) -> Int).self)),
             on: ABIManagedHookFixture.self,
-            selector: "sumThrough:",
-            as: ((Int) -> Int).self,
             onFailure: { Issue.record($0) }
         ) { call, value in
             calls.update { $0 += 1 }
@@ -207,9 +200,8 @@ struct ObjectiveCMethodHookTests {
         weak var observed = object
         let calls = HookBox(0)
         let originalClass = object_getClass(try #require(object))
-        let hook = try unsafe runtime.object(try #require(object)).hookMethod(
-            selector: "add:to:",
-            as: ((Int32, Int32) -> Int32).self,
+        let hook = try unsafe runtime.object(try #require(object)).hookCalls(
+            .objc(.method("add:to:", as: ((Int32, Int32) -> Int32).self)),
             onFailure: { Issue.record($0) }
         ) { call, a, b in
             calls.update { $0 += 1 }
@@ -231,20 +223,18 @@ struct ObjectiveCMethodHookTests {
         let deinitialized = HookBox(false)
         var capture: HookCapture? = HookCapture { deinitialized.update { $0 = true } }
         weak var observed = capture
-        let inner = try unsafe runtime.hookMethod(
+        let inner = try unsafe runtime.hookCalls(
+            .objc(.method("add:to:", as: ((Int32, Int32) -> Int32).self)),
             on: ABIManagedHookFixture.self,
-            selector: "add:to:",
-            as: ((Int32, Int32) -> Int32).self,
             onFailure: { Issue.record($0) }
         ) { [capture] call, a, b in
             withExtendedLifetime(capture) { callbacks.update { $0 += 1 } }
             return try call.proceed(a, b) + 1
         }
         capture = nil
-        let outer = try unsafe runtime.hookMethod(
+        let outer = try unsafe runtime.hookCalls(
+            .objc(.method("add:to:", as: ((Int32, Int32) -> Int32).self)),
             on: ABIManagedHookFixture.self,
-            selector: "add:to:",
-            as: ((Int32, Int32) -> Int32).self,
             onFailure: { Issue.record($0) }
         ) { call, a, b in
             started.signal(); resume.wait()
@@ -268,17 +258,15 @@ struct ObjectiveCMethodHookTests {
     @Test func invalidateAndRegisterFromInsideCallbacks() throws {
         let current = HookBox<NativeObjCMethodHook?>(nil)
         let added = HookBox<NativeObjCMethodHook?>(nil)
-        let hook = try unsafe runtime.hookMethod(
+        let hook = try unsafe runtime.hookCalls(
+            .objc(.method("add:to:", as: ((Int32, Int32) -> Int32).self)),
             on: ABIManagedHookFixture.self,
-            selector: "add:to:",
-            as: ((Int32, Int32) -> Int32).self,
             onFailure: { Issue.record($0) }
         ) { call, a, b in
             current.read()?.invalidate()
-            let next = try unsafe ABIRuntime.shared.hookMethod(
+            let next = try unsafe ABIRuntime.shared.hookCalls(
+                .objc(.method("add:to:", as: ((Int32, Int32) -> Int32).self)),
                 on: ABIManagedHookFixture.self,
-                selector: "add:to:",
-                as: ((Int32, Int32) -> Int32).self,
                 onFailure: { Issue.record($0) }
             ) { call, a, b in try call.proceed(a, b) + 2 }
             added.update { $0 = next }
@@ -291,10 +279,9 @@ struct ObjectiveCMethodHookTests {
     }
 
     @Test func externalReplacementKeepsSavedDispatcherAndIsNeverOverwritten() throws {
-        let hook = try unsafe runtime.hookMethod(
+        let hook = try unsafe runtime.hookCalls(
+            .objc(.method("add:to:", as: ((Int32, Int32) -> Int32).self)),
             on: ABIHookExternalFixture.self,
-            selector: "add:to:",
-            as: ((Int32, Int32) -> Int32).self,
             onFailure: { Issue.record($0) }
         ) { call, a, b in try call.proceed(a, b) + 1 }
         let method = try #require(
@@ -315,10 +302,9 @@ struct ObjectiveCMethodHookTests {
         #expect(hook.status == .displaced)
         #expect(ABIHookExternalFixture().add(20, to: 21) == 52)
         #expect(throws: NativeObjCMethodHookError.displaced) {
-            try unsafe runtime.hookMethod(
+            try unsafe runtime.hookCalls(
+                .objc(.method("add:to:", as: ((Int32, Int32) -> Int32).self)),
                 on: ABIHookExternalFixture.self,
-                selector: "add:to:",
-                as: ((Int32, Int32) -> Int32).self,
                 onFailure: { Issue.record($0) }
             ) { call, a, b in try call.proceed(a, b) }
         }
@@ -328,10 +314,9 @@ struct ObjectiveCMethodHookTests {
         #expect(ABIReplacementCallAdd(saved, ABIHookExternalFixture(), 20, 22) == 42)
         method_setImplementation(method, ABIHookForwardingImplementation())
         #expect(throws: NativeObjCMethodHookError.displaced) {
-            try unsafe runtime.hookMethod(
+            try unsafe runtime.hookCalls(
+                .objc(.method("add:to:", as: ((Int32, Int32) -> Int32).self)),
                 on: ABIHookExternalFixture.self,
-                selector: "add:to:",
-                as: ((Int32, Int32) -> Int32).self,
                 onFailure: { Issue.record($0) }
             ) { call, a, b in try call.proceed(a, b) }
         }
@@ -341,20 +326,18 @@ struct ObjectiveCMethodHookTests {
         let released = HookBox(false)
         var capture: HookCapture? = HookCapture {
             do {
-                let hook = try unsafe ABIRuntime.shared.hookMethod(
+                let hook = try unsafe ABIRuntime.shared.hookCalls(
+                    .objc(.method("add:to:", as: ((Int32, Int32) -> Int32).self)),
                     on: ABIManagedHookFixture.self,
-                    selector: "add:to:",
-                    as: ((Int32, Int32) -> Int32).self,
                     onFailure: { Issue.record($0) }
                 ) { call, a, b in try call.proceed(a, b) }
                 hook.invalidate()
                 released.update { $0 = true }
             } catch { Issue.record(error) }
         }
-        var token: NativeObjCMethodHook? = try unsafe runtime.hookMethod(
+        var token: NativeObjCMethodHook? = try unsafe runtime.hookCalls(
+            .objc(.method("add:to:", as: ((Int32, Int32) -> Int32).self)),
             on: ABIManagedHookFixture.self,
-            selector: "add:to:",
-            as: ((Int32, Int32) -> Int32).self,
             onFailure: { Issue.record($0) }
         ) { [capture] call, a, b in
             try withExtendedLifetime(capture) { try call.proceed(a, b) + 1 }
@@ -369,16 +352,14 @@ struct ObjectiveCMethodHookTests {
     @Test func errorsContinueTheSnapshotWithoutRepeatingNativeEffects() throws {
         for after in [false, true] {
             let errors = HookBox(0)
-            let inner = try unsafe runtime.hookMethod(
+            let inner = try unsafe runtime.hookCalls(
+                .objc(.method("add:to:", as: ((Int32, Int32) -> Int32).self)),
                 on: ABIManagedHookFixture.self,
-                selector: "add:to:",
-                as: ((Int32, Int32) -> Int32).self,
                 onFailure: { Issue.record($0) }
             ) { call, a, b in try call.proceed(a, b) + 1 }
-            let outer = try unsafe runtime.hookMethod(
+            let outer = try unsafe runtime.hookCalls(
+                .objc(.method("add:to:", as: ((Int32, Int32) -> Int32).self)),
                 on: ABIManagedHookFixture.self,
-                selector: "add:to:",
-                as: ((Int32, Int32) -> Int32).self,
                 onFailure: { _ in errors.update { $0 += 1 } }
             ) { call, a, b in
                 if after { _ = try call.proceed(a + 1, b) }
@@ -396,10 +377,9 @@ struct ObjectiveCMethodHookTests {
         let tokens = HookBox<[NativeObjCMethodHook]>([])
         DispatchQueue.concurrentPerform(iterations: 8) { _ in
             do {
-                let token = try unsafe ABIRuntime.shared.hookMethod(
+                let token = try unsafe ABIRuntime.shared.hookCalls(
+                    .objc(.method("resize:", as: ((CGSize) -> CGSize).self)),
                     on: ABIManagedHookFixture.self,
-                    selector: "resize:",
-                    as: ((CGSize) -> CGSize).self,
                     onFailure: { Issue.record($0) }
                 ) { call, size in
                     count.update { $0 += 1 }
@@ -430,10 +410,9 @@ struct ObjectiveCMethodHookTests {
             let tokens = HookBox<[NativeObjCMethodHook]>([])
             DispatchQueue.concurrentPerform(iterations: 8) { _ in
                 do {
-                    let token = try unsafe ABIRuntime.shared.hookMethod(
+                    let token = try unsafe ABIRuntime.shared.hookCalls(
+                        .objc(.method("add:to:", as: ((Int32, Int32) -> Int32).self)),
                         on: target.read(),
-                        selector: "add:to:",
-                        as: ((Int32, Int32) -> Int32).self,
                         onFailure: { Issue.record($0) }
                     ) { call, a, b in try call.proceed(a, b) + 1 }
                     tokens.update { $0.append(token) }
@@ -449,10 +428,9 @@ struct ObjectiveCMethodHookTests {
             let implementation = method_getImplementation(method)
             for token in tokens.read() { token.invalidate() }
             #expect(fixture.add(20, to: 22) == 42)
-            let again = try unsafe runtime.hookMethod(
+            let again = try unsafe runtime.hookCalls(
+                .objc(.method("add:to:", as: ((Int32, Int32) -> Int32).self)),
                 on: type,
-                selector: "add:to:",
-                as: ((Int32, Int32) -> Int32).self,
                 onFailure: { Issue.record($0) }
             ) { call, a, b in try call.proceed(a, b) }
             again.invalidate()
@@ -463,9 +441,8 @@ struct ObjectiveCMethodHookTests {
     @MainActor @Test func mainActorMethodAndWeakObjectRoute() throws {
         let object = ABIManagedHookFixture()
         let calls = HookBox(0), errors = HookBox(0)
-        let hook = try unsafe runtime.object(object).hookMainActorMethod(
-            selector: "add:to:",
-            as: ((Int32, Int32) -> Int32).self,
+        let hook = try unsafe runtime.object(object).hookMainActorCalls(
+            .objc(.method("add:to:", as: ((Int32, Int32) -> Int32).self)),
             onFailure: { error in
                 #expect(error as? NativeObjCMethodHookError == .wrongThread)
                 errors.update { $0 += 1 }
@@ -475,10 +452,9 @@ struct ObjectiveCMethodHookTests {
         }
         defer { hook.invalidate() }
         #expect(object.add(20, to: 21) == 42)
-        let classHook = try unsafe runtime.hookMainActorMethod(
+        let classHook = try unsafe runtime.hookMainActorCalls(
+            .objc(.method("number", as: (() -> Int).self)),
             on: ABIManagedHookFixture.self,
-            selector: "number",
-            as: (() -> Int).self,
             onFailure: { _ in errors.update { $0 += 1 } }
         ) { call in
             MainActor.assertIsolated(); return try call.proceed() + 1
@@ -499,11 +475,9 @@ struct ObjectiveCMethodHookTests {
             ("newBorrowedObject", .init(returnsRetainedObject: false)),
         ] {
             func install() throws -> NativeObjCMethodHook {
-                try unsafe runtime.hookMethod(
+                try unsafe runtime.hookCalls(
+                    .objc(.method(selector, as: (() -> NSObject).self, options: options)),
                     on: ABIManagedHookFixture.self,
-                    selector: selector,
-                    as: (() -> NSObject).self,
-                    options: options,
                     onFailure: { Issue.record($0) }
                 ) { call in try call.proceed() }
             }
@@ -532,20 +506,16 @@ struct ObjectiveCMethodHookTests {
         let failures = HookBox(0)
         let saved = HookBox<NSObject?>(nil)
         let options = NativeObjCMethodOptions(consumedArguments: [0])
-        let first = try unsafe runtime.hookMethod(
+        let first = try unsafe runtime.hookCalls(
+            .objc(.method("consume:", as: ((NSObject?) -> Int).self, options: options)),
             on: ABIConsumedHookFixture.self,
-            selector: "consume:",
-            as: ((NSObject?) -> Int).self,
-            options: options,
             onFailure: { Issue.record($0) }
         ) { call, value in
             try call.proceed(value)
         }
-        let second = try unsafe runtime.hookMethod(
+        let second = try unsafe runtime.hookCalls(
+            .objc(.method("consume:", as: ((NSObject?) -> Int).self, options: options)),
             on: ABIConsumedHookFixture.self,
-            selector: "consume:",
-            as: ((NSObject?) -> Int).self,
-            options: options,
             onFailure: { _ in failures.update { $0 += 1 } }
         ) { call, value in
             if mode == "skip" { return 99 }
@@ -579,18 +549,21 @@ struct ObjectiveCMethodHookTests {
         let method = try #require(class_getInstanceMethod(ABIConsumedHookFixture.self, selector))
         let original = method_getImplementation(method)
         let consumed = unsafe NativeObjCHookRequest.method(
+            .objc(
+                .method(
+                    "consume:withClass:",
+                    as: ((NSObject?, AnyClass) -> Int).self,
+                    options: .init(consumedArguments: [0])
+                )
+            ),
             on: ABIConsumedHookFixture.self,
-            selector: "consume:withClass:",
-            as: ((NSObject?, AnyClass) -> Int).self,
-            options: .init(consumedArguments: [0]),
             onFailure: { Issue.record($0) }
         ) { call, value, type in
             try call.proceed(value, type)
         }
         let borrowed = unsafe NativeObjCHookRequest.method(
+            .objc(.method("consume:withClass:", as: ((NSObject?, AnyClass) -> Int).self)),
             on: ABIConsumedHookFixture.self,
-            selector: "consume:withClass:",
-            as: ((NSObject?, AnyClass) -> Int).self,
             onFailure: { Issue.record($0) }
         ) { call, value, type in try call.proceed(value, type) }
         #expect(throws: NativeObjCHookInstallationError.self) {
@@ -606,10 +579,9 @@ struct ObjectiveCMethodHookTests {
         ) -> Double
         let selector = "mixed:b:c:d:e:f:g:h:i:j:k:l:"
         func install() throws -> NativeObjCMethodHook {
-            try unsafe runtime.hookMethod(
+            try unsafe runtime.hookCalls(
+                .objc(.method(selector, as: Mixed.self)),
                 on: ABIManagedHookFixture.self,
-                selector: selector,
-                as: Mixed.self,
                 onFailure: { Issue.record($0) }
             ) { call, a, b, c, d, e, f, g, h, i, j, k, l in
                 try call.proceed(a, b, c, d, e, f, g, h, i, j, k, l) + 1
@@ -649,16 +621,14 @@ struct ObjectiveCMethodHookTests {
             ) == expected + 2
         )
         typealias Block = @convention(block) (Int32) -> Int32
-        let blockHook = try unsafe runtime.hookMethod(
+        let blockHook = try unsafe runtime.hookCalls(
+            .objc(.method("block", as: (() -> Block).self)),
             on: ABIManagedHookFixture.self,
-            selector: "block",
-            as: (() -> Block).self,
             onFailure: { Issue.record($0) }
         ) { call in try call.proceed() }
-        let argumentHook = try unsafe runtime.hookMethod(
+        let argumentHook = try unsafe runtime.hookCalls(
+            .objc(.method("apply:block:", as: ((Int32, Block?) -> Int32).self)),
             on: ABIManagedHookFixture.self,
-            selector: "apply:block:",
-            as: ((Int32, Block?) -> Int32).self,
             onFailure: { Issue.record($0) }
         ) { call, value, block in try call.proceed(value, block) }
         defer { blockHook.invalidate(); argumentHook.invalidate() }
@@ -671,44 +641,58 @@ struct ObjectiveCMethodHookTests {
         let selector = NSSelectorFromString("add:to:")
         let method = try #require(class_getInstanceMethod(ABIManagedHookFixture.self, selector))
         let original = method_getImplementation(method)
-        #expect(throws: (any Error).self) {
-            try unsafe runtime.hookMethod(
+        #expect(throws: ABIResolutionError.self) {
+            try unsafe runtime.hookCalls(
+                .objc(.method("add:to:", as: ((Int32, Int32) -> Int32).self, variadicFrom: 1)),
                 on: ABIManagedHookFixture.self,
-                selector: "add:to:",
-                as: ((String) -> Int).self,
+                onFailure: { Issue.record($0) }
+            ) { call, a, b in try call.proceed(a, b) }
+        }
+        #expect(throws: ABIResolutionError.self) {
+            try unsafe runtime.hookCalls(
+                .objc(.method("add:to:", as: ((Int32) throws -> Int32).self)),
+                on: ABIManagedHookFixture.self,
+                onFailure: { Issue.record($0) }
+            ) { call, a in try call.proceed(a) }
+        }
+        #expect(throws: (any Error).self) {
+            try unsafe runtime.hookCalls(
+                .objc(.method("add:to:", as: ((String) -> Int).self)),
+                on: ABIManagedHookFixture.self,
                 onFailure: { Issue.record($0) }
             ) { _, _ in 0 }
         }
         #expect(method_getImplementation(method) == original)
         #expect(throws: NativeObjCMethodHookError.unsupportedMethod) {
-            try unsafe runtime.hookMethod(
+            try unsafe runtime.hookCalls(
+                .objc(.method("init", as: (() -> AnyObject?).self)),
                 on: ABIManagedHookFixture.self,
-                selector: "init",
-                as: (() -> AnyObject?).self,
                 onFailure: { Issue.record($0) }
             ) { call in try call.proceed() }
         }
         #expect(throws: NativeObjCMethodHookError.unsupportedMethod) {
-            try unsafe runtime.hookMethod(
+            try unsafe runtime.hookCalls(
+                .objc(.method("dealloc", as: (() -> Void).self)),
                 on: ABIManagedHookFixture.self,
-                selector: "dealloc",
-                as: (() -> Void).self,
                 onFailure: { Issue.record($0) }
             ) { call in try call.proceed() }
         }
-        let token = try unsafe runtime.hookMethod(
+        let token = try unsafe runtime.hookCalls(
+            .objc(.method("object", as: (() -> NSObject).self)),
             on: ABIManagedHookFixture.self,
-            selector: "object",
-            as: (() -> NSObject).self,
             onFailure: { Issue.record($0) }
         ) { call in try call.proceed() }
         defer { token.invalidate() }
         #expect(throws: NativeObjCMethodHookError.incompatibleContract) {
-            try unsafe runtime.hookMethod(
+            try unsafe runtime.hookCalls(
+                .objc(
+                    .method(
+                        "object",
+                        as: (() -> NSObject).self,
+                        options: .init(returnsRetainedObject: true)
+                    )
+                ),
                 on: ABIManagedHookFixture.self,
-                selector: "object",
-                as: (() -> NSObject).self,
-                options: .init(returnsRetainedObject: true),
                 onFailure: { Issue.record($0) }
             ) { call in try call.proceed() }
         }

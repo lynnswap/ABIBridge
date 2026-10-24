@@ -49,26 +49,23 @@ struct ObjectiveCHookBenchmarks {
         var tokens: [NativeObjCMethodHook] = []
         for level in 1...3 {
             tokens.append(
-                try unsafe runtime.hookMethod(
+                try unsafe runtime.hookCalls(
+                    .objc(.method("add:to:", as: ((Int32, Int32) -> Int32).self)),
                     on: ABIManagedHookFixture.self,
-                    selector: "add:to:",
-                    as: ((Int32, Int32) -> Int32).self,
                     onFailure: { Issue.record($0) }
                 ) { call, a, b in try call.proceed(a, b) }
             )
             tokens.append(
-                try unsafe runtime.hookMethod(
+                try unsafe runtime.hookCalls(
+                    .objc(.method("resize:", as: ((CGSize) -> CGSize).self)),
                     on: ABIManagedHookFixture.self,
-                    selector: "resize:",
-                    as: ((CGSize) -> CGSize).self,
                     onFailure: { Issue.record($0) }
                 ) { call, value in try call.proceed(value) }
             )
             tokens.append(
-                try unsafe runtime.hookMethod(
+                try unsafe runtime.hookCalls(
+                    .objc(.method("object", as: (() -> NSObject).self)),
                     on: ABIManagedHookFixture.self,
-                    selector: "object",
-                    as: (() -> NSObject).self,
                     onFailure: { Issue.record($0) }
                 ) { call in try call.proceed() }
             )

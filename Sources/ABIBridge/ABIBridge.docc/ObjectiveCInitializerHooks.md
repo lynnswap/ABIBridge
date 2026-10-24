@@ -4,13 +4,12 @@ Transform initializer arguments and configure the initialized result with automa
 
 ## Observe initialization
 
-Use ``ABIRuntime/hookInitializer(on:selector:as:options:retaining:onFailure:transformingArguments:before:after:)-(_,String,_,_,_,_,_,_,_)`` for a concrete Objective-C instance initializer. For an imported `Renderer` class exposing `initWithConfiguration:`, its use looks like this:
+Use `ABIRuntime.hookInitializer` for a concrete Objective-C instance initializer. For an imported `Renderer` class exposing `initWithConfiguration:`, its use looks like this:
 
 ```swift
 let hook = try unsafe runtime.hookInitializer(
+    .objc(.method("initWithConfiguration:", as: ((NSMutableDictionary) -> Renderer?).self)),
     on: Renderer.self,
-    selector: "initWithConfiguration:",
-    as: ((NSMutableDictionary) -> Renderer?).self,
     onFailure: { print("Initializer hook failed:", $0) },
     before: { configuration in
         configuration["compact"] = true
@@ -32,9 +31,8 @@ Keep the returned ``NativeObjCMethodHook`` token alive. Invalidation, destructio
 
 ```swift
 let hook = try unsafe runtime.hookInitializer(
+    .objc(.method("initWithWidth:height:", as: ((Double, Double) -> Renderer?).self)),
     on: Renderer.self,
-    selector: "initWithWidth:height:",
-    as: ((Double, Double) -> Renderer?).self,
     onFailure: { print($0) },
     transformingArguments: { width, height in
         (max(width, 100), max(height, 40))
@@ -58,7 +56,7 @@ A `before`, transformation, or argument-conversion failure is reported through `
 
 After initialization, a result-conversion failure or an error thrown by `after` is reported while returning the existing native result. The bridge never reinitializes, fabricates a nil result, or replaces the returned object to recover. Request an optional result when nil is possible. A mismatched nonoptional or object type can fail conversion while the original native caller still receives its actual object or nil.
 
-Callbacks are synchronous on the native caller's thread. For a known MainActor initializer contract, use ``ABIRuntime/hookMainActorInitializer(on:selector:as:options:retaining:onFailure:transformingArguments:before:after:)-(_,String,_,_,_,_,_,_,_)``. It checks background entry before decoding arguments, reports `wrongThread`, and bypasses the actor callbacks. It does not perform an actor hop; `onFailure` must remain safe on background threads.
+Callbacks are synchronous on the native caller's thread. For a known MainActor initializer contract, use `ABIRuntime.hookMainActorInitializer`. It checks background entry before decoding arguments, reports `wrongThread`, and bypasses the actor callbacks. It does not perform an actor hop; `onFailure` must remain safe on background threads.
 
 ## Supported declarations
 

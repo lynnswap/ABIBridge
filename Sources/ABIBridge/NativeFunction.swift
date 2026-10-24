@@ -135,6 +135,7 @@ public struct NativeFunction<Result, each Argument>: Sendable {
 /// validate native layouts; resolution prepares the call and retains its image.
 public struct NativeFunctionRequest<Result, each Argument>: Sendable {
     let name: String
+    let nameForm: NativeSymbolNameForm
     var language: NativeLanguage
     let variadicFrom: Int?
 
@@ -152,7 +153,29 @@ public struct NativeFunctionRequest<Result, each Argument>: Sendable {
         as signature: ((repeat each Argument) -> Result).Type,
         variadicFrom: Int? = nil
     ) -> Self {
-        Self(name: name, language: .c, variadicFrom: variadicFrom)
+        Self(name: name, nameForm: .source, language: .c, variadicFrom: variadicFrom)
+    }
+    /// Describes a function by its exact linker spelling, without normalization.
+    /// Mach-O's leading underscore is added exactly once.
+    public static func function(
+        linkerName: String,
+        as signature: ((repeat each Argument) -> Result).Type,
+        variadicFrom: Int? = nil
+    ) -> Self {
+        Self(name: linkerName, nameForm: .linker, language: .c, variadicFrom: variadicFrom)
+    }
+
+    /// Describes a function by its literal Mach-O symbol-table spelling.
+    public static func function(
+        machOName: String,
+        as signature: ((repeat each Argument) -> Result).Type,
+        variadicFrom: Int? = nil
+    ) -> Self {
+        Self(name: machOName, nameForm: .machO, language: .c, variadicFrom: variadicFrom)
+    }
+
+    var nativeDeclaration: NativeDeclaration {
+        .init(name: name, language: language, kind: .function, nameForm: nameForm)
     }
 }
 
@@ -198,7 +221,7 @@ extension ABIRuntime {
         let declaration = request.declaration
         return try NativeFunction(
             symbol: resolver.resolve(
-                .init(name: declaration.name, language: declaration.language),
+                declaration.nativeDeclaration,
                 in: scope,
                 loading: loading
             ),
@@ -246,7 +269,7 @@ extension ABIRuntime {
         let declaration = request.declaration
         return try NativeFunction(
             symbol: resolver.resolve(
-                .init(name: declaration.name, language: declaration.language),
+                declaration.nativeDeclaration,
                 in: image,
                 loading: loading
             ),
