@@ -369,7 +369,9 @@ extension NativeSwiftType {
                 let own = try conformance(to: protocolAddress)
                 var sources: [UnsafeRawPointer] = own.map { [$0.descriptor] } ?? []
                 sources += conformances.keys
-                for address in [protocolAddress, own?.descriptor].compactMap({ $0 }) {
+                for address in [protocolAddress, own?.descriptor].compactMap({ $0 })
+                    + conformances.keys
+                {
                     let count = ABISwiftImageConformanceDescriptors(
                         address,
                         protocolAddress,
@@ -388,20 +390,17 @@ extension NativeSwiftType {
                     sources += recorded.prefix(min(count, copied)).compactMap { $0 }
                 }
                 var tried: Set<UnsafeRawPointer> = []
-                // Stripping removes the witnesses of every conformance in an image.
-                var stripped: Set<NativeImage> = []
                 for descriptor in sources
                 where tried.insert(descriptor).inserted && !unnamed.isEmpty {
                     guard
+                        // Each protocol has its own witness-table layout, including
+                        // the protocols inherited by the requested member's owner.
+                        ABISwiftProtocolRequirementDescriptor(descriptor) == protocolAddress,
                         let image = try conformances[descriptor]
-                            ?? swiftImplementationImage(containing: descriptor),
-                        !stripped.contains(image)
+                            ?? swiftImplementationImage(containing: descriptor)
                     else { continue }
                     let witnesses = resolver.swiftWitnesses(ofConformanceAt: descriptor, in: image)
-                    guard !witnesses.isEmpty else {
-                        stripped.insert(image)
-                        continue
-                    }
+                    guard !witnesses.isEmpty else { continue }
                     guard
                         let table = descriptor == own?.descriptor
                             ? own?.table : ABISwiftConformanceWitnessTablePattern(descriptor)
