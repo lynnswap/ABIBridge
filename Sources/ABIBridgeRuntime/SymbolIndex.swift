@@ -454,7 +454,11 @@ package final class SymbolIndex {
     private var decoded: [Scope: [Int: [IndexedSymbol]]] = [:]
     private var linkerNames: [[UInt8]: [IndexedSymbol]] = [:]
     private var imageLinkerNames: [[UInt8]: [IndexedSymbol]] = [:]
-    private var swiftMembers: [Scope: [SwiftMemberPath: [IndexedSymbol]]] = [:]
+    private struct SwiftMemberScope: Hashable {
+        let symbols: Scope
+        let entry: SwiftMemberMatch.Entry
+    }
+    private var swiftMembers: [SwiftMemberScope: [SwiftMemberPath: [IndexedSymbol]]] = [:]
     private var swiftRecords: [IndexedSymbol: RuntimeSwiftDeclaration?] = [:]
 
     package init(image: RuntimeImage) {
@@ -573,7 +577,8 @@ package final class SymbolIndex {
         guard !additions.isEmpty else { return }
         let fallback = (
             sourceSymbols.filter { $0.key.candidates == .swiftFallback },
-            decoded[Self.swiftFallbackScope], swiftMembers[Self.swiftFallbackScope]
+            decoded[Self.swiftFallbackScope],
+            swiftMembers.filter { $0.key.symbols == Self.swiftFallbackScope }
         )
         localSymbols += additions
         sourceSymbols.removeAll()
@@ -583,7 +588,7 @@ package final class SymbolIndex {
         if !changesFallback {
             sourceSymbols = fallback.0
             decoded[Self.swiftFallbackScope] = fallback.1
-            swiftMembers[Self.swiftFallbackScope] = fallback.2
+            swiftMembers = fallback.2
         }
     }
 
@@ -1073,16 +1078,19 @@ package final class SymbolIndex {
                     fragments: query.swiftModule.map { [$0.module] } ?? [],
                     swiftFallback: false
                 )
-            if swiftMembers[scope] == nil {
+            let memberScope = SwiftMemberScope(symbols: scope, entry: match.entry)
+            if swiftMembers[memberScope] == nil {
                 var members: [SwiftMemberPath: [IndexedSymbol]] = [:]
                 for symbol in self.symbols(for: query, swiftBucket: bucket) {
-                    guard let name = memberName(of: symbol) else { continue }
+                    guard let record = record(of: symbol),
+                        (record.role == .propertyDescriptor)
+                            == (match.entry == .propertyDescriptor),
+                        let name = memberName(of: symbol)
+                    else { continue }
                     // An allocator's record also files its `__allocating_init`
                     // with its initializer; a function or method can have
                     // that name too.
-                    let allocates =
-                        SymbolIndex.byteOffset(of: "__allocating_init", in: name) != nil
-                        && record(of: symbol)?.kind == .allocator
+                    let allocates = record.kind == .allocator
                     for name in [name, Self.operatorAlias(name)].compactMap({ $0 }) {
                         guard let path = SwiftMemberPath(declaration: name) else { continue }
                         members[path, default: []].append(symbol)
@@ -1094,9 +1102,9 @@ package final class SymbolIndex {
                         }
                     }
                 }
-                swiftMembers[scope] = members
+                swiftMembers[memberScope] = members
             }
-            symbols += swiftMembers[scope]?[match.path] ?? []
+            symbols += swiftMembers[memberScope]?[match.path] ?? []
         }
         var addresses: Set<UInt64> = []
         var witnesses: Set<IndexedSymbol> = []
