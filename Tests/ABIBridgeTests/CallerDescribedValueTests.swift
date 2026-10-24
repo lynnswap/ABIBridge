@@ -133,9 +133,13 @@ struct CallerDescribedValueTests {
             as: try .opaque(named: "RecordReceiver")
         )
         let receiver = runtime.cxxObject(storage, typeNamed: "ABICXXFixture::RecordReceiver")
-        let method = try receiver.resolveMethodAndWait(
-            named: "shifted(ABICXXRecord) const",
-            as: ((CallerRecord) -> CallerRecord).self
+        let method = try receiver.resolveAndWait(
+            .cxx(
+                .method(
+                    "shifted(ABICXXRecord) const",
+                    as: ((CallerRecord) -> CallerRecord).self
+                )
+            )
         )
         let result = try unsafe method.unsafeInvoke(CallerRecord(value: 2, tag: 3))
         #expect(result.value == 12 && result.tag == 4)

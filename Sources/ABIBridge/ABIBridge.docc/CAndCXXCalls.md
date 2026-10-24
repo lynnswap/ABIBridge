@@ -20,6 +20,8 @@ Use a Swift function type to describe the native signature, then prepare a funct
 
 - <doc:CXXObjectInvocation>
 - ``NativeCXXObject``
+- ``NativeCXXMethodRequest``
+- ``NativeCXXVirtualMethodRequest``
 - ``NativeCXXMethod``
 - ``NativeBoundCXXMethod``
 - ``NativeVTable``

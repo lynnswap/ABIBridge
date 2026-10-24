@@ -55,9 +55,13 @@ struct SwiftObjectConsumer {
             typeNamed: "ABIBridgeFixture::VirtualCounter",
             in: .path(url)
         )
-        let direct = try object.resolveMethodAndWait(
-            named: "current() const",
-            as: (() -> Int32).self
+        let direct = try object.resolveAndWait(
+            .cxx(
+                .method(
+                    "current() const",
+                    as: (() -> Int32).self
+                )
+            )
         )
         let directValue = try unsafe direct.unsafeInvoke()
         precondition(directValue == 13)
@@ -66,11 +70,17 @@ struct SwiftObjectConsumer {
             entryCount: 1,
             authentication: .cxxVTablePointer(discriminator: tableDiscriminator.unsafeInvoke())
         )
-        let method = try unsafe object.resolveVirtualMethodAndWait(
-            at: 0,
-            in: table,
-            authentication: .cxxVirtualFunction(discriminator: slotDiscriminator.unsafeInvoke()),
-            as: (() -> Int32).self
+        let method = try unsafe object.resolveAndWait(
+            .cxx(
+                .virtualMethod(
+                    at: 0,
+                    in: table,
+                    authentication: .cxxVirtualFunction(
+                        discriminator: slotDiscriminator.unsafeInvoke()
+                    ),
+                    as: (() -> Int32).self
+                )
+            )
         )
         runtime.removeCachedResults()
         guard let anotherAddress = try unsafe make.unsafeInvoke(42) else {

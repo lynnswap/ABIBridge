@@ -106,10 +106,13 @@ struct VirtualHookTests {
     @Test func sharedOrderInvalidationAndCapturedCalls() async throws {
         let fixture = try Fixture(); defer { fixture.library.cleanup() }
         let entry = try await fixture.entry()
-        let before = try unsafe fixture.object().resolveVirtualMethodAndWait(
-            entry,
-            as: ((Int32) -> Int32).self
+        let request = NativeRequest.cxx(
+            .virtualMethod(
+                entry,
+                as: ((Int32) -> Int32).self
+            )
         )
+        let before = try unsafe fixture.object().resolveAndWait(request)
         let declaration = entry.declaration
         let first = try unsafe entry.hookSharedCalls(
             as: ((Int32) -> Int32).self,
@@ -120,10 +123,7 @@ struct VirtualHookTests {
             #expect(call.description.contains("::Derived::value(int) const"))
             return try call.proceed(value + 1) + 10
         }
-        let captured = try unsafe fixture.object().resolveVirtualMethodAndWait(
-            entry,
-            as: ((Int32) -> Int32).self
-        )
+        let captured = try unsafe await fixture.object().resolve(request)
         let second = try unsafe entry.hookSharedCalls(
             as: ((Int32) -> Int32).self,
             onFailure: { Issue.record(Comment(rawValue: "\($0)")) }
@@ -190,9 +190,13 @@ struct VirtualHookTests {
             return try call.proceed(value) + 1
         }
         defer { first.invalidate() }
-        let method = try unsafe fixture.object(secondary: true).resolveVirtualMethodAndWait(
-            adjusted,
-            as: ((Int32) -> Int32).self
+        let method = try unsafe fixture.object(secondary: true).resolveAndWait(
+            .cxx(
+                .virtualMethod(
+                    adjusted,
+                    as: ((Int32) -> Int32).self
+                )
+            )
         )
         #expect(try unsafe method.unsafeInvoke(2) == 63)
         let identity = try await fixture.entry("identity()", secondary: true)
@@ -204,9 +208,13 @@ struct VirtualHookTests {
             return try call.proceed()
         }
         defer { second.invalidate() }
-        let returned = try unsafe fixture.object(secondary: true).resolveVirtualMethodAndWait(
-            identity,
-            as: (() -> UnsafeMutableRawPointer?).self
+        let returned = try unsafe fixture.object(secondary: true).resolveAndWait(
+            .cxx(
+                .virtualMethod(
+                    identity,
+                    as: (() -> UnsafeMutableRawPointer?).self
+                )
+            )
         )
         let pointer = try unsafe returned.unsafeInvoke()
         #expect(pointer.map(UInt.init(bitPattern:)) == receiverBits)

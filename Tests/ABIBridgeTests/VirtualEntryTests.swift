@@ -178,15 +178,23 @@ struct VirtualEntryTests {
             )
             let object = runtime.cxxObject(storage, typeNamed: "NamedVirtual::Derived")
             if slot == 1 {
-                let call = try unsafe await object.resolveVirtualMethod(
-                    entry,
-                    as: (() -> UnsafeMutableRawPointer?).self
+                let call = try unsafe await object.resolve(
+                    .cxx(
+                        .virtualMethod(
+                            entry,
+                            as: (() -> UnsafeMutableRawPointer?).self
+                        )
+                    )
                 )
                 #expect(try unsafe call.unsafeInvoke() == receiver)
             } else {
-                let call = try unsafe await object.resolveVirtualMethod(
-                    entry,
-                    as: ((Int32) -> Int32).self
+                let call = try unsafe await object.resolve(
+                    .cxx(
+                        .virtualMethod(
+                            entry,
+                            as: ((Int32) -> Int32).self
+                        )
+                    )
                 )
                 #expect(try unsafe call.unsafeInvoke(2) == argumentResult)
             }
@@ -254,12 +262,16 @@ struct VirtualEntryTests {
             unsafe NativeValue(borrowing: receiver, as: try .opaque(named: "receiver")),
             typeNamed: "NamedVirtual::Derived"
         )
-        var method: NativeBoundCXXMethod<Int32, Int32>? =
-            try unsafe await object.resolveVirtualMethod(
+        var request: NativeRequest<NativeCXXVirtualMethodRequest<Int32, Int32>>? = .cxx(
+            .virtualMethod(
                 entry!,
                 as: ((Int32) -> Int32).self
             )
+        )
         entry = nil
+        var method: NativeBoundCXXMethod<Int32, Int32>? =
+            try unsafe await object.resolve(request!)
+        request = nil
         runtime.removeCachedResults()
         #expect(originalLease != nil)
         #expect(try unsafe method!.unsafeInvoke(2) == 102)

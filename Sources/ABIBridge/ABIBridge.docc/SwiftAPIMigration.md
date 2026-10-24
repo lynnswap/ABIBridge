@@ -65,6 +65,27 @@ Move `named:` to the inner factory's unlabeled name. Keep `as:` and typed `varia
 
 Save declarations with `NativeRequest.c(.function(...))` or `NativeRequest.cxx(.function(...))`; see <doc:CFunctionInvocation> for typed and dynamic examples. Request construction performs no lookup, loading, or layout validation. `as:` still yields `NativeFunction<Result, each Argument>` and `signature:` yields `DynamicNativeFunction`. Native invocation, argument promotions, image retention, pointer ownership, errors, and caller execution requirements keep their existing contracts.
 
+## Resolve C++ members from requests
+
+Replace a C++ receiver's direct and virtual per-kind lookup functions with `resolve` or `resolveAndWait` and a `.cxx(...)` request:
+
+| Before | After |
+| --- | --- |
+| `object.resolveMethod(named: n, as: s, using: a)` | `object.resolve(.cxx(.method(n, as: s, using: a)))` |
+| `object.resolveVirtualMethod(entry, as: s, using: a)` | `object.resolve(.cxx(.virtualMethod(entry, as: s, using: a)))` |
+| `object.resolveVirtualMethod(at: i, in: t, authentication: p, as: s)` | `object.resolve(.cxx(.virtualMethod(at: i, in: t, authentication: p, as: s)))` |
+
+The same mapping applies to `AndWait` calls. Keep `try unsafe` at virtual resolution and `try unsafe await` for its async form. The previous per-kind methods have no compatibility aliases.
+
+```swift
+let request = NativeRequest.cxx(.virtualMethod(
+    entry, as: (() -> Int32).self
+))
+let current = try unsafe await counter.resolve(request)
+```
+
+Direct and virtual requests are separate concrete types. A direct request is Sendable; a virtual request retains a non-Sendable table and stays on the caller's isolation domain. Creating either request performs no lookup, slot capture, or ABI preparation. Each virtual resolution reads the current slot before worker preparation; a saved request does not freeze its target. A table read from a receiver keeps that receiver alive while the request retains the table. Named entries also keep their original image; explicit table requests retain only the supplied table's existing owners and the captured target's established dependencies. Prepared handles, adapters, subobject adjustment, authentication, invocation, and release rules are unchanged. See <doc:CXXObjectInvocation>.
+
 ## Migrate earlier per-kind resolution functions
 
 Swift functions and members and Objective-C messages are described by request values and prepared by one `resolve` and `resolveAndWait` pair. The per-kind functions, such as `resolveGetter`, `resolveStaticMethod`, `resolveSwiftFunction`, and `resolveObjCMethod`, are removed without compatibility aliases. Requests keep their declaration options separate from their resolution destination. A Swift member request resolves on a ``NativeSwiftType`` or a ``NativeObject`` with the same options:
@@ -124,8 +145,7 @@ Functions named `resolve…` perform search and call preparation on a worker whi
 | C function request (`.c(.function(...))`) | `resolve` | `resolveAndWait` |
 | C++ function request (`.cxx(.function(...))`) | `resolve` | `resolveAndWait` |
 | Swift type | `resolveSwiftType` | `resolveSwiftTypeAndWait` |
-| C++ instance method | `resolveMethod` | `resolveMethodAndWait` |
-| C++ virtual method | `resolveVirtualMethod` | `resolveVirtualMethodAndWait` |
+| C++ direct or virtual member request | `resolve` | `resolveAndWait` |
 | Named C++ virtual-table entry | `resolveEntry` | `resolveEntryAndWait` |
 | Swift enum payload | `resolveEnumPayload` | `resolveEnumPayloadAndWait` |
 | Stored Swift closure | `resolveClosure` | `resolveClosureAndWait` |
@@ -143,7 +163,7 @@ let read = try await type.resolve(.swift(.method("read()", as: (() -> Int64).sel
 
 Use `resolveAndWait` without `await` for synchronous lookup, including inside an async function. It can block during cold lookup or while joining preparation. Bound member lookup keeps the receiver in the caller's isolation domain; see <doc:SwiftFunctionInvocation> and <doc:SwiftMemberInvocation>.
 
-`ABIRuntime` and `NativeSwiftType` remain actors. Replace earlier C/C++ `cFunction`, `cxxFunction`, `resolveCFunction`, and `resolveCXXFunction` factories with `.c(.function(...))` and `.cxx(.function(...))` requests passed to `resolve` or `resolveAndWait`. The same rename applies to `images`, `lazyLibraries`, C++ `method` and `virtualMethod`, and named vtable `entry`. Earlier `objcMethod`, `objcImplementation`, and Objective-C `method(selector:)` calls become `.objc(.method(...))` or `.objc(.imp(...))` requests. Earlier synchronous raw `resolve` calls become `resolveAndWait`, or add `await` to use async resolution. The old factory names have no compatibility aliases.
+`ABIRuntime` and `NativeSwiftType` remain actors. Replace earlier C/C++ `cFunction`, `cxxFunction`, `resolveCFunction`, and `resolveCXXFunction` factories with `.c(.function(...))` and `.cxx(.function(...))` requests passed to `resolve` or `resolveAndWait`. The same rename applies to `images`, `lazyLibraries`, and named vtable `entry`. Earlier C++ `method` and `virtualMethod` factories become the direct and virtual `.cxx(...)` requests above. Earlier `objcMethod`, `objcImplementation`, and Objective-C `method(selector:)` calls become `.objc(.method(...))` or `.objc(.imp(...))` requests. Earlier synchronous raw `resolve` calls become `resolveAndWait`, or add `await` to use async resolution. The old factory names have no compatibility aliases.
 
 For C or C++ lookup from `MainActor`, call the async factory directly:
 

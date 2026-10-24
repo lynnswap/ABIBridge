@@ -62,6 +62,8 @@ func calculate() async throws -> Int32 {
 
 Search, image acquisition, and call preparation run on a worker while the caller suspends. Use `.c(.function(...))` for a C declaration, or save either form with `NativeRequest.c(...)` or `NativeRequest.cxx(...)`. Optional earlier `prepare` shares its work with either lookup form; callers join only the preparation they need.
 
+For C++ object methods, bind receiver storage with `cxxObject` and resolve `.cxx(.method(...))` or, for a selected virtual slot, `.cxx(.virtualMethod(...))`. See [C++ object calls](https://lynnswap.github.io/ABIBridge/documentation/abibridge/cxxobjectinvocation) for signatures, table ownership, and unsafe virtual resolution.
+
 ### Call Swift by its source-level name
 
 For an already-loaded module defining `func decorate(_ value: String) -> String`:

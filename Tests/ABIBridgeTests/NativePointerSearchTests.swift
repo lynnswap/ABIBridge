@@ -361,7 +361,7 @@ struct NativePointerSearchTests {
             retaining: evidence
         )
         let method = try ABIRuntime.shared.cxxObject(storage, typeNamed: "ABICXXFixture::Derived")
-            .resolveMethodAndWait(named: "value() const", as: (() -> Int32).self)
+            .resolveAndWait(.cxx(.method("value() const", as: (() -> Int32).self)))
         candidate = nil
         #expect(try unsafe method.unsafeInvoke() == 110)
         #expect(weakOwner != nil)
