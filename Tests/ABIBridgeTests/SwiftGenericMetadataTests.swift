@@ -102,10 +102,12 @@ struct SwiftGenericMetadataTests {
         let runtime = ABIRuntime()
         let rect = try await runtime.resolveSwiftType(named: "__C.CGRect")
         let copy = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
-                as: ((CGRect) -> CGRect).self,
-                genericArguments: [.type(rect)]
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+                    as: ((CGRect) -> CGRect).self,
+                    genericArguments: [.type(rect)]
+                )
             )
         )
         let value = CGRect(x: 1, y: 2, width: 3, height: 4)

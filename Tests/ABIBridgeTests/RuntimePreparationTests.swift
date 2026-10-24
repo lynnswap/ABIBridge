@@ -282,17 +282,21 @@ struct RuntimePreparationTests {
         let function: NativeSwiftFunction<() -> Int32>
         if asynchronous {
             function = try await runtime.resolve(
-                .function(
-                    name,
-                    as: (() -> Int32).self
+                .swift(
+                    .function(
+                        name,
+                        as: (() -> Int32).self
+                    )
                 ),
                 in: image
             )
         } else {
             function = try runtime.resolveAndWait(
-                .function(
-                    name,
-                    as: (() -> Int32).self
+                .swift(
+                    .function(
+                        name,
+                        as: (() -> Int32).self
+                    )
                 ),
                 in: image
             )
@@ -301,9 +305,11 @@ struct RuntimePreparationTests {
         #expect(try unsafe function.unsafeInvoke() == (asynchronous ? 0 : 1))
 
         let retained = try await runtime.resolve(
-            .function(
-                name,
-                as: (() -> Int32).self
+            .swift(
+                .function(
+                    name,
+                    as: (() -> Int32).self
+                )
             ),
             in: function.symbol.image,
             loading: .loadedOnly
@@ -326,21 +332,27 @@ struct RuntimePreparationTests {
 
         if bound {
             let method = try await object.resolve(
-                .method(
-                    "read()",
-                    as: (() -> SwiftPreparationValue).self
+                .swift(
+                    .method(
+                        "read()",
+                        as: (() -> SwiftPreparationValue).self
+                    )
                 )
             )
             let getter = try await object.resolve(
-                .getter(
-                    "value",
-                    as: (() -> SwiftPreparationValue).self
+                .swift(
+                    .getter(
+                        "value",
+                        as: (() -> SwiftPreparationValue).self
+                    )
                 )
             )
             let setter = try await object.resolve(
-                .setter(
-                    "value",
-                    as: ((SwiftPreparationValue) -> Void).self
+                .swift(
+                    .setter(
+                        "value",
+                        as: ((SwiftPreparationValue) -> Void).self
+                    )
                 )
             )
             let observations = SwiftPreparationValue.preparationThreads.withLock { $0 }
@@ -354,21 +366,27 @@ struct RuntimePreparationTests {
             #expect(receiver.raw == 44)
         } else {
             let method = try await type.resolve(
-                .method(
-                    "read()",
-                    as: (() -> SwiftPreparationValue).self
+                .swift(
+                    .method(
+                        "read()",
+                        as: (() -> SwiftPreparationValue).self
+                    )
                 )
             )
             let getter = try await type.resolve(
-                .getter(
-                    "value",
-                    as: (() -> SwiftPreparationValue).self
+                .swift(
+                    .getter(
+                        "value",
+                        as: (() -> SwiftPreparationValue).self
+                    )
                 )
             )
             let setter = try await type.resolve(
-                .setter(
-                    "value",
-                    as: ((SwiftPreparationValue) -> Void).self
+                .swift(
+                    .setter(
+                        "value",
+                        as: ((SwiftPreparationValue) -> Void).self
+                    )
                 )
             )
             let observations = SwiftPreparationValue.preparationThreads.withLock { $0 }
@@ -395,27 +413,35 @@ struct RuntimePreparationTests {
         defer { SwiftPreparationValue.preparationThreads.withLock { $0.removeAll() } }
 
         let initialize = try await type.resolve(
-            .initializer(
-                "init(value:)",
-                as: ((SwiftPreparationValue) -> AnyObject).self
+            .swift(
+                .initializer(
+                    "init(value:)",
+                    as: ((SwiftPreparationValue) -> AnyObject).self
+                )
             )
         )
         let read = try await type.resolve(
-            .staticMethod(
-                "readStatic()",
-                as: (() -> SwiftPreparationValue).self
+            .swift(
+                .staticMethod(
+                    "readStatic()",
+                    as: (() -> SwiftPreparationValue).self
+                )
             )
         )
         let getter = try await type.resolve(
-            .staticGetter(
-                "staticValue",
-                as: (() -> SwiftPreparationValue).self
+            .swift(
+                .staticGetter(
+                    "staticValue",
+                    as: (() -> SwiftPreparationValue).self
+                )
             )
         )
         let setter = try await type.resolve(
-            .staticSetter(
-                "staticValue",
-                as: ((SwiftPreparationValue) -> Void).self
+            .swift(
+                .staticSetter(
+                    "staticValue",
+                    as: ((SwiftPreparationValue) -> Void).self
+                )
             )
         )
         let observations = SwiftPreparationValue.preparationThreads.withLock { $0 }
@@ -440,16 +466,20 @@ struct RuntimePreparationTests {
         )
         await #expect(throws: ABIResolutionError.declarationNotFound(missing)) {
             try await runtime.resolve(
-                .function(
-                    missing.name,
-                    as: (() -> Int32).self
+                .swift(
+                    .function(
+                        missing.name,
+                        as: (() -> Int32).self
+                    )
                 )
             )
         }
         let function = try await runtime.resolve(
-            .function(
-                "ABIBridgeTests.swiftABIAnswer()",
-                as: (() -> Int32).self
+            .swift(
+                .function(
+                    "ABIBridgeTests.swiftABIAnswer()",
+                    as: (() -> Int32).self
+                )
             )
         )
         #expect(try unsafe function.unsafeInvoke() == 42)
@@ -466,12 +496,14 @@ struct RuntimePreparationTests {
             named: "ABIBridgeTests.SwiftPreparationReceiver"
         )
         await #expect(throws: ABIResolutionError.self) {
-            try await type.resolve(.getter("missing", as: (() -> Int64).self))
+            try await type.resolve(.swift(.getter("missing", as: (() -> Int64).self)))
         }
         let getter = try await type.resolve(
-            .getter(
-                "value",
-                as: (() -> SwiftPreparationValue).self
+            .swift(
+                .getter(
+                    "value",
+                    as: (() -> SwiftPreparationValue).self
+                )
             )
         )
         #expect(try unsafe getter.unsafeInvoke(on: SwiftPreparationReceiver()).raw == 42)

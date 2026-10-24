@@ -5,10 +5,10 @@ Use ``NativeSwiftValue`` for a native declaration returning `some P`. The matche
 For a loaded module declaring `func makeSummary(_ title: String) -> some Summary`:
 
 ```swift
-let make = try ABIRuntime.shared.resolveAndWait(.function(
+let make = try ABIRuntime.shared.resolveAndWait(.swift(.function(
     "Example.makeSummary(_:)",
     as: ((String) -> NativeSwiftValue).self
-))
+)))
 let result = try unsafe make.unsafeInvoke("Title")
 try result.withCopy { value in
     if let summary = value as? any Summary {
@@ -22,11 +22,11 @@ The same result type works with supported synchronous, throwing, and async funct
 For a generic factory, use its complete declaration and bind the generic arguments:
 
 ```swift
-let make = try runtime.resolveAndWait(.function(
+let make = try runtime.resolveAndWait(.swift(.function(
     "Example.makeSummary<A>(A) -> some",
     as: ((String) -> NativeSwiftValue).self,
     genericArguments: [.type(String.self)]
-))
+)))
 let result = try unsafe make.unsafeInvoke("Title")
 ```
 
@@ -56,13 +56,13 @@ Prepare members through the result's type and pass the owner directly. For a hid
 
 ```swift
 let selfABI = try NativeType.opaque(named: result.type.name)
-let read = try result.type.resolveAndWait(.method(
+let read = try result.type.resolveAndWait(.swift(.method(
     "read()", as: (() -> Int64).self, receiverABI: selfABI
-))
-let add = try result.type.resolveAndWait(.method(
+)))
+let add = try result.type.resolveAndWait(.swift(.method(
     "add(_:)", as: ((Int64) -> Void).self,
     receiverABI: selfABI, receiver: .mutating
-))
+)))
 try unsafe add.unsafeInvoke(on: result, 5)
 print(try unsafe read.unsafeInvoke(on: result))
 ```
@@ -76,11 +76,11 @@ Members prepared with `consuming: true` transfer the owned payload, including no
 Bind a native generic parameter to the value's retained type. The signature uses NativeSwiftValue for owned runtime inputs and results, or NativeSwiftBorrowedValue for an active borrowed input. For a provider declaring `move<T: ~Copyable>(_ value: consuming T) -> T`:
 
 ```swift
-let move = try runtime.resolveAndWait(.function(
+let move = try runtime.resolveAndWait(.swift(.function(
     "Provider.move<A where A: ~Swift.Copyable>(__owned A) -> A",
     as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self,
     genericArguments: [.type(result.type)]
-))
+)))
 let moved = try unsafe move.unsafeInvoke(NativeSwiftConsuming(result))
 // result.isConsumed is true; moved owns the same native payload.
 ```
@@ -137,10 +137,10 @@ For a native enum with `case item(any Payload)` whose concrete payload is a resi
 ```swift
 if let payload = try await result.resolveEnumPayload(forCase: "item") {
     let concrete = try payload.copyUnderlyingValue()
-    let read = try await concrete.type.resolve(.method(
+    let read = try await concrete.type.resolve(.swift(.method(
         "read()", as: (() -> Int64).self,
         receiverABI: .opaque(named: concrete.type.name)
-    ))
+    )))
     print(try unsafe read.unsafeInvoke(on: concrete))
 }
 ```
@@ -172,10 +172,10 @@ Compiler controls compare provider descriptors with independently compiled calle
 Use `NativeSwiftBorrowedValue` as the result marker and `unsafeInvoke(..., withResult:)` when a native result must stay within its valid lifetime:
 
 ```swift
-let make = try runtime.resolveAndWait(.function(
+let make = try runtime.resolveAndWait(.swift(.function(
     "Example.makeView(_:)",
     as: ((Owner) -> NativeSwiftBorrowedValue).self
-))
+)))
 let number = try unsafe make.unsafeInvoke(owner, withResult: { view in
     try unsafe read.unsafeInvoke(on: view)
 })
@@ -188,14 +188,14 @@ Prepare member handles such as `read` before entering a synchronous body. They u
 `declaredAs:` can state which inputs the result borrows from. Copy the provider's effective lifetime dependencies, including any inferred `self` dependency, into its formal function type. For a provider declaring `@_lifetime(borrow first) func view(_ first: String, _ second: String) -> View`:
 
 ```swift
-let view = try runtime.resolveAndWait(.function(
+let view = try runtime.resolveAndWait(.swift(.function(
     "Example.view(_:_:)",
     as: ((String, String) -> NativeSwiftBorrowedValue).self,
     declaredAs: "@_lifetime(borrow first) (_ first: Swift.String, _ second: Swift.String) -> Example.View"
-))
-let read = try runtime.resolveAndWait(.function(
+)))
+let read = try runtime.resolveAndWait(.swift(.function(
     "Example.read(_:)", as: ((NativeSwiftBorrowedValue) -> Int64).self
-))
+)))
 let number = try unsafe view.unsafeInvoke("123", "456", withResult: { value in
     try unsafe read.unsafeInvoke(value)
 })

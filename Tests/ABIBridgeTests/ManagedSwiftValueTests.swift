@@ -252,15 +252,19 @@ struct ManagedSwiftValueTests {
     /// directly; ResilientRecord is resilient and passes indirectly.
     @Test func declarationTypesInferTheirConventions() async throws {
         let managed = try ABIRuntime.shared.resolveAndWait(
-            .function(
-                "ManagedSwiftFixtures.transformManaged(_:)",
-                as: ((ManagedRecord) -> ManagedRecord).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.transformManaged(_:)",
+                    as: ((ManagedRecord) -> ManagedRecord).self
+                )
             )
         )
         let resilient = try ABIRuntime.shared.resolveAndWait(
-            .function(
-                "ManagedSwiftFixtures.transformResilient(_:)",
-                as: ((ResilientRecord) -> ResilientRecord).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.transformResilient(_:)",
+                    as: ((ResilientRecord) -> ResilientRecord).self
+                )
             )
         )
         weak var weakToken: LifetimeToken?
@@ -287,24 +291,30 @@ struct ManagedSwiftValueTests {
     @Test func undecidedHostValuesPassByAddressAtWholePositions() async throws {
         let runtime = ABIRuntime.shared
         let describe = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.describeWideLabel(_:)",
-                as: ((WideLabel) -> String).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.describeWideLabel(_:)",
+                    as: ((WideLabel) -> String).self
+                )
             )
         )
         #expect(try unsafe describe.unsafeInvoke(WideLabel(name: "host", a: 4)) == "host:4,5,6")
         let make = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.makeWideLabel(_:)",
-                as: ((String) -> WideLabel).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.makeWideLabel(_:)",
+                    as: ((String) -> WideLabel).self
+                )
             )
         )
         let made = try unsafe make.unsafeInvoke("made")
         #expect(made.name == "made" && made.a == 1 && made.c == 3)
         let apply = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.applyWideLabel(_:_:)",
-                as: ((NativeSwiftClosure<(WideLabel) -> WideLabel>, WideLabel) -> String).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.applyWideLabel(_:_:)",
+                    as: ((NativeSwiftClosure<(WideLabel) -> WideLabel>, WideLabel) -> String).self
+                )
             )
         )
         let callback = try NativeSwiftClosure { (value: WideLabel) in
@@ -313,18 +323,22 @@ struct ManagedSwiftValueTests {
         #expect(try unsafe apply.unsafeInvoke(callback, WideLabel(name: "cb", a: 1)) == "cb!:3,4,5")
         // A tuple parameter's elements are whole parameters.
         let pair = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.describeWideLabelPair(_:)",
-                as: (((WideLabel, Int64)) -> String).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.describeWideLabelPair(_:)",
+                    as: (((WideLabel, Int64)) -> String).self
+                )
             )
         )
         #expect(try unsafe pair.unsafeInvoke((WideLabel(name: "pair", a: 1), 7)) == "pair:1,2,3#7")
         // A tuple result's elements are nested, where the conventions differ.
         await #expect {
             _ = try await runtime.resolve(
-                .function(
-                    "ManagedSwiftFixtures.makeWideLabelPair(_:)",
-                    as: ((String) -> (WideLabel, Int64)).self
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.makeWideLabelPair(_:)",
+                        as: ((String) -> (WideLabel, Int64)).self
+                    )
                 )
             )
         } throws: { error in

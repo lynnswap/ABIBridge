@@ -17,12 +17,12 @@ nonisolated(nonsending) func visitRecords(
 ) async throws {
     let runtime = ABIRuntime.shared
     let type = try await runtime.resolveSwiftType(named: "Example.Record")
-    let text = try await type.resolve(.getter("text", as: (() -> String).self, receiverABI: .opaque(named: type.name)))
-    let visit = try await runtime.resolve(.function(
+    let text = try await type.resolve(.swift(.getter("text", as: (() -> String).self, receiverABI: .opaque(named: type.name))))
+    let visit = try await runtime.resolve(.swift(.function(
         "Example.visit((Example.Record) -> ()) -> ()",
         as: ((NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Void>) -> Void).self,
         valueABIs: [type: .opaque(named: type.name)]
-    ))
+    )))
     let callback = try NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Void> { record in
         do {
             onValue(try unsafe text.unsafeInvoke(on: record))

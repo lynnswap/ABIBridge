@@ -28,13 +28,17 @@ import Synchronization
         checks.append(message)
     }
     let oracle = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.witnessRead(_:_:_:)",
-            as: ((Int64, Int64, Int64) -> Int64).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.witnessRead(_:_:_:)",
+                as: ((Int64, Int64, Int64) -> Int64).self
+            )
         ),
         in: caller
     )
-    let method = try await type.resolve(.method(prefix + "read(_:)", as: ((Int64) -> Int64).self))
+    let method = try await type.resolve(
+        .swift(.method(prefix + "read(_:)", as: ((Int64) -> Int64).self))
+    )
     let hook = try await unsafe method.hookVirtualCalls(onFailure: failure) {
         call,
         value in try call.proceed(value + 1) + 100
@@ -48,7 +52,9 @@ import Synchronization
         try unsafe oracle.unsafeInvoke(1, 40, 2) == 43,
         "Witness hook preserves another conformance"
     )
-    let again = try await type.resolve(.method(prefix + "read(_:)", as: ((Int64) -> Int64).self))
+    let again = try await type.resolve(
+        .swift(.method(prefix + "read(_:)", as: ((Int64) -> Int64).self))
+    )
     let second = try await unsafe again.hookVirtualCalls(onFailure: failure) {
         call,
         value in try call.proceed(value * 2) + 1000
@@ -60,11 +66,11 @@ import Synchronization
     )
     second.invalidate()
     let replacement = try await type.resolve(
-        .method(prefix + "replacement(_:)", as: ((Int64) -> Int64).self)
+        .swift(.method(prefix + "replacement(_:)", as: ((Int64) -> Int64).self))
     )
     let plan = try await unsafe method.prepareVirtualReplacement(with: replacement)
     let construct = try await type.resolve(
-        .initializer("init(seed:)", as: ((Int64) -> NativeSwiftValue).self)
+        .swift(.initializer("init(seed:)", as: ((Int64) -> NativeSwiftValue).self))
     )
     let value = try unsafe construct.unsafeInvoke(40)
     try check(
@@ -80,8 +86,10 @@ import Synchronization
     try plan.restore()
     hook.invalidate()
 
-    let getter = try await type.resolve(.getter(prefix + "value", as: (() -> Int64).self))
-    let setter = try await type.resolve(.setter(prefix + "value", as: ((Int64) -> Void).self))
+    let getter = try await type.resolve(.swift(.getter(prefix + "value", as: (() -> Int64).self)))
+    let setter = try await type.resolve(
+        .swift(.setter(prefix + "value", as: ((Int64) -> Void).self))
+    )
     let getHook = try await unsafe getter.hookVirtualCalls(onFailure: failure) { call in
         try call.proceed() + 10
     }
@@ -91,9 +99,11 @@ import Synchronization
     }
     defer { setHook.invalidate() }
     let set = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.witnessSet(_:_:_:)",
-            as: ((Int64, Int64, Int64) -> Int64).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.witnessSet(_:_:_:)",
+                as: ((Int64, Int64, Int64) -> Int64).self
+            )
         ),
         in: caller
     )
@@ -104,14 +114,14 @@ import Synchronization
     getHook.invalidate(); setHook.invalidate()
 
     let kind = try await type.resolve(
-        .staticMethod(prefix + "kind(_:)", as: ((Int64) -> Int64).self)
+        .swift(.staticMethod(prefix + "kind(_:)", as: ((Int64) -> Int64).self))
     )
     let kindHook = try await unsafe kind.hookVirtualCalls(onFailure: failure) { call, value in
         try call.proceed(value) + 200
     }
     defer { kindHook.invalidate() }
     let kindOracle = try await runtime.resolve(
-        .function("SwiftImportCallerControl.witnessKind(_:)", as: ((Int64) -> Int64).self),
+        .swift(.function("SwiftImportCallerControl.witnessKind(_:)", as: ((Int64) -> Int64).self)),
         in: caller
     )
     try check(
@@ -119,7 +129,7 @@ import Synchronization
         "Static requirement preserves metatype and conformance context"
     )
     let initializer = try await type.resolve(
-        .initializer(prefix + "init(seed:)", as: ((Int64) -> NativeSwiftValue).self)
+        .swift(.initializer(prefix + "init(seed:)", as: ((Int64) -> NativeSwiftValue).self))
     )
     let initHook = try await unsafe initializer.hookVirtualCalls(onFailure: failure) {
         call,
@@ -127,7 +137,7 @@ import Synchronization
     }
     defer { initHook.invalidate() }
     let initOracle = try await runtime.resolve(
-        .function("SwiftImportCallerControl.witnessInit(_:)", as: ((Int64) -> Int64).self),
+        .swift(.function("SwiftImportCallerControl.witnessInit(_:)", as: ((Int64) -> Int64).self)),
         in: caller
     )
     try check(
@@ -137,9 +147,11 @@ import Synchronization
     initHook.invalidate()
 
     let asynchronous = try await type.resolve(
-        .method(
-            prefix + "asyncRead(_:)",
-            as: (nonisolated(nonsending) (Int64) async -> Int64).self
+        .swift(
+            .method(
+                prefix + "asyncRead(_:)",
+                as: (nonisolated(nonsending) (Int64) async -> Int64).self
+            )
         )
     )
     let asyncHook = try await unsafe asynchronous.hookVirtualCalls(onFailure: failure) {
@@ -150,9 +162,11 @@ import Synchronization
     }
     defer { asyncHook.invalidate() }
     let asyncOracle = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.witnessAsync(_:_:_:)",
-            as: (nonisolated(nonsending) (Int64, Int64, Int64) async -> Int64).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.witnessAsync(_:_:_:)",
+                as: (nonisolated(nonsending) (Int64, Int64, Int64) async -> Int64).self
+            )
         ),
         in: caller
     )
@@ -173,7 +187,7 @@ import Synchronization
             genericArguments: [.type(Int64.self)]
         )
         let boundMethod = try await bound.resolve(
-            .method(prefix + "read(_:)", as: ((Int64) -> Int64).self)
+            .swift(.method(prefix + "read(_:)", as: ((Int64) -> Int64).self))
         )
         let boundHook = try await unsafe boundMethod.hookVirtualCalls(onFailure: failure) {
             call,
@@ -202,9 +216,11 @@ import Synchronization
         genericArguments: [.type(String.self)]
     )
     let sharedName = "SwiftImportProvider.SharedWitnessed.read(_:)"
-    let sharedMethod = try await sharedInt.resolve(.method(sharedName, as: ((Int64) -> Int64).self))
+    let sharedMethod = try await sharedInt.resolve(
+        .swift(.method(sharedName, as: ((Int64) -> Int64).self))
+    )
     let sharedOther = try await sharedString.resolve(
-        .method(sharedName, as: ((Int64) -> Int64).self)
+        .swift(.method(sharedName, as: ((Int64) -> Int64).self))
     )
     let sharedHook = try await unsafe sharedMethod.hookVirtualCalls(onFailure: failure) {
         call,
@@ -217,9 +233,11 @@ import Synchronization
     }
     defer { sharedOtherHook.invalidate() }
     let sharedOracle = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.witnessShared(_:_:_:)",
-            as: ((Bool, Int64, Int64) -> Int64).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.witnessShared(_:_:_:)",
+                as: ((Bool, Int64, Int64) -> Int64).self
+            )
         ),
         in: caller
     )

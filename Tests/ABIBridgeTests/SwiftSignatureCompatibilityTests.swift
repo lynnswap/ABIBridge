@@ -19,18 +19,22 @@ struct SwiftSignatureCompatibilityTests {
 
     @Test func resultsConvertToRequestedSuperclassesAndOptional() async throws {
         let base = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.compatibilityMakeDerived()",
-                as: (() -> CompatibilityBase).self,
-                declaredAs: "() -> ManagedSwiftFixtures.CompatibilityDerived"
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.compatibilityMakeDerived()",
+                    as: (() -> CompatibilityBase).self,
+                    declaredAs: "() -> ManagedSwiftFixtures.CompatibilityDerived"
+                )
             )
         )
         #expect(try unsafe base.unsafeInvoke().name() == "derived")
         let optional = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.compatibilityMakeDerived()",
-                as: (() -> CompatibilityBase?).self,
-                declaredAs: "() -> ManagedSwiftFixtures.CompatibilityDerived"
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.compatibilityMakeDerived()",
+                    as: (() -> CompatibilityBase?).self,
+                    declaredAs: "() -> ManagedSwiftFixtures.CompatibilityDerived"
+                )
             )
         )
         #expect(try unsafe optional.unsafeInvoke()?.name() == "derived")
@@ -38,18 +42,22 @@ struct SwiftSignatureCompatibilityTests {
 
     @Test func argumentsAcceptSubclassesAndOptionalWrapping() async throws {
         let name = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.compatibilityName(_:)",
-                as: ((CompatibilityDerived) -> String).self,
-                declaredAs: "(ManagedSwiftFixtures.CompatibilityBase) -> Swift.String"
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.compatibilityName(_:)",
+                    as: ((CompatibilityDerived) -> String).self,
+                    declaredAs: "(ManagedSwiftFixtures.CompatibilityBase) -> Swift.String"
+                )
             )
         )
         #expect(try unsafe name.unsafeInvoke(CompatibilityDerived()) == "derived")
         let optional = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.compatibilityOptionalName(_:)",
-                as: ((CompatibilityDerived) -> String).self,
-                declaredAs: "(ManagedSwiftFixtures.CompatibilityBase?) -> Swift.String"
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.compatibilityOptionalName(_:)",
+                    as: ((CompatibilityDerived) -> String).self,
+                    declaredAs: "(ManagedSwiftFixtures.CompatibilityBase?) -> Swift.String"
+                )
             )
         )
         #expect(try unsafe optional.unsafeInvoke(CompatibilityDerived()) == "derived")
@@ -60,10 +68,12 @@ struct SwiftSignatureCompatibilityTests {
         // requires its subclass.
         do {
             _ = try await runtime.resolve(
-                .function(
-                    "ManagedSwiftFixtures.compatibilityDerivedName(_:)",
-                    as: ((CompatibilityBase) -> String).self,
-                    declaredAs: "(ManagedSwiftFixtures.CompatibilityDerived) -> Swift.String"
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.compatibilityDerivedName(_:)",
+                        as: ((CompatibilityBase) -> String).self,
+                        declaredAs: "(ManagedSwiftFixtures.CompatibilityDerived) -> Swift.String"
+                    )
                 )
             )
             Issue.record("A superclass argument was accepted")
@@ -74,10 +84,12 @@ struct SwiftSignatureCompatibilityTests {
         // A native Optional result cannot be requested as nonoptional.
         do {
             _ = try await runtime.resolve(
-                .function(
-                    "ManagedSwiftFixtures.compatibilityMakeOptional(_:)",
-                    as: ((Bool) -> CompatibilityBase).self,
-                    declaredAs: "(Swift.Bool) -> ManagedSwiftFixtures.CompatibilityDerived?"
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.compatibilityMakeOptional(_:)",
+                        as: ((Bool) -> CompatibilityBase).self,
+                        declaredAs: "(Swift.Bool) -> ManagedSwiftFixtures.CompatibilityDerived?"
+                    )
                 )
             )
             Issue.record("A nonoptional result was accepted for an Optional native result")
@@ -90,42 +102,51 @@ struct SwiftSignatureCompatibilityTests {
         // The callee can store a superclass instance through inout.
         await #expect(throws: ABIResolutionError.self) {
             _ = try await runtime.resolve(
-                .function(
-                    "ManagedSwiftFixtures.compatibilityReplace(_:)",
-                    as: ((NativeSwiftInout<CompatibilityDerived>) -> Void).self,
-                    declaredAs: "(inout ManagedSwiftFixtures.CompatibilityBase) -> ()"
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.compatibilityReplace(_:)",
+                        as: ((NativeSwiftInout<CompatibilityDerived>) -> Void).self,
+                        declaredAs: "(inout ManagedSwiftFixtures.CompatibilityBase) -> ()"
+                    )
                 )
             )
         }
         // A tuple field is a result, which cannot narrow to a subclass.
         await #expect(throws: ABIResolutionError.self) {
             _ = try await runtime.resolve(
-                .function(
-                    "ManagedSwiftFixtures.compatibilityPair()",
-                    as: (() -> (CompatibilityDerived, Int64)).self,
-                    declaredAs: "() -> (ManagedSwiftFixtures.CompatibilityBase, Swift.Int64)"
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.compatibilityPair()",
+                        as: (() -> (CompatibilityDerived, Int64)).self,
+                        declaredAs: "() -> (ManagedSwiftFixtures.CompatibilityBase, Swift.Int64)"
+                    )
                 )
             )
         }
         // A callback receives native arguments and returns a native result.
         await #expect(throws: ABIResolutionError.self) {
             _ = try await runtime.resolve(
-                .function(
-                    "ManagedSwiftFixtures.compatibilityApply(_:)",
-                    as: ((NativeSwiftClosure<(CompatibilityDerived) -> CompatibilityBase>) -> String)
-                        .self,
-                    declaredAs:
-                        "((ManagedSwiftFixtures.CompatibilityBase) -> ManagedSwiftFixtures.CompatibilityDerived) -> Swift.String"
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.compatibilityApply(_:)",
+                        as: ((NativeSwiftClosure<(CompatibilityDerived) -> CompatibilityBase>)
+                            -> String)
+                            .self,
+                        declaredAs:
+                            "((ManagedSwiftFixtures.CompatibilityBase) -> ManagedSwiftFixtures.CompatibilityDerived) -> Swift.String"
+                    )
                 )
             )
         }
         // An adapter subclass is not passed as an object reference.
         await #expect(throws: ABIResolutionError.self) {
             _ = try await runtime.resolve(
-                .function(
-                    "ManagedSwiftFixtures.compatibilityName(_:)",
-                    as: ((IntegerAdaptedSubclass) -> String).self,
-                    declaredAs: "(ManagedSwiftFixtures.CompatibilityBase) -> Swift.String"
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.compatibilityName(_:)",
+                        as: ((IntegerAdaptedSubclass) -> String).self,
+                        declaredAs: "(ManagedSwiftFixtures.CompatibilityBase) -> Swift.String"
+                    )
                 )
             )
         }
@@ -134,18 +155,22 @@ struct SwiftSignatureCompatibilityTests {
         let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.CompatibilityBase")
         await #expect(throws: ABIResolutionError.self) {
             _ = try await type.resolve(
-                .method(
-                    "describe(_:)",
-                    as: ((NativeSwiftBorrowing<CompatibilityDerived>) -> String).self,
-                    declaredAs: "(ManagedSwiftFixtures.CompatibilityBase) -> Swift.String"
+                .swift(
+                    .method(
+                        "describe(_:)",
+                        as: ((NativeSwiftBorrowing<CompatibilityDerived>) -> String).self,
+                        declaredAs: "(ManagedSwiftFixtures.CompatibilityBase) -> Swift.String"
+                    )
                 )
             )
         }
         let describe = try await type.resolve(
-            .method(
-                "describe(_:)",
-                as: ((CompatibilityDerived) -> String).self,
-                declaredAs: "(ManagedSwiftFixtures.CompatibilityBase) -> Swift.String"
+            .swift(
+                .method(
+                    "describe(_:)",
+                    as: ((CompatibilityDerived) -> String).self,
+                    declaredAs: "(ManagedSwiftFixtures.CompatibilityBase) -> Swift.String"
+                )
             )
         )
         #expect(
@@ -160,9 +185,11 @@ struct SwiftSignatureCompatibilityTests {
 
     @Test func labelOnlyNamesSelectCompatibleFunctions() async throws {
         let make = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.compatibilityMakeDerived()",
-                as: (() -> CompatibilityBase).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.compatibilityMakeDerived()",
+                    as: (() -> CompatibilityBase).self
+                )
             )
         )
         #expect(try unsafe make.unsafeInvoke().name() == "derived")
@@ -174,9 +201,11 @@ struct SwiftSignatureCompatibilityTests {
         }
         // An erased result is a conversion too: a hook could return any object.
         let erased = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.compatibilityMakeDerived()",
-                as: (() -> AnyObject).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.compatibilityMakeDerived()",
+                    as: (() -> AnyObject).self
+                )
             )
         )
         #expect((try unsafe erased.unsafeInvoke() as? CompatibilityDerived)?.name() == "derived")
@@ -192,10 +221,14 @@ struct SwiftSignatureCompatibilityTests {
         // Both properties are declared with the subclass type, in the class
         // and in an extension from another module.
         for name in ["derived", "extensionDerived"] {
-            let getter = try await type.resolve(.getter(name, as: (() -> CompatibilityBase).self))
+            let getter = try await type.resolve(
+                .swift(.getter(name, as: (() -> CompatibilityBase).self))
+            )
             #expect(try unsafe getter.unsafeInvoke(on: CompatibilityBase()).name() == "derived")
         }
-        let derived = try await type.resolve(.getter("derived", as: (() -> CompatibilityBase).self))
+        let derived = try await type.resolve(
+            .swift(.getter("derived", as: (() -> CompatibilityBase).self))
+        )
         await expectNativeTypesRequired {
             _ = try await unsafe derived.hookVirtualCalls(onFailure: { _ in }) { call in
                 try call.proceed()
@@ -203,25 +236,31 @@ struct SwiftSignatureCompatibilityTests {
         }
         // A complete declaration need not name the extension's module.
         let name = try await type.resolve(
-            .method(
-                "extensionAsyncName() async -> Swift.String",
-                as: (@concurrent () async -> String).self
+            .swift(
+                .method(
+                    "extensionAsyncName() async -> Swift.String",
+                    as: (@concurrent () async -> String).self
+                )
             )
         )
         #expect(try unsafe await name.unsafeInvoke(on: CompatibilityBase()) == "async")
         // Label-only protocol members: a requirement, and an extension member
         // named without its module.
         let label = try await type.resolve(
-            .method(
-                "ManagedSwiftFixtures.CompatibilityNamed.compatibilityLabel()",
-                as: (() -> String).self
+            .swift(
+                .method(
+                    "ManagedSwiftFixtures.CompatibilityNamed.compatibilityLabel()",
+                    as: (() -> String).self
+                )
             )
         )
         #expect(try unsafe label.unsafeInvoke(on: CompatibilityBase()) == "base")
         let greeting = try await type.resolve(
-            .method(
-                "ManagedSwiftFixtures.CompatibilityNamed.compatibilityGreeting()",
-                as: (() -> String).self
+            .swift(
+                .method(
+                    "ManagedSwiftFixtures.CompatibilityNamed.compatibilityGreeting()",
+                    as: (() -> String).self
+                )
             )
         )
         #expect(try unsafe greeting.unsafeInvoke(on: CompatibilityBase()) == "hello base")
@@ -230,9 +269,11 @@ struct SwiftSignatureCompatibilityTests {
     @Test func protocolRequirementsPrecedeTheirDefaultImplementations() async throws {
         let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.CompatibilityTagged")
         let set = try await type.resolve(
-            .setter(
-                "ManagedSwiftFixtures.CompatibilityLabeled.compatibilityTag",
-                as: ((String) -> Void).self
+            .swift(
+                .setter(
+                    "ManagedSwiftFixtures.CompatibilityLabeled.compatibilityTag",
+                    as: ((String) -> Void).self
+                )
             )
         )
         let tagged = CompatibilityTagged()
@@ -245,19 +286,23 @@ struct SwiftSignatureCompatibilityTests {
             named: "ManagedSwiftFixtures.CompatibilityCount",
             as: HostCount.self
         )
-        let make = try await type.resolve(.initializer("init(_:)", as: ((Int64) -> HostCount).self))
+        let make = try await type.resolve(
+            .swift(.initializer("init(_:)", as: ((Int64) -> HostCount).self))
+        )
         let count = try unsafe make.unsafeInvoke(21)
         #expect(count.value == 21)
-        let doubled = try await type.resolve(.getter("doubled", as: (() -> HostCount).self))
+        let doubled = try await type.resolve(.swift(.getter("doubled", as: (() -> HostCount).self)))
         #expect(try unsafe doubled.unsafeInvoke(on: count).value == 42)
     }
 
     @Test func completeDeclarationsKeepHostRepresentationsInTuples() async throws {
         let count = "ManagedSwiftFixtures.CompatibilityCount"
         let pair = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.compatibilityCountPair((\(count), Swift.Int64)) -> (\(count), Swift.Int64)",
-                as: (((HostStoredCount, Int64)) -> (HostStoredCount, Int64)).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.compatibilityCountPair((\(count), Swift.Int64)) -> (\(count), Swift.Int64)",
+                    as: (((HostStoredCount, Int64)) -> (HostStoredCount, Int64)).self
+                )
             )
         )
         let result = try unsafe pair.unsafeInvoke((HostStoredCount(value: 40), 2))
@@ -268,18 +313,22 @@ struct SwiftSignatureCompatibilityTests {
         let count = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.CompatibilityCount")
         let valueABIs = [count: try NativeType.structure(named: "CompatibilityCount", fields: [.int64])]
         let doubled = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.compatibilityCountDoubled(_:)",
-                as: ((CompatibilityCount) -> CompatibilityCount).self,
-                valueABIs: valueABIs
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.compatibilityCountDoubled(_:)",
+                    as: ((CompatibilityCount) -> CompatibilityCount).self,
+                    valueABIs: valueABIs
+                )
             )
         )
         #expect(try unsafe doubled.unsafeInvoke(CompatibilityCount(21)).value == 42)
         let pair = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.compatibilityCountPair(_:)",
-                as: (((CompatibilityCount, Int64)) -> (CompatibilityCount, Int64)).self,
-                valueABIs: valueABIs
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.compatibilityCountPair(_:)",
+                    as: (((CompatibilityCount, Int64)) -> (CompatibilityCount, Int64)).self,
+                    valueABIs: valueABIs
+                )
             )
         )
         let result = try unsafe pair.unsafeInvoke((CompatibilityCount(40), 2))
@@ -290,10 +339,12 @@ struct SwiftSignatureCompatibilityTests {
         let count = "ManagedSwiftFixtures.CompatibilityCount"
         let int64 = try await runtime.resolveSwiftType(named: "Swift.Int64")
         let pair = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.compatibilityCountPair((\(count), Swift.Int64)) -> (\(count), Swift.Int64)",
-                as: (((HostStoredCount, Int64)) -> (HostStoredCount, Int64)).self,
-                valueABIs: [int64: .int64]
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.compatibilityCountPair((\(count), Swift.Int64)) -> (\(count), Swift.Int64)",
+                    as: (((HostStoredCount, Int64)) -> (HostStoredCount, Int64)).self,
+                    valueABIs: [int64: .int64]
+                )
             )
         )
         let result = try unsafe pair.unsafeInvoke((HostStoredCount(value: 40), 2))
@@ -301,10 +352,12 @@ struct SwiftSignatureCompatibilityTests {
         // A class reference keeps its subclass conversion.
         let derived = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.CompatibilityDerived")
         let name = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.compatibilityName(_:)",
-                as: ((CompatibilityDerived) -> String).self,
-                valueABIs: [derived: .pointer]
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.compatibilityName(_:)",
+                    as: ((CompatibilityDerived) -> String).self,
+                    valueABIs: [derived: .pointer]
+                )
             )
         )
         let value = CompatibilityDerived()
@@ -316,10 +369,12 @@ struct SwiftSignatureCompatibilityTests {
     @Test func tupleElementsConvertThroughAdapters() async throws {
         let count = "ManagedSwiftFixtures.CompatibilityCount"
         let pair = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.compatibilityCountPair"
-                    + "((\(count), Swift.Int64)) -> (\(count), Swift.Int64)",
-                as: (((HostCount, Int64)) -> (HostCount, Int64)).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.compatibilityCountPair"
+                        + "((\(count), Swift.Int64)) -> (\(count), Swift.Int64)",
+                    as: (((HostCount, Int64)) -> (HostCount, Int64)).self
+                )
             )
         )
         let result = try unsafe pair.unsafeInvoke((HostCount(value: 40), 2))
@@ -330,17 +385,21 @@ struct SwiftSignatureCompatibilityTests {
     /// `true`, as a result and as an inout buffer.
     @Test func booleansReadNonzeroBytesAsTrue() async throws {
         let byte = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.compatibilityByte() -> Swift.UInt8",
-                as: (() -> Bool).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.compatibilityByte() -> Swift.UInt8",
+                    as: (() -> Bool).self
+                )
             )
         )
         let value = try unsafe byte.unsafeInvoke()
         #expect(value == true)
         let store = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.compatibilityStoreByte(inout Swift.UInt8) -> ()",
-                as: ((NativeSwiftInout<Bool>) -> Void).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.compatibilityStoreByte(inout Swift.UInt8) -> ()",
+                    as: ((NativeSwiftInout<Bool>) -> Void).self
+                )
             )
         )
         let buffer = NativeSwiftInout(false)
@@ -352,9 +411,11 @@ struct SwiftSignatureCompatibilityTests {
         let outer = "ManagedSwiftFixtures.compatibilityLocalCount(Swift.Int64) -> Swift.Int64"
         let count = "Count #1 in " + outer
         let bump = try await runtime.resolve(
-            .function(
-                "bump #1 (\(count)) -> \(count) in \(outer)",
-                as: ((HostCount) -> HostCount).self
+            .swift(
+                .function(
+                    "bump #1 (\(count)) -> \(count) in \(outer)",
+                    as: ((HostCount) -> HostCount).self
+                )
             )
         )
         #expect(try unsafe bump.unsafeInvoke(HostCount(value: 41)).value == 42)
@@ -362,24 +423,30 @@ struct SwiftSignatureCompatibilityTests {
 
     @Test func labelOnlyNamesReturnOpaqueResultsAsTheirUnderlyingType() async throws {
         let function = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.compatibilityOpaqueCount()",
-                as: (() -> Int64).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.compatibilityOpaqueCount()",
+                    as: (() -> Int64).self
+                )
             )
         )
         #expect(try unsafe function.unsafeInvoke() == 41)
         let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.CompatibilityBase")
-        let method = try await type.resolve(.method("opaqueCount()", as: (() -> Int64).self))
+        let method = try await type.resolve(
+            .swift(.method("opaqueCount()", as: (() -> Int64).self))
+        )
         #expect(try unsafe method.unsafeInvoke(on: CompatibilityBase()) == 42)
     }
 
     @Test func hooksRequireTheNativeTypes() async throws {
         let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.CompatibilityBase")
         let make = try await type.resolve(
-            .method(
-                "makeDerived()",
-                as: (() -> CompatibilityBase).self,
-                declaredAs: "() -> ManagedSwiftFixtures.CompatibilityDerived"
+            .swift(
+                .method(
+                    "makeDerived()",
+                    as: (() -> CompatibilityBase).self,
+                    declaredAs: "() -> ManagedSwiftFixtures.CompatibilityDerived"
+                )
             )
         )
         #expect(try unsafe make.unsafeInvoke(on: CompatibilityBase()).name() == "derived")

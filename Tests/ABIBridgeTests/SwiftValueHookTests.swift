@@ -27,16 +27,20 @@ struct SwiftValueHookTests {
         )
         for (member, caller, consuming) in [("sum", "wideSum", false), ("consume", "wideConsume", true)] {
             let method = try await type.resolve(
-                .method(
-                    member + "(_:)",
-                    as: ((Int64) -> Int64).self,
-                    receiver: consuming ? .consuming : nil
+                .swift(
+                    .method(
+                        member + "(_:)",
+                        as: ((Int64) -> Int64).self,
+                        receiver: consuming ? .consuming : nil
+                    )
                 )
             )
             let oracle = try await fixture.runtime.resolve(
-                .function(
-                    fixture.callerModule + "." + caller + "(_:_:)",
-                    as: ((Int64, Int64) -> Int64).self
+                .swift(
+                    .function(
+                        fixture.callerModule + "." + caller + "(_:_:)",
+                        as: ((Int64, Int64) -> Int64).self
+                    )
                 ),
                 in: fixture.callerScope
             )
@@ -51,15 +55,19 @@ struct SwiftValueHookTests {
             #expect(try unsafe oracle.unsafeInvoke(40, 2) == 212)
         }
         let method = try await type.resolve(
-            .method(
-                "payload(Swift.Int64) -> " + fixture.module + ".ReplacementPayload",
-                as: ((Int64) -> SwiftABIFive).self
+            .swift(
+                .method(
+                    "payload(Swift.Int64) -> " + fixture.module + ".ReplacementPayload",
+                    as: ((Int64) -> SwiftABIFive).self
+                )
             )
         )
         let oracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".widePayload(_:_:)",
-                as: ((Int64, Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".widePayload(_:_:)",
+                    as: ((Int64, Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -79,11 +87,15 @@ struct SwiftValueHookTests {
             as: Int64.self,
             in: fixture.providerScope
         )
-        let method = try await type.resolve(.method("scalar(_:)", as: ((Int64) -> Int64).self))
+        let method = try await type.resolve(
+            .swift(.method("scalar(_:)", as: ((Int64) -> Int64).self))
+        )
         let oracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedValueMethod(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedValueMethod(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -113,18 +125,22 @@ struct SwiftValueHookTests {
             in: fixture.providerScope
         )
         let method = try await type.resolve(
-            .method(
-                "stack(_:_:_:_:_:_:_:_:_:_:_:_:)",
-                as: ((
-                    Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64,
-                    Int64
-                ) -> Int64).self
+            .swift(
+                .method(
+                    "stack(_:_:_:_:_:_:_:_:_:_:_:_:)",
+                    as: ((
+                        Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64,
+                        Int64
+                    ) -> Int64).self
+                )
             )
         )
         let oracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".stackedValue()",
-                as: (() -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".stackedValue()",
+                    as: (() -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -137,11 +153,15 @@ struct SwiftValueHookTests {
         hook.invalidate()
         #expect(try unsafe oracle.unsafeInvoke() == 118)
 
-        let scalar = try await type.resolve(.method("scalar(_:)", as: ((Int64) -> Int64).self))
+        let scalar = try await type.resolve(
+            .swift(.method("scalar(_:)", as: ((Int64) -> Int64).self))
+        )
         let scalarCaller = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedValueMethod(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedValueMethod(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -176,16 +196,20 @@ struct SwiftValueHookTests {
             in: fixture.providerScope
         )
         let method = try await type.resolve(
-            .method(
-                "increment(_:)",
-                as: ((Int64) -> Int64).self,
-                receiver: .mutating
+            .swift(
+                .method(
+                    "increment(_:)",
+                    as: ((Int64) -> Int64).self,
+                    receiver: .mutating
+                )
             )
         )
         let oracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".incrementValue(_:_:)",
-                as: ((Int64, Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".incrementValue(_:_:)",
+                    as: ((Int64, Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -223,12 +247,14 @@ struct SwiftValueHookTests {
             in: fixture.providerScope
         )
         let method = try await type.resolve(
-            .method("consume()", as: (() -> String).self, receiver: .consuming)
+            .swift(.method("consume()", as: (() -> String).self, receiver: .consuming))
         )
         let oracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".consumeTextValue(_:)",
-                as: ((String) -> String).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".consumeTextValue(_:)",
+                    as: ((String) -> String).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -268,16 +294,20 @@ struct SwiftValueHookTests {
             in: fixture.providerScope
         )
         let method = try await type.resolve(
-            .method(
-                "append(_:)",
-                as: ((String) -> String).self,
-                receiver: .mutating
+            .swift(
+                .method(
+                    "append(_:)",
+                    as: ((String) -> String).self,
+                    receiver: .mutating
+                )
             )
         )
         let oracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".appendTextValue(_:_:)",
-                as: ((String, String) -> String).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".appendTextValue(_:_:)",
+                    as: ((String, String) -> String).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -308,9 +338,11 @@ struct SwiftValueHookTests {
         """); defer { fixture.cleanup() }
         let name = fixture.module + ".ValueToken"
         let make = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".makeValueToken() -> " + name,
-                as: (() -> AnyObject).self
+            .swift(
+                .function(
+                    fixture.module + ".makeValueToken() -> " + name,
+                    as: (() -> AnyObject).self
+                )
             ),
             in: fixture.providerScope
         )
@@ -323,17 +355,21 @@ struct SwiftValueHookTests {
             in: fixture.providerScope
         )
         let method = try await type.resolve(
-            .method(
-                "consume(_:)",
-                as: ((Int64) -> Int64).self,
-                receiver: .consuming
+            .swift(
+                .method(
+                    "consume(_:)",
+                    as: ((Int64) -> Int64).self,
+                    receiver: .consuming
+                )
             )
         )
         let oracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule
-                    + ".consumeReferenceValue(\(name), Swift.Int64) -> Swift.Int64",
-                as: ((AnyObject, Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule
+                        + ".consumeReferenceValue(\(name), Swift.Int64) -> Swift.Int64",
+                    as: ((AnyObject, Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -373,9 +409,11 @@ struct SwiftValueHookTests {
         """); defer { fixture.cleanup() }
         let name = fixture.module + ".ValueBox"
         let make = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".makeValueBox() -> " + name,
-                as: (() -> AnyObject).self
+            .swift(
+                .function(
+                    fixture.module + ".makeValueBox() -> " + name,
+                    as: (() -> AnyObject).self
+                )
             ),
             in: fixture.providerScope
         )
@@ -387,12 +425,14 @@ struct SwiftValueHookTests {
             in: fixture.providerScope
         )
         let setter = try await type.resolve(
-            .setter("text", as: ((String) -> Void).self, receiver: .borrowing)
+            .swift(.setter("text", as: ((String) -> Void).self, receiver: .borrowing))
         )
         let oracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".setBoxValue(\(name), Swift.String) -> Swift.String",
-                as: ((AnyObject, String) -> String).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".setBoxValue(\(name), Swift.String) -> Swift.String",
+                    as: ((AnyObject, String) -> String).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -438,18 +478,22 @@ struct SwiftValueHookTests {
             in: fixture.providerScope
         )
         let function = try await fixture.runtime.resolve(
-            .function(
-                "\(fixture.module).tokensAndWords(Swift.Int64) -> (\(token.name), Swift.Int64, "
-                    + "\(token.name), Swift.Int64, Swift.Int64, Swift.Int64, Swift.Int64)",
-                as: ((Int64) -> (HookWord, Int64, HookWord, Int64, Int64, Int64, Int64)).self,
-                valueABIs: [token: try .opaque(named: token.name)]
+            .swift(
+                .function(
+                    "\(fixture.module).tokensAndWords(Swift.Int64) -> (\(token.name), Swift.Int64, "
+                        + "\(token.name), Swift.Int64, Swift.Int64, Swift.Int64, Swift.Int64)",
+                    as: ((Int64) -> (HookWord, Int64, HookWord, Int64, Int64, Int64, Int64)).self,
+                    valueABIs: [token: try .opaque(named: token.name)]
+                )
             ),
             in: fixture.providerScope
         )
         let oracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedTokensAndWords(_:)",
-                as: ((Int64) -> [Int64]).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedTokensAndWords(_:)",
+                    as: ((Int64) -> [Int64]).self
+                )
             ),
             in: fixture.callerScope
         )

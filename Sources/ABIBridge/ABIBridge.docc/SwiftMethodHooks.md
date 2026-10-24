@@ -8,9 +8,9 @@ Resolve the class and method using source names and an ordinary Swift function t
 
 ```swift
 let renderer = try await runtime.resolveSwiftType(named: "Rendering.Renderer")
-let render = try await renderer.resolve(.method(
+let render = try await renderer.resolve(.swift(.method(
     "render(_:)", as: ((String) -> String).self
-))
+)))
 let hook = try await unsafe render.hookVirtualCalls(
     onFailure: { error in print(error) }
 ) { call, text in
@@ -35,9 +35,9 @@ Resolve a concrete conforming type, then qualify the member with its protocol:
 
 ```swift
 let counter = try await runtime.resolveSwiftType(named: "Rendering.Counter")
-let read = try await counter.resolve(.method(
+let read = try await counter.resolve(.swift(.method(
     "Rendering.Readable.read(_:)", as: ((Int64) -> Int64).self
-))
+)))
 let hook = try await unsafe read.hookVirtualCalls(
     onFailure: { error in print(error) }
 ) { call, value in
@@ -57,9 +57,9 @@ A `class func`, and a `class var`'s or `class subscript`'s getter and setter, re
 
 ```swift
 let preview = try await runtime.resolveSwiftType(named: "Rendering.PreviewRenderer")
-let scale = try await preview.resolve(.staticMethod(
+let scale = try await preview.resolve(.swift(.staticMethod(
     "scale(for:)", as: ((Double) -> Double).self
-))
+)))
 let hook = try await unsafe scale.hookVirtualCalls(
     onFailure: { error in print(error) }
 ) { call, width in
@@ -83,10 +83,10 @@ Imported-member hooks also accept the concrete value representation selected dur
 let counter = try await runtime.resolveSwiftType(
     named: "Rendering.Counter", as: Int64.self
 )
-let increment = try await counter.resolve(.method(
+let increment = try await counter.resolve(.swift(.method(
     "increment(_:)", as: ((Int64) -> Int64).self,
     receiver: .mutating
-))
+)))
 let hook = try await unsafe increment.hookImportedCalls(
     in: .framework(named: "PreviewClient"),
     onFailure: { error in print(error) }

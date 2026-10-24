@@ -53,16 +53,20 @@ private final class ExtractedCounterOwner {
         let receiver = MethodExtractionReceiver(1)
         originalSwift = receiver
         sync = try await runtime.object(receiver).resolve(
-            .method(
-                "adding(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .method(
+                    "adding(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             )
         )
         .method
         async = try await runtime.object(receiver).resolve(
-            .method(
-                "addingLater(_:)",
-                as: (nonisolated(nonsending) (Int64) async throws -> Int64).self
+            .swift(
+                .method(
+                    "addingLater(_:)",
+                    as: (nonisolated(nonsending) (Int64) async throws -> Int64).self
+                )
             )
         ).method
     }

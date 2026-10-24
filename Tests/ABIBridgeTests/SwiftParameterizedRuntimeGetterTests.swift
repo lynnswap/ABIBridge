@@ -16,11 +16,13 @@ struct SwiftParameterizedRuntimeGetterTests {
             genericArguments: [.type(FreshCollectionSuperclassValue<[Int64]>.self)]
         )
         let getter = try await receiver.resolve(
-            .getter(
-                "storage",
-                as: (() -> NativeSwiftValue).self,
-                valueABIs: [storage: .opaque(named: storage.name)],
-                receiverABI: .opaque(named: receiver.name)
+            .swift(
+                .getter(
+                    "storage",
+                    as: (() -> NativeSwiftValue).self,
+                    valueABIs: [storage: .opaque(named: storage.name)],
+                    receiverABI: .opaque(named: receiver.name)
+                )
             )
         )
         let value = try unsafe getter.unsafeInvoke(on: RuntimeAssociatedGetter<Int64>(42))
@@ -39,11 +41,13 @@ struct SwiftParameterizedRuntimeGetterTests {
             genericArguments: [.type(RuntimeConditionalSource<[Int64]>.self)]
         )
         let getter = try await receiver.resolve(
-            .getter(
-                "storage",
-                as: (() -> NativeSwiftValue).self,
-                valueABIs: [storage: .opaque(named: storage.name)],
-                receiverABI: .opaque(named: receiver.name)
+            .swift(
+                .getter(
+                    "storage",
+                    as: (() -> NativeSwiftValue).self,
+                    valueABIs: [storage: .opaque(named: storage.name)],
+                    receiverABI: .opaque(named: receiver.name)
+                )
             )
         )
         let value = try unsafe getter.unsafeInvoke(on: RuntimeConditionalGetter<[Int64]>(42))
@@ -64,11 +68,13 @@ struct SwiftParameterizedRuntimeGetterTests {
             genericArguments: [.type(RuntimeNestedSource<RuntimeCollectionSourceValue>.self)]
         )
         let getter = try await receiver.resolve(
-            .getter(
-                "storage",
-                as: (() -> NativeSwiftValue).self,
-                valueABIs: [storage: .opaque(named: storage.name)],
-                receiverABI: .opaque(named: receiver.name)
+            .swift(
+                .getter(
+                    "storage",
+                    as: (() -> NativeSwiftValue).self,
+                    valueABIs: [storage: .opaque(named: storage.name)],
+                    receiverABI: .opaque(named: receiver.name)
+                )
             )
         )
         let value = try unsafe getter.unsafeInvoke(
@@ -81,9 +87,11 @@ struct SwiftParameterizedRuntimeGetterTests {
     func explicitNestedNominalABIComposesWithRuntimeGettersAndClosures() async throws {
         let runtime = ABIRuntime.shared
         let make = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.makeRuntimeParameterizedGetter(_:)",
-                as: ((Int64) -> NativeSwiftValue).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.makeRuntimeParameterizedGetter(_:)",
+                    as: ((Int64) -> NativeSwiftValue).self
+                )
             )
         )
         let source = try unsafe make.unsafeInvoke(42)
@@ -93,11 +101,13 @@ struct SwiftParameterizedRuntimeGetterTests {
         )
         let valueABIs = [structureType: try NativeType.opaque(named: structureType.name)]
         let getter = try await source.type.resolve(
-            .getter(
-                "structure",
-                as: (() -> NativeSwiftValue).self,
-                valueABIs: valueABIs,
-                receiverABI: .opaque(named: source.type.name)
+            .swift(
+                .getter(
+                    "structure",
+                    as: (() -> NativeSwiftValue).self,
+                    valueABIs: valueABIs,
+                    receiverABI: .opaque(named: source.type.name)
+                )
             )
         )
         let value = try unsafe getter.unsafeInvoke(on: source)
@@ -109,11 +119,13 @@ struct SwiftParameterizedRuntimeGetterTests {
 
         typealias Signature = @MainActor () -> NativeSwiftValue
         let factory = try await source.type.resolve(
-            .getter(
-                "makeStructure",
-                as: (() -> NativeSwiftClosure<Signature>).self,
-                valueABIs: valueABIs,
-                receiverABI: .opaque(named: source.type.name)
+            .swift(
+                .getter(
+                    "makeStructure",
+                    as: (() -> NativeSwiftClosure<Signature>).self,
+                    valueABIs: valueABIs,
+                    receiverABI: .opaque(named: source.type.name)
+                )
             )
         )
         let closure = try unsafe factory.unsafeInvoke(on: source)
@@ -128,18 +140,22 @@ struct SwiftParameterizedRuntimeGetterTests {
     @Test func explicitHintsPreserveFormalGenericIndirection() async throws {
         let runtime = ABIRuntime.shared
         let make = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
-                as: ((Int64) -> NativeSwiftValue).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.makeOpaqueInteger(_:)",
+                    as: ((Int64) -> NativeSwiftValue).self
+                )
             )
         )
         let input = try unsafe make.unsafeInvoke(42)
         let echo = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.echoGeneric(_:)",
-                as: ((NativeSwiftValue) -> NativeSwiftValue).self,
-                genericArguments: [.type(input.type)],
-                valueABIs: [input.type: .int64]
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.echoGeneric(_:)",
+                    as: ((NativeSwiftValue) -> NativeSwiftValue).self,
+                    genericArguments: [.type(input.type)],
+                    valueABIs: [input.type: .int64]
+                )
             )
         )
         let result = try unsafe echo.unsafeInvoke(input)
@@ -151,11 +167,13 @@ struct SwiftParameterizedRuntimeGetterTests {
             genericArguments: [.type([Int64].self)]
         )
         let arrayElement = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.arrayElementGeneric(_:)",
-                as: ((GenericElementStorage<[Int64]>) -> GenericElementStorage<[Int64]>).self,
-                genericArguments: [.type(Int64.self)],
-                valueABIs: [elementStorage: .int64]
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.arrayElementGeneric(_:)",
+                    as: ((GenericElementStorage<[Int64]>) -> GenericElementStorage<[Int64]>).self,
+                    genericArguments: [.type(Int64.self)],
+                    valueABIs: [elementStorage: .int64]
+                )
             )
         )
         #expect(try unsafe arrayElement.unsafeInvoke(.init(42)).element == 42)

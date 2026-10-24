@@ -48,9 +48,11 @@ import SwiftReplacementFixtures
         for pass in ["cold", "warm"] {
             try await measure("\(label) \(pass)", repetitions: pass == "warm" ? 100 : 1) {
                 let method = try await type.resolve(
-                    .method(
-                        "scalar(_:)",
-                        as: ((Int64) -> Int64).self
+                    .swift(
+                        .method(
+                            "scalar(_:)",
+                            as: ((Int64) -> Int64).self
+                        )
                     )
                 )
                 guard try unsafe method.unsafeInvoke(on: receiver, 40) == 42 else {

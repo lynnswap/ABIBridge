@@ -1,3 +1,48 @@
+/// A native callable declaration and the language used to resolve it.
+///
+/// Language factories wrap typed declarations without performing lookup or
+/// preparing a call. Save a request to resolve it again in another scope, or
+/// pass it directly to `resolve` or `resolveAndWait`. Scope and loading options
+/// belong to resolution, and each returned handle retains its existing
+/// invocation and ownership contract.
+public struct NativeRequest<Declaration> {
+    let declaration: Declaration
+}
+
+extension NativeRequest: Sendable where Declaration: Sendable {}
+
+extension NativeRequest {
+    /// Describes a Swift free function.
+    ///
+    /// Resolve this request with an `ABIRuntime` to get a
+    /// ``NativeSwiftFunction``.
+    public static func swift<Signature>(
+        _ declaration: NativeSwiftFunctionRequest<Signature>
+    ) -> Self where Declaration == NativeSwiftFunctionRequest<Signature> {
+        Self(declaration: declaration)
+    }
+
+    /// Describes a Swift instance method, getter, or setter.
+    ///
+    /// Resolve this request with a ``NativeSwiftType`` for an explicit
+    /// receiver, or a ``NativeObject`` to bind that object as the receiver.
+    public static func swift<Signature>(
+        _ declaration: NativeSwiftInstanceMemberRequest<Signature>
+    ) -> Self where Declaration == NativeSwiftInstanceMemberRequest<Signature> {
+        Self(declaration: declaration)
+    }
+
+    /// Describes a Swift initializer, or a static or class member.
+    ///
+    /// Resolve this request with a ``NativeSwiftType`` or ``NativeObject``
+    /// to get a ``NativeSwiftFunction`` called on the lookup type.
+    public static func swift<Signature>(
+        _ declaration: NativeSwiftTypeMemberRequest<Signature>
+    ) -> Self where Declaration == NativeSwiftTypeMemberRequest<Signature> {
+        Self(declaration: declaration)
+    }
+}
+
 /// How a Swift instance member receives `self`.
 ///
 /// A request without a convention follows the member's default. Methods and
@@ -71,7 +116,8 @@ struct SwiftReceiverRequest: Sendable {
 
 /// A Swift free function to prepare for calls.
 ///
-/// Resolve a request with `ABIRuntime`'s `resolveAndWait(_:in:loading:)` or
+/// Wrap the declaration with `NativeRequest.swift`, then use
+/// `ABIRuntime`'s `resolveAndWait(_:in:loading:)` or
 /// `resolve(_:in:loading:)` to get a ``NativeSwiftFunction``. A request holds
 /// no image scope, so one request can be resolved in several scopes.
 ///
@@ -128,7 +174,8 @@ public struct NativeSwiftFunctionRequest<Signature>: Sendable {
 /// A Swift instance method, or a property's or subscript's getter or setter,
 /// to prepare for calls.
 ///
-/// Resolve a request on a ``NativeSwiftType`` to get a ``NativeSwiftMethod``,
+/// Wrap the declaration with `NativeRequest.swift`, then resolve it on a
+/// ``NativeSwiftType`` to get a ``NativeSwiftMethod``,
 /// which takes its receiver at each call, or on a ``NativeObject`` to get a
 /// ``NativeBoundSwiftMethod`` bound to that object. The same request resolves
 /// on either, with the same options.
@@ -302,7 +349,8 @@ public struct NativeSwiftInstanceMemberRequest<Signature>: Sendable {
 /// A Swift initializer, or a static or class method, getter, or setter, to
 /// prepare for calls.
 ///
-/// Resolve a request on a ``NativeSwiftType``, or on a ``NativeObject`` for
+/// Wrap the declaration with `NativeRequest.swift`, then resolve it on a
+/// ``NativeSwiftType``, or on a ``NativeObject`` for
 /// the object's type, to get a ``NativeSwiftFunction``. The type's metadata
 /// is supplied as the member's `self`.
 ///

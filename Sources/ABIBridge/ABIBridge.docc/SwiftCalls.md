@@ -10,6 +10,8 @@ Start with <doc:SwiftFunctionInvocation> for free functions or <doc:SwiftMemberI
 
 ### Functions
 
+- ``NativeRequest``
+- ``NativeSwiftFunctionRequest``
 - <doc:SwiftFunctionInvocation>
 - ``NativeSwiftFunction``
 
@@ -21,6 +23,8 @@ Start with <doc:SwiftFunctionInvocation> for free functions or <doc:SwiftMemberI
 
 - <doc:SwiftMemberInvocation>
 - ``NativeSwiftType``
+- ``NativeSwiftInstanceMemberRequest``
+- ``NativeSwiftTypeMemberRequest``
 - ``NativeSwiftMethod``
 - ``NativeBoundSwiftMethod``
 - ``NativeSwiftWritebackError``

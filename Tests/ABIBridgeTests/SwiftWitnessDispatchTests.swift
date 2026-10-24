@@ -16,16 +16,18 @@ struct SwiftWitnessDispatchTests {
             in: fixture.providerScope
         )
         let name = fixture.module + ".Witnessed.read(_:)"
-        let method = try await type.resolve(.method(name, as: ((Int64) -> Int64).self))
+        let method = try await type.resolve(.swift(.method(name, as: ((Int64) -> Int64).self)))
         let construct = try await type.resolve(
-            .initializer("init(seed:)", as: ((Int64) -> NativeSwiftValue).self)
+            .swift(.initializer("init(seed:)", as: ((Int64) -> NativeSwiftValue).self))
         )
         let receiver = try unsafe construct.unsafeInvoke(40)
         #expect(try unsafe method.unsafeInvoke(on: receiver, 2) == 42)
         let oracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".witnessRead(_:_:_:)",
-                as: ((Int64, Int64, Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".witnessRead(_:_:_:)",
+                    as: ((Int64, Int64, Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -40,7 +42,7 @@ struct SwiftWitnessDispatchTests {
         #expect(try unsafe method.unsafeInvoke(on: receiver, 2) == 42)
         // Lookup after publication must use immutable identity and join the
         // existing physical slot, even when no Tq symbol exists.
-        let again = try await type.resolve(.method(name, as: ((Int64) -> Int64).self))
+        let again = try await type.resolve(.swift(.method(name, as: ((Int64) -> Int64).self)))
         let second = try await unsafe again.hookVirtualCalls(onFailure: { Issue.record($0) }) {
             call,
             value in try call.proceed(value * 2) + 1000
@@ -66,19 +68,23 @@ struct SwiftWitnessDispatchTests {
             in: fixture.providerScope
         )
         let method = try await type.resolve(
-            .method(fixture.module + ".Witnessed.read(_:)", as: ((Int64) -> Int64).self)
+            .swift(.method(fixture.module + ".Witnessed.read(_:)", as: ((Int64) -> Int64).self))
         )
         let other = try await type.resolve(
-            .method(fixture.module + ".Witnessed.replacement(_:)", as: ((Int64) -> Int64).self)
+            .swift(
+                .method(fixture.module + ".Witnessed.replacement(_:)", as: ((Int64) -> Int64).self)
+            )
         )
         let make = try await type.resolve(
-            .initializer("init(seed:)", as: ((Int64) -> NativeSwiftValue).self)
+            .swift(.initializer("init(seed:)", as: ((Int64) -> NativeSwiftValue).self))
         )
         let object = try unsafe make.unsafeInvoke(40)
         let oracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".witnessRead(_:_:_:)",
-                as: ((Int64, Int64, Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".witnessRead(_:_:_:)",
+                    as: ((Int64, Int64, Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -108,21 +114,27 @@ struct SwiftWitnessDispatchTests {
             in: fixture.providerScope
         )
         let protocolName = fixture.module + ".Witnessed."
-        let getter = try await type.resolve(.getter(protocolName + "value", as: (() -> Int64).self))
+        let getter = try await type.resolve(
+            .swift(.getter(protocolName + "value", as: (() -> Int64).self))
+        )
         let setter = try await type.resolve(
-            .setter(protocolName + "value", as: ((Int64) -> Void).self)
+            .swift(.setter(protocolName + "value", as: ((Int64) -> Void).self))
         )
         let get = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".witnessGet(_:_:)",
-                as: ((Int64, Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".witnessGet(_:_:)",
+                    as: ((Int64, Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
         let set = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".witnessSet(_:_:_:)",
-                as: ((Int64, Int64, Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".witnessSet(_:_:_:)",
+                    as: ((Int64, Int64, Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -141,13 +153,15 @@ struct SwiftWitnessDispatchTests {
         getHook.invalidate(); setHook.invalidate()
 
         let kind = try await type.resolve(
-            .staticMethod(protocolName + "kind(_:)", as: ((Int64) -> Int64).self)
+            .swift(.staticMethod(protocolName + "kind(_:)", as: ((Int64) -> Int64).self))
         )
         let patched = try await type.resolve(
-            .staticMethod(protocolName + "patchedKind(_:)", as: ((Int64) -> Int64).self)
+            .swift(.staticMethod(protocolName + "patchedKind(_:)", as: ((Int64) -> Int64).self))
         )
         let kindOracle = try await fixture.runtime.resolve(
-            .function(fixture.callerModule + ".witnessKind(_:)", as: ((Int64) -> Int64).self),
+            .swift(
+                .function(fixture.callerModule + ".witnessKind(_:)", as: ((Int64) -> Int64).self)
+            ),
             in: fixture.callerScope
         )
         let replacement = try await unsafe kind.prepareVirtualReplacement(with: patched)
@@ -158,10 +172,14 @@ struct SwiftWitnessDispatchTests {
         try replacement.restore()
 
         let construct = try await type.resolve(
-            .initializer(protocolName + "init(seed:)", as: ((Int64) -> NativeSwiftValue).self)
+            .swift(
+                .initializer(protocolName + "init(seed:)", as: ((Int64) -> NativeSwiftValue).self)
+            )
         )
         let initOracle = try await fixture.runtime.resolve(
-            .function(fixture.callerModule + ".witnessInit(_:)", as: ((Int64) -> Int64).self),
+            .swift(
+                .function(fixture.callerModule + ".witnessInit(_:)", as: ((Int64) -> Int64).self)
+            ),
             in: fixture.callerScope
         )
         let initHook = try await unsafe construct.hookVirtualCalls(onFailure: { Issue.record($0) })
@@ -174,12 +192,14 @@ struct SwiftWitnessDispatchTests {
         initHook.invalidate()
 
         let method = try await type.resolve(
-            .method(protocolName + "asyncRead(_:)", as: ((Int64) async -> Int64).self)
+            .swift(.method(protocolName + "asyncRead(_:)", as: ((Int64) async -> Int64).self))
         )
         let asyncOracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".witnessAsync(_:_:_:)",
-                as: ((Int64, Int64, Int64) async -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".witnessAsync(_:_:_:)",
+                    as: ((Int64, Int64, Int64) async -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -204,9 +224,11 @@ struct SwiftWitnessDispatchTests {
         )
         defer { fixture.cleanup() }
         let oracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".witnessRead(_:_:_:)",
-                as: ((Int64, Int64, Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".witnessRead(_:_:_:)",
+                    as: ((Int64, Int64, Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -222,8 +244,10 @@ struct SwiftWitnessDispatchTests {
                 genericArguments: [.type(String.self)]
             )
             let name = fixture.module + ".Witnessed.read(_:)"
-            let first = try await int.resolve(.method(name, as: ((Int64) -> Int64).self))
-            let second = try await string.resolve(.method(name, as: ((Int64) -> Int64).self))
+            let first = try await int.resolve(.swift(.method(name, as: ((Int64) -> Int64).self)))
+            let second = try await string.resolve(
+                .swift(.method(name, as: ((Int64) -> Int64).self))
+            )
             let firstHook = try await unsafe first.hookVirtualCalls(onFailure: { Issue.record($0) })
             {
                 call,
@@ -265,12 +289,14 @@ struct SwiftWitnessDispatchTests {
             genericArguments: [.type(String.self)]
         )
         let name = fixture.module + ".SharedWitnessed.read(_:)"
-        let method = try await int.resolve(.method(name, as: ((Int64) -> Int64).self))
-        let other = try await string.resolve(.method(name, as: ((Int64) -> Int64).self))
+        let method = try await int.resolve(.swift(.method(name, as: ((Int64) -> Int64).self)))
+        let other = try await string.resolve(.swift(.method(name, as: ((Int64) -> Int64).self)))
         let oracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".witnessShared(_:_:_:)",
-                as: ((Bool, Int64, Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".witnessShared(_:_:_:)",
+                    as: ((Bool, Int64, Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -311,10 +337,10 @@ struct SwiftWitnessDispatchTests {
             in: fixture.providerScope
         )
         let first = try await type.resolve(
-            .method(fixture.module + ".FoldedWitness.first()", as: (() -> Int64).self)
+            .swift(.method(fixture.module + ".FoldedWitness.first()", as: (() -> Int64).self))
         )
         let second = try await type.resolve(
-            .method(fixture.module + ".FoldedWitness.second()", as: (() -> Int64).self)
+            .swift(.method(fixture.module + ".FoldedWitness.second()", as: (() -> Int64).self))
         )
         // Establish that optimized code really erased the declaration distinction.
         try #require(first.symbol.address == second.symbol.address)

@@ -14,9 +14,11 @@ import Synchronization
     let name = "SwiftImportProvider.HookRenderer"
     let type = try await runtime.resolveSwiftType(named: name, in: provider)
     let make = try await runtime.resolve(
-        .function(
-            "SwiftImportProvider.makeHookRenderer(Swift.Int64) -> " + name,
-            as: ((Int64) -> AnyObject).self
+        .swift(
+            .function(
+                "SwiftImportProvider.makeHookRenderer(Swift.Int64) -> " + name,
+                as: ((Int64) -> AnyObject).self
+            )
         ),
         in: provider
     )
@@ -31,13 +33,15 @@ import Synchronization
         checks.append(message)
     }
 
-    let getter = try await type.resolve(.getter("count", as: (() -> Int64).self))
-    let setter = try await type.resolve(.setter("count", as: ((Int64) -> Void).self))
-    let method = try await type.resolve(.method("render(_:)", as: ((Int64) -> Int64).self))
+    let getter = try await type.resolve(.swift(.getter("count", as: (() -> Int64).self)))
+    let setter = try await type.resolve(.swift(.setter("count", as: ((Int64) -> Void).self)))
+    let method = try await type.resolve(.swift(.method("render(_:)", as: ((Int64) -> Int64).self)))
     let oracle = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.hookRender(\(name), Swift.Int64) -> Swift.Int64",
-            as: ((AnyObject, Int64) -> Int64).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.hookRender(\(name), Swift.Int64) -> Swift.Int64",
+                as: ((AnyObject, Int64) -> Int64).self
+            )
         ),
         in: caller
     )
@@ -60,11 +64,15 @@ import Synchronization
     second.invalidate()
     try check(try unsafe oracle.unsafeInvoke(object!, 2) == 32, "Virtual invalidation preserves callable pass-through code")
 
-    let direct = try await type.resolve(.method("directRender(_:)", as: ((Int64) -> Int64).self))
+    let direct = try await type.resolve(
+        .swift(.method("directRender(_:)", as: ((Int64) -> Int64).self))
+    )
     let directOracle = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.hookDirectRender(\(name), Swift.Int64) -> Swift.Int64",
-            as: ((AnyObject, Int64) -> Int64).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.hookDirectRender(\(name), Swift.Int64) -> Swift.Int64",
+                as: ((AnyObject, Int64) -> Int64).self
+            )
         ),
         in: caller
     )
@@ -79,12 +87,14 @@ import Synchronization
     imported.invalidate()
     try check(try unsafe directOracle.unsafeInvoke(object!, 2) == 32, "Imported member fallback remains callable")
 
-    let textSetter = try await type.resolve(.setter("text", as: ((String) -> Void).self))
-    let textGetter = try await type.resolve(.getter("text", as: (() -> String).self))
+    let textSetter = try await type.resolve(.swift(.setter("text", as: ((String) -> Void).self)))
+    let textGetter = try await type.resolve(.swift(.getter("text", as: (() -> String).self)))
     let textOracle = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.hookSetText(\(name), Swift.String) -> Swift.String",
-            as: ((AnyObject, String) -> String).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.hookSetText(\(name), Swift.String) -> Swift.String",
+                as: ((AnyObject, String) -> String).self
+            )
         ),
         in: caller
     )
@@ -101,16 +111,20 @@ import Synchronization
     setHook.invalidate(); getHook.invalidate()
 
     let consume = try await type.resolve(
-        .method(
-            "consume(_:)",
-            as: ((Int64) -> Int64).self,
-            receiver: .consuming
+        .swift(
+            .method(
+                "consume(_:)",
+                as: ((Int64) -> Int64).self,
+                receiver: .consuming
+            )
         )
     )
     let consumeOracle = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.hookConsume(\(name), Swift.Int64) -> Swift.Int64",
-            as: ((AnyObject, Int64) -> Int64).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.hookConsume(\(name), Swift.Int64) -> Swift.Int64",
+                as: ((AnyObject, Int64) -> Int64).self
+            )
         ),
         in: caller
     )
@@ -131,18 +145,24 @@ import Synchronization
     let childName = "SwiftImportCallerControl.CallerOverridingRenderer"
     let childType = try await runtime.resolveSwiftType(named: childName, in: caller)
     let makeChild = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.makeCallerRenderer() -> " + childName,
-            as: (() -> AnyObject).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.makeCallerRenderer() -> " + childName,
+                as: (() -> AnyObject).self
+            )
         ),
         in: caller
     )
     let child = try unsafe makeChild.unsafeInvoke()
-    let childText = try await childType.resolve(.method("text(_:)", as: ((String) -> String).self))
+    let childText = try await childType.resolve(
+        .swift(.method("text(_:)", as: ((String) -> String).self))
+    )
     let childOracle = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.classText(SwiftImportProvider.ReplacementRenderer, Swift.String) -> Swift.String",
-            as: ((AnyObject, String) -> String).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.classText(SwiftImportProvider.ReplacementRenderer, Swift.String) -> Swift.String",
+                as: ((AnyObject, String) -> String).self
+            )
         ),
         in: caller
     )
@@ -186,26 +206,32 @@ private func validateClassMemberHooks(
     }
     let baseName = "SwiftImportProvider.ReplacementRenderer"
     let kindOracle = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.classKind(\(baseName), Swift.Int64) -> Swift.Int64",
-            as: ((AnyObject, Int64) -> Int64).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.classKind(\(baseName), Swift.Int64) -> Swift.Int64",
+                as: ((AnyObject, Int64) -> Int64).self
+            )
         ),
         in: caller
     )
     // Sets the class var, then reads it, through the object's metatype.
     let levelOracle = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.classLevel(\(baseName), Swift.Int64) -> Swift.Int64",
-            as: ((AnyObject, Int64) -> Int64).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.classLevel(\(baseName), Swift.Int64) -> Swift.Int64",
+                as: ((AnyObject, Int64) -> Int64).self
+            )
         ),
         in: caller
     )
     var objects: [AnyObject] = []
     for factory in ["makeRenderer", "makeOverridingRenderer"] {
         let make = try await runtime.resolve(
-            .function(
-                "SwiftImportProvider.\(factory)() -> " + baseName,
-                as: (() -> AnyObject).self
+            .swift(
+                .function(
+                    "SwiftImportProvider.\(factory)() -> " + baseName,
+                    as: (() -> AnyObject).self
+                )
             ),
             in: provider
         )
@@ -227,13 +253,17 @@ private func validateClassMemberHooks(
             in: provider
         )
         let kind = try await type.resolve(
-            .staticMethod(
-                "kind(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .staticMethod(
+                    "kind(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             )
         )
-        let getter = try await type.resolve(.staticGetter("level", as: (() -> Int64).self))
-        let setter = try await type.resolve(.staticSetter("level", as: ((Int64) -> Void).self))
+        let getter = try await type.resolve(.swift(.staticGetter("level", as: (() -> Int64).self)))
+        let setter = try await type.resolve(
+            .swift(.staticSetter("level", as: ((Int64) -> Void).self))
+        )
         let hooks = [
             try await unsafe kind.hookVirtualCalls(onFailure: failure) { call, value in
                 try call.proceed(value + 1) + 100

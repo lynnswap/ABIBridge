@@ -34,10 +34,12 @@ let runtime = ABIRuntime()
 let measurePreparation = CommandLine.arguments.dropFirst(2).contains("--measure-preparation")
 let preparationStart = ContinuousClock.now
 let echo = try runtime.resolveAndWait(
-    .function(
-        "SwiftUIPlugin.echo<A where A: SwiftUI.View>(A) -> A",
-        as: ((Text) -> Text).self,
-        genericArguments: [.type(Text.self)]
+    .swift(
+        .function(
+            "SwiftUIPlugin.echo<A where A: SwiftUI.View>(A) -> A",
+            as: ((Text) -> Text).self,
+            genericArguments: [.type(Text.self)]
+        )
     ),
     in: .path(library)
 )
@@ -46,10 +48,12 @@ let echoed = try unsafe echo.unsafeInvoke(Text(verbatim: "Generic SwiftUI value"
 if measurePreparation {
     let repeatedStart = ContinuousClock.now
     let repeated = try runtime.resolveAndWait(
-        .function(
-            "SwiftUIPlugin.echo<A where A: SwiftUI.View>(A) -> A",
-            as: ((Text) -> Text).self,
-            genericArguments: [.type(Text.self)]
+        .swift(
+            .function(
+                "SwiftUIPlugin.echo<A where A: SwiftUI.View>(A) -> A",
+                as: ((Text) -> Text).self,
+                genericArguments: [.type(Text.self)]
+            )
         ),
         in: .path(library)
     )
@@ -64,26 +68,32 @@ if measurePreparation {
 precondition(pixels(echoed) == pixels(Text(verbatim: "Generic SwiftUI value")))
 do {
     _ = try runtime.resolveAndWait(
-        .function(
-            "SwiftUIPlugin.echo<A where A: SwiftUI.View>(A) -> A",
-            as: ((Int64) -> Int64).self,
-            genericArguments: [.type(Int64.self)]
+        .swift(
+            .function(
+                "SwiftUIPlugin.echo<A where A: SwiftUI.View>(A) -> A",
+                as: ((Int64) -> Int64).self,
+                genericArguments: [.type(Int64.self)]
+            )
         ),
         in: .path(library)
     )
     fatalError("Expected the View constraint to reject Int64")
 } catch ABIResolutionError.signatureMismatch {}
 let make = try runtime.resolveAndWait(
-    .function(
-        "SwiftUIPlugin.makeView(_:_:)",
-        as: ((String, NativeSwiftClosure<(Int64) -> Int64>) -> NativeSwiftValue).self
+    .swift(
+        .function(
+            "SwiftUIPlugin.makeView(_:_:)",
+            as: ((String, NativeSwiftClosure<(Int64) -> Int64>) -> NativeSwiftValue).self
+        )
     ),
     in: .path(library)
 )
 let host = try runtime.resolveAndWait(
-    .function(
-        "SwiftUIPlugin.makeHost(_:_:)",
-        as: ((String, NativeSwiftClosure<(Int64) -> Int64>) -> NSView).self
+    .swift(
+        .function(
+            "SwiftUIPlugin.makeHost(_:_:)",
+            as: ((String, NativeSwiftClosure<(Int64) -> Int64>) -> NSView).self
+        )
     ),
     in: .path(library)
 )
@@ -111,9 +121,11 @@ precondition(observed == nil)
 destroyed.state.withLock { precondition($0) }
 
 let number = try runtime.resolveAndWait(
-    .function(
-        "SwiftUIPlugin.makeNumber()",
-        as: (() -> NativeSwiftValue).self
+    .swift(
+        .function(
+            "SwiftUIPlugin.makeNumber()",
+            as: (() -> NativeSwiftValue).self
+        )
     ),
     in: .path(library)
 )

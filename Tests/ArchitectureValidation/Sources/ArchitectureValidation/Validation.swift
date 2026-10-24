@@ -437,9 +437,11 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         try check(ABIValidateAuthenticatedFunction(), "Unmodified function-pointer authentication")
     case "swift":
         let sum = try await runtime.resolve(
-            .function(
-                "ArchitectureValidation.architectureSum(_:_:_:_:_:_:_:_:_:_:)",
-                as: ((Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Int).self
+            .swift(
+                .function(
+                    "ArchitectureValidation.architectureSum(_:_:_:_:_:_:_:_:_:_:)",
+                    as: ((Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Int).self
+                )
             )
         )
         try check(
@@ -448,9 +450,11 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
             "Swift register/stack arguments"
         )
         let decorate = try await runtime.resolve(
-            .function(
-                "ArchitectureValidation.architectureDecorate(_:)",
-                as: ((String) -> String).self
+            .swift(
+                .function(
+                    "ArchitectureValidation.architectureDecorate(_:)",
+                    as: ((String) -> String).self
+                )
             )
         )
         for size in [0, 100, 4096] {
@@ -466,9 +470,11 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
             let receiver = ArchitectureCounter(40)
             observed = receiver
             bound = try await runtime.object(receiver).resolve(
-                .method(
-                    "adding(_:)",
-                    as: ((Int) -> Int).self
+                .swift(
+                    .method(
+                        "adding(_:)",
+                        as: ((Int) -> Int).self
+                    )
                 )
             )
         }
@@ -491,15 +497,19 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
             receiver.value = 40
             let object = runtime.object(receiver)
             privateMethod = try await object.resolve(
-                .method(
-                    "adding(_:)",
-                    as: ((Int) -> Int).self
+                .swift(
+                    .method(
+                        "adding(_:)",
+                        as: ((Int) -> Int).self
+                    )
                 )
             )
             let complete = try await object.resolve(
-                .method(
-                    "adding(Swift.Int) -> Swift.Int",
-                    as: ((Int) -> Int).self
+                .swift(
+                    .method(
+                        "adding(Swift.Int) -> Swift.Int",
+                        as: ((Int) -> Int).self
+                    )
                 )
             )
             try check(
@@ -507,14 +517,18 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
                 "Private Swift complete member declaration"
             )
             let inherited = try await object.resolve(
-                .method(
-                    "inherited()",
-                    as: (() -> Int).self
+                .swift(
+                    .method(
+                        "inherited()",
+                        as: (() -> Int).self
+                    )
                 )
             )
             try check(unsafe inherited.unsafeInvoke() == 42, "Private Swift superclass declaration")
-            let getter = try await object.resolve(.getter("value", as: (() -> Int).self))
-            let setter = try await object.resolve(.setter("value", as: ((Int) -> Void).self))
+            let getter = try await object.resolve(.swift(.getter("value", as: (() -> Int).self)))
+            let setter = try await object.resolve(
+                .swift(.setter("value", as: ((Int) -> Void).self))
+            )
             try unsafe setter.unsafeInvoke(50)
             try check(unsafe getter.unsafeInvoke() == 50, "Private Swift getter and setter")
         }

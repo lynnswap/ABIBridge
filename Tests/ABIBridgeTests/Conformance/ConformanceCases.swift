@@ -342,9 +342,11 @@ extension ConformanceCase {
             oracle: "return String(cmMakeCounter().add(1))",
             invoke: { f in
                 let add = try await f.type("CMCounter").resolve(
-                    .method(
-                        "add(_:)",
-                        as: ((Int64) -> Int64).self
+                    .swift(
+                        .method(
+                            "add(_:)",
+                            as: ((Int64) -> Int64).self
+                        )
                     )
                 )
                 return String(
@@ -362,13 +364,13 @@ extension ConformanceCase {
             invoke: { f in
                 let type = try await f.type("CMCounter")
                 let counter = try f.make("cmMakeCounter", returning: "CMCounter")
-                try unsafe await type.resolve(.setter("value", as: ((Int64) -> Void).self))
+                try unsafe await type.resolve(.swift(.setter("value", as: ((Int64) -> Void).self)))
                     .unsafeInvoke(
                     on: counter,
                     9
                 )
                 return String(
-                    try unsafe await type.resolve(.getter("value", as: (() -> Int64).self))
+                    try unsafe await type.resolve(.swift(.getter("value", as: (() -> Int64).self)))
                         .unsafeInvoke(on: counter)
                 )
             }
@@ -379,9 +381,11 @@ extension ConformanceCase {
             oracle: "return String(cmMakeDerived().add(1))",
             invoke: { f in
                 let add = try await f.type("CMDerivedCounter").resolve(
-                    .method(
-                        "add(_:)",
-                        as: ((Int64) -> Int64).self
+                    .swift(
+                        .method(
+                            "add(_:)",
+                            as: ((Int64) -> Int64).self
+                        )
                     )
                 )
                 return String(
@@ -399,9 +403,11 @@ extension ConformanceCase {
             oracle: "return String(CMCounter(start: 1).add(1))",
             invoke: { f in
                 let add = try await f.type("CMCounter").resolve(
-                    .method(
-                        "add(_:)",
-                        as: ((Int64) -> Int64).self
+                    .swift(
+                        .method(
+                            "add(_:)",
+                            as: ((Int64) -> Int64).self
+                        )
                     )
                 )
                 return String(
@@ -419,9 +425,11 @@ extension ConformanceCase {
             invoke: { f in
                 let derived = try f.make("cmMakeDerived", returning: "CMCounter")
                 let add = try await f.runtime.object(derived).resolve(
-                    .method(
-                        "add(_:)",
-                        as: ((Int64) -> Int64).self
+                    .swift(
+                        .method(
+                            "add(_:)",
+                            as: ((Int64) -> Int64).self
+                        )
                     )
                 )
                 return String(try unsafe add.unsafeInvoke(1))
@@ -433,9 +441,11 @@ extension ConformanceCase {
             oracle: "return String(cmMakeCounter().finalValue())"
         ) { f in
             let call = try await f.type("CMCounter").resolve(
-                .method(
-                    "finalValue()",
-                    as: (() -> Int64).self
+                .swift(
+                    .method(
+                        "finalValue()",
+                        as: (() -> Int64).self
+                    )
                 )
             )
             return String(
@@ -448,9 +458,11 @@ extension ConformanceCase {
             oracle: "return String(cmMakeCounter().doubled())"
         ) { f in
             let call = try await f.type("CMCounter").resolve(
-                .method(
-                    "doubled()",
-                    as: (() -> Int64).self
+                .swift(
+                    .method(
+                        "doubled()",
+                        as: (() -> Int64).self
+                    )
                 )
             )
             return String(
@@ -463,9 +475,11 @@ extension ConformanceCase {
             oracle: "return String(CMCounter.staticValue())"
         ) { f in
             let call = try await f.type("CMCounter").resolve(
-                .staticMethod(
-                    "staticValue()",
-                    as: (() -> Int64).self
+                .swift(
+                    .staticMethod(
+                        "staticValue()",
+                        as: (() -> Int64).self
+                    )
                 )
             )
             return String(try unsafe call.unsafeInvoke())
@@ -476,9 +490,11 @@ extension ConformanceCase {
             oracle: "return CMCounter.className()",
             invoke: { f in
                 let call = try await f.type("CMCounter").resolve(
-                    .staticMethod(
-                        "className()",
-                        as: (() -> String).self
+                    .swift(
+                        .staticMethod(
+                            "className()",
+                            as: (() -> String).self
+                        )
                     )
                 )
                 return try unsafe call.unsafeInvoke()
@@ -490,9 +506,11 @@ extension ConformanceCase {
             oracle: "return String(runBlocking { await cmMakeCounter().asyncValue() })",
             invoke: { f in
                 let call = try await f.type("CMCounter").resolve(
-                    .method(
-                        "asyncValue()",
-                        as: (@concurrent () async -> Int64).self
+                    .swift(
+                        .method(
+                            "asyncValue()",
+                            as: (@concurrent () async -> Int64).self
+                        )
                     )
                 )
                 return String(
@@ -508,9 +526,11 @@ extension ConformanceCase {
             oracle: "return String(describing: cmMakeCounter().opaqueValue())",
             invoke: { f in
                 let call = try await f.type("CMCounter").resolve(
-                    .method(
-                        "opaqueValue()",
-                        as: (() -> NativeSwiftValue).self
+                    .swift(
+                        .method(
+                            "opaqueValue()",
+                            as: (() -> NativeSwiftValue).self
+                        )
                     )
                 )
                 return try unsafe call.unsafeInvoke(
@@ -525,15 +545,19 @@ extension ConformanceCase {
             invoke: { f in
                 let type = try await f.type("CMCounter")
                 let make = try await type.resolve(
-                    .initializer(
-                        "init(start:)",
-                        as: ((Int64) -> AnyObject).self
+                    .swift(
+                        .initializer(
+                            "init(start:)",
+                            as: ((Int64) -> AnyObject).self
+                        )
                     )
                 )
                 let text = try await type.resolve(
-                    .method(
-                        "describe()",
-                        as: (() -> String).self
+                    .swift(
+                        .method(
+                            "describe()",
+                            as: (() -> String).self
+                        )
                     )
                 )
                 return try unsafe text.unsafeInvoke(on: make.unsafeInvoke(3))
@@ -546,9 +570,11 @@ extension ConformanceCase {
             invoke: { f in
                 let make = try await f.function("cmMakeDerivedTyped()", as: (() -> AnyObject).self)
                 let text = try await f.type("CMCounter").resolve(
-                    .method(
-                        "describe()",
-                        as: (() -> String).self
+                    .swift(
+                        .method(
+                            "describe()",
+                            as: (() -> String).self
+                        )
                     )
                 )
                 return try unsafe text.unsafeInvoke(on: make.unsafeInvoke())
@@ -600,9 +626,11 @@ extension ConformanceCase {
             invoke: { f in
                 let square = try await f.type("CMSquare")
                 let area = try await square.resolve(
-                    .method(
-                        f.module + ".CMArea.area() -> Swift.Double",
-                        as: (() -> Double).self
+                    .swift(
+                        .method(
+                            f.module + ".CMArea.area() -> Swift.Double",
+                            as: (() -> Double).self
+                        )
                     )
                 )
                 return String(
@@ -617,9 +645,11 @@ extension ConformanceCase {
             invoke: { f in
                 let square = try await f.type("CMSquare")
                 let label = try await square.resolve(
-                    .getter(
-                        f.module + ".CMArea.label.getter : Swift.String",
-                        as: (() -> String).self
+                    .swift(
+                        .getter(
+                            f.module + ".CMArea.label.getter : Swift.String",
+                            as: (() -> String).self
+                        )
                     )
                 )
                 return try unsafe label.unsafeInvoke(
@@ -635,14 +665,18 @@ extension ConformanceCase {
                 let square = try await f.type("CMSquare")
                 var object = try f.make("cmMakeSquare", returning: "CMSquare")
                 let set = try await square.resolve(
-                    .setter(
-                        f.module + ".CMArea.label.setter : Swift.String",
-                        as: ((String) -> Void).self
+                    .swift(
+                        .setter(
+                            f.module + ".CMArea.label.setter : Swift.String",
+                            as: ((String) -> Void).self
+                        )
                     )
                 )
                 // The requirement's setter is mutating: CMArea is not class-bound.
                 try unsafe set.unsafeInvoke(on: &object, "renamed")
-                let get = try await square.resolve(.getter("label", as: (() -> String).self))
+                let get = try await square.resolve(
+                    .swift(.getter("label", as: (() -> String).self))
+                )
                 return try unsafe get.unsafeInvoke(on: object)
             }
         ),
@@ -653,9 +687,11 @@ extension ConformanceCase {
             invoke: { f in
                 let square = try await f.type("CMSquare")
                 let get = try await square.resolve(
-                    .getter(
-                        f.module + ".CMArea.subscript.getter : (Swift.Double) -> Swift.Double",
-                        as: ((Double) -> Double).self
+                    .swift(
+                        .getter(
+                            f.module + ".CMArea.subscript.getter : (Swift.Double) -> Swift.Double",
+                            as: ((Double) -> Double).self
+                        )
                     )
                 )
                 return String(
@@ -673,9 +709,11 @@ extension ConformanceCase {
             invoke: { f in
                 let square = try await f.type("CMSquare")
                 let call = try await square.resolve(
-                    .method(
-                        f.module + ".CMArea.asyncArea()",
-                        as: (@concurrent () async -> Double).self
+                    .swift(
+                        .method(
+                            f.module + ".CMArea.asyncArea()",
+                            as: (@concurrent () async -> Double).self
+                        )
                     )
                 )
                 return String(
@@ -692,18 +730,24 @@ extension ConformanceCase {
             invoke: { f in
                 let square = try await f.type("CMSquare")
                 let unitName = try await square.resolve(
-                    .staticGetter(
-                        f.module + ".CMArea.unitName",
-                        as: (() -> String).self
+                    .swift(
+                        .staticGetter(
+                            f.module + ".CMArea.unitName",
+                            as: (() -> String).self
+                        )
                     )
                 )
                 let unit = try await square.resolve(
-                    .staticMethod(
-                        f.module + ".CMArea.unit()",
-                        as: (() -> AnyObject).self
+                    .swift(
+                        .staticMethod(
+                            f.module + ".CMArea.unit()",
+                            as: (() -> AnyObject).self
+                        )
                     )
                 )
-                let area = try await square.resolve(.method("area()", as: (() -> Double).self))
+                let area = try await square.resolve(
+                    .swift(.method("area()", as: (() -> Double).self))
+                )
                 return try unsafe unitName.unsafeInvoke() + ":"
                     + String(area.unsafeInvoke(on: unit.unsafeInvoke()))
             }
@@ -715,12 +759,16 @@ extension ConformanceCase {
             invoke: { f in
                 let square = try await f.type("CMSquare")
                 let make = try await square.resolve(
-                    .initializer(
-                        f.module + ".CMArea.init(side:)",
-                        as: ((Double) -> AnyObject).self
+                    .swift(
+                        .initializer(
+                            f.module + ".CMArea.init(side:)",
+                            as: ((Double) -> AnyObject).self
+                        )
                     )
                 )
-                let area = try await square.resolve(.method("area()", as: (() -> Double).self))
+                let area = try await square.resolve(
+                    .swift(.method("area()", as: (() -> Double).self))
+                )
                 return String(try unsafe area.unsafeInvoke(on: make.unsafeInvoke(4)))
             }
         ),
@@ -735,21 +783,27 @@ extension ConformanceCase {
             invoke: { f in
                 let disk = try await f.type("CMDisk")
                 let make = try await disk.resolve(
-                    .initializer(
-                        f.module + ".CMArea.init(side:)",
-                        as: ((Double) -> NativeSwiftValue).self
+                    .swift(
+                        .initializer(
+                            f.module + ".CMArea.init(side:)",
+                            as: ((Double) -> NativeSwiftValue).self
+                        )
                     )
                 )
                 let area = try await disk.resolve(
-                    .method(
-                        f.module + ".CMArea.area()",
-                        as: (() -> Double).self
+                    .swift(
+                        .method(
+                            f.module + ".CMArea.area()",
+                            as: (() -> Double).self
+                        )
                     )
                 )
                 let get = try await disk.resolve(
-                    .getter(
-                        f.module + ".CMArea.subscript.getter : (Swift.Double) -> Swift.Double",
-                        as: ((Double) -> Double).self
+                    .swift(
+                        .getter(
+                            f.module + ".CMArea.subscript.getter : (Swift.Double) -> Swift.Double",
+                            as: ((Double) -> Double).self
+                        )
                     )
                 )
                 let value = try unsafe make.unsafeInvoke(5)
@@ -764,9 +818,11 @@ extension ConformanceCase {
         ) { f in
             let square = try await f.type("CMSquare")
             let summary = try await square.resolve(
-                .method(
-                    "(extension in \(f.module)):\(f.module).CMArea.summary() -> Swift.String",
-                    as: (() -> String).self
+                .swift(
+                    .method(
+                        "(extension in \(f.module)):\(f.module).CMArea.summary() -> Swift.String",
+                        as: (() -> String).self
+                    )
                 )
             )
             return try unsafe summary.unsafeInvoke(

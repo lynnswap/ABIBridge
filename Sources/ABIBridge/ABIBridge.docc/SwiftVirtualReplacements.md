@@ -6,12 +6,12 @@ Select a class method by its source declaration and replace the entry in that cl
 
 ```swift
 let type = try runtime.resolveSwiftTypeAndWait(named: "Rendering.Renderer")
-let method = try type.resolveAndWait(.method(
+let method = try type.resolveAndWait(.swift(.method(
     "render(_:)", as: ((String) -> String).self
-))
-let replacement = try type.resolveAndWait(.method(
+)))
+let replacement = try type.resolveAndWait(.swift(.method(
     "debugRender(_:)", as: ((String) -> String).self
-))
+)))
 let plan = try unsafe method.prepareVirtualReplacementAndWait(with: replacement)
 let previous = plan.original
 // Initialize any state needed by debugRender before publishing its pointer.
@@ -41,12 +41,12 @@ Preparation compares the replacement's declaration with the original's. Each arg
 A `class func`, and a `class var`'s or `class subscript`'s getter and setter, receive their class's metatype as `self` and dispatch through entries of the class's metadata. Resolve them with `staticMethod`, `staticGetter`, or `staticSetter` requests, and prepare the replacement on the returned `NativeSwiftFunction`:
 
 ```swift
-let scale = try type.resolveAndWait(.staticMethod(
+let scale = try type.resolveAndWait(.swift(.staticMethod(
     "scale(for:)", as: ((Double) -> Double).self
-))
-let replacement = try type.resolveAndWait(.staticMethod(
+)))
+let replacement = try type.resolveAndWait(.swift(.staticMethod(
     "debugScale(for:)", as: ((Double) -> Double).self
-))
+)))
 let plan = try unsafe scale.prepareVirtualReplacementAndWait(with: replacement)
 try unsafe plan.install()
 // The predecessor runs with the lookup type's metatype as self.

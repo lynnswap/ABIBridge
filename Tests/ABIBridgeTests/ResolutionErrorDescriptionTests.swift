@@ -124,7 +124,7 @@ struct ResolutionErrorDescriptionTests {
         )
         let getter = "target.getter : __C.DescribedTarget"
         await #expect {
-            _ = try await screen.resolve(.getter(getter, as: (() -> UInt32).self))
+            _ = try await screen.resolve(.swift(.getter(getter, as: (() -> UInt32).self)))
         } throws: { error in
             error.localizedDescription.hasPrefix("\(module).Screen.\(getter): Cannot compare")
                 && error.localizedDescription.hasSuffix(

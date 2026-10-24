@@ -29,15 +29,19 @@ extension Box: ABIBridgeSwiftValue where Value == Int64 {
 
 let runtime = ABIRuntime()
 let transform = try runtime.resolveAndWait(
-    .function(
-        "SwiftExplicitValueConsumer.change(_:)",
-        as: ((Record) -> Record).self
+    .swift(
+        .function(
+            "SwiftExplicitValueConsumer.change(_:)",
+            as: ((Record) -> Record).self
+        )
     )
 )
 let apply = try runtime.resolveAndWait(
-    .function(
-        "SwiftExplicitValueConsumer.apply(_:_:)",
-        as: ((NativeSwiftClosure<(Choice) -> Choice>, Choice) -> Choice).self
+    .swift(
+        .function(
+            "SwiftExplicitValueConsumer.apply(_:_:)",
+            as: ((NativeSwiftClosure<(Choice) -> Choice>, Choice) -> Choice).self
+        )
     )
 )
 let identity = try NativeSwiftClosure<(Choice) -> Choice> { $0 }
@@ -54,9 +58,11 @@ withExtendedLifetime(result) { precondition(observed != nil) }
 result = nil
 precondition(observed == nil)
 let boxed = try runtime.resolveAndWait(
-    .function(
-        "SwiftExplicitValueConsumer.applyBox(_:_:)",
-        as: ((NativeSwiftClosure<(Box<Int64>) -> Box<Int64>>, Box<Int64>) -> Box<Int64>).self
+    .swift(
+        .function(
+            "SwiftExplicitValueConsumer.applyBox(_:_:)",
+            as: ((NativeSwiftClosure<(Box<Int64>) -> Box<Int64>>, Box<Int64>) -> Box<Int64>).self
+        )
     )
 )
 let boxBody = try NativeSwiftClosure { (value: Box<Int64>) in Box(value: value.value + 7) }
@@ -74,9 +80,11 @@ print("Explicit Swift value consumer passed")
     return String(repeating: "success", count: 100)
 }
 let checkedCall = try runtime.resolveAndWait(
-    .function(
-        "SwiftExplicitValueConsumer.checked(_:)",
-        as: ((Bool) throws(Failure) -> String).self
+    .swift(
+        .function(
+            "SwiftExplicitValueConsumer.checked(_:)",
+            as: ((Bool) throws(Failure) -> String).self
+        )
     )
 )
 let success = try unsafe checkedCall.unsafeInvoke(false)
@@ -98,10 +106,13 @@ let throwingCallback = try NativeSwiftClosure<(Int64) throws(Failure) -> Int64> 
     return value + 7
 }
 let invokeThrowingCall = try runtime.resolveAndWait(
-    .function(
-        "SwiftExplicitValueConsumer.invokeThrowing(_:_:)",
-        as: ((NativeSwiftClosure<(Int64) throws(Failure) -> Int64>, Int64) throws(Failure) -> Int64)
-            .self
+    .swift(
+        .function(
+            "SwiftExplicitValueConsumer.invokeThrowing(_:_:)",
+            as: ((NativeSwiftClosure<(Int64) throws(Failure) -> Int64>, Int64) throws(Failure)
+                -> Int64)
+                .self
+        )
     )
 )
 let callbackResult = try unsafe invokeThrowingCall.unsafeInvoke(throwingCallback, 35)

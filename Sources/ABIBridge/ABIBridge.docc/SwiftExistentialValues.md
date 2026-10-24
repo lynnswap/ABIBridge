@@ -5,10 +5,10 @@ Use Any or an imported protocol existential in the existing function metatype. S
 For a loaded module declaring `func echo(_ value: any Summary) -> any Summary`:
 
 ```swift
-let echo = try ABIRuntime.shared.resolveAndWait(.function(
+let echo = try ABIRuntime.shared.resolveAndWait(.swift(.function(
     "Example.echo(_:)",
     as: ((any Summary) -> any Summary).self
-))
+)))
 let result = try unsafe echo.unsafeInvoke(existingSummary)
 print(result)
 ```
@@ -36,10 +36,10 @@ Keep implementation images alive while their values can execute native code, inc
 Use a matching parameterized protocol in a typed signature:
 
 ```swift
-let echo = try runtime.resolveAndWait(.function(
+let echo = try runtime.resolveAndWait(.swift(.function(
     "Example.echoCollection(_:)",
     as: ((any Collection<Int>) -> any Collection<Int>).self
-))
+)))
 let values: any Collection<Int> = try unsafe echo.unsafeInvoke([1, 2, 3])
 ```
 

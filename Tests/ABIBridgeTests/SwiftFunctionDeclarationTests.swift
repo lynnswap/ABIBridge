@@ -24,33 +24,41 @@ struct SwiftFunctionDeclarationTests {
         for operation in ["-->", "->>"] {
             let expected = operation == "-->" ? (Int64(35) --> Int64(7)) : (Int64(35) ->> Int64(7))
             let function = try await runtime.resolve(
-                .function(
-                    "ManagedSwiftFixtures." + operation + "(_:_:)",
-                    as: ((Int64, Int64) -> Int64).self
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures." + operation + "(_:_:)",
+                        as: ((Int64, Int64) -> Int64).self
+                    )
                 )
             )
             #expect(try unsafe function.unsafeInvoke(35, 7) == expected)
             let complete = try await runtime.resolve(
-                .function(
-                    "ManagedSwiftFixtures." + operation
-                        + " infix(Swift.Int64, Swift.Int64) -> Swift.Int64",
-                    as: ((Int64, Int64) -> Int64).self
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures." + operation
+                            + " infix(Swift.Int64, Swift.Int64) -> Swift.Int64",
+                        as: ((Int64, Int64) -> Int64).self
+                    )
                 ),
                 in: function.symbol.image
             )
             #expect(try unsafe complete.unsafeInvoke(35, 7) == expected)
             let method = try await type.resolve(
-                .staticMethod(
-                    operation + "(_:_:)",
-                    as: ((ArrowOperatorValue, ArrowOperatorValue) -> Int64).self
+                .swift(
+                    .staticMethod(
+                        operation + "(_:_:)",
+                        as: ((ArrowOperatorValue, ArrowOperatorValue) -> Int64).self
+                    )
                 )
             )
             let memberControl = operation == "-->" ? (first --> second) : (first ->> second)
             #expect(try unsafe method.unsafeInvoke(first, second) == memberControl)
             let genericMethod = try await generic.resolve(
-                .staticMethod(
-                    operation + "(_:_:)",
-                    as: ((GenericOperatorBox<Int64>, GenericOperatorBox<Int64>) -> Int64).self
+                .swift(
+                    .staticMethod(
+                        operation + "(_:_:)",
+                        as: ((GenericOperatorBox<Int64>, GenericOperatorBox<Int64>) -> Int64).self
+                    )
                 )
             )
             let genericControl =
@@ -92,9 +100,11 @@ struct SwiftFunctionDeclarationTests {
             )
             do {
                 _ = try await runtime.resolve(
-                    .function(
-                        declaration,
-                        as: ((Int) -> String).self
+                    .swift(
+                        .function(
+                            declaration,
+                            as: ((Int) -> String).self
+                        )
                     ),
                     in: .path(fixture.libraryURL),
                     loading: .loadedOnly
@@ -105,9 +115,11 @@ struct SwiftFunctionDeclarationTests {
             }
             do {
                 _ = try await runtime.resolve(
-                    .function(
-                        declaration,
-                        as: ((Int) async throws -> String).self
+                    .swift(
+                        .function(
+                            declaration,
+                            as: ((Int) async throws -> String).self
+                        )
                     ),
                     in: .path(fixture.libraryURL),
                     loading: .loadedOnly
