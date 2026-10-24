@@ -298,7 +298,7 @@ struct SwiftClassHookTests {
             let getter = try await type.resolve(.staticGetter("level", as: (() -> Int64).self))
             let setter = try await type.resolve(.staticSetter("level", as: ((Int64) -> Void).self))
             let element = try await type.resolve(
-                .staticMethod(
+                .staticGetter(
                     "subscript.getter : (Swift.Int64) -> Swift.Int64",
                     as: ((Int64) -> Int64).self
                 )

@@ -454,7 +454,7 @@ package final class SymbolIndex {
     private var decoded: [Scope: [Int: [IndexedSymbol]]] = [:]
     private var linkerNames: [[UInt8]: [IndexedSymbol]] = [:]
     private var imageLinkerNames: [[UInt8]: [IndexedSymbol]] = [:]
-    private var swiftMembers: [Scope: [Int: [IndexedSymbol]]] = [:]
+    private var swiftMembers: [Scope: [SwiftMemberPath: [IndexedSymbol]]] = [:]
     private var swiftRecords: [IndexedSymbol: RuntimeSwiftDeclaration?] = [:]
 
     package init(image: RuntimeImage) {
@@ -839,7 +839,7 @@ package final class SymbolIndex {
                 let descriptor = UnsafeRawPointer(bitPattern: UInt(symbol.address)),
                 descriptor.loadUnaligned(as: UInt32.self) == 0,
                 let property = RuntimeSwiftPropertySymbol(linkageName: symbol.name),
-                property.isDescriptor
+                property.isDescriptor, property.extensionModule == nil
             else { return nil }
             return property
         }
@@ -863,7 +863,8 @@ package final class SymbolIndex {
             let exports = exportedSymbols(withPrefix: prefix)
             for symbol in Set(table + exports) {
                 guard let property = RuntimeSwiftPropertySymbol(linkageName: symbol.name),
-                    !property.isStatic, property.typeDescriptor == descriptor
+                    !property.isStatic, property.extensionModule == nil,
+                    property.typeDescriptor == descriptor
                 else { continue }
                 result[property.name, default: false] =
                     result[property.name, default: false] || property.declaresOpaqueType
@@ -874,6 +875,57 @@ package final class SymbolIndex {
     }
 
     private var propertyDeclarations: [UInt64: [String: Bool]] = [:]
+
+    /// The descriptors in this image's exports or symbol table of the
+    /// instance property `name` of the type whose nominal type descriptor
+    /// symbol is `typeDescriptor`. The symbols' trees state the type, the
+    /// name, and the extension that declares the property.
+    ///
+    /// - Parameter extensionModule: The module of another module's extension
+    ///   that declares the property, or nil for the type's own property.
+    package func swiftPropertyDescriptors(
+        named name: String,
+        ofTypeNamed typeDescriptor: String,
+        inExtensionOf extensionModule: String?
+    ) -> [(symbol: RuntimeSymbol, property: RuntimeSwiftPropertySymbol)] {
+        (propertyDescriptors[typeDescriptor] ?? []).compactMap { symbol, property in
+            guard property.name == name, property.extensionModule == extensionModule,
+                let section = sections.first(where: { $0.range.contains(symbol.address) }),
+                let spelling = DeclarationKey.demangle(symbol.name, language: .swift)
+            else { return nil }
+            return (
+                RuntimeSymbol(
+                    declaration: .init(name: spelling, language: .swift, kind: .data),
+                    image: image,
+                    sectionRange: section.range,
+                    source: symbol.source,
+                    address: symbol.address,
+                    linkageName: symbol.name
+                ),
+                property
+            )
+        }
+    }
+
+    // Swift mangles an instance property's descriptor with the suffix `vpMV`.
+    private lazy var propertyDescriptors:
+        [String: [(symbol: IndexedSymbol, property: RuntimeSwiftPropertySymbol)]] = {
+            var result: [String: [(symbol: IndexedSymbol, property: RuntimeSwiftPropertySymbol)]] =
+                [:]
+            for symbol in swiftSymbols(endingWith: (77, 86)) where symbol.name.hasSuffix("vpMV") {
+                guard let property = RuntimeSwiftPropertySymbol(linkageName: symbol.name),
+                    property.isDescriptor, !property.isStatic
+                else { continue }
+                result[property.typeDescriptor, default: []].append((symbol, property))
+            }
+            return result
+        }()
+
+    /// The nominal type descriptor symbol at `address` in this image's
+    /// exports or symbol table, without its leading underscore.
+    package func swiftTypeDescriptorName(at address: UInt64) -> String? {
+        swiftTypeDescriptorSymbol(at: address)
+    }
 
     private func symbols(
         for query: SymbolQuery,
@@ -1038,15 +1090,31 @@ package final class SymbolIndex {
         return Self.matching(decoded[scope]?[query.fingerprint] ?? [], query: query)
     }
 
-    // A dispatch thunk is keyed by the member it dispatches, so one query
-    // returns a declaration's code and its thunk together. A conformance's
-    // witness is keyed by the requirement it serves.
+    /// The candidates of the member that the query's declaration spells.
     package func swiftDeclarationCandidates(
         _ query: SymbolQuery,
         source: RuntimeSymbol.Source,
         extensionsOnly: Bool
     ) -> [RuntimeSwiftCandidate] {
-        guard let key = SwiftMemberLookup.key(query.declaration.name) else { return [] }
+        guard let match = SwiftMemberMatch(declaration: query.declaration.name) else { return [] }
+        return swiftDeclarationCandidates(
+            match,
+            query: query,
+            source: source,
+            extensionsOnly: extensionsOnly
+        )
+    }
+
+    // A dispatch thunk is keyed by the member it dispatches, so one query
+    // returns a declaration's code and its thunk together. A conformance's
+    // witness is keyed by the requirement it serves. The path selects the
+    // symbols, and their records decide whether each declares the member.
+    package func swiftDeclarationCandidates(
+        _ match: SwiftMemberMatch,
+        query: SymbolQuery,
+        source: RuntimeSymbol.Source,
+        extensionsOnly: Bool
+    ) -> [RuntimeSwiftCandidate] {
         var symbols: [IndexedSymbol] = []
         for bucket in [SwiftBucket.knownModule, .fallback] {
             let scope =
@@ -1058,17 +1126,17 @@ package final class SymbolIndex {
                     swiftFallback: false
                 )
             if swiftMembers[scope] == nil {
-                var members: [Int: [IndexedSymbol]] = [:]
+                var members: [SwiftMemberPath: [IndexedSymbol]] = [:]
                 for symbol in self.symbols(for: query, swiftBucket: bucket) {
                     guard let name = memberName(of: symbol) else { continue }
                     for name in [name, Self.operatorAlias(name)].compactMap({ $0 }) {
-                        guard let key = SwiftMemberLookup.key(name) else { continue }
-                        members[DeclarationKey.fingerprint(key), default: []].append(symbol)
+                        guard let path = SwiftMemberPath(declaration: name) else { continue }
+                        members[path, default: []].append(symbol)
                     }
                 }
                 swiftMembers[scope] = members
             }
-            symbols += swiftMembers[scope]?[DeclarationKey.fingerprint(key)] ?? []
+            symbols += swiftMembers[scope]?[match.path] ?? []
         }
         var addresses: Set<UInt64> = []
         var witnesses: Set<IndexedSymbol> = []
@@ -1076,10 +1144,8 @@ package final class SymbolIndex {
             guard symbol.source == source,
                 let record = record(of: symbol),
                 extensionsOnly == record.context.isExtension,
+                match.accepts(record),
                 let name = memberName(of: symbol),
-                [name, Self.operatorAlias(name)].compactMap({ $0 }).contains(where: {
-                    SwiftMemberLookup.key($0) == key
-                }),
                 let section = sections.first(where: { $0.range.contains(symbol.address) }),
                 section.accepts(query.declaration.kind),
                 let spelling = DeclarationKey.demangle(symbol.name, language: .swift)

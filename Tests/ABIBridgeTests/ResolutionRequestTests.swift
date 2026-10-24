@@ -192,6 +192,11 @@ struct ResolutionRequestTests {
         )
         let element = try await array.resolve(.getter("subscript", as: ((Int) -> Int).self))
         #expect(try unsafe element.unsafeInvoke(on: [10, 20, 30], 1) == 20)
+        // A complete accessor declaration qualified by the type selects it too.
+        let declared = try await array.resolve(
+            .getter("Swift.Array.subscript.getter : (Swift.Int) -> A", as: ((Int) -> Int).self)
+        )
+        #expect(try unsafe declared.unsafeInvoke(on: [10, 20, 30], 2) == 30)
     }
 
     @MainActor @Test func receiverConventionsSelectHowSelfPasses() async throws {

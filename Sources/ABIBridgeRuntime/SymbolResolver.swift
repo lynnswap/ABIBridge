@@ -373,6 +373,9 @@ package final class RuntimeSymbolResolver: Sendable {
         }
     }
 
+    /// The candidates of the member that a complete or qualified declaration
+    /// spells.
+    ///
     /// - Parameter includingSharedCache: Also returns code that only the
     ///   shared cache's local symbols describe, even when the images contain
     ///   other candidates.
@@ -384,14 +387,20 @@ package final class RuntimeSymbolResolver: Sendable {
         includingSharedCache: Bool = false
     ) throws -> [RuntimeSwiftCandidate] {
         try validate(declaration)
-        return try swiftDeclarationCandidates(
-            declaration,
-            in: searchScope(selector, loading: loading),
+        guard let match = SwiftMemberMatch(declaration: declaration.name) else { return [] }
+        return try swiftMemberCandidates(
+            match,
+            owner: declaration.name,
+            in: selector,
+            loading: loading,
             extensionsOnly: extensionsOnly,
             includingSharedCache: includingSharedCache
         )
     }
 
+    /// The candidates of the member that a complete or qualified declaration
+    /// spells, in one image.
+    ///
     /// - Parameter module: The module whose symbols are read instead of the
     ///   declaration's own, such as a conforming type's module for its witnesses.
     package func swiftDeclarationCandidates(
@@ -403,11 +412,62 @@ package final class RuntimeSymbolResolver: Sendable {
         includingSharedCache: Bool = false
     ) throws -> [RuntimeSwiftCandidate] {
         try validate(declaration)
+        guard let match = SwiftMemberMatch(declaration: declaration.name) else { return [] }
+        return try swiftMemberCandidates(
+            match,
+            owner: declaration.name,
+            in: image,
+            loading: loading,
+            module: module,
+            extensionsOnly: extensionsOnly,
+            includingSharedCache: includingSharedCache
+        )
+    }
+
+    /// The candidates of a member, whose records `match` accepts.
+    ///
+    /// - Parameters:
+    ///   - owner: The name of the member's owner, whose module's symbols are
+    ///     read.
+    ///   - includingSharedCache: Also returns code that only the shared
+    ///     cache's local symbols describe, even when the images contain other
+    ///     candidates.
+    package func swiftMemberCandidates(
+        _ match: SwiftMemberMatch,
+        owner: String,
+        in selector: RuntimeImageSelector,
+        loading: RuntimeImageLoadingPolicy,
+        extensionsOnly: Bool = false,
+        includingSharedCache: Bool = false
+    ) throws -> [RuntimeSwiftCandidate] {
+        try swiftMemberCandidates(
+            match,
+            owner: owner,
+            in: searchScope(selector, loading: loading),
+            extensionsOnly: extensionsOnly,
+            includingSharedCache: includingSharedCache
+        )
+    }
+
+    /// The candidates of a member in one image, or in the loaded images.
+    ///
+    /// - Parameter module: The module whose symbols are read instead of the
+    ///   owner's, such as a conforming type's module for its witnesses.
+    package func swiftMemberCandidates(
+        _ match: SwiftMemberMatch,
+        owner: String,
+        in image: RuntimeImage?,
+        loading: RuntimeImageLoadingPolicy = .loadedOnly,
+        module: String? = nil,
+        extensionsOnly: Bool = false,
+        includingSharedCache: Bool = false
+    ) throws -> [RuntimeSwiftCandidate] {
         let scope =
             try image.map { SearchScope.images([loading == .ifNeeded ? try $0.opened() : $0]) }
             ?? searchScope(.automatic, loading: .loadedOnly)
-        return try swiftDeclarationCandidates(
-            declaration,
+        return try swiftMemberCandidates(
+            match,
+            owner: owner,
             in: scope,
             module: module,
             extensionsOnly: extensionsOnly,
@@ -415,14 +475,16 @@ package final class RuntimeSymbolResolver: Sendable {
         )
     }
 
-    private func swiftDeclarationCandidates(
-        _ declaration: RuntimeDeclaration,
+    private func swiftMemberCandidates(
+        _ match: SwiftMemberMatch,
+        owner: String,
         in scope: SearchScope,
         module: String? = nil,
         extensionsOnly: Bool,
         includingSharedCache: Bool
     ) throws -> [RuntimeSwiftCandidate] {
-        let query = SymbolQuery(declaration, module: module)
+        // The owner's name selects the module whose symbols are read.
+        let query = SymbolQuery(.init(name: owner, language: .swift), module: module)
         let indexes = state.withLock { state in scope.images.map { state.index(for: $0) } }
         func matches(
             _ source: RuntimeSymbol.Source,
@@ -431,7 +493,8 @@ package final class RuntimeSymbolResolver: Sendable {
             state.withLock { _ in
                 indexes.flatMap {
                     $0.swiftDeclarationCandidates(
-                        query,
+                        match,
+                        query: query,
                         source: source,
                         extensionsOnly: extensionsOnly
                     )
@@ -689,6 +752,39 @@ package final class RuntimeSymbolResolver: Sendable {
         let index = state.withLock { $0.index(for: image) }
         return withExtendedLifetime(index) {
             state.withLock { _ in index.swiftPropertyDeclarations(ofTypeAt: address) }
+        }
+    }
+
+    /// The descriptors in `image` of the instance property `name` of the type
+    /// whose nominal type descriptor is at `typeDescriptor` in `typeImage`.
+    ///
+    /// - Parameter extensionModule: The module of another module's extension
+    ///   that declares the property, or nil for the type's own property.
+    package func swiftPropertyDescriptors(
+        named name: String,
+        ofTypeAt typeDescriptor: UInt64,
+        in typeImage: RuntimeImage,
+        inExtensionOf extensionModule: String?,
+        image: RuntimeImage
+    ) -> [(symbol: RuntimeSymbol, property: RuntimeSwiftPropertySymbol)] {
+        let typeIndex = state.withLock { $0.index(for: typeImage) }
+        guard
+            let typeName = withExtendedLifetime(
+                typeIndex,
+                {
+                    state.withLock { _ in typeIndex.swiftTypeDescriptorName(at: typeDescriptor) }
+                }
+            )
+        else { return [] }
+        let index = state.withLock { $0.index(for: image) }
+        return withExtendedLifetime(index) {
+            state.withLock { _ in
+                index.swiftPropertyDescriptors(
+                    named: name,
+                    ofTypeNamed: typeName,
+                    inExtensionOf: extensionModule
+                )
+            }
         }
     }
 

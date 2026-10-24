@@ -91,6 +91,49 @@ final class SymbolResolver: Sendable {
             ).map(SwiftCandidate.init)
         }
     }
+    /// The candidates of a member of `owner`, whose records `match` accepts.
+    func swiftMemberCandidates(
+        _ match: SwiftMemberMatch,
+        owner: String,
+        in image: NativeImage?,
+        loading: ImageLoadingPolicy = .loadedOnly,
+        module: String? = nil,
+        extensionsOnly: Bool = false,
+        includingSharedCache: Bool = false
+    ) throws -> [SwiftCandidate] {
+        try withRuntimeErrors {
+            try runtime.swiftMemberCandidates(
+                match,
+                owner: owner,
+                in: image?.runtimeValue,
+                loading: loading.runtimeValue,
+                module: module,
+                extensionsOnly: extensionsOnly,
+                includingSharedCache: includingSharedCache
+            ).map(SwiftCandidate.init)
+        }
+    }
+    /// The descriptors in `image` of the instance property `name` of the
+    /// type whose nominal type descriptor is `typeDescriptor`, which
+    /// `typeImage` holds.
+    ///
+    /// - Parameter extensionModule: The module of another module's extension
+    ///   that declares the property, or nil for the type's own property.
+    func swiftPropertyDescriptors(
+        named name: String,
+        ofTypeAt typeDescriptor: UnsafeRawPointer,
+        in typeImage: NativeImage,
+        inExtensionOf extensionModule: String?,
+        image: NativeImage
+    ) -> [(symbol: ResolvedSymbol, property: RuntimeSwiftPropertySymbol)] {
+        runtime.swiftPropertyDescriptors(
+            named: name,
+            ofTypeAt: UInt64(UInt(bitPattern: typeDescriptor)),
+            in: typeImage.runtimeValue,
+            inExtensionOf: extensionModule,
+            image: image.runtimeValue
+        ).map { (ResolvedSymbol($0.symbol), $0.property) }
+    }
     func swiftWitnesses(
         ofConformanceAt descriptor: UnsafeRawPointer,
         in image: NativeImage
