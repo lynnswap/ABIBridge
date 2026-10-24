@@ -283,9 +283,18 @@ extension NativeSwiftType {
                     throw undecided("The image of protocol \(protocolName) is unavailable.")
                 }
                 for requirement in RuntimeProtocolLayout(protocolAddress).requirements {
-                    guard requirement.isInheritedProtocol, let base = requirement.protocolDescriptor
-                    else { continue }
-                    try visit(SwiftProtocolDescriptor(address: base))
+                    guard requirement.isInheritedProtocol else { continue }
+                    if let objectiveC = requirement.objectiveCProtocol {
+                        try SwiftObjectiveCRequirements.check(
+                            unsafeBitCast(objectiveC, to: Protocol.self),
+                            query: query,
+                            signature: signature,
+                            displayed: displayed,
+                            extensionMember: extensionMember
+                        )
+                    } else if let base = requirement.protocolDescriptor {
+                        try visit(SwiftProtocolDescriptor(address: base))
+                    }
                 }
                 let isInherited = protocolAddress != root
                 // The requirements of the member's kind, with their witness-table

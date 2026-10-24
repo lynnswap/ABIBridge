@@ -1149,6 +1149,10 @@ struct SwiftMemberInvocationTests {
                     var value: Int64 { get set }
                     static func make() -> Int64
                 }
+                public protocol SwiftStore: Store {}
+                extension SwiftStore {
+                    @inline(never) public func extra(_ value: Int64) -> Int64 { -2 }
+                }
                 @objc public protocol OptionalStore {
                     @objc optional func maybe() -> Int64
                     @objc optional var level: Int64 { get }
@@ -1165,7 +1169,7 @@ struct SwiftMemberInvocationTests {
                     public var level: Int64 { 43 }
                     public var nullableLevel: Int64? { 44 }
                 }
-                public final class Impl: NSObject, Store, OptionalStore {
+                public final class Impl: NSObject, SwiftStore, OptionalStore {
                     public func extra(_ value: Int64) -> Int64 { value }
                     public func inherited() -> Double { 1 }
                     public var on: Bool { true }
@@ -1175,6 +1179,9 @@ struct SwiftMemberInvocationTests {
                     @objc public var level: Int64 { 46 }
                 }
                 public func makeImpl() -> AnyObject { Impl() }
+                public func swiftStoreExtra(_ value: Int64) -> Int64 {
+                    (Impl() as any SwiftStore).extra(value)
+                }
                 """,
             linkArguments: ["-O"]
         )
@@ -1182,6 +1189,11 @@ struct SwiftMemberInvocationTests {
         let runtime = ABIRuntime()
         let scope = ImageSelector.path(library.libraryURL)
         let type = try await runtime.resolveSwiftType(named: module + ".Impl", in: scope)
+        let native = try await runtime.resolve(
+            .function(module + ".swiftStoreExtra(_:)", as: ((Int64) -> Int64).self),
+            in: scope
+        )
+        #expect(try unsafe native.unsafeInvoke(9) == 9)
         func expectRequirement(_ selector: String, _ operation: () async throws -> Void) async {
             await #expect { try await operation() } throws: { error in
                 guard case ABIResolutionError.metadataUnavailable(let message) = error else {
@@ -1196,6 +1208,11 @@ struct SwiftMemberInvocationTests {
         await expectRequirement("renamedSelector:") {
             _ = try await type.resolve(
                 .method(module + ".Store.extra(_:)", as: ((Int64) -> Int64).self)
+            )
+        }
+        await expectRequirement("renamedSelector:") {
+            _ = try await type.resolve(
+                .method(module + ".SwiftStore.extra(_:)", as: ((Int64) -> Int64).self)
             )
         }
         await expectRequirement("inherited") {
