@@ -1,6 +1,6 @@
 import ABIBridgeCore
 
-/// A compiled method replacement in one selected Swift class's metadata.
+/// A compiled method replacement in one selected Swift class or conformance witness table.
 ///
 /// Preparation captures the current implementation without changing dispatch. Initialize replacement-owned state before calling `install()`. Restore explicitly: releasing the plan does not undo a potentially fallible mutation. Published and captured code owners remain retained for process lifetime. See <doc:SwiftVirtualReplacements> for dispatch and inheritance boundaries.
 public final class NativeSwiftVirtualReplacement<Implementation> {
@@ -15,7 +15,7 @@ public final class NativeSwiftVirtualReplacement<Implementation> {
         original = capture(entry)
         plan = NativeSwiftImportedReplacement(storage: storage, capture: capture)
     }
-    /// Address of the selected class metadata entry, not its implementation.
+    /// Address of the selected class or witness-table slot.
     public var address: UInt { plan.slots[0].address }
     /// The captured predecessor, callable without virtual redispatch.
     public let original: Implementation
@@ -48,11 +48,13 @@ extension NativeSwiftMethod {
     ///
     /// Inherited and overridden methods select the copied slot in the requested type. Existing superclass and sibling metadata are unchanged. Subclasses initialized later can inherit the changed entry. Direct, devirtualized, inlined and previously captured implementations bypass this operation.
     ///
+    /// Protocol-qualified requirements select the actual conformance table, including value methods and accessors. Generic/conditional conformances can share physical entries; the replacement must accept every binding reaching that entry.
+    ///
     /// Search and capture run synchronously on the caller's thread. The async counterpart prepares the same uninstalled plan on a worker.
     ///
     /// The replacement must accept every receiver reaching this slot and match its Swift context, ownership, lowering and isolation contract. Equal argument/result metatypes alone do not establish that compatibility.
     /// - Parameters:
-    ///   - replacement: An already compiled synchronous class method.
+    ///   - replacement: An already compiled synchronous member accepting this slot's native ABI.
     ///   - owner: Optional additional owner of code outside loader images.
     /// - Returns: An uninstalled plan with a typed predecessor.
     /// - Throws: A metadata layout, declaration, capture or image error.
@@ -206,7 +208,9 @@ extension NativeSwiftMethod {
         with replacement: NativeSwiftMethod<ReplacementSignature>,
         retaining owner: (any Sendable)? = nil
     ) throws -> NativeSwiftVirtualReplacement<NativeSwiftMethodImplementation<Signature>> {
-        guard receiver.mode == .object, replacement.receiver.mode == .object else {
+        guard entry.record?.context == .protocolRequirement
+            || (receiver.mode == .object && replacement.receiver.mode == .object)
+        else {
             throw ABIResolutionError.unsupportedDeclaration(
                 "Virtual replacement requires Swift class instance methods."
             )
@@ -232,7 +236,7 @@ extension NativeSwiftFunction {
 
     /// Prepares replacement of this class member's entry in the lookup type's metadata.
     ///
-    /// A `class func`, and a `class var`'s or `class subscript`'s getter or setter, receive their class's metatype as `self` and dispatch through the class's metadata, as instance methods do; their entries follow the same inheritance and override rules. Static and final members have no entry, nor do free functions and the static members of structs and enums, and preparation rejects them.
+    /// A `class func`, and a `class var`'s or `class subscript`'s getter or setter, receive their class's metatype as `self` and dispatch through the class's metadata, as instance methods do; their entries follow the same inheritance and override rules. Concrete static and final members and free functions have no class entry. Protocol-qualified static and initializer requirements use their conformance's witness table.
     ///
     /// Search and capture run synchronously on the caller's thread. The async counterpart prepares the same uninstalled plan on a worker.
     ///
@@ -392,7 +396,7 @@ extension NativeSwiftFunction {
         with replacement: NativeSwiftFunction<ReplacementSignature>,
         retaining owner: (any Sendable)? = nil
     ) throws -> NativeSwiftVirtualReplacement<NativeSwiftFunctionImplementation<Signature>> {
-        let dispatch = try virtualDispatch().dispatch
+        let dispatch = try virtualDispatch()
         try requireReplacement(replacement)
         let storage = try SwiftReplacementStorage(
             slots: [(dispatch.address, dispatch.authentication)],

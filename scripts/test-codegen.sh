@@ -19,6 +19,7 @@ for task_check in \
     check-swift-generic-codegen.py \
     check-swift-generic-call-codegen.py \
     check-swift-generic-receiver-codegen.py \
+    check-swift-witness-codegen.py \
     check-explicit-swift-value-codegen.py \
     check-indirect-swift-value-codegen.py \
     check-swift-tuple-result-codegen.py \

@@ -88,8 +88,8 @@ package enum SwiftMemberLookup {
         Self.owner(of: declaration).map(ownerKey) == ownerKey(owner)
     }
 
-    /// The lookup key of a member's owner: a type, a protocol, or a module,
-    /// named as the demangler spells it.
+    /// The coarse index key of a member's owner. Declaration records verify
+    /// the identity of a typed lookup's owner after this selects its bucket.
     ///
     /// The key leaves out the generic clauses and the extension contexts
     /// that the spelling can lead with, such as the `(extension in M):` of a
@@ -224,10 +224,12 @@ package struct SwiftMemberMatch: Hashable, Sendable {
         case allocating
         /// Anything but an allocating initializer.
         case excluded
-        /// Whether the entry is a class's allocating initializer, which a
-        /// demangled name spells `__allocating_init`; it spells any other
-        /// initializer `init`.
-        case classAllocator(Bool)
+        /// What a demangled name spells. It spells a class's allocating
+        /// initializer `__allocating_init`, a name that a function or method
+        /// can also have, and any other initializer `init`. A spelled
+        /// `__allocating_init` accepts any entry of that path; another
+        /// spelling excludes a class's allocating initializer.
+        case spelled(allocatingInit: Bool)
     }
 
     /// What a lookup selects of a member.
@@ -239,6 +241,9 @@ package struct SwiftMemberMatch: Hashable, Sendable {
     }
 
     package let path: SwiftMemberPath
+    /// A typed lookup's declared owner. The path's normalized owner only
+    /// chooses an index bucket; this identity selects its actual members.
+    package let ownerIdentity: RuntimeSwiftTypeIdentity?
     package let accessor: RuntimeSwiftDeclaration.Accessor?
     package let isStatic: Bool
     package let initializer: Initializer
@@ -249,9 +254,11 @@ package struct SwiftMemberMatch: Hashable, Sendable {
         accessor: RuntimeSwiftDeclaration.Accessor?,
         isStatic: Bool,
         initializer: Initializer,
-        entry: Entry = .code
+        entry: Entry = .code,
+        ownerIdentity: RuntimeSwiftTypeIdentity? = nil
     ) {
         self.path = path
+        self.ownerIdentity = ownerIdentity
         self.accessor = accessor
         self.isStatic = isStatic
         self.initializer = initializer
@@ -259,37 +266,36 @@ package struct SwiftMemberMatch: Hashable, Sendable {
     }
 
     /// The member that a complete or qualified declaration spells,
-    /// including its accessor, static-ness, and whether it is a class's
+    /// including its accessor, static-ness, and whether it spells a class's
     /// allocating initializer, as a demangled name spells them.
     package init?(declaration: String) {
         let text = SymbolIndex.extensionMemberName(declaration) ?? declaration
         let member = SwiftMemberLookup.member(of: text) ?? text
-        // A caller's spelling cannot tell an allocating initializer from a
-        // method of that name; it selects the allocator, which records confirm.
-        let allocates =
-            member.hasPrefix("__allocating_init(") || member.hasPrefix("__allocating_init<")
-        guard let path = SwiftMemberPath(declaration: text, allocates: allocates) else {
-            return nil
-        }
+        guard let path = SwiftMemberPath(declaration: text) else { return nil }
         accessor =
             SymbolIndex.byteOffset(of: ".getter : ", in: text) != nil
             ? .getter : SymbolIndex.byteOffset(of: ".setter : ", in: text) != nil ? .setter : nil
         isStatic = text.hasPrefix("static ")
-        initializer = .classAllocator(allocates)
+        initializer = .spelled(
+            allocatingInit: member.hasPrefix("__allocating_init(")
+                || member.hasPrefix("__allocating_init<")
+        )
         entry = .code
+        ownerIdentity = nil
         self.path = path
     }
 
     /// Whether a symbol with `record` declares this member.
     package func accepts(_ record: RuntimeSwiftDeclaration) -> Bool {
         guard (record.role == .propertyDescriptor) == (entry == .propertyDescriptor),
-            record.accessor == accessor, record.isStatic == isStatic
+            record.accessor == accessor, record.isStatic == isStatic,
+            ownerIdentity == nil || record.ownerIdentity == ownerIdentity
         else { return false }
         switch initializer {
         case .allocating: return record.kind == .allocator
         case .excluded: return record.kind != .allocator
-        case .classAllocator(let allocates):
-            return (record.kind == .allocator && record.isClassMember) == allocates
+        case .spelled(let allocatingInit):
+            return allocatingInit || !(record.kind == .allocator && record.isClassMember)
         }
     }
 }

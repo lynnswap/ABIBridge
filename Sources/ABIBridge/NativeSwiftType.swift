@@ -521,22 +521,28 @@ public actor NativeSwiftType: Hashable {
         }
     }
 
-    // A library-evolution class can export only the dispatch thunk and method
-    // descriptor of a member. The member's code is then this type's
-    // virtual-table entry: the implementation visible to this type, which
-    // calls run without redispatching on the receiver.
+    // A dispatch thunk reads a class or conformance table. Capture its
+    // selected implementation so member handles never redispatch after a
+    // hook or replacement changes that table.
     ///
-    /// - Parameter asynchronous: The requested effect, when known. A slot
+    /// - Parameter asynchronous: The requested effect. A slot
     ///   with another effect does not apply to the request.
     private nonisolated func dispatchedEntry(
         _ candidate: SwiftCandidate,
-        asynchronous: Bool?
+        asynchronous: Bool
     ) throws -> SwiftEntry {
         var entry = candidate.entry
-        let dispatch = try SwiftClassDispatch(
-            metadata: metadata,
+        if entry.record?.context != .protocolRequirement {
+            entry.dispatch = try SwiftClassDispatch(
+                metadata: metadata,
+                entry: entry,
+                resolver: resolver,
+                asynchronous: asynchronous
+            )
+        }
+        let dispatch = try SwiftVirtualDispatch(
+            type: self,
             entry: entry,
-            resolver: resolver,
             asynchronous: asynchronous
         )
         let code = try SwiftSlotCode(
@@ -550,7 +556,6 @@ public actor NativeSwiftType: Hashable {
         }
         entry.implementation = implementation
         entry.asyncEntry = code.asyncEntry
-        entry.dispatch = dispatch
         return entry
     }
 
@@ -594,6 +599,7 @@ public actor NativeSwiftType: Hashable {
         var ownerClass: AnyClass? = metadata as? AnyClass
         var ownerImage = image
         var ownerName = try declarationName()
+        let query = query.inContext(of: ownerName)
         var hasUnavailableImages = false
         var preparationFailure: (any Error)?
         // Why a requirement that the request names has no witness for this
@@ -622,7 +628,11 @@ public actor NativeSwiftType: Hashable {
                     "Name this type's own initializer relative to the type, such as init(text:)."
                 )
             }
-            let match = try query.match(in: ownerName)
+            let match = try query.match(
+                in: ownerName,
+                ownerIdentity: isProtocolMember
+                    ? nil : resolver.swiftTypeIdentity(of: owner, in: ownerImage)
+            )
             let memberOwner = query.owner(in: ownerName)
             // Prepares a candidate whose context applies to the request.
             func prepare(
@@ -725,7 +735,10 @@ public actor NativeSwiftType: Hashable {
             }
             // The members a type declares hide those its extensions declare.
             for extensionsOnly in [false, true]
-            where extensionsOnly ? missingWitness == nil : query.extensionModule == nil {
+            where extensionsOnly
+                ? missingWitness == nil
+                : query.extensionModule == nil || query.includesOwnerExtension
+            {
                 var selection: SwiftCandidateSelection<SwiftGenericCallPlan>
                 var unserved: [NativeDeclaration]
                 do {

@@ -1077,15 +1077,21 @@ package final class SymbolIndex {
                 var members: [SwiftMemberPath: [IndexedSymbol]] = [:]
                 for symbol in self.symbols(for: query, swiftBucket: bucket) {
                     guard let name = memberName(of: symbol) else { continue }
-                    // Only an allocator's record files `__allocating_init`
-                    // with its initializer; a method can have that name.
+                    // An allocator's record also files its `__allocating_init`
+                    // with its initializer; a function or method can have
+                    // that name too.
                     let allocates =
                         SymbolIndex.byteOffset(of: "__allocating_init", in: name) != nil
                         && record(of: symbol)?.kind == .allocator
                     for name in [name, Self.operatorAlias(name)].compactMap({ $0 }) {
-                        guard let path = SwiftMemberPath(declaration: name, allocates: allocates)
-                        else { continue }
+                        guard let path = SwiftMemberPath(declaration: name) else { continue }
                         members[path, default: []].append(symbol)
+                        if allocates,
+                            let initializer = SwiftMemberPath(declaration: name, allocates: true),
+                            initializer != path
+                        {
+                            members[initializer, default: []].append(symbol)
+                        }
                     }
                 }
                 swiftMembers[scope] = members

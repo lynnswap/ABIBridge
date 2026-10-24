@@ -64,7 +64,7 @@ Existing superclass, sibling and subclass metadata copies are unchanged. A subcl
 
 Only calls that read the changed metadata entry are affected. Direct, inlined, specialized or devirtualized calls and previously captured implementations can bypass it. The original `NativeSwiftMethod` remains a direct implementation handle. A compiler-instrumented `dynamic` method can independently consult Swift's dynamic-replacement machinery.
 
-Compiled virtual replacement supports synchronous instance and class methods and ordinary getters/setters on concrete nongeneric classes, including initialized resilient-superclass bounds. Selection requires an introducing descriptor available to symbol lookup with a matching signature. Generic class layouts, stripped descriptors, initializer/coroutine entries, and differently lowered overrides fail selection. The operation changes the selected Swift metadata slot; Objective-C selectors, protocol witness tables, and function bodies use separate mechanisms, so a protocol requirement fails with ``ABIResolutionError/unsupportedDeclaration(_:)``.
+Compiled virtual replacement supports synchronous instance and class methods and ordinary getters/setters on concrete nongeneric classes, including initialized resilient-superclass bounds. Selection requires an introducing descriptor available to symbol lookup with a matching signature. Generic class layouts, stripped descriptors, initializer/coroutine entries, and differently lowered overrides fail selection. This class path changes the selected Swift metadata slot. Protocol-qualified requirements use conformance entries described below; Objective-C selectors and function bodies use separate mechanisms.
 
 ## Inspect and restore
 
@@ -73,3 +73,9 @@ Use `status`, `mutation`, `restoration` and `protectionRecovery` to inspect the 
 Call `restore()` explicitly. It preserves a different pointer installed by another writer and permits retrying incomplete pointer or page-protection restoration. Raw comparisons cannot detect ABA changes. Releasing the plan leaves dispatch unchanged, avoiding hidden cleanup whose failure could not be returned.
 
 Published code images and captured predecessor images remain pinned for process lifetime, so native code pointers saved by other callers remain valid after restoration or plan release. Additional code owners passed through `retaining` have that same lifetime. State accessed by the compiled replacement still needs application-owned synchronization and lifetime management.
+
+## Protocol conformance entries
+
+A protocol-qualified method or accessor selects the lookup type's actual witness table. Static and initializer requirements use the corresponding `NativeSwiftFunction` handles. Preparation captures the slot's current predecessor, including an installed hook chain; `original` calls it with the prepared receiver/metatype and conformance context. Restoration preserves other writers and reports partial pointer/protection failures through the existing plan state.
+
+Generic and conditional conformances can share a table. A compiled replacement must accept every Self and generic binding reaching that physical slot; it does not filter calls as a typed callback does. Other conformance tables remain unchanged, and publication always uses the actual conformance table. Swift can return a shared canonical pattern directly when instantiation is unnecessary. Slot identity requires requirement descriptors or UUID-matched original fixups and unambiguous local witness symbols; stripping or folded identities can make preparation unavailable. See <doc:SwiftMethodHooks> for conformance scope and callback alternatives.
