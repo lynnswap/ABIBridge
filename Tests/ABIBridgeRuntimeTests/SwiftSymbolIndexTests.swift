@@ -86,6 +86,79 @@ struct SwiftSymbolIndexTests {
         }
     }
 
+    @Test func propertyDescriptorsAndCodeResolveInEitherOrderAfterLocalSymbolsArrive() async throws
+    {
+        let module = "MemberEntryFixture"
+        let owner = module + ".Box"
+        let fixture = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                public struct Box {
+                    public var value: Int {
+                        get { 1 }
+                        set {}
+                    }
+                }
+                """,
+            linkArguments: ["-parse-as-library", "-enable-library-evolution"]
+        )
+        defer { fixture.cleanup() }
+        let image = try #require(
+            try await RuntimeSymbolResolver().images(matching: .path(fixture.libraryURL)).first
+        )
+        let path = try #require(SwiftMemberPath(owner: owner, member: "value"))
+        let entries: [SwiftMemberMatch.Entry] = [.propertyDescriptor, .code]
+        for order in [entries, Array(entries.reversed())] {
+            let index = SymbolIndex(image: image)
+            var locals: [IndexedSymbol] = []
+            for source in [RuntimeSymbol.Source.image, .sharedCache] {
+                for entry in order {
+                    let query = SymbolQuery(
+                        .init(
+                            name: owner,
+                            language: .swift,
+                            kind: entry == .propertyDescriptor ? .data : .function
+                        )
+                    )
+                    let candidates = index.swiftDeclarationCandidates(
+                        SwiftMemberMatch(
+                            path: path,
+                            accessor: entry == .propertyDescriptor ? nil : .getter,
+                            isStatic: false,
+                            initializer: .excluded,
+                            entry: entry
+                        ),
+                        query: query,
+                        source: source,
+                        extensionsOnly: false
+                    )
+                    let candidate = try #require(candidates.first)
+                    #expect(candidates.count == 1)
+                    #expect(
+                        (candidate.record.role == .propertyDescriptor)
+                            == (entry == .propertyDescriptor)
+                    )
+                    #expect(candidate.symbol.source == source)
+                    if source == .image {
+                        locals.append(
+                            IndexedSymbol(
+                                name: candidate.symbol.linkageName,
+                                address: candidate.symbol.address,
+                                source: .sharedCache
+                            )
+                        )
+                    }
+                }
+                if source == .image {
+                    index.appendSharedCacheSymbols(
+                        locals,
+                        matching: SymbolQuery(.init(name: owner, language: .swift))
+                    )
+                }
+            }
+        }
+    }
+
     @Test func knownAbbreviationsKeepSharedCacheCoverageSeparate() async throws {
         let fixture = try FixtureLibrary()
         defer { fixture.cleanup() }
