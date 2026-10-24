@@ -1022,7 +1022,7 @@ package final class SymbolIndex {
                 var names = [name]
                 if declaration.language == .swift {
                     if let alias = Self.operatorAlias(name) { names.append(alias) }
-                    if let alias = Self.nominalDescriptorAlias(name) { names.append(alias) }
+                    names += Self.nominalDescriptorAliases(name)
                 }
                 for name in names {
                     index[
@@ -1282,7 +1282,7 @@ package final class SymbolIndex {
             var names = [name]
             if query.declaration.language == .swift {
                 if let alias = operatorAlias(name) { names.append(alias) }
-                if let alias = nominalDescriptorAlias(name) { names.append(alias) }
+                names += nominalDescriptorAliases(name)
             }
             return names.contains {
                 DeclarationKey.make($0, language: query.declaration.language) == query.key
@@ -1290,17 +1290,22 @@ package final class SymbolIndex {
         }
     }
 
-    package static func nominalDescriptorAlias(_ name: String) -> String? {
+    package static func nominalDescriptorAliases(_ name: String) -> [String] {
         let marker = "nominal type descriptor for "
-        guard name.hasPrefix(marker),
-            var nominal = extensionMemberName(String(name.dropFirst(marker.count)))
-        else { return nil }
+        guard name.hasPrefix(marker) else { return [] }
+        let original = String(name.dropFirst(marker.count))
+        var nominal = original
         // A nominal declaration is selected before its arguments are bound.
         // Its descriptor retains the extension constraints for runtime validation.
         for group in SwiftGenericSyntax.groups(in: nominal).reversed() {
             nominal.removeSubrange(group.range)
         }
-        return marker + nominal
+        guard let unqualified = extensionMemberName(nominal) else { return [] }
+        // Removing constraints must preserve the module that declares a nested
+        // type, while existing unqualified requests retain their lookup alias.
+        return nominal == original
+            ? [marker + unqualified]
+            : [marker + nominal, marker + unqualified]
     }
 
     package static func operatorAlias(_ name: String) -> String? {
