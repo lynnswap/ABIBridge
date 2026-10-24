@@ -1621,6 +1621,7 @@ struct SwiftInferredValueTests {
                 @_lifetime(immortal) init(_ value: Int64) { self.value = value }
             }
             @inline(never) public func readNumber(_ value: borrowing Number) -> Int64 { value.value }
+            @inline(never) public func makeResultTuple() -> () -> (Number, Int64) { { (Number(44), 7) } }
             public struct Evidence { public var text: String = "evidence" }
             @available(macOS 26.0, *)
             @_lifetime(borrow text) @inline(never) public func first(_ text: String, _ other: String) -> View { View(text.utf8Span.span) }
@@ -1745,6 +1746,15 @@ struct SwiftInferredValueTests {
         let functionTuple = try unsafe makeFunctionTuple.unsafeInvoke()
         let transform = try NativeSwiftClosure<(Int64) -> Int64> { $0 + 7 }
         #expect(try unsafe functionTuple.unsafeInvoke(("123", transform), withResult: { try unsafe readNumber.unsafeInvoke($0) }) == 42)
+        let makeResultTuple = try await runtime.resolve(
+            .function(module + ".makeResultTuple()", as: (() -> NativeSwiftValue).self), in: scope
+        )
+        let erasedResultTuple = try unsafe makeResultTuple.unsafeInvoke()
+        let resultTuple = try await erasedResultTuple.resolveClosure(as: (() -> NativeSwiftBorrowedValue).self)
+        try unsafe resultTuple.unsafeInvoke(withResult: { value in
+            #expect(value.type.name.contains(module + ".Number"))
+            #expect(throws: ABIResolutionError.self) { try value.copy() }
+        })
         let makeAsync = try await runtime.resolve(
             .function(
                 module + ".makeAsync()",

@@ -1792,6 +1792,9 @@ struct SwiftGenericCallPlan: Sendable {
             }
             return _openExistential(wrapped, do: marker)
         }
+        if owned, !SwiftEscapability.accepts(try binding.types(canonical)[0]) {
+            return NativeSwiftBorrowedValue.self
+        }
         if case .function = canonical {
             let signature = try nativeClosureSignature(canonical, binding: binding)
             func marker<Signature>(_ type: Signature.Type) -> Any.Type {
@@ -1836,10 +1839,7 @@ struct SwiftGenericCallPlan: Sendable {
             }
             return unsafeBitCast(metadata, to: Any.Type.self)
         }
-        if owned, SwiftEscapability.accepts(try binding.types(canonical)[0]) {
-            return NativeSwiftValue.self
-        }
-        return NativeSwiftBorrowedValue.self
+        return owned ? NativeSwiftValue.self : NativeSwiftBorrowedValue.self
     }
 
     static func closure(
