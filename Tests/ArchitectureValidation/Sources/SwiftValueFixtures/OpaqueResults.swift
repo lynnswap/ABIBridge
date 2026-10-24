@@ -260,6 +260,27 @@ public struct RuntimeScopedText: ~Escapable, RuntimeScopedReadable {
 ) -> some RuntimeScopedReadable & ~Copyable & ~Escapable {
     RuntimeScopedText(second)
 }
+#if compiler(>=6.4)
+@available(macOS 26.0, iOS 26.0, tvOS 26.0, visionOS 26.0, *)
+@_lifetime(borrow text)
+@inline(never) public func runtimeScopedTextClosureBody(_ text: String) -> RuntimeScopedText {
+    RuntimeScopedText(text)
+}
+@available(macOS 26.0, iOS 26.0, tvOS 26.0, visionOS 26.0, *)
+@inline(never) public func makeRuntimeScopedTextClosure() -> @_lifetime(borrow text) (_ text: String) -> RuntimeScopedText {
+    runtimeScopedTextClosureBody
+}
+@available(macOS 26.0, iOS 26.0, tvOS 26.0, visionOS 26.0, *)
+@_lifetime(borrow text)
+@inline(never) public nonisolated(nonsending) func runtimeScopedTextAsyncClosureBody(_ text: String) async -> RuntimeScopedText {
+    await Task.yield()
+    return RuntimeScopedText(text)
+}
+@available(macOS 26.0, iOS 26.0, tvOS 26.0, visionOS 26.0, *)
+@inline(never) public func makeRuntimeScopedTextAsyncClosure() -> nonisolated(nonsending) @_lifetime(borrow text) (_ text: String) async -> RuntimeScopedText {
+    runtimeScopedTextAsyncClosureBody
+}
+#endif
 extension String {
     @available(macOS 26.0, iOS 26.0, tvOS 26.0, visionOS 26.0, *)
     @_lifetime(borrow self)
