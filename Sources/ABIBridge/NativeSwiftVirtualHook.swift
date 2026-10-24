@@ -1,4 +1,4 @@
-/// Owns callback behavior for one selected Swift class metadata entry.
+/// Owns callback behavior for one selected Swift class or conformance witness entry.
 ///
 /// The stable dispatcher and its code/metadata owners remain process-lived. Invalidation releases user captures after in-flight snapshots finish. Saved pointers and subclass metadata that copied this dispatcher share its chain.
 public final class NativeSwiftVirtualHook: Sendable {
@@ -7,7 +7,7 @@ public final class NativeSwiftVirtualHook: Sendable {
     private let registration: NativeSwiftImportedFunctionHook
     init(_ registration: NativeSwiftImportedFunctionHook) { self.registration = registration }
     private var slot: NativeSwiftImportedFunctionHook.Slot { registration.slots[0] }
-    /// Address of the selected class's method pointer.
+    /// Address of the selected class or witness-table slot.
     public var address: UInt { slot.address }
     /// Logical state and the currently observed pointer ownership.
     public var status: Status { slot.status }
@@ -25,7 +25,7 @@ public final class NativeSwiftVirtualHook: Sendable {
     }
 }
 
-/// A class-method hook could not finish pointer publication or protection changes.
+/// A virtual hook could not finish pointer publication or protection changes.
 public struct NativeSwiftVirtualHookInstallationError: Error {
     /// The original publication failure; the slot remains available for inspection.
     public let underlyingError: any Error
@@ -39,16 +39,15 @@ extension NativeSwiftVirtualHook {
     ///
     /// - Parameter owner: The handle whose declaration was hooked.
     static func install(
-        at dispatch: SwiftClassDispatch,
-        of type: NativeSwiftType,
+        at dispatch: SwiftVirtualDispatch,
         retaining owner: any Sendable,
         prepared: (signature: SwiftHookSignature, handler: SwiftHookHandler),
         codeOwner: (any Sendable)?
     ) async throws -> NativeSwiftVirtualHook {
-        // A file-backed inherited entry can also be an importing reference. Use
-        // the storage type's generation so both operations share one dispatcher.
+        // File-backed slots can also be importing references. Use the storage
+        // owner's generation so every registration shares one dispatcher.
         let reference = SwiftHookReference(
-            key: .init(address: dispatch.address, generation: type.image.identity.loadGeneration),
+            key: .init(address: dispatch.address, generation: dispatch.generation),
             authentication: dispatch.authentication,
             asyncDescriptor: dispatch.isAsync
         )
@@ -75,11 +74,11 @@ extension NativeSwiftMethod {
     // decomposes Signature into a parameter pack. Transparent entry thunks keep
     // that requirement out of the implementation frame, including in Debug builds.
 
-    /// Intercepts calls through the selected class's virtual method entry.
+    /// Intercepts calls through the selected class or protocol conformance entry.
     ///
     /// Declaration descriptors select the lookup type's copied slot, including inherited and overridden methods. Separate superclass and sibling entries are unchanged. Saved dispatchers and later-initialized subclasses copying this entry share its chain, including future registrations. Direct, final, inlined, and devirtualized calls bypass the slot.
     ///
-    /// Callbacks run on the incoming thread with an initialized instance. The caller establishes the native ABI, ownership, isolation, and coordination with external writers; source types alone do not establish those contracts. Initializers, deinitializers, and yielding accessors need separate support. See <doc:SwiftMethodHooks> for receiver access and failure handling.
+    /// Callbacks run on the incoming thread with an initialized instance. The caller establishes the native ABI, ownership, isolation, and coordination with external writers; source types alone do not establish those contracts. Protocol-qualified requirements also support value receivers, static members, and initializers through their conformance table. Generic tables can be shared; callbacks filter incoming Self and generic bindings. Deinitializers and yielding accessors need separate support. See <doc:SwiftMethodHooks> for receiver access and failure handling.
     ///
     /// - Parameters:
     ///   - owner: Keeps generated predecessor code alive.
@@ -150,7 +149,6 @@ extension NativeSwiftMethod {
         }
         return try await NativeSwiftVirtualHook.install(
             at: dispatch,
-            of: type,
             retaining: self,
             prepared: prepared,
             codeOwner: owner
@@ -345,9 +343,9 @@ extension NativeSwiftFunction {
     // decomposes Signature into a parameter pack. Transparent entry thunks keep
     // that requirement out of the implementation frame, including in Debug builds.
 
-    /// Intercepts calls of a class member through the selected class's virtual method entry.
+    /// Intercepts a class member or protocol static/initializer requirement through its virtual entry.
     ///
-    /// A `class func`, and a `class var`'s or `class subscript`'s getter or setter, receive their class's metatype as `self` and dispatch through the class's metadata, as instance members do. Declaration descriptors select the lookup type's copied slot, including inherited and overridden members. Separate superclass and sibling entries are unchanged. Saved dispatchers and later-initialized subclasses copying this entry share its chain, including future registrations. Direct, inlined, and devirtualized calls bypass the slot. Static and final members have no slot, nor do free functions and the static members of structs and enums, and preparation rejects them.
+    /// A `class func`, and a `class var`'s or `class subscript`'s getter or setter, receive their class's metatype as `self` and dispatch through the class's metadata, as instance members do. Declaration descriptors select the lookup type's copied slot, including inherited and overridden members. Separate superclass and sibling entries are unchanged. Saved dispatchers and later-initialized subclasses copying this entry share its chain, including future registrations. Direct, inlined, and devirtualized calls bypass the slot. Concrete static and final members and free functions have no class slot. Protocol-qualified static and initializer requirements select their actual conformance table; typed callbacks select incoming Self and generic bindings even when tables are shared.
     ///
     /// Callbacks run on the incoming thread, and `proceed` passes the incoming metatype on. The caller establishes the native ABI, ownership, isolation, and coordination with external writers; source types alone do not establish those contracts. See <doc:SwiftMethodHooks> for scope and failure handling.
     ///
@@ -419,8 +417,7 @@ extension NativeSwiftFunction {
             try virtualDispatch()
         }
         return try await NativeSwiftVirtualHook.install(
-            at: selected.dispatch,
-            of: selected.type,
+            at: selected,
             retaining: self,
             prepared: prepared,
             codeOwner: owner

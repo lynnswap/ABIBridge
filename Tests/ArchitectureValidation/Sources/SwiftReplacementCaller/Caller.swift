@@ -129,3 +129,35 @@ open class CallerOverridingRenderer: ReplacementRenderer {
 @inline(never) public func callBorrowedTupleAndAdapter(_ object: NSObject, _ pointer: UnsafeMutableRawPointer?) -> Int64 {
     hookBorrowedTupleAndAdapter((object, 42), pointer)
 }
+
+@inline(never) public func witnessRead(_ which: Int64, _ seed: Int64, _ value: Int64) -> Int64 {
+    makeWitness(which, seed).read(value)
+}
+@inline(never) public func witnessGet(_ which: Int64, _ seed: Int64) -> Int64 {
+    makeWitness(which, seed).value
+}
+@inline(never) public func witnessSet(_ which: Int64, _ seed: Int64, _ value: Int64) -> Int64 {
+    var object = makeWitness(which, seed)
+    object.value = value
+    return object.value
+}
+@inline(never) public nonisolated(nonsending) func witnessAsync(_ which: Int64, _ seed: Int64, _ value: Int64) async -> Int64 {
+    await makeWitness(which, seed).asyncRead(value)
+}
+// Prevent specialization/devirtualization in the caller-owned control. These
+// operations must continue to read the selected conformance's real table.
+@_optimize(none) private func witnessKind<P: Witnessed>(_ type: P.Type, _ value: Int64) -> Int64 {
+    P.kind(value)
+}
+@_optimize(none) private func witnessInit<P: Witnessed>(_ type: P.Type, _ value: Int64) -> Int64 {
+    P(seed: value).value
+}
+@inline(never) public func witnessKind(_ value: Int64) -> Int64 {
+    witnessKind(WitnessValue.self, value)
+}
+@inline(never) public func witnessInit(_ value: Int64) -> Int64 {
+    witnessInit(WitnessValue.self, value)
+}
+@inline(never) public func witnessShared(_ text: Bool, _ seed: Int64, _ value: Int64) -> Int64 {
+    makeSharedWitness(text, seed).read(value)
+}

@@ -166,6 +166,7 @@ import Synchronization
     )
     checks += try await validateAsyncMethodHooks(runtime: runtime, provider: provider, caller: caller)
     try check(failures.withLock { $0.isEmpty }, "No unexpected class hook failures")
+    checks += try await validateSwiftWitnessHooks()
     return ArchitectureReport(mode: "swift-method-hooks", cpuType: ABIValidationCPUType(),
         cpuSubtype: ABIValidationCPUSubtype(), pacCompiled: ABIValidationPACCompiled(), checks: checks, allocationTag: nil)
 }
