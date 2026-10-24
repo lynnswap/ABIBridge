@@ -108,7 +108,11 @@ package struct RuntimeObjectType {
     }
 
     package func conforms(to expected: Protocol) -> Bool {
-        if let classType, class_conformsToProtocol(classType, expected) { return true }
+        var current: AnyClass? = classType
+        while let type = current {
+            if class_conformsToProtocol(type, expected) { return true }
+            current = class_getSuperclass(type)
+        }
         return protocols.contains { protocol_conformsToProtocol($0, expected) }
     }
 }
