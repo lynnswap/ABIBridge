@@ -96,7 +96,7 @@ public:
     }
 
 private:
-    friend class Runtime;
+    friend class runtime;
     image_selector(std::int32_t kind, std::string value)
         : kind_(kind), value_(std::move(value)) {}
     std::int32_t kind_ = ABIImageAutomatic;
@@ -157,7 +157,7 @@ public:
     }
 
 private:
-    friend class Runtime;
+    friend class runtime;
     explicit resolved_symbol(ABIResolvedSymbol* handle)
         : handle_(handle, ABIReleaseResolvedSymbol) {}
     std::shared_ptr<ABIResolvedSymbol> handle_;
@@ -292,13 +292,13 @@ private:
 };
 
 /// Synchronous access to the same backend as Swift's ABIRuntime. Copies share a cache; default construction creates an independent cache. Calls and cache clearing are thread-safe while handles stay alive. Moving leaves an empty handle; do not resolve or clear through that moved-from value.
-class Runtime final {
+class runtime final {
 public:
-    Runtime() : handle_(ABICreateSymbolRuntime(), ABIReleaseSymbolRuntime) {}
+    runtime() : handle_(ABICreateSymbolRuntime(), ABIReleaseSymbolRuntime) {}
     /// Shares the process-wide resolver cache with Swift's ABIRuntime.shared.
-    static Runtime current() { return Runtime(ABICopySharedSymbolRuntime()); }
+    static runtime current() { return runtime(ABICopySharedSymbolRuntime()); }
     explicit operator bool() const noexcept { return bool(handle_); }
-    /// Borrows this resolver's C reference; keep the Runtime alive during use.
+    /// Borrows this resolver's C reference; keep the runtime alive during use.
     ABISymbolRuntime *native_handle() const noexcept { return handle_.get(); }
 
     /// Resolves a declaration or throws an owned resolution_error. The returned symbol is independent of this runtime and keeps its image loaded. Names/selectors use UTF-8 without embedded NULs. Embedded NULs report ABIFailureInvalidRequest instead of resolving a truncated C string.
@@ -398,7 +398,7 @@ public:
     void remove_cached_results() const { ABISymbolRuntimeRemoveCachedResults(handle_.get()); }
 
 private:
-    explicit Runtime(ABISymbolRuntime* handle) : handle_(handle, ABIReleaseSymbolRuntime) {}
+    explicit runtime(ABISymbolRuntime* handle) : handle_(handle, ABIReleaseSymbolRuntime) {}
     std::shared_ptr<ABISymbolRuntime> handle_;
 };
 

@@ -20,10 +20,10 @@ inline void checkMemoryReads() {
         owner.reset();
         assert(!weakOwner.expired());
         saved = region.read();
-        assert(saved.status == ABIMemoryReadPartial && saved.bytes.size() == 3);
+        assert(saved.status == memory_read_status::partial && saved.bytes.size() == 3);
         assert(saved.system_error != 0 && saved.bytes.front() == std::byte{0x51});
         const auto failed = region.read(3, 3);
-        assert(failed.status == ABIMemoryReadFailed && failed.bytes.empty());
+        assert(failed.status == memory_read_status::failed && failed.bytes.empty());
         assert(region.read(6, 0).is_complete());
         try { region.read(6, 1); assert(false); } catch (const std::out_of_range&) {}
     }

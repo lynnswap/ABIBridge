@@ -17,7 +17,7 @@ For an existing Objective-C class exposing `valueAt:`, install a typed callback 
 #include <cstdio>
 
 Class type = objc_getClass("Renderer");
-auto hook = abi_bridge::objc_method_hook<int32_t(int32_t)>(
+auto hook = abi_bridge::hook_objc_method<int32_t(int32_t)>(
     type, "valueAt:",
     [](auto& call, int32_t index) {
         return call.proceed(index + 1);
@@ -38,12 +38,12 @@ The C++ wrapper validates encodings and sizes before installation. Pure C++ supp
 
 ## Objective-C++ object scope and values
 
-`objc_object_hook<Signature>(object, selector, body, on_failure)` installs a weak identity filter on the object's current class. It does not change isa. Other instances share the dispatcher but skip that callback. Later overrides or isa changes that bypass the entry are not followed.
+`hook_objc_object<Signature>(object, selector, body, on_failure)` installs a weak identity filter on the object's current class. It does not change isa. Other instances share the dispatcher but skip that callback. Later overrides or isa changes that bypass the entry are not followed.
 
 ```objc
 #include <ABIBridge/ObjectiveCHooks.hpp>
 
-auto hook = abi_bridge::objc_object_hook<CGSize(CGSize)>(
+auto hook = abi_bridge::hook_objc_object<CGSize(CGSize)>(
     view, "sizeThatFits:",
     [](auto& call, CGSize proposal) {
         proposal.width = std::max(proposal.width, 100.0);
@@ -65,10 +65,10 @@ For `ns_consumed` arguments, set zero-based `consumed_parameters = {0, ...}` in 
 
 ## Initializer phases
 
-Use `objc_initializer_hook<Signature>` for consumed-self initialization. The before callback receives only explicit arguments. It can return void to observe without replacing native argument storage, return the argument tuple, or return one convertible value for a single argument. The after callback receives the actual initialized object or nil. Pass `nullptr` to omit either phase.
+Use `hook_objc_initializer<Signature>` for consumed-self initialization. The before callback receives only explicit arguments. It can return void to observe without replacing native argument storage, return the argument tuple, or return one convertible value for a single argument. The after callback receives the actual initialized object or nil. Pass `nullptr` to omit either phase.
 
 ```objc
-auto hook = abi_bridge::objc_initializer_hook<id(int32_t)>(
+auto hook = abi_bridge::hook_objc_initializer<id(int32_t)>(
     rendererClass, "initWithCapacity:",
     [](int32_t capacity) { return std::max(capacity, int32_t{16}); },
     [](id initialized) {
@@ -102,6 +102,8 @@ A nonnull `releaseContext` transfers context on entry, including failure, and ru
 
 Swift, C, and C++ registrations join the same native chain. Later registrations wrap earlier ones, each invocation keeps its snapshot, and invalidating one token leaves other registrations intact. Published callable entries remain process-lived so saved IMPs remain callable. See <doc:ObjectiveCMethodHooks> for inherited pass-through, external-writer coordination, dynamic class/code lifetime, and the permanent-entry cost.
 
-Callbacks run synchronously on the incoming thread. `requires_main_thread` reports a background entry and bypasses user callbacks before argument access; it does not dispatch work or establish arbitrary Swift actor isolation. C++ callback exceptions are converted to reported failures within the wrapper. Failure callbacks must be `noexcept`. Raw C callbacks, Objective-C exceptions, and exceptions from native implementations must not unwind across the call boundary.
+Coordinated installation uses `objc_hook_request::method/initializer` and `install_objc_hooks`. Its `objc_hook_installation_error` retains an owned `cause()`, the failing request index, and invalidated partial handles; `phase()` reports `objc_hook_installation_phase::preparation` or `::activation`. Request factories describe declarations and retain their callback captures independently of installed handles.
+
+Callbacks run synchronously on the incoming thread. `requires_main_thread` reports a background entry and bypasses user callbacks before argument access; it does not dispatch work or establish arbitrary Swift actor isolation. C++ callback exceptions are converted to reported failures within the wrapper. Failure callbacks must be `noexcept` when called as stored lvalues. Raw C callbacks, Objective-C exceptions, and exceptions from native implementations must not unwind across the call boundary.
 
 Match the declaration's ownership, object classes, block/function-pointer signatures, and pointee lifetimes. Runtime encodings cannot establish these parts of the unsafe contract. See <doc:Architectures> for execution evidence.

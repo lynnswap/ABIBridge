@@ -9,7 +9,7 @@ int main(int argc,char **argv) {
     auto *library=dlopen(argv[1],RTLD_NOW|RTLD_LOCAL); assert(library);
     auto object=reinterpret_cast<void*(*)(int)>(dlsym(library,"ABIVirtualObject"));
     auto invoke=reinterpret_cast<int(*)(int,int)>(dlsym(library,"ABIVirtualCall"));
-    auto runtime=abi_bridge::Runtime::current();
+    auto runtime=abi_bridge::runtime::current();
     auto table=abi_bridge::virtual_table::from(*static_cast<VirtualFixture::Renderer*>(object(0)),2);
     auto entry=table.entry(runtime,"VirtualFixture::Renderer::value(int) const");
     auto copy=entry; copy=entry;
@@ -19,12 +19,24 @@ int main(int argc,char **argv) {
     },[](const auto&) noexcept { assert(false); });
     assert(invoke(0,2)==53 && invoke(1,2)==103);
     const auto info=entry.native_info();
+    auto invalid = info;
+    invalid.index = invalid.entryCount;
+    std::optional<abi_bridge::resolution_error> savedFailure;
+    try {
+        (void)abi_bridge::virtual_entry(invalid).hook_shared_calls<int(int)>(
+            [](auto& call, int value) { return call.proceed(value); }, [](const auto&) noexcept { assert(false); });
+        assert(false);
+    } catch (const abi_bridge::virtual_hook_installation_error& error) {
+        assert(!error.registration().slot());
+        savedFailure = error.cause();
+    }
+    assert(savedFailure && savedFailure->code() == ABIFailureInvalidRequest);
     auto explicitEntry=table.entry(0,info.key,info.discriminator,info.addressDiversity);
     auto second=explicitEntry.hook_shared_calls<int(int)>([](auto& call,int value) { return call.proceed(value)*2; },[](const auto&) noexcept { assert(false); });
     assert(invoke(0,2)==106 && !second.slot()->mutation.didWrite);
     hook.invalidate(); assert(invoke(0,2)==84);
     second.invalidate(); assert(invoke(0,2)==42);
-    assert(second.slot()->status==ABIVirtualInactive);
+    assert(second.slot()->status==abi_bridge::virtual_hook_status::inactive);
     int errors=0;
     auto failed=entry.hook_shared_calls<int(int)>([](auto&,int)->int { throw std::runtime_error("callback error"); },[&](const auto& error) noexcept {
         ++errors; assert(std::string(error.what())=="callback error");

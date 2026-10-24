@@ -26,7 +26,7 @@ int main() {
         const auto original = method_getImplementation(method);
         try { (void)abi_bridge::install_objc_hooks({request,invalid}); assert(false); }
         catch (const abi_bridge::objc_hook_installation_error& error) {
-            assert(error.failed_index() == 1 && error.phase() == ABIObjCHookPreparation);
+            assert(error.failed_index() == 1 && error.phase() == abi_bridge::objc_hook_installation_phase::preparation);
             assert(error.invalidated_hooks().empty() && error.cause().code() == ABIFailureDeclarationNotFound);
         }
         assert(method_getImplementation(method) == original);
@@ -50,7 +50,7 @@ int main() {
         assert([[ABINativeHookFixture alloc] initWithSeed:40].seed == 42);
         mixed.clear();
 
-        auto existing = abi_bridge::objc_method_hook<int32_t()>(ABIBatchActivationFixture.class, "seed", [](auto& call) { return call.proceed() + 1; }, failed);
+        auto existing = abi_bridge::hook_objc_method<int32_t()>(ABIBatchActivationFixture.class, "seed", [](auto& call) { return call.proceed() + 1; }, failed);
         Method seedMethod = class_getInstanceMethod(ABIBatchActivationFixture.class, @selector(seed));
         IMP seedOriginal = method_getImplementation(seedMethod);
         IMP external = imp_implementationWithBlock(^int32_t(id value) { return 99; });
@@ -63,9 +63,9 @@ int main() {
         owner.onRetain = ^{ method_setImplementation(seedMethod, external); };
         try { (void)abi_bridge::install_objc_hooks(batch); assert(false); }
         catch (const abi_bridge::objc_hook_installation_error& error) {
-            if (error.failed_index() != 1 || error.phase() != ABIObjCHookActivation)
-                std::fprintf(stderr, "Activation case failed at %zu, phase %d: %s\n", error.failed_index(), error.phase(), error.what());
-            assert(error.failed_index() == 1 && error.phase() == ABIObjCHookActivation);
+            if (error.failed_index() != 1 || error.phase() != abi_bridge::objc_hook_installation_phase::activation)
+                std::fprintf(stderr, "Activation case failed at %zu, phase %d: %s\n", error.failed_index(), static_cast<int>(error.phase()), error.what());
+            assert(error.failed_index() == 1 && error.phase() == abi_bridge::objc_hook_installation_phase::activation);
             assert(error.invalidated_hooks().size() == 1 && error.invalidated_hooks()[0].status() == abi_bridge::objc_hook_status::invalidated);
             assert(error.cause().code() == ABIFailureHookDisplaced);
         }

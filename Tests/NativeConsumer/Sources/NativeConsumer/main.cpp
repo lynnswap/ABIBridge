@@ -75,7 +75,7 @@ extern "C" void ABIBridgeTestConstructorEntered(const void *initializer) {
         abi_bridge::symbol_request alias{absent};
         alias.alternatives = {pid};
         abi_bridge::symbol_request unavailable{pending};
-        auto batch = abi_bridge::Runtime::current().resolve(std::vector{available, alias, unavailable});
+        auto batch = abi_bridge::runtime::current().resolve(std::vector{available, alias, unavailable});
         assert(std::holds_alternative<abi_bridge::resolved_symbol>(batch[0]));
         assert(std::holds_alternative<abi_bridge::resolved_symbol>(batch[1]));
         assert(std::get<abi_bridge::resolution_error>(batch[2]).code() == ABIFailureImageUnavailable);
