@@ -58,9 +58,11 @@ private func withGuardedThreeBytes(_ body: (UnsafeMutableRawPointer) throws -> V
 struct SwiftCallBoundaryTests {
     @Test func integerAndFloatSharingAChunkUseSeparateRegisterBanks() async throws {
         let function = try await ABIRuntime.shared.resolve(
-            .function(
-                "ABIBridgeTests.swiftABIMixedFields(_:)",
-                as: ((SwiftABIMixedFields) -> SwiftABIMixedFields).self
+            .swift(
+                .function(
+                    "ABIBridgeTests.swiftABIMixedFields(_:)",
+                    as: ((SwiftABIMixedFields) -> SwiftABIMixedFields).self
+                )
             )
         )
         let input = SwiftABIMixedFields(integer: -8, floating: 3.25)
@@ -120,9 +122,11 @@ struct SwiftCallBoundaryTests {
 
     @Test func typedWrappersSupportOddSizedTrivialValues() async throws {
         let function = try await ABIRuntime.shared.resolve(
-            .function(
-                "ABIBridgeTests.swiftABIBytes(ABIBridgeTests.SwiftABIBytes3) -> ABIBridgeTests.SwiftABIBytes3",
-                as: ((SwiftABIBytes3) -> SwiftABIBytes3).self
+            .swift(
+                .function(
+                    "ABIBridgeTests.swiftABIBytes(ABIBridgeTests.SwiftABIBytes3) -> ABIBridgeTests.SwiftABIBytes3",
+                    as: ((SwiftABIBytes3) -> SwiftABIBytes3).self
+                )
             )
         )
         let result = try unsafe function.unsafeInvoke(.init(a: 1, b: 2, c: 3))

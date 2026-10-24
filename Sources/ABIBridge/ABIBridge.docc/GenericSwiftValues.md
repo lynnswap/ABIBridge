@@ -7,11 +7,11 @@ Bind a declaration's type parameters with `genericArguments:` and pass its concr
 For a provider declaring `func run<T>(_ apply: () -> T) -> T`, use its qualified name and argument labels:
 
 ```swift
-let run = try ABIRuntime.shared.resolveAndWait(.function(
+let run = try ABIRuntime.shared.resolveAndWait(.swift(.function(
     "Example.run(_:)",
     as: ((NativeSwiftClosure<() -> String>) -> String).self,
     genericArguments: [.type(String.self)]
-))
+)))
 let suffix = "!"
 let apply = try NativeSwiftClosure { "Hello" + suffix }
 let result = try unsafe run.unsafeInvoke(apply)
@@ -30,11 +30,11 @@ The declaration determines the physical convention before substitution. An uncon
 Existing protocol conformances, including conditional conformances, supply the required witness tables. Same-type requirements and associated types are resolved against the supplied arguments. For example, given `func select<T, Values: Collection>(_ fallback: T, _ values: Values) -> T where Values.Element == T`:
 
 ```swift
-let select = try runtime.resolveAndWait(.function(
+let select = try runtime.resolveAndWait(.swift(.function(
     "Example.select<A, B where A == B.Element, B: Swift.Collection>(A, B) -> A",
     as: ((String, [String]) -> String).self,
     genericArguments: [.type(String.self), .type([String].self)]
-))
+)))
 let selected = try unsafe select.unsafeInvoke("fallback", ["first"])
 ```
 
@@ -49,11 +49,11 @@ Use one `.pack` argument for each declared type pack, including an empty array f
 ```swift
 // Provider: func echo<each T: Equatable>(_ values: repeat each T)
 //           -> (repeat each T)
-let echo = try runtime.resolveAndWait(.function(
+let echo = try runtime.resolveAndWait(.swift(.function(
     "Example.echo<each A where A: Swift.Equatable>(repeat A) -> (repeat A)",
     as: ((Int64, String) -> (Int64, String)).self,
     genericArguments: [.pack([.type(Int64.self), .type(String.self)])]
-))
+)))
 let values = try unsafe echo.unsafeInvoke(42, "answer")
 ```
 
@@ -69,17 +69,17 @@ For `class Box<Value: Equatable>` with `init(_:)`, a `value` property, and `comp
 let boxType = try runtime.resolveSwiftTypeAndWait(
     named: "Example.Box", genericArguments: [.type(String.self)]
 )
-let initialize = try boxType.resolveAndWait(.initializer(
+let initialize = try boxType.resolveAndWait(.swift(.initializer(
     "init(_:)", as: ((String) -> AnyObject).self
-))
+)))
 let box = try unsafe initialize.unsafeInvoke("hello")
-let value = try runtime.object(box).resolveAndWait(.getter(
+let value = try runtime.object(box).resolveAndWait(.swift(.getter(
     "value", as: (() -> String).self
-))
-let compare = try runtime.object(box).resolveAndWait(.method(
+)))
+let compare = try runtime.object(box).resolveAndWait(.swift(.method(
     "compare(_:)", as: ((Int64) -> (String, Int64, Bool)).self,
     genericArguments: [.type(Int64.self)]
-))
+)))
 let comparison = try unsafe compare.unsafeInvoke(42)
 ```
 
@@ -100,10 +100,10 @@ A member combining a nominal protocol constraint with a superclass constraint ma
 For `Box<Value: Score>` with a static `score() -> Int` member in `extension Box where Value: Base`, a provider that compiled with the `Base: Score` conformance visible can use:
 
 ```swift
-let score = try boxType.resolveAndWait(.staticMethod(
+let score = try boxType.resolveAndWait(.swift(.staticMethod(
     "score()", as: (() -> Int).self,
     declaredAs: "<A where A: BaseModule.Base> () -> Swift.Int"
-))
+)))
 let result = try unsafe score.unsafeInvoke()
 ```
 
@@ -111,10 +111,10 @@ If that conformance was not visible to the provider, include its remaining witne
 
 ```swift
 // Same member symbol; a different canonical signature at compilation.
-let score = try boxType.resolveAndWait(.staticMethod(
+let score = try boxType.resolveAndWait(.swift(.staticMethod(
     "score()", as: (() -> Int).self,
     declaredAs: "<A where A: BaseModule.Base, A: BaseModule.Score> () -> Swift.Int"
-))
+)))
 ```
 
 Obtain the canonical signature from the provider's compiler output using its imports and build settings. Swift SIL includes the generic parameters and requirements on each declaration. Rename parameters to the demangler's names: `A`, `B`, and so on for the outer context, then `A1`, `B1` for the next depth.

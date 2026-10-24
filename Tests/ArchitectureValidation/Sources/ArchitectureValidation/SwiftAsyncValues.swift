@@ -9,9 +9,11 @@ import SwiftValueFixtures
         checks.append(message)
     }
     let text = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.asyncText(_:_:)",
-            as: (@concurrent (AsyncValueGate, ErrorToken) async -> String).self
+        .swift(
+            .function(
+                "SwiftValueFixtures.asyncText(_:_:)",
+                as: (@concurrent (AsyncValueGate, ErrorToken) async -> String).self
+            )
         )
     )
     let gate = AsyncValueGate(), token = ErrorToken()
@@ -25,9 +27,11 @@ import SwiftValueFixtures
               "Native async completion returns owned String storage to the caller executor")
 
     let inherited = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.asyncInherited(_:_:)",
-            as: (nonisolated(nonsending) (AsyncValueGate, Int64) async -> Int64).self
+        .swift(
+            .function(
+                "SwiftValueFixtures.asyncInherited(_:_:)",
+                as: (nonisolated(nonsending) (AsyncValueGate, Int64) async -> Int64).self
+            )
         )
     )
     let inheritedGate = AsyncValueGate()
@@ -42,9 +46,11 @@ import SwiftValueFixtures
     try check(try await inheritedTask.value == 42, "Caller-isolation payload and task-local values survive suspension")
 
     let failing = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.asyncFailure(_:_:)",
-            as: (@concurrent (AsyncValueGate, ErrorToken) async throws -> String).self
+        .swift(
+            .function(
+                "SwiftValueFixtures.asyncFailure(_:_:)",
+                as: (@concurrent (AsyncValueGate, ErrorToken) async throws -> String).self
+            )
         )
     )
     for cancel in [false, true] {
@@ -65,10 +71,12 @@ import SwiftValueFixtures
     }
 
     let large = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.asyncLarge(_:_:_:)",
-            as: (@concurrent (AsyncValueGate, ErrorToken, Bool) async throws(LargeError) ->
-                LargeError).self
+        .swift(
+            .function(
+                "SwiftValueFixtures.asyncLarge(_:_:_:)",
+                as: (@concurrent (AsyncValueGate, ErrorToken, Bool) async throws(LargeError) ->
+                    LargeError).self
+            )
         )
     )
     for fail in [false, true] {
@@ -86,10 +94,14 @@ import SwiftValueFixtures
     }
 
     let stack = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.asyncStack(_:_:_:_:_:_:_:_:_:_:)",
-            as: (@concurrent (Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64)
-                async -> Int64).self
+        .swift(
+            .function(
+                "SwiftValueFixtures.asyncStack(_:_:_:_:_:_:_:_:_:_:)",
+                as: (@concurrent (
+                    Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64
+                )
+                    async -> Int64).self
+            )
         )
     )
     try check(try unsafe await stack.unsafeInvoke(1, 2, 3, 4, 5, 6, 7, 8, 9, 10) == 385,
@@ -97,9 +109,11 @@ import SwiftValueFixtures
 
     let type = try await runtime.resolveSwiftType(named: "SwiftValueFixtures.AsyncValueOwner")
     let member = try await type.resolve(
-        .method(
-            "text(_:)",
-            as: (@concurrent (AsyncValueGate) async -> String).self
+        .swift(
+            .method(
+                "text(_:)",
+                as: (@concurrent (AsyncValueGate) async -> String).self
+            )
         )
     )
     let owner = AsyncValueOwner(token), memberGate = AsyncValueGate()

@@ -9,11 +9,14 @@ import SwiftValueFixtures
         checks.append(message)
     }
     let mutate = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.mutateArguments(_:_:_:_:)",
-            as: ((
-                NativeSwiftInout<String>, NativeSwiftInout<[String]>, NativeSwiftInout<Int64>, Bool
-            ) throws(SmallError) -> Void).self
+        .swift(
+            .function(
+                "SwiftValueFixtures.mutateArguments(_:_:_:_:)",
+                as: ((
+                    NativeSwiftInout<String>, NativeSwiftInout<[String]>, NativeSwiftInout<Int64>,
+                    Bool
+                ) throws(SmallError) -> Void).self
+            )
         )
     )
     let text = NativeSwiftInout(String(repeating: "text", count: 100))
@@ -29,10 +32,12 @@ import SwiftValueFixtures
     }
 
     let consume = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.consumeArgument(_:_:_:)",
-            as: ((NativeSwiftConsuming<LargeError>, NativeSwiftBorrowing<String>, Bool)
-                throws(SmallError) -> String).self
+        .swift(
+            .function(
+                "SwiftValueFixtures.consumeArgument(_:_:_:)",
+                as: ((NativeSwiftConsuming<LargeError>, NativeSwiftBorrowing<String>, Bool)
+                    throws(SmallError) -> String).self
+            )
         )
     )
     let counts = ArgumentCounts()
@@ -58,12 +63,14 @@ import SwiftValueFixtures
 
     let type = try await runtime.resolveSwiftType(named: "SwiftValueFixtures.ArgumentOwner")
     let make = try await type.resolve(
-        .initializer(
-            "init(_:_:_:)",
-            as: ((
-                NativeSwiftBorrowing<String>, NativeSwiftConsuming<String>,
-                NativeSwiftBorrowing<ErrorToken>
-            ) -> ArgumentOwner).self
+        .swift(
+            .initializer(
+                "init(_:_:_:)",
+                as: ((
+                    NativeSwiftBorrowing<String>, NativeSwiftConsuming<String>,
+                    NativeSwiftBorrowing<ErrorToken>
+                ) -> ArgumentOwner).self
+            )
         )
     )
     let token = ErrorToken()
@@ -71,12 +78,14 @@ import SwiftValueFixtures
     try check(owner.first == "first" && owner.second == "second" && owner.token === token, "Allocating initializer mixes guaranteed and owned parameters")
 
     let async = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.asyncArguments(_:_:_:_:)",
-            as: (@concurrent (
-                AsyncValueGate, NativeSwiftInout<String>, NativeSwiftConsuming<String>,
-                NativeSwiftBorrowing<String>
-            ) async throws(SmallError) -> String).self
+        .swift(
+            .function(
+                "SwiftValueFixtures.asyncArguments(_:_:_:_:)",
+                as: (@concurrent (
+                    AsyncValueGate, NativeSwiftInout<String>, NativeSwiftConsuming<String>,
+                    NativeSwiftBorrowing<String>
+                ) async throws(SmallError) -> String).self
+            )
         )
     )
     for cancelled in [false, true] {
@@ -98,12 +107,14 @@ import SwiftValueFixtures
     }
 
     let asyncMake = try await type.resolve(
-        .initializer(
-            "init(_:_:_:_:_:)",
-            as: (@concurrent (
-                NativeSwiftBorrowing<String>, NativeSwiftConsuming<String>,
-                NativeSwiftBorrowing<ErrorToken>, AsyncValueGate, Bool
-            ) async throws(SmallError) -> ArgumentOwner).self
+        .swift(
+            .initializer(
+                "init(_:_:_:_:_:)",
+                as: (@concurrent (
+                    NativeSwiftBorrowing<String>, NativeSwiftConsuming<String>,
+                    NativeSwiftBorrowing<ErrorToken>, AsyncValueGate, Bool
+                ) async throws(SmallError) -> ArgumentOwner).self
+            )
         )
     )
     let gate = AsyncValueGate()

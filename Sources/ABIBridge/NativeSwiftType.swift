@@ -850,8 +850,9 @@ public actor NativeSwiftType: Hashable {
     ///   type and the member's implementation images.
     /// - Throws: A lookup, representation, or preparation error.
     public nonisolated func resolveAndWait<Signature>(
-        _ request: NativeSwiftInstanceMemberRequest<Signature>
+        _ request: NativeRequest<NativeSwiftInstanceMemberRequest<Signature>>
     ) throws -> NativeSwiftMethod<Signature> {
+        let request = request.declaration
         let member = try resolveMember(request.member, signature: Signature.self)
         let receiver = try receiverPlan(
             mutating: request.receiver.isMutating,
@@ -876,7 +877,7 @@ public actor NativeSwiftType: Hashable {
     /// - Throws: The same lookup, representation, and preparation errors as
     ///   synchronous resolution.
     public nonisolated func resolve<Signature>(
-        _ request: NativeSwiftInstanceMemberRequest<Signature>
+        _ request: NativeRequest<NativeSwiftInstanceMemberRequest<Signature>>
     ) async throws -> NativeSwiftMethod<Signature> {
         try await NativePreparation.run { try self.resolveAndWait(request) }
     }
@@ -898,8 +899,9 @@ public actor NativeSwiftType: Hashable {
     ///   implementation images.
     /// - Throws: A lookup, representation, or preparation error.
     public nonisolated func resolveAndWait<Signature>(
-        _ request: NativeSwiftTypeMemberRequest<Signature>
+        _ request: NativeRequest<NativeSwiftTypeMemberRequest<Signature>>
     ) throws -> NativeSwiftFunction<Signature> {
+        let request = request.declaration
         let member = try resolveMember(request.member, signature: Signature.self)
         switch request.member.role {
         case .initializer:
@@ -929,7 +931,7 @@ public actor NativeSwiftType: Hashable {
     /// - Throws: The same lookup, representation, and preparation errors as
     ///   synchronous resolution.
     public nonisolated func resolve<Signature>(
-        _ request: NativeSwiftTypeMemberRequest<Signature>
+        _ request: NativeRequest<NativeSwiftTypeMemberRequest<Signature>>
     ) async throws -> NativeSwiftFunction<Signature> {
         try await NativePreparation.run { try self.resolveAndWait(request) }
     }

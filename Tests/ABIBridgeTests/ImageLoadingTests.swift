@@ -233,9 +233,11 @@ struct ImageLoadingTests {
         let scope = ImageSelector.path(fixture.libraryURL)
         #expect(try runtime.resolveImagesAndWait(matching: scope).isEmpty)
         let function = try await runtime.resolve(
-            .function(
-                module + ".answer()",
-                as: (() -> Int).self
+            .swift(
+                .function(
+                    module + ".answer()",
+                    as: (() -> Int).self
+                )
             ),
             in: scope
         )

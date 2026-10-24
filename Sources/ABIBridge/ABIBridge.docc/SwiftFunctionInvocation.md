@@ -7,10 +7,10 @@ Resolve a Swift function by source-level name and invoke it with ordinary Swift 
 For an already-loaded module defining `func decorate(_ value: String) -> String`:
 
 ```swift
-let decorate = try ABIRuntime.shared.resolveAndWait(.function(
+let decorate = try ABIRuntime.shared.resolveAndWait(.swift(.function(
     "Example.decorate(_:)",
     as: ((String) -> String).self
-))
+)))
 let message = try unsafe decorate.unsafeInvoke("Hello")
 ```
 
@@ -28,12 +28,31 @@ The check needs the declared type's convention: a built-in representation, an ``
 
 ```swift
 let uint32 = try runtime.resolveSwiftTypeAndWait(named: "Swift.UInt32")
-let target = try screenType.resolveAndWait(.getter(
+let target = try screenType.resolveAndWait(.swift(.getter(
     "target.getter : __C.HIDTarget",
     as: (() -> UInt32).self,
     valueABIs: [uint32: .uint32]
-))
+)))
 ```
+
+## Save a callable request
+
+Use ``NativeRequest`` to save a declaration for later resolution:
+
+```swift
+let request = NativeRequest.swift(.function(
+    "Example.decorate(_:)",
+    as: ((String) -> String).self
+))
+let decorate = try await runtime.resolve(
+    request, in: .framework(named: "Example")
+)
+let message = try unsafe decorate.unsafeInvoke("Hello")
+```
+
+The inline `.swift(.function(...))` form describes the same request. Creating a request performs no lookup or ABI preparation. The inner declaration holds signature, generic arguments, `declaredAs:`, and `valueABIs:` options; the resolver supplies the image scope and loading policy. Both `in: ImageSelector` and `in: NativeImage` are supported, with `.automatic` and `.ifNeeded` as the defaults.
+
+Requests are reusable values and are `Sendable` when their declaration is `Sendable`; Swift callable declarations are `Sendable`. They have no public `Hashable` conformance. Repeated resolution uses existing indexes and call-interface preparation, and returns a handle for that resolution. Retain the handle when making repeated calls. See <doc:SymbolLookup#Cache-and-loader-lifetime> for cache management and <doc:SwiftAPIMigration> for earlier request spellings.
 
 ## Await lookup and preparation
 
@@ -44,10 +63,10 @@ From `MainActor`, await `resolve` to keep lookup and preparation from blocking t
 ```swift
 @MainActor
 func makeMessage() async throws -> String {
-    let decorate = try await ABIRuntime.shared.resolve(.function(
+    let decorate = try await ABIRuntime.shared.resolve(.swift(.function(
         "Example.decorate(_:)",
         as: ((String) -> String).self
-    ))
+    )))
     return try unsafe decorate.unsafeInvoke("Hello")
 }
 ```
@@ -57,10 +76,10 @@ The native signature controls invocation separately. A synchronous signature run
 ```swift
 @MainActor
 func loadContents() async throws -> String {
-    let load = try await ABIRuntime.shared.resolve(.function(
+    let load = try await ABIRuntime.shared.resolve(.swift(.function(
         "Example.load(_:)",
         as: (@concurrent (String) async throws -> String).self
-    ))
+    )))
     return try unsafe await load.unsafeInvoke("settings")
 }
 ```
@@ -72,12 +91,12 @@ Neither factory invokes the native body or requires earlier preparation. Optiona
 Prepared functions, methods, bound methods, and closures use one complete function type as their generic parameter:
 
 ```swift
-let decorate: NativeSwiftFunction<(String) -> String> = try runtime.resolveAndWait(.function(
+let decorate: NativeSwiftFunction<(String) -> String> = try runtime.resolveAndWait(.swift(.function(
     "Example.decorate(_:)", as: ((String) -> String).self
-))
-let load: NativeSwiftFunction<@concurrent (String) async throws -> String> = try runtime.resolveAndWait(.function(
+)))
+let load: NativeSwiftFunction<@concurrent (String) async throws -> String> = try runtime.resolveAndWait(.swift(.function(
     "Example.load(_:)", as: (@concurrent (String) async throws -> String).self
-))
+)))
 ```
 
 Invocation can throw bridge errors even when the native signature is nonthrowing. Native failures arrive as ``NativeSwiftError``. Include native errors and async isolation in the function type; see <doc:SwiftErrorABI> and <doc:SwiftAsyncABI>. For changes from earlier handle types, see <doc:SwiftAPIMigration>.
@@ -166,10 +185,10 @@ Incorrect signatures, invalid pointers, and violated ownership or isolation cont
 A native `T...` parameter takes one `Array<T>` argument in the call signature. For `func collect(_ values: String...) -> [String]`, use the complete declaration to select the variadic overload:
 
 ```swift
-let collect = try runtime.resolveAndWait(.function(
+let collect = try runtime.resolveAndWait(.swift(.function(
     "Example.collect(Swift.String...) -> [Swift.String]",
     as: (([String]) -> [String]).self
-))
+)))
 let values = try unsafe collect.unsafeInvoke(["first", "second"])
 ```
 

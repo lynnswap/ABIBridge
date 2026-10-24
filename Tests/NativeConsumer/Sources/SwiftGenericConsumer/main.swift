@@ -24,10 +24,12 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
     typealias TextBody = NativeSwiftClosure<() -> String>
     typealias NumberBody = NativeSwiftClosure<() -> Int64>
     let closurePack = try await runtime.resolve(
-        .function(
-            "ManagedSwiftFixtures.closurePackGeneric<each A>(repeat () -> A) -> (repeat A)",
-            as: ((TextBody, NumberBody) -> (String, Int64)).self,
-            genericArguments: [.pack([.type(String.self), .type(Int64.self)])]
+        .swift(
+            .function(
+                "ManagedSwiftFixtures.closurePackGeneric<each A>(repeat () -> A) -> (repeat A)",
+                as: ((TextBody, NumberBody) -> (String, Int64)).self,
+                genericArguments: [.pack([.type(String.self), .type(Int64.self)])]
+            )
         )
     )
     let packValues = try unsafe closurePack.unsafeInvoke(TextBody { "pack" }, NumberBody { 42 })
@@ -37,9 +39,11 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
         genericArguments: [.pack([.type(String.self), .type(Int64.self)])]
     )
     let makePackOwner = try await packOwnerType.resolve(
-        .initializer(
-            "init(_:)",
-            as: ((TextBody, NumberBody) -> AnyObject).self
+        .swift(
+            .initializer(
+                "init(_:)",
+                as: ((TextBody, NumberBody) -> AnyObject).self
+            )
         )
     )
     let packOwner = try unsafe makePackOwner.unsafeInvoke(
@@ -47,9 +51,11 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
         NumberBody { 43 }
     )
     let callPackOwner = try await runtime.object(packOwner).resolve(
-        .method(
-            "call()",
-            as: (() -> (String, Int64)).self
+        .swift(
+            .method(
+                "call()",
+                as: (() -> (String, Int64)).self
+            )
         )
     )
     let ownedPackValues = try unsafe callPackOwner.unsafeInvoke()
@@ -59,16 +65,20 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
         genericArguments: [.type(Int64.self)]
     )
     let makeCallbackOwner = try await callbackType.resolve(
-        .initializer(
-            "init()",
-            as: (() -> AnyObject).self
+        .swift(
+            .initializer(
+                "init()",
+                as: (() -> AnyObject).self
+            )
         )
     )
     let callbacks = runtime.object(try unsafe makeCallbackOwner.unsafeInvoke())
     let selectedCallback = try await callbacks.resolve(
-        .method(
-            "callback(_:)",
-            as: ((NativeSwiftClosure<(Int64) -> Int64>) -> Int64).self
+        .swift(
+            .method(
+                "callback(_:)",
+                as: ((NativeSwiftClosure<(Int64) -> Int64>) -> Int64).self
+            )
         )
     )
     let callbackValue = try unsafe selectedCallback.unsafeInvoke(
@@ -76,19 +86,23 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
     )
     precondition(callbackValue == 42)
     let returnedCallback = try await callbacks.resolve(
-        .method(
-            "returnedCallback()",
-            as: (() -> NativeSwiftClosure<(Int64) -> Int64>).self
+        .swift(
+            .method(
+                "returnedCallback()",
+                as: (() -> NativeSwiftClosure<(Int64) -> Int64>).self
+            )
         )
     )
     let returnedBody = try unsafe returnedCallback.unsafeInvoke()
     let returnedValue = try unsafe returnedBody.unsafeInvoke(40)
     precondition(returnedValue == 42)
     let objectIdentity = try await runtime.resolve(
-        .function(
-            "ManagedSwiftFixtures.objectConstraintGeneric<A where A: AnyObject>(A) -> A",
-            as: ((AnyObject) -> AnyObject).self,
-            genericArguments: [.type(AnyObject.self)]
+        .swift(
+            .function(
+                "ManagedSwiftFixtures.objectConstraintGeneric<A where A: AnyObject>(A) -> A",
+                as: ((AnyObject) -> AnyObject).self,
+                genericArguments: [.type(AnyObject.self)]
+            )
         )
     )
     let originalObject = NSObject()
@@ -99,32 +113,38 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
         genericArguments: [.type(String.self)]
     )
     let initialize = try await type.resolve(
-        .initializer(
-            "init(_:)",
-            as: ((String) -> AnyObject).self,
-            declaredAs:
-                "<A where A: Swift.Equatable> (A) -> ManagedSwiftFixtures.GenericTypeClass<A>"
+        .swift(
+            .initializer(
+                "init(_:)",
+                as: ((String) -> AnyObject).self,
+                declaredAs:
+                    "<A where A: Swift.Equatable> (A) -> ManagedSwiftFixtures.GenericTypeClass<A>"
+            )
         )
     )
     let object = try unsafe initialize.unsafeInvoke("first")
     let set = try await runtime.object(object).resolve(
-        .setter(
-            "value",
-            as: ((String) -> Void).self,
-            declaredAs: "<A where A: Swift.Equatable> (A) -> ()"
+        .swift(
+            .setter(
+                "value",
+                as: ((String) -> Void).self,
+                declaredAs: "<A where A: Swift.Equatable> (A) -> ()"
+            )
         )
     )
     try unsafe set.unsafeInvoke("updated")
-    let get = try await type.resolve(.getter("value", as: (() -> String).self))
+    let get = try await type.resolve(.swift(.getter("value", as: (() -> String).self)))
     let updated = try unsafe get.unsafeInvoke(on: object)
     precondition(updated == "updated")
     let compare = try await runtime.object(object).resolve(
-        .method(
-            "compare(_:)",
-            as: ((Int64) -> (String, Int64, Bool)).self,
-            genericArguments: [.type(Int64.self)],
-            declaredAs:
-                "<A, A1 where A: Swift.Equatable, A1: Swift.Equatable> (A1) -> (A, A1, Swift.Bool)"
+        .swift(
+            .method(
+                "compare(_:)",
+                as: ((Int64) -> (String, Int64, Bool)).self,
+                genericArguments: [.type(Int64.self)],
+                declaredAs:
+                    "<A, A1 where A: Swift.Equatable, A1: Swift.Equatable> (A1) -> (A, A1, Swift.Bool)"
+            )
         )
     )
     let comparison = try unsafe compare.unsafeInvoke(42)
@@ -135,26 +155,32 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
         genericArguments: [.type(String.self)]
     )
     let makeClosureOwner = try await closureType.resolve(
-        .initializer(
-            "init(_:)",
-            as: ((NativeSwiftClosure<() -> String>) -> AnyObject).self
+        .swift(
+            .initializer(
+                "init(_:)",
+                as: ((NativeSwiftClosure<() -> String>) -> AnyObject).self
+            )
         )
     )
     let closureOwner = try unsafe makeClosureOwner.unsafeInvoke(
         NativeSwiftClosure<() -> String> { "initialized" }
     )
     let invokeStored = try await runtime.object(closureOwner).resolve(
-        .method(
-            "run()",
-            as: (() -> String).self
+        .swift(
+            .method(
+                "run()",
+                as: (() -> String).self
+            )
         )
     )
     let initialized = try unsafe invokeStored.unsafeInvoke()
     precondition(initialized == "initialized")
     let setClosure = try await runtime.object(closureOwner).resolve(
-        .setter(
-            "body",
-            as: ((NativeSwiftClosure<() -> String>) -> Void).self
+        .swift(
+            .setter(
+                "body",
+                as: ((NativeSwiftClosure<() -> String>) -> Void).self
+            )
         )
     )
     try unsafe setClosure.unsafeInvoke(NativeSwiftClosure<() -> String> { "replaced" })
@@ -169,41 +195,49 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
         genericArguments: [.type(argument)]
     )
     let pack = try await runtime.resolve(
-        .function(
-            "ManagedSwiftFixtures.constrainedPackGeneric<each A where A: Swift.Equatable>(repeat A) -> (repeat A)",
-            as: ((Int64, String) -> (Int64, String)).self,
-            genericArguments: [.pack([.type(Int64.self), .type(String.self)])],
-            declaredAs: "<each A where A: Swift.Equatable> (repeat A) -> (repeat A)"
+        .swift(
+            .function(
+                "ManagedSwiftFixtures.constrainedPackGeneric<each A where A: Swift.Equatable>(repeat A) -> (repeat A)",
+                as: ((Int64, String) -> (Int64, String)).self,
+                genericArguments: [.pack([.type(Int64.self), .type(String.self)])],
+                declaredAs: "<each A where A: Swift.Equatable> (repeat A) -> (repeat A)"
+            )
         )
     )
     let packed = try unsafe pack.unsafeInvoke(43, "pack")
     precondition(packed == (43, "pack"))
     let transform = try await runtime.resolve(
-        .function(
-            "ManagedSwiftFixtures.transformGeneric<A, B>([A], (A) throws -> B) throws -> [B]",
-            as: (([Int64], NativeSwiftBorrowing<NativeSwiftClosure<(Int64) throws -> String>>)
-                throws
-                -> [String]).self,
-            genericArguments: [.type(Int64.self), .type(String.self)]
+        .swift(
+            .function(
+                "ManagedSwiftFixtures.transformGeneric<A, B>([A], (A) throws -> B) throws -> [B]",
+                as: (([Int64], NativeSwiftBorrowing<NativeSwiftClosure<(Int64) throws -> String>>)
+                    throws
+                    -> [String]).self,
+                genericArguments: [.type(Int64.self), .type(String.self)]
+            )
         )
     )
     let callback = try NativeSwiftClosure<(Int64) throws -> String> { "value: \($0)" }
     let transformed = try unsafe transform.unsafeInvoke([1, 2], .init(callback))
     precondition(transformed == ["value: 1", "value: 2"])
     let select = try await runtime.resolve(
-        .function(
-            "ManagedSwiftFixtures.selectGeneric<A, B where A == B.Element, B: Swift.Collection>(A, B) -> A",
-            as: ((String, [String]) -> String).self,
-            genericArguments: [.type(String.self), .type([String].self)]
+        .swift(
+            .function(
+                "ManagedSwiftFixtures.selectGeneric<A, B where A == B.Element, B: Swift.Collection>(A, B) -> A",
+                as: ((String, [String]) -> String).self,
+                genericArguments: [.type(String.self), .type([String].self)]
+            )
         )
     )
     let selected = try unsafe select.unsafeInvoke("fallback", ["element"])
     precondition(selected == "element")
     let suspended = try await runtime.resolve(
-        .function(
-            "ManagedSwiftFixtures.suspendedGeneric<A>(A) async -> A",
-            as: (nonisolated(nonsending) (String) async -> String).self,
-            genericArguments: [.type(String.self)]
+        .swift(
+            .function(
+                "ManagedSwiftFixtures.suspendedGeneric<A>(A) async -> A",
+                as: (nonisolated(nonsending) (String) async -> String).self,
+                genericArguments: [.type(String.self)]
+            )
         )
     )
     let resumed = try unsafe await suspended.unsafeInvoke("resumed")
@@ -214,9 +248,11 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
         genericArguments: [.type(String.self), .type(GenericConsumerFailure.self)]
     )
     let makeGetter = try await getterType.resolve(
-        .initializer(
-            "init(A, B, Swift.Bool) -> ManagedSwiftFixtures.GenericEffectfulGetter<A, B>",
-            as: ((String, GenericConsumerFailure, GenericConsumerBool) -> AnyObject).self
+        .swift(
+            .initializer(
+                "init(A, B, Swift.Bool) -> ManagedSwiftFixtures.GenericEffectfulGetter<A, B>",
+                as: ((String, GenericConsumerFailure, GenericConsumerBool) -> AnyObject).self
+            )
         )
     )
     let getterObject = try unsafe makeGetter.unsafeInvoke(
@@ -225,35 +261,44 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
         GenericConsumerBool(false)
     )
     let checked = try await getterType.resolve(
-        .getter(
-            "checked",
-            as: (() throws(GenericConsumerFailure) -> String).self,
-            declaredAs: "() throws(B) -> A"
+        .swift(
+            .getter(
+                "checked",
+                as: (() throws(GenericConsumerFailure) -> String).self,
+                declaredAs: "() throws(B) -> A"
+            )
         )
     )
     let checkedValue = try unsafe checked.unsafeInvoke(on: getterObject)
     precondition(checkedValue == "checked")
     let delayed = try await runtime.object(getterObject).resolve(
-        .getter(
-            "delayedChecked",
-            as: (nonisolated(nonsending) () async throws(GenericConsumerFailure) -> String).self,
-            declaredAs: "() async throws(B) -> A"
+        .swift(
+            .getter(
+                "delayedChecked",
+                as: (nonisolated(nonsending) () async throws(GenericConsumerFailure) -> String)
+                    .self,
+                declaredAs: "() async throws(B) -> A"
+            )
         )
     )
     let delayedValue = try unsafe await delayed.unsafeInvoke()
     precondition(delayedValue == "checked")
     let flag = try await runtime.object(getterObject).resolve(
-        .getter(
-            "shouldThrow.getter : Swift.Bool",
-            as: (() -> GenericConsumerBool).self
+        .swift(
+            .getter(
+                "shouldThrow.getter : Swift.Bool",
+                as: (() -> GenericConsumerBool).self
+            )
         )
     )
     let initialFlag = try unsafe flag.unsafeInvoke()
     precondition(!initialFlag.value)
     let shouldThrow = try await getterType.resolve(
-        .setter(
-            "shouldThrow.setter : Swift.Bool",
-            as: ((GenericConsumerBool) -> Void).self
+        .swift(
+            .setter(
+                "shouldThrow.setter : Swift.Bool",
+                as: ((GenericConsumerBool) -> Void).self
+            )
         )
     )
     try unsafe shouldThrow.unsafeInvoke(on: getterObject, GenericConsumerBool(true))

@@ -84,7 +84,9 @@ struct SwiftKeyPathTests {
         let root = try runtime.resolveSwiftTypeAndWait(
             named: "ManagedSwiftFixtures.RuntimeKeyPathSequenceRoot"
         )
-        let getter = try root.resolveAndWait(.getter("sequence", as: (() -> NativeSwiftValue).self))
+        let getter = try root.resolveAndWait(
+            .swift(.getter("sequence", as: (() -> NativeSwiftValue).self))
+        )
         let sequence = try unsafe getter.unsafeInvoke(on: RuntimeKeyPathSequenceRoot())
         let value = try root.resolveWritableKeyPathAndWait(
             named: "sequence",
@@ -98,7 +100,7 @@ struct SwiftKeyPathTests {
         receiver[keyPath: path] = [2, 3]
         #expect(Array(receiver.sequence) == [2, 3])
         let otherGetter = try root.resolveAndWait(
-            .getter("otherSequence", as: (() -> NativeSwiftValue).self)
+            .swift(.getter("otherSequence", as: (() -> NativeSwiftValue).self))
         )
         let other = try unsafe otherGetter.unsafeInvoke(on: RuntimeKeyPathSequenceRoot())
         #expect {
@@ -296,7 +298,9 @@ struct SwiftKeyPathTests {
         )
         let string = try await runtime.resolveSwiftType(named: "Swift.String")
         let value = try await root.resolveWritableKeyPath(named: "other", valueType: string)
-        let make = try await root.resolve(.initializer("init()", as: (() -> AnyObject).self))
+        let make = try await root.resolve(
+            .swift(.initializer("init()", as: (() -> AnyObject).self))
+        )
         let object = try unsafe make.unsafeInvoke()
         // An `AnyObject` value cannot apply a key path itself.
         func read<Root>(_ root: Root, through path: AnyKeyPath) -> Any? { root[keyPath: path] }

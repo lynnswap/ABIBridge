@@ -133,29 +133,35 @@ struct CallerDescribedValueTests {
     @Test func swiftStructEnumArrayAndCallbackUseCallerDescriptions() async throws {
         let runtime = ABIRuntime.shared
         let function = try await runtime.resolve(
-            .function(
-                "ABIBridgeTests.callerRecord(_:)",
-                as: ((CallerRecord) -> CallerRecord).self
+            .swift(
+                .function(
+                    "ABIBridgeTests.callerRecord(_:)",
+                    as: ((CallerRecord) -> CallerRecord).self
+                )
             )
         )
         let input = CallerRecord(value: 2, tag: 3)
         let result = try unsafe function.unsafeInvoke(input)
         #expect(result.value == 3.5 && result.tag == 5)
         let apply = try await runtime.resolve(
-            .function(
-                "ABIBridgeTests.callerApply(_:_:)",
-                as: ((NativeSwiftClosure<(CallerRecord) -> CallerRecord>, CallerRecord)
-                    -> CallerRecord)
-                    .self
+            .swift(
+                .function(
+                    "ABIBridgeTests.callerApply(_:_:)",
+                    as: ((NativeSwiftClosure<(CallerRecord) -> CallerRecord>, CallerRecord)
+                        -> CallerRecord)
+                        .self
+                )
             )
         )
         let body = try NativeSwiftClosure { (value: CallerRecord) in callerRecord(value) }
         let callbackResult = try unsafe apply.unsafeInvoke(body, input)
         #expect(callbackResult.value == result.value && callbackResult.tag == result.tag)
         let choice = try await runtime.resolve(
-            .function(
-                "ABIBridgeTests.callerChoice(_:)",
-                as: ((CallerChoice) -> CallerChoice).self
+            .swift(
+                .function(
+                    "ABIBridgeTests.callerChoice(_:)",
+                    as: ((CallerChoice) -> CallerChoice).self
+                )
             )
         )
         if case .number(let value) = try unsafe choice.unsafeInvoke(.number(42)) {
@@ -168,9 +174,11 @@ struct CallerDescribedValueTests {
             Issue.record("Expected empty case")
         }
         let array = try await runtime.resolve(
-            .function(
-                "ABIBridgeTests.callerRecords(_:)",
-                as: (([CallerRecord]) -> [CallerRecord]).self
+            .swift(
+                .function(
+                    "ABIBridgeTests.callerRecords(_:)",
+                    as: (([CallerRecord]) -> [CallerRecord]).self
+                )
             )
         )
         let records = try unsafe array.unsafeInvoke([input, CallerRecord(value: 4, tag: 5)])
@@ -188,9 +196,11 @@ struct CallerDescribedValueTests {
             as: ((CallerMode) -> CallerMode).self
         )
         let swift = try await runtime.resolve(
-            .function(
-                "ABIBridgeTests.callerMode(_:)",
-                as: ((CallerMode) -> CallerMode).self
+            .swift(
+                .function(
+                    "ABIBridgeTests.callerMode(_:)",
+                    as: ((CallerMode) -> CallerMode).self
+                )
             )
         )
         #expect(try unsafe c.unsafeInvoke(.slow) == .fast)
@@ -198,9 +208,11 @@ struct CallerDescribedValueTests {
         #expect(try unsafe swift.unsafeInvoke(.slow) == .fast)
         // An Optional keeps the Swift ABI rather than the foreign conversion.
         let optional = try await runtime.resolve(
-            .function(
-                "ABIBridgeTests.optionalCallerMode(_:)",
-                as: ((CallerMode?) -> CallerMode?).self
+            .swift(
+                .function(
+                    "ABIBridgeTests.optionalCallerMode(_:)",
+                    as: ((CallerMode?) -> CallerMode?).self
+                )
             )
         )
         #expect(try unsafe optional.unsafeInvoke(.slow) == .fast)

@@ -30,14 +30,18 @@ private struct BindingBoolAdapter: ABIBridgeValue {
         let receiver = GenericMemberReceiver(GenericReceiverText(String(repeating: "owned", count: 100)))
         observed = receiver
         let object = runtime.object(receiver)
-        retained = try await object.resolve(.method("concrete(_:)", as: ((String) -> String).self))
+        retained = try await object.resolve(
+            .swift(.method("concrete(_:)", as: ((String) -> String).self))
+        )
         let complete = try await object.resolve(
-            .method(
-                "concrete(Swift.String) -> Swift.String",
-                as: ((String) -> String).self
+            .swift(
+                .method(
+                    "concrete(Swift.String) -> Swift.String",
+                    as: ((String) -> String).self
+                )
             )
         )
-        let getter = try await object.resolve(.getter("valueText", as: (() -> String).self))
+        let getter = try await object.resolve(.swift(.getter("valueText", as: (() -> String).self)))
         try check(unsafe retained!.unsafeInvoke("prefix:") == receiver.concrete("prefix:"),
                   "Generic Swift receiver uses its metadata and witness context")
         try check(unsafe complete.unsafeInvoke("") == receiver.concrete(""),
@@ -46,23 +50,29 @@ private struct BindingBoolAdapter: ABIBridgeValue {
     }
     let inherited = InheritedGenericMemberReceiver(GenericReceiverNumber(42))
     let method = try await runtime.object(inherited).resolve(
-        .method(
-            "concrete(_:)",
-            as: ((String) -> String).self
+        .swift(
+            .method(
+                "concrete(_:)",
+                as: ((String) -> String).self
+            )
         )
     )
     try check(unsafe method.unsafeInvoke("") == inherited.concrete(""),
               "Generic Swift superclass implementation")
     let constrained = try await runtime.object(inherited).resolve(
-        .method(
-            "specialized(_:)",
-            as: ((String) -> String).self
+        .swift(
+            .method(
+                "specialized(_:)",
+                as: ((String) -> String).self
+            )
         )
     )
     let constrainedGetter = try await runtime.object(inherited).resolve(
-        .getter(
-            "specializedText",
-            as: (() -> String).self
+        .swift(
+            .getter(
+                "specializedText",
+                as: (() -> String).self
+            )
         )
     )
     try check(unsafe constrained.unsafeInvoke("prefix:") == inherited.specialized("prefix:"),
@@ -70,9 +80,11 @@ private struct BindingBoolAdapter: ABIBridgeValue {
     try check(unsafe constrainedGetter.unsafeInvoke() == inherited.specializedText,
               "Swift same-type constrained getter")
     let witness = try await runtime.object(inherited).resolve(
-        .method(
-            "witnessText()",
-            as: (() -> String).self
+        .swift(
+            .method(
+                "witnessText()",
+                as: (() -> String).self
+            )
         )
     )
     try check(unsafe witness.unsafeInvoke() == inherited.witnessText(),
@@ -102,12 +114,14 @@ private struct BindingBoolAdapter: ABIBridgeValue {
         )
         let witness = importsConformance ? "" : ", A: SwiftValueFixtures.BindingDeclaredScore"
         let entry = try await owner.resolve(
-            .staticMethod(
-                "entry(_:_:)",
-                as: ((SmallError, Bool) throws(SmallError) -> Int64).self,
-                genericArguments: [.type(SmallError.self)],
-                declaredAs: "<A, A1 where A: SwiftValueFixtures.BindingDeclaredBase" + witness
-                    + ", A1: Swift.Error> (A1, Swift.Bool) throws(A1) -> Swift.Int64"
+            .swift(
+                .staticMethod(
+                    "entry(_:_:)",
+                    as: ((SmallError, Bool) throws(SmallError) -> Int64).self,
+                    genericArguments: [.type(SmallError.self)],
+                    declaredAs: "<A, A1 where A: SwiftValueFixtures.BindingDeclaredBase" + witness
+                        + ", A1: Swift.Error> (A1, Swift.Bool) throws(A1) -> Swift.Int64"
+                )
             )
         )
         try check(unsafe entry.unsafeInvoke(SmallError(45), false) == 42,
@@ -124,28 +138,34 @@ private struct BindingBoolAdapter: ABIBridgeValue {
     typealias PackTextBody = NativeSwiftClosure<() -> String>
     typealias PackNumberBody = NativeSwiftClosure<() -> Int64>
     let packClosures = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingClosurePack<each A>(repeat () -> A) -> (repeat A)",
-            as: ((PackTextBody, PackNumberBody) -> (String, Int64)).self,
-            genericArguments: [.pack([.type(String.self), .type(Int64.self)])]
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingClosurePack<each A>(repeat () -> A) -> (repeat A)",
+                as: ((PackTextBody, PackNumberBody) -> (String, Int64)).self,
+                genericArguments: [.pack([.type(String.self), .type(Int64.self)])]
+            )
         )
     )
     try check(unsafe packClosures.unsafeInvoke(PackTextBody { "pack" }, PackNumberBody { 42 }) == ("pack", 42),
         "Closure pack elements use native closure storage and per-element reabstraction")
     let emptyClosures = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingClosurePack<each A>(repeat () -> A) -> (repeat A)",
-            as: (() -> Void).self,
-            genericArguments: [.pack([])]
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingClosurePack<each A>(repeat () -> A) -> (repeat A)",
+                as: (() -> Void).self,
+                genericArguments: [.pack([])]
+            )
         )
     )
     try unsafe emptyClosures.unsafeInvoke()
     try check(true, "Empty closure packs preserve their native argument and result convention")
     let wrapperPack = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingIdentityPack<each A>(repeat A) -> (repeat A)",
-            as: ((PackTextBody) -> PackTextBody).self,
-            genericArguments: [.pack([.type(PackTextBody.self)])]
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingIdentityPack<each A>(repeat A) -> (repeat A)",
+                as: ((PackTextBody) -> PackTextBody).self,
+                genericArguments: [.pack([.type(PackTextBody.self)])]
+            )
         )
     )
     let wrapperBody = try unsafe wrapperPack.unsafeInvoke(PackTextBody { "wrapper" })
@@ -154,20 +174,25 @@ private struct BindingBoolAdapter: ABIBridgeValue {
         named: "SwiftValueFixtures.BindingClosurePackOwner",
         genericArguments: [.pack([.type(String.self), .type(Int64.self)])])
     let makePackOwner = try await packOwnerType.resolve(
-        .initializer(
-            "init(_:)",
-            as: ((NativeSwiftConsuming<PackTextBody>, PackNumberBody) -> BindingClosurePackOwner<
-                String, Int64
-            >).self
+        .swift(
+            .initializer(
+                "init(_:)",
+                as: ((NativeSwiftConsuming<PackTextBody>, PackNumberBody)
+                    -> BindingClosurePackOwner<
+                        String, Int64
+                    >).self
+            )
         )
     )
     let callPackOwner = try await packOwnerType.resolve(
-        .method("call()", as: (() -> (String, Int64)).self)
+        .swift(.method("call()", as: (() -> (String, Int64)).self))
     )
     let applyPack = try await packOwnerType.resolve(
-        .method(
-            "apply(_:)",
-            as: ((NativeSwiftBorrowing<PackTextBody>, PackNumberBody) -> (String, Int64)).self
+        .swift(
+            .method(
+                "apply(_:)",
+                as: ((NativeSwiftBorrowing<PackTextBody>, PackNumberBody) -> (String, Int64)).self
+            )
         )
     )
     let packDeaths = Mutex(0)
@@ -186,12 +211,14 @@ private struct BindingBoolAdapter: ABIBridgeValue {
     typealias AsyncPackTextBody = NativeSwiftClosure<nonisolated(nonsending) () async -> String>
     typealias AsyncPackNumberBody = NativeSwiftClosure<nonisolated(nonsending) () async -> Int64>
     let asyncPack = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingAsyncClosurePack<each A>(repeat nonisolated(nonsending) () async -> A) async -> (repeat A)",
-            as: (nonisolated(nonsending) (AsyncPackTextBody, AsyncPackNumberBody) async -> (
-                String, Int64
-            )).self,
-            genericArguments: [.pack([.type(String.self), .type(Int64.self)])]
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingAsyncClosurePack<each A>(repeat nonisolated(nonsending) () async -> A) async -> (repeat A)",
+                as: (nonisolated(nonsending) (AsyncPackTextBody, AsyncPackNumberBody) async -> (
+                    String, Int64
+                )).self,
+                genericArguments: [.pack([.type(String.self), .type(Int64.self)])]
+            )
         )
     )
     let asyncPackText: nonisolated(nonsending) @Sendable () async -> String = { await Task.yield(); return "async pack" }
@@ -201,12 +228,15 @@ private struct BindingBoolAdapter: ABIBridgeValue {
     typealias PackObjectBody = NativeSwiftClosure<() throws(SmallError) -> ErrorToken>
     typealias PackFailingBody = NativeSwiftClosure<() throws(SmallError) -> Int64>
     let throwingPack = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingThrowingClosurePack<A, B where A: Swift.Error>(repeat () throws(A) -> B) throws(A) -> (repeat B)",
-            as: ((PackObjectBody, PackFailingBody) throws(SmallError) -> (ErrorToken, Int64)).self,
-            genericArguments: [
-                .type(SmallError.self), .pack([.type(ErrorToken.self), .type(Int64.self)]),
-            ]
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingThrowingClosurePack<A, B where A: Swift.Error>(repeat () throws(A) -> B) throws(A) -> (repeat B)",
+                as: ((PackObjectBody, PackFailingBody) throws(SmallError) -> (ErrorToken, Int64))
+                    .self,
+                genericArguments: [
+                    .type(SmallError.self), .pack([.type(ErrorToken.self), .type(Int64.self)]),
+                ]
+            )
         )
     )
     let failedPackDeaths = Mutex(0)
@@ -229,48 +259,60 @@ private struct BindingBoolAdapter: ABIBridgeValue {
     )
     let left = OperatorBox(42), right = OperatorBox(1)
     let greater = try await operators.resolve(
-        .staticMethod(
-            ">(_:_:)",
-            as: ((OperatorBox, OperatorBox) -> Bool).self
+        .swift(
+            .staticMethod(
+                ">(_:_:)",
+                as: ((OperatorBox, OperatorBox) -> Bool).self
+            )
         )
     )
     try check(unsafe greater.unsafeInvoke(left, right) == (left > right), "Generic operator lookup uses existing fixity aliases")
     let less = try await operators.resolve(
-        .staticMethod(
-            "<(SwiftValueFixtures.BindingOperatorBox<A>, SwiftValueFixtures.BindingOperatorBox<A>) -> Swift.Bool",
-            as: ((OperatorBox, OperatorBox) -> BindingBoolAdapter).self
+        .swift(
+            .staticMethod(
+                "<(SwiftValueFixtures.BindingOperatorBox<A>, SwiftValueFixtures.BindingOperatorBox<A>) -> Swift.Bool",
+                as: ((OperatorBox, OperatorBox) -> BindingBoolAdapter).self
+            )
         )
     )
     try check(unsafe less.unsafeInvoke(left, right).value == (left < right), "Complete generic operator declarations preserve concrete adapters")
     let prefix = try await operators.resolve(
-        .staticMethod(
-            "^^^ prefix(_:)",
-            as: ((OperatorBox) -> Int64).self
+        .swift(
+            .staticMethod(
+                "^^^ prefix(_:)",
+                as: ((OperatorBox) -> Int64).self
+            )
         )
     )
     try check(unsafe prefix.unsafeInvoke(left) == ^^^left, "Explicit generic operator fixity remains selectable")
     let member = try await operators.resolve(
-        .staticMethod(
-            "+(_:_:)",
-            as: ((OperatorBox, String) -> String).self,
-            genericArguments: [.type(String.self)]
+        .swift(
+            .staticMethod(
+                "+(_:_:)",
+                as: ((OperatorBox, String) -> String).self,
+                genericArguments: [.type(String.self)]
+            )
         )
     )
     try check(unsafe member.unsafeInvoke(left, "member") == (left + "member"), "Generic operator aliases preserve independent member type arguments")
     let namedTuple = try await runtime.object(BindingCandidateBox<(first: Int64, second: String)>())
         .resolve(
-            .method(
-                "tupleIdentity()",
-                as: (() -> Int64).self
+            .swift(
+                .method(
+                    "tupleIdentity()",
+                    as: (() -> Int64).self
+                )
             )
         )
     try check(unsafe namedTuple.unsafeInvoke() == 42, "Tuple labels remain part of same-type requirements")
     do {
         _ = try await runtime.object(BindingCandidateBox<(different: Int64, labels: String)>())
             .resolve(
-                .method(
-                    "tupleIdentity()",
-                    as: (() -> Int64).self
+                .swift(
+                    .method(
+                        "tupleIdentity()",
+                        as: (() -> Int64).self
+                    )
                 )
             )
         throw ArchitectureValidationFailure(description: "Different tuple labels matched a same-type requirement")
@@ -278,17 +320,21 @@ private struct BindingBoolAdapter: ABIBridgeValue {
         try check(true, "Different tuple labels do not satisfy a same-type requirement")
     }
     let concreteClass = try await runtime.object(BindingCandidateBox<NSObject>()).resolve(
-        .method(
-            "classIdentity()",
-            as: (() -> Int64).self
+        .swift(
+            .method(
+                "classIdentity()",
+                as: (() -> Int64).self
+            )
         )
     )
     try check(unsafe concreteClass.unsafeInvoke() == 42, "Concrete Objective-C classes satisfy their same-type requirements")
     do {
         _ = try await runtime.object(BindingCandidateBox<any NSObjectProtocol>()).resolve(
-            .method(
-                "classIdentity()",
-                as: (() -> Int64).self
+            .swift(
+                .method(
+                    "classIdentity()",
+                    as: (() -> Int64).self
+                )
             )
         )
         throw ArchitectureValidationFailure(description: "An Objective-C protocol matched its same-named class")
@@ -296,28 +342,32 @@ private struct BindingBoolAdapter: ABIBridgeValue {
         try check(true, "Objective-C protocol existentials do not satisfy same-named class identities")
     }
     let applicable = try await candidates.resolve(
-        .method("constraintChoice()", as: (() -> Int64).self)
+        .swift(.method("constraintChoice()", as: (() -> Int64).self))
     )
     try check(unsafe applicable.unsafeInvoke() == 42,
         "An inapplicable associated-type requirement does not hide another overload")
     let inherited = try await candidates.resolve(
-        .method("inheritedChoice()", as: (() -> Int64).self)
+        .swift(.method("inheritedChoice()", as: (() -> Int64).self))
     )
     try check(unsafe inherited.unsafeInvoke() == 42,
         "An inapplicable associated-type requirement does not hide a superclass member")
     let callbacks = runtime.object(BindingCallbackConventions<Int64>())
     let selectedCallback = try await callbacks.resolve(
-        .method(
-            "callback(_:)",
-            as: ((NativeSwiftClosure<(Int64) -> Int64>) -> Int64).self
+        .swift(
+            .method(
+                "callback(_:)",
+                as: ((NativeSwiftClosure<(Int64) -> Int64>) -> Int64).self
+            )
         )
     )
     try check(unsafe selectedCallback.unsafeInvoke(NativeSwiftClosure<(Int64) -> Int64> { $0 + 2 }) == 42,
         "Swift callback arguments select their own convention beside C and block overloads")
     let returnedCallback = try await callbacks.resolve(
-        .method(
-            "returnedCallback()",
-            as: (() -> NativeSwiftClosure<(Int64) -> Int64>).self
+        .swift(
+            .method(
+                "returnedCallback()",
+                as: (() -> NativeSwiftClosure<(Int64) -> Int64>).self
+            )
         )
     )
     let returnedBody = try unsafe returnedCallback.unsafeInvoke()
@@ -326,9 +376,11 @@ private struct BindingBoolAdapter: ABIBridgeValue {
     for name in ["foreignC(_:)", "foreignBlock(_:)"] {
         do {
             _ = try await callbacks.resolve(
-                .method(
-                    name,
-                    as: ((NativeSwiftClosure<(Int64) -> Int64>) -> Int64).self
+                .swift(
+                    .method(
+                        name,
+                        as: ((NativeSwiftClosure<(Int64) -> Int64>) -> Int64).self
+                    )
                 )
             )
             throw ArchitectureValidationFailure(description: "A Swift closure matched a foreign convention")
@@ -339,27 +391,33 @@ private struct BindingBoolAdapter: ABIBridgeValue {
     }
     let cBody: @convention(c) (Int64) -> Int64 = { $0 + 2 }
     let cCallback = try await callbacks.resolve(
-        .method(
-            "foreignC(@convention(c) (Swift.Int64) -> Swift.Int64) -> Swift.Int64",
-            as: ((UnsafeRawPointer) -> Int64).self
+        .swift(
+            .method(
+                "foreignC(@convention(c) (Swift.Int64) -> Swift.Int64) -> Swift.Int64",
+                as: ((UnsafeRawPointer) -> Int64).self
+            )
         )
     )
     try check(unsafe cCallback.unsafeInvoke(unsafeBitCast(cBody, to: UnsafeRawPointer.self)) == 42,
         "A complete C callback declaration preserves its explicit pointer representation")
     let block: @convention(block) (Int64) -> Int64 = { $0 + 2 }
     let blockCallback = try await callbacks.resolve(
-        .method(
-            "foreignBlock(@convention(block) (Swift.Int64) -> Swift.Int64) -> Swift.Int64",
-            as: ((AnyObject) -> Int64).self
+        .swift(
+            .method(
+                "foreignBlock(@convention(block) (Swift.Int64) -> Swift.Int64) -> Swift.Int64",
+                as: ((AnyObject) -> Int64).self
+            )
         )
     )
     try check(unsafe blockCallback.unsafeInvoke(unsafeBitCast(block, to: AnyObject.self)) == 42,
         "A complete block callback declaration preserves its explicit object representation")
     let similarConstraint = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingSimilarConstraint<A where A: SwiftValueFixtures.BindingNotAnyObject>(A) -> A",
-            as: ((BindingConstraintValue) -> BindingConstraintValue).self,
-            genericArguments: [.type(BindingConstraintValue.self)]
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingSimilarConstraint<A where A: SwiftValueFixtures.BindingNotAnyObject>(A) -> A",
+                as: ((BindingConstraintValue) -> BindingConstraintValue).self,
+                genericArguments: [.type(BindingConstraintValue.self)]
+            )
         )
     )
     let indirectValue = BindingConstraintValue(text: String(repeating: "indirect", count: 100))
@@ -368,12 +426,12 @@ private struct BindingBoolAdapter: ABIBridgeValue {
     let overloadReceiver = InheritedGenericMemberReceiver(GenericReceiverNumber(42))
     let overloadObject = runtime.object(overloadReceiver)
     let overloadRead = try await overloadObject.resolve(
-        .method("read(_:)", as: ((Int64) -> Int64).self)
+        .swift(.method("read(_:)", as: ((Int64) -> Int64).self))
     )
     try check(unsafe overloadRead.unsafeInvoke(41) == overloadReceiver.read(Int64(41)),
         "Unsupported opaque overloads do not hide supported superclass members")
     let extensionRead = try await overloadObject.resolve(
-        .method("read(_:)", as: ((Double) -> Double).self)
+        .swift(.method("read(_:)", as: ((Double) -> Double).self))
     )
     try check(unsafe extensionRead.unsafeInvoke(40) == overloadReceiver.read(Double(40)),
         "Unsupported opaque overloads do not hide constrained extension members")
@@ -383,43 +441,54 @@ private struct BindingBoolAdapter: ABIBridgeValue {
         genericArguments: [.type(AnyObject.self)]
     )
     let objectInit = try await objectType.resolve(
-        .initializer(
-            "init(_:)",
-            as: ((AnyObject) -> AnyObject).self
+        .swift(
+            .initializer(
+                "init(_:)",
+                as: ((AnyObject) -> AnyObject).self
+            )
         )
     )
     let boxedObject = try unsafe objectInit.unsafeInvoke(object)
     let objectProject = try await runtime.object(boxedObject).resolve(
-        .method(
-            "project()",
-            as: (() -> AnyObject).self
+        .swift(
+            .method(
+                "project()",
+                as: (() -> AnyObject).self
+            )
         )
     )
     try check(unsafe objectProject.unsafeInvoke() === object, "AnyObject satisfies nominal generic class constraints")
     let objectIdentity = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingObjectIdentity<A where A: AnyObject>(A) -> A",
-            as: ((AnyObject) -> AnyObject).self,
-            genericArguments: [.type(AnyObject.self)]
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingObjectIdentity<A where A: AnyObject>(A) -> A",
+                as: ((AnyObject) -> AnyObject).self,
+                genericArguments: [.type(AnyObject.self)]
+            )
         )
     )
     try check(unsafe objectIdentity.unsafeInvoke(object) === object, "AnyObject satisfies free-function generic class constraints")
     let protocolObject: any NSObjectProtocol = NSObject()
     let protocolIdentity = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingProtocolIdentity<A where A: __C.NSObject>(A) -> A",
-            as: ((any NSObjectProtocol) -> any NSObjectProtocol).self,
-            genericArguments: [.type((any NSObjectProtocol).self)]
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingProtocolIdentity<A where A: __C.NSObject>(A) -> A",
+                as: ((any NSObjectProtocol) -> any NSObjectProtocol).self,
+                genericArguments: [.type((any NSObjectProtocol).self)]
+            )
         )
     )
     try check(unsafe protocolIdentity.unsafeInvoke(protocolObject) === protocolObject,
         "Objective-C existential generic arguments satisfy their protocol constraints")
     let superclassObject: any NSCopying & NSObject = NSString(string: "superclass existential")
     let superclassIdentity = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingSuperclassIdentity<A where A: __C.NSObject>(A, __C.NSObject) -> A",
-            as: ((any NSCopying & NSObject, any NSObjectProtocol) -> any NSCopying & NSObject).self,
-            genericArguments: [.type((any NSCopying & NSObject).self)]
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingSuperclassIdentity<A where A: __C.NSObject>(A, __C.NSObject) -> A",
+                as: ((any NSCopying & NSObject, any NSObjectProtocol) -> any NSCopying & NSObject)
+                    .self,
+                genericArguments: [.type((any NSCopying & NSObject).self)]
+            )
         )
     )
     try check(unsafe superclassIdentity.unsafeInvoke(superclassObject, protocolObject) === superclassObject,
@@ -428,33 +497,42 @@ private struct BindingBoolAdapter: ABIBridgeValue {
         named: "SwiftValueFixtures.BindingGetter",
         genericArguments: [.type(String.self), .type(SmallError.self)])
     let adapterInit = try await adapterType.resolve(
-        .initializer(
-            "init(A, B, Swift.Bool) -> SwiftValueFixtures.BindingGetter<A, B>",
-            as: ((String, SmallError, BindingBoolAdapter) -> BindingGetter<String, SmallError>).self
+        .swift(
+            .initializer(
+                "init(A, B, Swift.Bool) -> SwiftValueFixtures.BindingGetter<A, B>",
+                as: ((String, SmallError, BindingBoolAdapter) -> BindingGetter<String, SmallError>)
+                    .self
+            )
         )
     )
     let adapterReceiver = try unsafe adapterInit.unsafeInvoke("adapter", SmallError(1), BindingBoolAdapter(false))
     let adapterObject = runtime.object(adapterReceiver)
     let adapterGet = try await adapterObject.resolve(
-        .getter(
-            "shouldThrow.getter : Swift.Bool",
-            as: (() -> BindingBoolAdapter).self
+        .swift(
+            .getter(
+                "shouldThrow.getter : Swift.Bool",
+                as: (() -> BindingBoolAdapter).self
+            )
         )
     )
     try check(unsafe !adapterGet.unsafeInvoke().value && adapterReceiver.value == "adapter",
         "Complete generic initializer and getter declarations preserve concrete adapters")
     let adapterMethod = try await adapterObject.resolve(
-        .method(
-            "compareFlag(Swift.Bool) -> Swift.Bool",
-            as: ((BindingBoolAdapter) -> BindingBoolAdapter).self
+        .swift(
+            .method(
+                "compareFlag(Swift.Bool) -> Swift.Bool",
+                as: ((BindingBoolAdapter) -> BindingBoolAdapter).self
+            )
         )
     )
     try check(unsafe adapterMethod.unsafeInvoke(BindingBoolAdapter(false)).value,
         "Complete generic member declarations preserve concrete argument and result adapters")
     let adapterSet = try await adapterObject.resolve(
-        .setter(
-            "shouldThrow.setter : Swift.Bool",
-            as: ((BindingBoolAdapter) -> Void).self
+        .swift(
+            .setter(
+                "shouldThrow.setter : Swift.Bool",
+                as: ((BindingBoolAdapter) -> Void).self
+            )
         )
     )
     try unsafe adapterSet.unsafeInvoke(BindingBoolAdapter(true))
@@ -462,9 +540,11 @@ private struct BindingBoolAdapter: ABIBridgeValue {
         "Complete generic setter declarations preserve concrete adapters")
     let concreteMember = try await runtime.object(GenericMemberReceiver(GenericReceiverNumber(42)))
         .resolve(
-            .method(
-                "concrete(_:)",
-                as: ((NativeSwiftBorrowing<String>) -> String).self
+            .swift(
+                .method(
+                    "concrete(_:)",
+                    as: ((NativeSwiftBorrowing<String>) -> String).self
+                )
             )
         )
     try check(unsafe concreteMember.unsafeInvoke(.init("borrowed:")) == "borrowed:42",
@@ -474,15 +554,19 @@ private struct BindingBoolAdapter: ABIBridgeValue {
         genericArguments: [.type(String.self)]
     )
     let makeClosureOwner = try await closureType.resolve(
-        .initializer(
-            "init(_:)",
-            as: ((NativeSwiftClosure<() -> String>) -> BindingClosureOwner<String>).self
+        .swift(
+            .initializer(
+                "init(_:)",
+                as: ((NativeSwiftClosure<() -> String>) -> BindingClosureOwner<String>).self
+            )
         )
     )
     let setClosure = try await closureType.resolve(
-        .setter(
-            "body",
-            as: ((NativeSwiftClosure<() -> String>) -> Void).self
+        .swift(
+            .setter(
+                "body",
+                as: ((NativeSwiftClosure<() -> String>) -> Void).self
+            )
         )
     )
     let deaths = Mutex([0, 0])
@@ -506,11 +590,13 @@ private struct BindingBoolAdapter: ABIBridgeValue {
     closureOwner = nil
     try check(deaths.withLock { $0 } == [1, 1], "Stored generic closure captures are released exactly once")
     let consumeClosure = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingConsumeClosure<A, B where B: Swift.Error>(__owned () -> A, B, Swift.Bool) throws(B) -> A",
-            as: ((NativeSwiftConsuming<NativeSwiftClosure<() -> String>>, SmallError, Bool)
-                throws(SmallError) -> String).self,
-            genericArguments: [.type(String.self), .type(SmallError.self)]
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingConsumeClosure<A, B where B: Swift.Error>(__owned () -> A, B, Swift.Bool) throws(B) -> A",
+                as: ((NativeSwiftConsuming<NativeSwiftClosure<() -> String>>, SmallError, Bool)
+                    throws(SmallError) -> String).self,
+                genericArguments: [.type(String.self), .type(SmallError.self)]
+            )
         )
     )
     let consumedBody = try NativeSwiftClosure<() -> String> { "consumed" }
@@ -528,7 +614,7 @@ private struct BindingBoolAdapter: ABIBridgeValue {
         genericArguments: [.type(String.self)]
     )
     let hash = try await refined.resolve(
-        .staticMethod("refinedWitness(_:)", as: ((String) -> Int).self)
+        .swift(.staticMethod("refinedWitness(_:)", as: ((String) -> Int).self))
     )
     try check(unsafe hash.unsafeInvoke("hash") == BindingHashOwner<String>.refinedWitness("hash"),
         "Refined member constraints replace their nominal base witnesses")
@@ -537,10 +623,12 @@ private struct BindingBoolAdapter: ABIBridgeValue {
         genericArguments: [.type(Int.self)]
     )
     let other = try await concrete.resolve(
-        .staticMethod(
-            "concreteWitness(_:)",
-            as: ((String) -> Int).self,
-            genericArguments: [.type(String.self)]
+        .swift(
+            .staticMethod(
+                "concreteWitness(_:)",
+                as: ((String) -> Int).self,
+                genericArguments: [.type(String.self)]
+            )
         )
     )
     try check(unsafe other.unsafeInvoke("concrete") == BindingHashOwner<Int>.concreteWitness("concrete"),
@@ -550,7 +638,7 @@ private struct BindingBoolAdapter: ABIBridgeValue {
         genericArguments: [.type(BindingWitnessValue.self)]
     )
     let both = try await ordered.resolve(
-        .staticMethod("orderedWitnesses()", as: (() -> Int64).self)
+        .swift(.staticMethod("orderedWitnesses()", as: (() -> Int64).self))
     )
     try check(unsafe both.unsafeInvoke() == 42, "Independent nominal and member witnesses follow canonical order")
     let argument = try await runtime.resolveSwiftType(named: "SwiftValueFixtures.GenericReceiverNumber")
@@ -559,17 +647,21 @@ private struct BindingBoolAdapter: ABIBridgeValue {
         genericArguments: [.type(argument)]
     )
     let measure = try await borrowedType.resolve(
-        .method(
-            "measure()",
-            as: (() -> Int64).self,
-            receiverABI: .opaque(named: borrowedType.name)
+        .swift(
+            .method(
+                "measure()",
+                as: (() -> Int64).self,
+                receiverABI: .opaque(named: borrowedType.name)
+            )
         )
     )
     let measured = try await borrowedType.resolve(
-        .getter(
-            "measured",
-            as: (() -> Int64).self,
-            receiverABI: .opaque(named: borrowedType.name)
+        .swift(
+            .getter(
+                "measured",
+                as: (() -> Int64).self,
+                receiverABI: .opaque(named: borrowedType.name)
+            )
         )
     )
     let callbackFailure = Mutex<(any Error)?>(nil)
@@ -578,12 +670,14 @@ private struct BindingBoolAdapter: ABIBridgeValue {
         catch { callbackFailure.withLock { $0 = error }; return (-1, -1) }
     }
     let visit = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.visitBindingBorrowedRecord(Swift.Int64, (SwiftValueFixtures.BindingBorrowedRecord<SwiftValueFixtures.GenericReceiverNumber>) -> (Swift.Int64, Swift.Int64)) -> (Swift.Int64, Swift.Int64)",
-            as: ((Int64, NativeSwiftClosure<(NativeSwiftBorrowedValue) -> (Int64, Int64)>) -> (
-                Int64, Int64
-            )).self,
-            valueABIs: [borrowedType: .opaque(named: borrowedType.name)]
+        .swift(
+            .function(
+                "SwiftValueFixtures.visitBindingBorrowedRecord(Swift.Int64, (SwiftValueFixtures.BindingBorrowedRecord<SwiftValueFixtures.GenericReceiverNumber>) -> (Swift.Int64, Swift.Int64)) -> (Swift.Int64, Swift.Int64)",
+                as: ((Int64, NativeSwiftClosure<(NativeSwiftBorrowedValue) -> (Int64, Int64)>) -> (
+                    Int64, Int64
+                )).self,
+                valueABIs: [borrowedType: .opaque(named: borrowedType.name)]
+            )
         )
     )
     let borrowedResult = try unsafe visit.unsafeInvoke(42, callback)
@@ -595,18 +689,22 @@ private struct BindingBoolAdapter: ABIBridgeValue {
         named: "SwiftValueFixtures.BindingBox",
         genericArguments: [.type(string)])
     let initialize = try await boxType.resolve(
-        .initializer("init(_:)", as: ((String) -> AnyObject).self)
+        .swift(.initializer("init(_:)", as: ((String) -> AnyObject).self))
     )
     let box = try unsafe initialize.unsafeInvoke("initial")
-    let set = try await runtime.object(box).resolve(.setter("value", as: ((String) -> Void).self))
-    let get = try await boxType.resolve(.getter("value", as: (() -> String).self))
+    let set = try await runtime.object(box).resolve(
+        .swift(.setter("value", as: ((String) -> Void).self))
+    )
+    let get = try await boxType.resolve(.swift(.getter("value", as: (() -> String).self)))
     try unsafe set.unsafeInvoke("updated")
     try check(unsafe get.unsafeInvoke(on: box) == "updated", "Generic class construction, AnyObject result, setter, and getter")
     let compare = try await runtime.object(box).resolve(
-        .method(
-            "compare(_:)",
-            as: ((Int64) -> (String, Int64, Bool)).self,
-            genericArguments: [.type(Int64.self)]
+        .swift(
+            .method(
+                "compare(_:)",
+                as: ((Int64) -> (String, Int64, Bool)).self,
+                genericArguments: [.type(Int64.self)]
+            )
         )
     )
     try check(unsafe compare.unsafeInvoke(42) == ("updated", 42, true), "Member parameters combine with retained enclosing types and witnesses")
@@ -615,99 +713,120 @@ private struct BindingBoolAdapter: ABIBridgeValue {
         named: "SwiftValueFixtures.BindingValue",
         genericArguments: [.type(String.self)])
     let createValue = try await valueType.resolve(
-        .initializer(
-            "init(_:)",
-            as: ((String) -> BindingValue<String>).self
+        .swift(
+            .initializer(
+                "init(_:)",
+                as: ((String) -> BindingValue<String>).self
+            )
         )
     )
     var value = try unsafe createValue.unsafeInvoke("value")
     let replace = try await valueType.resolve(
-        .method(
-            "replace(_:)",
-            as: ((String) -> Void).self,
-            receiver: .mutating
+        .swift(
+            .method(
+                "replace(_:)",
+                as: ((String) -> Void).self,
+                receiver: .mutating
+            )
         )
     )
     try unsafe replace.unsafeInvoke(on: &value, "replaced")
     let take = try await valueType.resolve(
-        .method("take()", as: (() -> String).self, receiver: .consuming)
+        .swift(.method("take()", as: (() -> String).self, receiver: .consuming))
     )
     try check(unsafe take.unsafeInvoke(on: value) == "replaced" && value.value == "replaced",
         "Generic value initialization, mutation, and consuming receiver preserve ownership")
 
     let select = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingSelect<A, B where A == B.Element, B: Swift.Collection>(A, B) -> A",
-            as: ((String, [String]) -> String).self,
-            genericArguments: [.type(String.self), .type([String].self)]
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingSelect<A, B where A == B.Element, B: Swift.Collection>(A, B) -> A",
+                as: ((String, [String]) -> String).self,
+                genericArguments: [.type(String.self), .type([String].self)]
+            )
         )
     )
     try check(unsafe select.unsafeInvoke("fallback", ["selected"]) == bindingSelect("fallback", ["selected"]),
         "Associated types and same-type constraints match the compiler call")
     let pack = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingPack<each A where A: Swift.Equatable>(repeat A) -> (repeat A)",
-            as: ((Int64, String) -> (Int64, String)).self,
-            genericArguments: [.pack([.type(Int64.self), .type(String.self)])]
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingPack<each A where A: Swift.Equatable>(repeat A) -> (repeat A)",
+                as: ((Int64, String) -> (Int64, String)).self,
+                genericArguments: [.pack([.type(Int64.self), .type(String.self)])]
+            )
         )
     )
     try check(unsafe pack.unsafeInvoke(41, "pack") == bindingPack(Int64(41), "pack"), "Pack metadata and witnesses preserve mixed results")
     let empty = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingPack<each A where A: Swift.Equatable>(repeat A) -> (repeat A)",
-            as: (() -> Void).self,
-            genericArguments: [.pack([])]
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingPack<each A where A: Swift.Equatable>(repeat A) -> (repeat A)",
+                as: (() -> Void).self,
+                genericArguments: [.pack([])]
+            )
         )
     )
     try unsafe empty.unsafeInvoke()
     checks.append("Empty constrained pack preserves its shape")
     let packCallback = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingPackCallback<each A>((repeat A) -> (repeat A), repeat A) -> (repeat A)",
-            as: ((NativeSwiftClosure<(Int64, String) -> (Int64, String)>, Int64, String) -> (
-                Int64, String
-            )).self,
-            genericArguments: [.pack([.type(Int64.self), .type(String.self)])]
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingPackCallback<each A>((repeat A) -> (repeat A), repeat A) -> (repeat A)",
+                as: ((NativeSwiftClosure<(Int64, String) -> (Int64, String)>, Int64, String) -> (
+                    Int64, String
+                )).self,
+                genericArguments: [.pack([.type(Int64.self), .type(String.self)])]
+            )
         )
     )
     let packBody = try NativeSwiftClosure<(Int64, String) -> (Int64, String)> { ($0 + 1, $1 + "!") }
     try check(unsafe packCallback.unsafeInvoke(packBody, 41, "pack") == (42, "pack!"),
         "Pack callback authenticates its generic entry and reabstracts both directions")
     let packSource = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingPackSource<each A where A: Swift.Equatable>(SwiftValueFixtures.BindingPackSource<Pack{repeat A}>, repeat A) -> Swift.Int64",
-            as: ((BindingPackSource<Int64, String>, Int64, String) -> Int64).self,
-            genericArguments: [.pack([.type(Int64.self), .type(String.self)])]
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingPackSource<each A where A: Swift.Equatable>(SwiftValueFixtures.BindingPackSource<Pack{repeat A}>, repeat A) -> Swift.Int64",
+                as: ((BindingPackSource<Int64, String>, Int64, String) -> Int64).self,
+                genericArguments: [.pack([.type(Int64.self), .type(String.self)])]
+            )
         )
     )
     try check(unsafe packSource.unsafeInvoke(BindingPackSource(), 41, "pack") == 2,
         "Generic class arguments fulfill pack metadata and conformance requirements")
 
     let transform = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingTransform<A, B>([A], (A) throws -> B) throws -> [B]",
-            as: (([Int64], NativeSwiftClosure<(Int64) throws -> String>) throws -> [String]).self,
-            genericArguments: [.type(Int64.self), .type(String.self)]
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingTransform<A, B>([A], (A) throws -> B) throws -> [B]",
+                as: (([Int64], NativeSwiftClosure<(Int64) throws -> String>) throws -> [String])
+                    .self,
+                genericArguments: [.type(Int64.self), .type(String.self)]
+            )
         )
     )
     let body = try NativeSwiftClosure<(Int64) throws -> String> { "value: \($0)" }
     try check(unsafe transform.unsafeInvoke([1, 2], body) == ["value: 1", "value: 2"],
         "Generic collection callback preserves rethrows and managed results")
     let borrowedTransform = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingTransform<A, B>([A], (A) throws -> B) throws -> [B]",
-            as: (([Int64], NativeSwiftBorrowing<NativeSwiftClosure<(Int64) throws -> String>>)
-                throws -> [String]).self,
-            genericArguments: [.type(Int64.self), .type(String.self)]
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingTransform<A, B>([A], (A) throws -> B) throws -> [B]",
+                as: (([Int64], NativeSwiftBorrowing<NativeSwiftClosure<(Int64) throws -> String>>)
+                    throws -> [String]).self,
+                genericArguments: [.type(Int64.self), .type(String.self)]
+            )
         )
     )
     try check(unsafe borrowedTransform.unsafeInvoke([3], .init(body)) == ["value: 3"],
         "Borrowing markers preserve generic closure argument and result reabstraction")
     let make = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingClosure<A>(A) -> (A) -> A",
-            as: ((String) -> NativeSwiftClosure<(String) -> String>).self,
-            genericArguments: [.type(String.self)]
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingClosure<A>(A) -> (A) -> A",
+                as: ((String) -> NativeSwiftClosure<(String) -> String>).self,
+                genericArguments: [.type(String.self)]
+            )
         )
     )
     let closure = try unsafe make.unsafeInvoke(String(repeating: "retained", count: 100))
@@ -716,35 +835,43 @@ private struct BindingBoolAdapter: ABIBridgeValue {
         "Returned generic closure retains its capture and authenticates after cache removal")
 
     let never = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingError<A where A: Swift.Error>(A.Type) throws(A) -> Swift.Int64",
-            as: ((Never.Type) -> Int64).self,
-            genericArguments: [.type(Never.self)]
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingError<A where A: Swift.Error>(A.Type) throws(A) -> Swift.Int64",
+                as: ((Never.Type) -> Int64).self,
+                genericArguments: [.type(Never.self)]
+            )
         )
     )
     try check(unsafe never.unsafeInvoke(Never.self) == 44, "Never substitution preserves the generic throwing convention")
     let erased = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingError<A where A: Swift.Error>(A.Type) throws(A) -> Swift.Int64",
-            as: (((any Error).Type) throws -> Int64).self,
-            genericArguments: [.type((any Error).self)]
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingError<A where A: Swift.Error>(A.Type) throws(A) -> Swift.Int64",
+                as: (((any Error).Type) throws -> Int64).self,
+                genericArguments: [.type((any Error).self)]
+            )
         )
     )
     try check(unsafe erased.unsafeInvoke((any Error).self) == 44, "Error existential binding supplies its self-conformance witness")
     let neverCallback = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingErrorCallback<A where A: Swift.Error>(() throws(A) -> Swift.Int64) throws(A) -> Swift.Int64",
-            as: ((NativeSwiftClosure<() -> Int64>) -> Int64).self,
-            genericArguments: [.type(Never.self)]
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingErrorCallback<A where A: Swift.Error>(() throws(A) -> Swift.Int64) throws(A) -> Swift.Int64",
+                as: ((NativeSwiftClosure<() -> Int64>) -> Int64).self,
+                genericArguments: [.type(Never.self)]
+            )
         )
     )
     try check(unsafe neverCallback.unsafeInvoke(NativeSwiftClosure<() -> Int64> { 45 }) == 45,
         "Never-bound callback authenticates with the formal error convention")
     let erasedCallback = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingErrorCallback<A where A: Swift.Error>(() throws(A) -> Swift.Int64) throws(A) -> Swift.Int64",
-            as: ((NativeSwiftClosure<() throws -> Int64>) throws -> Int64).self,
-            genericArguments: [.type((any Error).self)]
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingErrorCallback<A where A: Swift.Error>(() throws(A) -> Swift.Int64) throws(A) -> Swift.Int64",
+                as: ((NativeSwiftClosure<() throws -> Int64>) throws -> Int64).self,
+                genericArguments: [.type((any Error).self)]
+            )
         )
     )
     do {
@@ -755,37 +882,43 @@ private struct BindingBoolAdapter: ABIBridgeValue {
     }
 
     let asyncValue = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingAsync<A>(A) async -> A",
-            as: (nonisolated(nonsending) (String) async -> String).self,
-            genericArguments: [.type(String.self)]
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingAsync<A>(A) async -> A",
+                as: (nonisolated(nonsending) (String) async -> String).self,
+                genericArguments: [.type(String.self)]
+            )
         )
     )
     try check(unsafe await asyncValue.unsafeInvoke("async") == "async", "Generic async result preserves caller isolation")
     let asyncCallback = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingAsyncCallback<A, B where B: Swift.Error>(A, nonisolated(nonsending) (A) async throws(B) -> A) async throws(B) -> A",
-            as: (nonisolated(nonsending) (
-                String,
-                NativeSwiftClosure<
-                    nonisolated(nonsending) (String) async throws(SmallError) -> String
-                >
-            ) async throws(SmallError) -> String).self,
-            genericArguments: [.type(String.self), .type(SmallError.self)]
-        )
-    )
-    let borrowedAsyncCallback = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingAsyncCallback<A, B where B: Swift.Error>(A, nonisolated(nonsending) (A) async throws(B) -> A) async throws(B) -> A",
-            as: (nonisolated(nonsending) (
-                String,
-                NativeSwiftBorrowing<
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingAsyncCallback<A, B where B: Swift.Error>(A, nonisolated(nonsending) (A) async throws(B) -> A) async throws(B) -> A",
+                as: (nonisolated(nonsending) (
+                    String,
                     NativeSwiftClosure<
                         nonisolated(nonsending) (String) async throws(SmallError) -> String
                     >
-                >
-            ) async throws(SmallError) -> String).self,
-            genericArguments: [.type(String.self), .type(SmallError.self)]
+                ) async throws(SmallError) -> String).self,
+                genericArguments: [.type(String.self), .type(SmallError.self)]
+            )
+        )
+    )
+    let borrowedAsyncCallback = try await runtime.resolve(
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingAsyncCallback<A, B where B: Swift.Error>(A, nonisolated(nonsending) (A) async throws(B) -> A) async throws(B) -> A",
+                as: (nonisolated(nonsending) (
+                    String,
+                    NativeSwiftBorrowing<
+                        NativeSwiftClosure<
+                            nonisolated(nonsending) (String) async throws(SmallError) -> String
+                        >
+                    >
+                ) async throws(SmallError) -> String).self,
+                genericArguments: [.type(String.self), .type(SmallError.self)]
+            )
         )
     )
     for shouldThrow in [false, true] {
@@ -812,23 +945,27 @@ private struct BindingBoolAdapter: ABIBridgeValue {
         }
     }
     let makeAsync = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingAsyncClosure<A where A: Swift.Sendable>(A) -> nonisolated(nonsending) @Sendable (A) async -> A",
-            as: ((String) -> NativeSwiftClosure<
-                nonisolated(nonsending) @Sendable (String) async -> String
-            >).self,
-            genericArguments: [.type(String.self)]
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingAsyncClosure<A where A: Swift.Sendable>(A) -> nonisolated(nonsending) @Sendable (A) async -> A",
+                as: ((String) -> NativeSwiftClosure<
+                    nonisolated(nonsending) @Sendable (String) async -> String
+                >).self,
+                genericArguments: [.type(String.self)]
+            )
         )
     )
     let asyncClosure = try unsafe makeAsync.unsafeInvoke("captured")
     try check(unsafe await asyncClosure.unsafeInvoke("ignored") == "captured", "Returned async generic closure authenticates and retains its context")
 
     let mutate = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingMutate<A, B where B: Swift.Error>(inout A, __owned A, B, Swift.Bool) throws(B) -> ()",
-            as: ((NativeSwiftInout<String>, NativeSwiftConsuming<String>, SmallError, Bool)
-                throws(SmallError) -> Void).self,
-            genericArguments: [.type(String.self), .type(SmallError.self)]
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingMutate<A, B where B: Swift.Error>(inout A, __owned A, B, Swift.Bool) throws(B) -> ()",
+                as: ((NativeSwiftInout<String>, NativeSwiftConsuming<String>, SmallError, Bool)
+                    throws(SmallError) -> Void).self,
+                genericArguments: [.type(String.self), .type(SmallError.self)]
+            )
         )
     )
     let storage = NativeSwiftInout("before")
@@ -841,26 +978,32 @@ private struct BindingBoolAdapter: ABIBridgeValue {
     }
     let getter = BindingGetter("delayed", SmallError(49), false)
     let checked = try await runtime.object(getter).resolve(
-        .getter(
-            "checkedNumber",
-            as: (() throws(SmallError) -> Int64).self,
-            declaredAs: "() throws(B) -> Swift.Int64"
+        .swift(
+            .getter(
+                "checkedNumber",
+                as: (() throws(SmallError) -> Int64).self,
+                declaredAs: "() throws(B) -> Swift.Int64"
+            )
         )
     )
     let fixed = try await runtime.object(getter).resolve(
-        .getter(
-            "fixedNumber",
-            as: (() throws(SmallError) -> Int64).self,
-            declaredAs: "() throws(SwiftValueFixtures.SmallError) -> Swift.Int64"
+        .swift(
+            .getter(
+                "fixedNumber",
+                as: (() throws(SmallError) -> Int64).self,
+                declaredAs: "() throws(SwiftValueFixtures.SmallError) -> Swift.Int64"
+            )
         )
     )
     try check(unsafe checked.unsafeInvoke() == 42 && fixed.unsafeInvoke() == 43,
         "Generic and fixed getter errors keep distinct conventions with equal concrete types")
     let delayed = try await runtime.object(getter).resolve(
-        .getter(
-            "delayed",
-            as: (nonisolated(nonsending) () async throws(SmallError) -> String).self,
-            declaredAs: "() async throws(B) -> A"
+        .swift(
+            .getter(
+                "delayed",
+                as: (nonisolated(nonsending) () async throws(SmallError) -> String).self,
+                declaredAs: "() async throws(B) -> A"
+            )
         )
     )
     try check(unsafe await delayed.unsafeInvoke() == "delayed", "Generic async getter returns its dependent value")
@@ -879,10 +1022,12 @@ private struct BindingBoolAdapter: ABIBridgeValue {
     }
 
     let metatypes = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingMetatypes<A>(A.Type, Swift.Int64.Type?, A) -> (A.Type, Swift.Int64.Type?, A)",
-            as: ((String.Type, Int64.Type?, String) -> (String.Type, Int64.Type?, String)).self,
-            genericArguments: [.type(String.self)]
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingMetatypes<A>(A.Type, Swift.Int64.Type?, A) -> (A.Type, Swift.Int64.Type?, A)",
+                as: ((String.Type, Int64.Type?, String) -> (String.Type, Int64.Type?, String)).self,
+                genericArguments: [.type(String.self)]
+            )
         )
     )
     let nonnil = try unsafe metatypes.unsafeInvoke(String.self, nil, "metadata")
@@ -890,22 +1035,28 @@ private struct BindingBoolAdapter: ABIBridgeValue {
     try check(nonnil.0 == String.self && nonnil.1 == Int64.self && nonnil.2 == "metadata"
         && nilResult.1 == nil, "Generic thick and optional thin metatypes preserve physical result components")
     let metatypeCallback = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingMetatypeCallback<A>(A.Type, (A.Type) -> A.Type) -> A.Type",
-            as: ((String.Type, NativeSwiftClosure<(String.Type) -> String.Type>) -> String.Type)
-                .self,
-            genericArguments: [.type(String.self)]
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingMetatypeCallback<A>(A.Type, (A.Type) -> A.Type) -> A.Type",
+                as: ((String.Type, NativeSwiftClosure<(String.Type) -> String.Type>) -> String.Type)
+                    .self,
+                genericArguments: [.type(String.self)]
+            )
         )
     )
     try check(unsafe metatypeCallback.unsafeInvoke(String.self, NativeSwiftClosure<(String.Type) -> String.Type> { $0 }) == String.self,
         "Thin concrete metatype callback restores the generic metadata word")
     let existential = try await runtime.resolve(
-        .function(
-            "SwiftValueFixtures.bindingExistentialMetatype<A>(Swift.CustomStringConvertible.Type, Swift.CustomStringConvertible.Protocol, A) -> (Swift.CustomStringConvertible.Type, Swift.CustomStringConvertible.Protocol, A)",
-            as: ((any CustomStringConvertible.Type, (any CustomStringConvertible).Type, String)
-                -> (any CustomStringConvertible.Type, (any CustomStringConvertible).Type, String))
-                .self,
-            genericArguments: [.type(String.self)]
+        .swift(
+            .function(
+                "SwiftValueFixtures.bindingExistentialMetatype<A>(Swift.CustomStringConvertible.Type, Swift.CustomStringConvertible.Protocol, A) -> (Swift.CustomStringConvertible.Type, Swift.CustomStringConvertible.Protocol, A)",
+                as: ((any CustomStringConvertible.Type, (any CustomStringConvertible).Type, String)
+                    -> (
+                        any CustomStringConvertible.Type, (any CustomStringConvertible).Type, String
+                    ))
+                    .self,
+                genericArguments: [.type(String.self)]
+            )
         )
     )
     let types = try unsafe existential.unsafeInvoke(Int64.self, (any CustomStringConvertible).self, "existential")

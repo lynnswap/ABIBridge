@@ -8,10 +8,10 @@ For a renderer exposing a synchronous Swift method:
 
 ```swift
 let object = ABIRuntime.shared.object(renderer)
-let setImage = try object.resolveAndWait(.method(
+let setImage = try object.resolveAndWait(.swift(.method(
     "setImage(_:animated:)",
     as: ((UIImage?, Bool) -> Void).self
-))
+)))
 try unsafe setImage.unsafeInvoke(image, true)
 ```
 
@@ -23,24 +23,40 @@ An object resolves the same member requests as its type, with the same options, 
 @MainActor
 func update(_ renderer: AnyObject, image: UIImage) async throws {
     let object = ABIRuntime.shared.object(renderer)
-    let setImage = try await object.resolve(.method(
+    let setImage = try await object.resolve(.swift(.method(
         "setImage(_:animated:)",
         as: ((UIImage?, Bool) -> Void).self
-    ))
+    )))
     try unsafe setImage.unsafeInvoke(image, true)
 }
 ```
 
 The native method remains synchronous here and executes on `MainActor`. Lookup does not invoke the native method or make its receiver Sendable.
 
+## Reuse a member request
+
+Save a Swift member declaration with `NativeRequest.swift(...)`. The same request resolves on a type for explicit-receiver calls or on an object for bound calls:
+
+```swift
+let request = NativeRequest.swift(.method("start()", as: (() -> Void).self))
+let type = try await runtime.resolveSwiftType(named: "Example.Renderer")
+let start = try await type.resolve(request)
+try unsafe start.unsafeInvoke(on: renderer)
+
+let boundStart = try await runtime.object(renderer).resolve(request)
+try unsafe boundStart.unsafeInvoke()
+```
+
+Getters, setters, initializers, static methods, and static accessors use the same `.swift(...)` wrapper. Their declaration options remain on the inner request, including `receiver:` and `receiverABI:` for instance members. The destination selects the receiver or type context; creating the request does not capture an implementation. Each resolution captures its own target, while an existing handle keeps the target it already selected.
+
 ## Reuse a discovered implementation with another object
 
 A bound method's `method` property returns its prepared explicit-receiver handle. Keeping that value does not keep the original receiver binding alive. This also works for getters, setters, and async members.
 
 ```swift
-let bound = try runtime.object(firstRenderer).resolveAndWait(.method(
+let bound = try runtime.object(firstRenderer).resolveAndWait(.swift(.method(
     "start()", as: (() -> Void).self
-))
+)))
 let start = bound.method
 try unsafe start.unsafeInvoke(on: secondRenderer)
 let secondBound = try start.bind(to: secondRenderer)
@@ -60,9 +76,9 @@ An existing object such as `Renderer<Content>` resolves the same method, getter,
 For example, given an existing `Renderer<Content>` with `func title() -> String`:
 
 ```swift
-let title = try runtime.object(renderer).resolveAndWait(.method(
+let title = try runtime.object(renderer).resolveAndWait(.swift(.method(
     "title()", as: (() -> String).self
-))
+)))
 let text = try unsafe title.unsafeInvoke()
 ```
 
@@ -78,8 +94,8 @@ An absent declaration or specialization with no applicable candidate reports `AB
 
 ```swift
 let type = try ABIRuntime.shared.resolveSwiftTypeAndWait(named: "Example.Renderer")
-let start = try type.resolveAndWait(.method("start()", as: (() -> Void).self))
-let stop = try type.resolveAndWait(.method("stop()", as: (() -> Void).self))
+let start = try type.resolveAndWait(.swift(.method("start()", as: (() -> Void).self)))
+let stop = try type.resolveAndWait(.swift(.method("stop()", as: (() -> Void).self)))
 try unsafe start.unsafeInvoke(on: renderer)
 try unsafe stop.unsafeInvoke(on: renderer)
 ```
@@ -94,7 +110,7 @@ A library-evolution framework can export only the dispatch thunk and method desc
 
 ```swift
 let view = try ABIRuntime.shared.resolveSwiftTypeAndWait(named: "Example.CanvasView")
-let setShowsGrid = try view.resolveAndWait(.setter("showsGrid", as: ((Bool) -> Void).self))
+let setShowsGrid = try view.resolveAndWait(.swift(.setter("showsGrid", as: ((Bool) -> Void).self)))
 try unsafe setShowsGrid.unsafeInvoke(on: canvas, true)
 ```
 
@@ -107,10 +123,10 @@ Relative names, complete declarations, `declaredAs:`, and `valueABIs:` use the s
 For a renderer conforming to `Example.Renderable`, resolve the protocol extension's `summary()` using its complete source declaration:
 
 ```swift
-let summary = try type.resolveAndWait(.method(
+let summary = try type.resolveAndWait(.swift(.method(
     "(extension in Example):Example.Renderable.summary() -> Swift.String",
     as: (() -> String).self
-))
+)))
 let text = try unsafe summary.unsafeInvoke(on: renderer)
 ```
 
@@ -124,16 +140,16 @@ A name qualified by the protocol, label-only or complete, selects a requirement 
 
 ```swift
 let type = try runtime.resolveSwiftTypeAndWait(named: "Example.Tile")
-let make = try type.resolveAndWait(.initializer(
+let make = try type.resolveAndWait(.swift(.initializer(
     "Example.Shape.init(size:)", as: ((Int64) -> AnyObject).self
-))
-let unit = try type.resolveAndWait(.staticMethod(
+)))
+let unit = try type.resolveAndWait(.swift(.staticMethod(
     "Example.Shape.unit()", as: (() -> AnyObject).self
-))
-let cell = try type.resolveAndWait(.getter(
+)))
+let cell = try type.resolveAndWait(.swift(.getter(
     "Example.Shape.subscript.getter : (Swift.Int64) -> Swift.Int64",
     as: ((Int64) -> Int64).self
-))
+)))
 let tile = try unsafe make.unsafeInvoke(4)
 let value = try unsafe cell.unsafeInvoke(on: tile, 2)
 ```
@@ -154,10 +170,10 @@ Name the extension member with its complete `(extension in Module):` declaration
 A requirement can also depend on associated types. For a concrete `builder` conforming to `Example.Builder`, whose `Request` associated type has an `Output` associated type:
 
 ```swift
-let build = try await builder.type.resolve(.method(
+let build = try await builder.type.resolve(.swift(.method(
     "Example.Builder.build(_: A.Request, in: A.Context, using: Example.Service) -> Example.Reply<A.Request.Output>",
     as: ((NativeSwiftValue, NativeSwiftValue, NativeSwiftValue) -> NativeSwiftValue).self
-))
+)))
 let reply = try unsafe build.unsafeInvoke(on: builder, request, context, service)
 ```
 
@@ -169,11 +185,11 @@ For an owned `NativeSwiftValue` named `receiver` whose concrete type conforms to
 
 ```swift
 let payloadType = try runtime.resolveSwiftTypeAndWait(named: "Example.Payload")
-let getter = try receiver.type.resolveAndWait(.getter(
+let getter = try receiver.type.resolveAndWait(.swift(.getter(
     "Example.Provider.payload.getter : Example.Payload",
     as: (() -> NativeSwiftValue).self,
     valueABIs: [payloadType: try .opaque(named: payloadType.name)]
-))
+)))
 let payload = try unsafe getter.unsafeInvoke(on: receiver)
 ```
 
@@ -193,7 +209,7 @@ func readText(
     from renderer: AnyObject, using runtime: ABIRuntime = .shared
 ) async throws -> String {
     let type = try await runtime.resolveSwiftType(named: "Example.Renderer")
-    let getText = try await type.resolve(.getter("text", as: (() -> String).self))
+    let getText = try await type.resolve(.swift(.getter("text", as: (() -> String).self)))
     return try unsafe getText.unsafeInvoke(on: renderer)
 }
 ```
@@ -208,7 +224,7 @@ func readTextWithPreparation(from renderer: AnyObject) async throws -> String {
     let runtime = ABIRuntime.shared
     async let preparation = runtime.prepare { runtime in
         let type = try runtime.resolveSwiftTypeAndWait(named: "Example.Renderer")
-        return try type.resolveAndWait(.getter("text", as: (() -> String).self))
+        return try type.resolveAndWait(.swift(.getter("text", as: (() -> String).self)))
     }
 
     let text = try await readText(from: renderer, using: runtime)
@@ -224,13 +240,13 @@ Use `resolveAndWait` to select synchronous lookup in either a synchronous or asy
 ## Initializers and static members
 
 ```swift
-let initialize = try type.resolveAndWait(.initializer(
+let initialize = try type.resolveAndWait(.swift(.initializer(
     "init(text:)",
     as: ((String) -> AnyObject).self
-))
+)))
 let renderer = try unsafe initialize.unsafeInvoke("Hello")
 
-let standard = try type.resolveAndWait(.staticGetter("standard", as: (() -> String).self))
+let standard = try type.resolveAndWait(.swift(.staticGetter("standard", as: (() -> String).self)))
 let value = try unsafe standard.unsafeInvoke()
 ```
 
@@ -244,10 +260,10 @@ Initializer and static member requests follow the same async lookup contract. Fo
 @MainActor
 func makeRenderer() async throws -> AnyObject {
     let type = try await ABIRuntime.shared.resolveSwiftType(named: "Example.Renderer")
-    let initialize = try await type.resolve(.initializer(
+    let initialize = try await type.resolve(.swift(.initializer(
         "init(text:)", as: ((String) -> AnyObject).self
-    ))
-    let standard = try await type.resolve(.staticGetter("standard", as: (() -> String).self))
+    )))
+    let standard = try await type.resolve(.swift(.staticGetter("standard", as: (() -> String).self)))
     let text = try unsafe standard.unsafeInvoke()
     return try unsafe initialize.unsafeInvoke(text)
 }
@@ -258,8 +274,8 @@ Static methods and setters use `staticMethod` and `staticSetter` requests. An ob
 ## Property accessors
 
 ```swift
-let getText = try type.resolveAndWait(.getter("text", as: (() -> String).self))
-let setText = try type.resolveAndWait(.setter("text", as: ((String) -> Void).self))
+let getText = try type.resolveAndWait(.swift(.getter("text", as: (() -> String).self)))
+let setText = try type.resolveAndWait(.swift(.setter("text", as: ((String) -> Void).self)))
 try unsafe setText.unsafeInvoke(on: renderer, "Updated")
 let text = try unsafe getText.unsafeInvoke(on: renderer)
 ```
@@ -271,9 +287,9 @@ Await setter lookup to prepare it without blocking `MainActor`, then perform the
 ```swift
 @MainActor
 func updateText(of renderer: AnyObject, to text: String) async throws {
-    let setText = try await ABIRuntime.shared.object(renderer).resolve(.setter(
+    let setText = try await ABIRuntime.shared.object(renderer).resolve(.swift(.setter(
         "text", as: ((String) -> Void).self
-    ))
+    )))
     try unsafe setText.unsafeInvoke(text)
 }
 ```
@@ -285,11 +301,11 @@ For a throwing getter in a generic type, also supply its source function type wi
 ```swift
 // For a provider declared as Getter<Value, Failure: Error>, with a property
 // checked: Value { get throws(Failure) }, and arguments String/ProviderFailure:
-let checked = try type.resolveAndWait(.getter(
+let checked = try type.resolveAndWait(.swift(.getter(
     "checked",
     as: (() throws(ProviderFailure) -> String).self,
     declaredAs: "() throws(B) -> A"
-))
+)))
 let value = try unsafe checked.unsafeInvoke(on: receiver)
 ```
 
@@ -310,18 +326,18 @@ let valueABIs = [
     key.type: try NativeType.opaque(named: key.type.name),
     replacement.type: try NativeType.opaque(named: replacement.type.name),
 ]
-let get = try await lookup.type.resolve(.getter(
+let get = try await lookup.type.resolve(.swift(.getter(
     "subscript",
     as: ((NativeSwiftValue) -> NativeSwiftValue).self,
     valueABIs: valueABIs,
     receiverABI: .opaque(named: lookup.type.name)
-))
-let set = try await lookup.type.resolve(.setter(
+)))
+let set = try await lookup.type.resolve(.swift(.setter(
     "subscript",
     as: ((NativeSwiftValue, NativeSwiftValue) -> Void).self,
     valueABIs: valueABIs,
     receiverABI: .opaque(named: lookup.type.name)
-))
+)))
 let setterKey = try key.copy()
 try unsafe set.unsafeInvoke(on: lookup, replacement, setterKey)
 let updated = try unsafe get.unsafeInvoke(on: lookup, key)
@@ -379,10 +395,10 @@ For a supported fixed-layout value or a value conforming to ABIBridgeValue:
 let pointType = try runtime.resolveSwiftTypeAndWait(
     named: "Example.Point", as: Point.self
 )
-let translate = try pointType.resolveAndWait(.method(
+let translate = try pointType.resolveAndWait(.swift(.method(
     "translate(_:)", as: ((Double) -> Void).self,
     receiver: .mutating
-))
+)))
 var point = existingPoint
 try unsafe translate.unsafeInvoke(on: &point, 10)
 ```
@@ -408,9 +424,9 @@ The unsafe boundary requires the declaration's actual ownership, effects, and ac
 An existing object can supply the identity of a file-private Swift class without exposing its compiler-generated private discriminator. The object member APIs match its live nominal descriptor to symbols in its defining image. Methods, getters, setters, and inherited members use that declaration owner; two same-named private classes in different files remain distinct.
 
 ```swift
-let method = try runtime.object(receiver).resolveAndWait(.method(
+let method = try runtime.object(receiver).resolveAndWait(.swift(.method(
     "title()", as: (() -> String).self
-))
+)))
 let title = try unsafe method.unsafeInvoke()
 ```
 

@@ -33,7 +33,7 @@ struct Benchmark {
         let object = ABIRuntime().object(PreparationBox("value"))
         let name = "add(Swift.Int64) -> Swift.Int64"
         let firstStart = ContinuousClock.now
-        let first = try object.resolveAndWait(.method(name, as: ((Int64) -> Int64).self))
+        let first = try object.resolveAndWait(.swift(.method(name, as: ((Int64) -> Int64).self)))
         let firstValue = try unsafe first.unsafeInvoke(35)
         precondition(firstValue == 42)
         print(
@@ -46,9 +46,11 @@ struct Benchmark {
             let start = ContinuousClock.now
             for value in 0..<count {
                 let method = try object.resolveAndWait(
-                    .method(
-                        name,
-                        as: ((Int64) -> Int64).self
+                    .swift(
+                        .method(
+                            name,
+                            as: ((Int64) -> Int64).self
+                        )
                     )
                 )
                 checksum += try unsafe method.unsafeInvoke(Int64(value))
@@ -68,29 +70,35 @@ struct Benchmark {
         let source = ImageSelector.automatic
         let start = ContinuousClock.now
         let regular = try await runtime.resolve(
-            .function(
-                "BenchmarkSwiftProvider.add(_:_:)",
-                as: ((Int64, Int64) -> Int64).self
+            .swift(
+                .function(
+                    "BenchmarkSwiftProvider.add(_:_:)",
+                    as: ((Int64, Int64) -> Int64).self
+                )
             ),
             in: source
         )
         print("Swift regular first preparation: \(seconds(start.duration(to:.now))*1000) ms")
         let genericStart = ContinuousClock.now
         let generic = try await runtime.resolve(
-            .function(
-                "BenchmarkSwiftProvider.identity(_:)",
-                as: ((Int64) -> Int64).self,
-                genericArguments: [.type(Int64.self)]
+            .swift(
+                .function(
+                    "BenchmarkSwiftProvider.identity(_:)",
+                    as: ((Int64) -> Int64).self,
+                    genericArguments: [.type(Int64.self)]
+                )
             ),
             in: source
         )
         print("Swift generic first preparation: \(seconds(genericStart.duration(to:.now))*1000) ms")
         let constrainedStart = ContinuousClock.now
         let constrained = try await runtime.resolve(
-            .function(
-                "BenchmarkSwiftProvider.hashEcho(_:)",
-                as: ((Int64) -> Int64).self,
-                genericArguments: [.type(Int64.self)]
+            .swift(
+                .function(
+                    "BenchmarkSwiftProvider.hashEcho(_:)",
+                    as: ((Int64) -> Int64).self,
+                    genericArguments: [.type(Int64.self)]
+                )
             ),
             in: source
         )
@@ -202,9 +210,11 @@ struct Benchmark {
             return value
         }
         let decorate = try await runtime.resolve(
-            .function(
-                "BenchmarkSwiftProvider.decorate(_:)",
-                as: ((String) -> String).self
+            .swift(
+                .function(
+                    "BenchmarkSwiftProvider.decorate(_:)",
+                    as: ((String) -> String).self
+                )
             )
         )
         let input = String(repeating: "x", count: 64)
@@ -215,9 +225,11 @@ struct Benchmark {
             $0 + Int64(try unsafe decorate.unsafeInvoke(input).utf8.count)
         }
         let apply = try await runtime.resolve(
-            .function(
-                "BenchmarkSwiftProvider.apply(_:_:)",
-                as: ((NativeSwiftClosure<(Int64) -> Int64>, Int64) -> Int64).self
+            .swift(
+                .function(
+                    "BenchmarkSwiftProvider.apply(_:_:)",
+                    as: ((NativeSwiftClosure<(Int64) -> Int64>, Int64) -> Int64).self
+                )
             ),
             in: source
         )

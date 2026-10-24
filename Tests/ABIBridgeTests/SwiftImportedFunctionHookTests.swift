@@ -34,16 +34,20 @@ struct SwiftImportedFunctionHookTests {
         SwiftPreparationValue.preparationThreads.withLock { $0.removeAll() }
         if asynchronous {
             let function = try await fixture.runtime.resolve(
-                .function(
-                    fixture.module + ".preparationAsync(Swift.Int64) async -> Swift.Int64",
-                    as: (nonisolated(nonsending) (Int64) async -> SwiftPreparationValue).self
+                .swift(
+                    .function(
+                        fixture.module + ".preparationAsync(Swift.Int64) async -> Swift.Int64",
+                        as: (nonisolated(nonsending) (Int64) async -> SwiftPreparationValue).self
+                    )
                 ),
                 in: fixture.providerScope
             )
             let caller = try await fixture.runtime.resolve(
-                .function(
-                    fixture.callerModule + ".importedPreparationAsync(_:)",
-                    as: (nonisolated(nonsending) (Int64) async -> Int64).self
+                .swift(
+                    .function(
+                        fixture.callerModule + ".importedPreparationAsync(_:)",
+                        as: (nonisolated(nonsending) (Int64) async -> Int64).self
+                    )
                 ),
                 in: fixture.callerScope
             )
@@ -66,16 +70,20 @@ struct SwiftImportedFunctionHookTests {
             #expect(try unsafe await caller.unsafeInvoke(40) == 41)
         } else {
             let function = try await fixture.runtime.resolve(
-                .function(
-                    fixture.module + ".scalar(Swift.Int64) -> Swift.Int64",
-                    as: ((Int64) -> SwiftPreparationValue).self
+                .swift(
+                    .function(
+                        fixture.module + ".scalar(Swift.Int64) -> Swift.Int64",
+                        as: ((Int64) -> SwiftPreparationValue).self
+                    )
                 ),
                 in: fixture.providerScope
             )
             let caller = try await fixture.runtime.resolve(
-                .function(
-                    fixture.callerModule + ".importedScalar(_:)",
-                    as: ((Int64) -> Int64).self
+                .swift(
+                    .function(
+                        fixture.callerModule + ".importedScalar(_:)",
+                        as: ((Int64) -> Int64).self
+                    )
                 ),
                 in: fixture.callerScope
             )
@@ -107,31 +115,39 @@ struct SwiftImportedFunctionHookTests {
             in: fixture.providerScope
         )
         let consume = try await runtime.resolve(
-            .function(
-                fixture.module + ".consumeHookTicket(_:)",
-                as: ((NativeSwiftConsuming<NativeSwiftValue>) -> Int64).self,
-                genericArguments: [.type(type)]
+            .swift(
+                .function(
+                    fixture.module + ".consumeHookTicket(_:)",
+                    as: ((NativeSwiftConsuming<NativeSwiftValue>) -> Int64).self,
+                    genericArguments: [.type(type)]
+                )
             ),
             in: fixture.providerScope
         )
         let read = try await type.resolve(
-            .method(
-                "read()",
-                as: (() -> Int64).self,
-                receiverABI: .int64
+            .swift(
+                .method(
+                    "read()",
+                    as: (() -> Int64).self,
+                    receiverABI: .int64
+                )
             )
         )
         let caller = try await runtime.resolve(
-            .function(
-                fixture.callerModule + ".callConsumeTicket(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".callConsumeTicket(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
         let counts = try await runtime.resolve(
-            .function(
-                fixture.module + ".hookTicketCounts()",
-                as: (() -> (Int64, Int64)).self
+            .swift(
+                .function(
+                    fixture.module + ".hookTicketCounts()",
+                    as: (() -> (Int64, Int64)).self
+                )
             ),
             in: fixture.providerScope
         )
@@ -196,32 +212,40 @@ struct SwiftImportedFunctionHookTests {
             in: fixture.providerScope
         )
         let move = try await runtime.resolve(
-            .function(
-                fixture.module + ".moveHookTicket(_:)",
-                as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self,
-                genericArguments: [.type(type)]
+            .swift(
+                .function(
+                    fixture.module + ".moveHookTicket(_:)",
+                    as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self,
+                    genericArguments: [.type(type)]
+                )
             ),
             in: fixture.providerScope
         )
         let consume = try await runtime.resolve(
-            .function(
-                fixture.module + ".consumeHookTicket(_:)",
-                as: ((NativeSwiftConsuming<NativeSwiftValue>) -> Int64).self,
-                genericArguments: [.type(type)]
+            .swift(
+                .function(
+                    fixture.module + ".consumeHookTicket(_:)",
+                    as: ((NativeSwiftConsuming<NativeSwiftValue>) -> Int64).self,
+                    genericArguments: [.type(type)]
+                )
             ),
             in: fixture.providerScope
         )
         let caller = try await runtime.resolve(
-            .function(
-                fixture.callerModule + ".callMoveTicket(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".callMoveTicket(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
         let counts = try await runtime.resolve(
-            .function(
-                fixture.module + ".hookTicketCounts()",
-                as: (() -> (Int64, Int64)).self
+            .swift(
+                .function(
+                    fixture.module + ".hookTicketCounts()",
+                    as: (() -> (Int64, Int64)).self
+                )
             ),
             in: fixture.providerScope
         )
@@ -300,17 +324,23 @@ struct SwiftImportedFunctionHookTests {
             in: fixture.providerScope
         )
         let count = try await runtime.resolve(
-            .function(
-                fixture.module + ".countHookOptionalRecord(_:)",
-                as: ((NativeSwiftConsuming<NativeSwiftValue?>) -> Int64).self,
-                valueABIs: [record: try .structure(named: "HookOptionalRecord", fields: [.int64])]
+            .swift(
+                .function(
+                    fixture.module + ".countHookOptionalRecord(_:)",
+                    as: ((NativeSwiftConsuming<NativeSwiftValue?>) -> Int64).self,
+                    valueABIs: [
+                        record: try .structure(named: "HookOptionalRecord", fields: [.int64])
+                    ]
+                )
             ),
             in: fixture.providerScope
         )
         let caller = try await runtime.resolve(
-            .function(
-                fixture.callerModule + ".callCountHookOptionalRecord(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".callCountHookOptionalRecord(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -348,23 +378,29 @@ struct SwiftImportedFunctionHookTests {
             in: fixture.providerScope
         )
         let move = try await type.resolve(
-            .method(
-                "move(_:)",
-                as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self,
-                genericArguments: [.type(valueType)]
+            .swift(
+                .method(
+                    "move(_:)",
+                    as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self,
+                    genericArguments: [.type(valueType)]
+                )
             )
         )
         let caller = try await runtime.resolve(
-            .function(
-                fixture.callerModule + ".callVirtualMoveTicket(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".callVirtualMoveTicket(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
         let counts = try await runtime.resolve(
-            .function(
-                fixture.module + ".hookTicketCounts()",
-                as: (() -> (Int64, Int64)).self
+            .swift(
+                .function(
+                    fixture.module + ".hookTicketCounts()",
+                    as: (() -> (Int64, Int64)).self
+                )
             ),
             in: fixture.providerScope
         )
@@ -393,25 +429,32 @@ struct SwiftImportedFunctionHookTests {
             in: fixture.providerScope
         )
         let move = try await runtime.resolve(
-            .function(
-                fixture.module + ".moveAsyncHookTicket(_:)",
-                as: (@concurrent (NativeSwiftConsuming<NativeSwiftValue>) async -> NativeSwiftValue)
-                    .self,
-                genericArguments: [.type(type)]
+            .swift(
+                .function(
+                    fixture.module + ".moveAsyncHookTicket(_:)",
+                    as: (@concurrent (NativeSwiftConsuming<NativeSwiftValue>) async ->
+                        NativeSwiftValue)
+                        .self,
+                    genericArguments: [.type(type)]
+                )
             ),
             in: fixture.providerScope
         )
         let caller = try await runtime.resolve(
-            .function(
-                fixture.callerModule + ".callAsyncMoveTicket(_:)",
-                as: (@concurrent (Int64) async -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".callAsyncMoveTicket(_:)",
+                    as: (@concurrent (Int64) async -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
         let counts = try await runtime.resolve(
-            .function(
-                fixture.module + ".hookTicketCounts()",
-                as: (() -> (Int64, Int64)).self
+            .swift(
+                .function(
+                    fixture.module + ".hookTicketCounts()",
+                    as: (() -> (Int64, Int64)).self
+                )
             ),
             in: fixture.providerScope
         )
@@ -445,32 +488,40 @@ struct SwiftImportedFunctionHookTests {
             in: fixture.providerScope
         )
         let target = try await runtime.resolve(
-            .function(
-                fixture.module + ".consumeAnyErrorHookTicket(_:)",
-                as: ((NativeSwiftConsuming<NativeSwiftValue>) throws -> Int64).self,
-                genericArguments: [.type(type)]
+            .swift(
+                .function(
+                    fixture.module + ".consumeAnyErrorHookTicket(_:)",
+                    as: ((NativeSwiftConsuming<NativeSwiftValue>) throws -> Int64).self,
+                    genericArguments: [.type(type)]
+                )
             ),
             in: fixture.providerScope
         )
         let consume = try await runtime.resolve(
-            .function(
-                fixture.module + ".consumeHookTicket(_:)",
-                as: ((NativeSwiftConsuming<NativeSwiftValue>) -> Int64).self,
-                genericArguments: [.type(type)]
+            .swift(
+                .function(
+                    fixture.module + ".consumeHookTicket(_:)",
+                    as: ((NativeSwiftConsuming<NativeSwiftValue>) -> Int64).self,
+                    genericArguments: [.type(type)]
+                )
             ),
             in: fixture.providerScope
         )
         let caller = try await runtime.resolve(
-            .function(
-                fixture.callerModule + ".callConsumeAnyErrorTicket(_:)",
-                as: ((Int64) throws -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".callConsumeAnyErrorTicket(_:)",
+                    as: ((Int64) throws -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
         let counts = try await runtime.resolve(
-            .function(
-                fixture.module + ".hookTicketCounts()",
-                as: (() -> (Int64, Int64)).self
+            .swift(
+                .function(
+                    fixture.module + ".hookTicketCounts()",
+                    as: (() -> (Int64, Int64)).self
+                )
             ),
             in: fixture.providerScope
         )
@@ -499,16 +550,20 @@ struct SwiftImportedFunctionHookTests {
         let fixture = try CompiledSwiftReplacementFixture()
         defer { fixture.cleanup() }
         let target = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".consumeHookObject(_:)",
-                as: ((NativeSwiftConsuming<NSObject>) -> Int64).self
+            .swift(
+                .function(
+                    fixture.module + ".consumeHookObject(_:)",
+                    as: ((NativeSwiftConsuming<NSObject>) -> Int64).self
+                )
             ),
             in: fixture.providerScope
         )
         let caller = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".callConsumeHookObject(_:)",
-                as: ((NativeSwiftConsuming<NSObject>) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".callConsumeHookObject(_:)",
+                    as: ((NativeSwiftConsuming<NSObject>) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -531,17 +586,21 @@ struct SwiftImportedFunctionHookTests {
         let fixture = try CompiledSwiftReplacementFixture()
         defer { fixture.cleanup() }
         let target = try await fixture.runtime.resolve(
-            .function(
-                fixture.module
-                    + ".hookOptionalPointer(Swift.UnsafeMutableRawPointer?) -> Swift.UnsafeMutableRawPointer?",
-                as: ((OptionalHookPointer?) -> OptionalHookPointer?).self
+            .swift(
+                .function(
+                    fixture.module
+                        + ".hookOptionalPointer(Swift.UnsafeMutableRawPointer?) -> Swift.UnsafeMutableRawPointer?",
+                    as: ((OptionalHookPointer?) -> OptionalHookPointer?).self
+                )
             ),
             in: fixture.providerScope
         )
         let caller = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".callOptionalHookPointer(_:)",
-                as: ((UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer?).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".callOptionalHookPointer(_:)",
+                    as: ((UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer?).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -568,17 +627,21 @@ struct SwiftImportedFunctionHookTests {
             in: fixture.providerScope
         )
         let target = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".consumeHookTicket(_:)",
-                as: ((NativeSwiftConsuming<NativeSwiftValue>) -> Int64).self,
-                genericArguments: [.type(type)]
+            .swift(
+                .function(
+                    fixture.module + ".consumeHookTicket(_:)",
+                    as: ((NativeSwiftConsuming<NativeSwiftValue>) -> Int64).self,
+                    genericArguments: [.type(type)]
+                )
             ),
             in: fixture.providerScope
         )
         let caller = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".callConsumeTicket(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".callConsumeTicket(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -610,17 +673,21 @@ struct SwiftImportedFunctionHookTests {
         let fixture = try CompiledSwiftReplacementFixture()
         defer { fixture.cleanup() }
         let target = try await fixture.runtime.resolve(
-            .function(
-                fixture.module
-                    + ".hookBorrowedPointer(Swift.UnsafeMutableRawPointer?) -> Swift.UnsafeMutableRawPointer?",
-                as: ((NativeSwiftBorrowing<OptionalHookPointer?>) -> OptionalHookPointer?).self
+            .swift(
+                .function(
+                    fixture.module
+                        + ".hookBorrowedPointer(Swift.UnsafeMutableRawPointer?) -> Swift.UnsafeMutableRawPointer?",
+                    as: ((NativeSwiftBorrowing<OptionalHookPointer?>) -> OptionalHookPointer?).self
+                )
             ),
             in: fixture.providerScope
         )
         let caller = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".callBorrowedHookPointer(_:)",
-                as: ((UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer?).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".callBorrowedHookPointer(_:)",
+                    as: ((UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer?).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -649,18 +716,22 @@ struct SwiftImportedFunctionHookTests {
         )
         typealias Body = NativeSwiftClosure<() -> Int64>
         let target = try await runtime.resolve(
-            .function(
-                fixture.module + ".moveHookTicketWithBody(_:_:_:)",
-                as: ((NativeSwiftConsuming<NativeSwiftValue>, NativeSwiftInout<Body>, Body)
-                    -> NativeSwiftValue).self,
-                genericArguments: [.type(type)]
+            .swift(
+                .function(
+                    fixture.module + ".moveHookTicketWithBody(_:_:_:)",
+                    as: ((NativeSwiftConsuming<NativeSwiftValue>, NativeSwiftInout<Body>, Body)
+                        -> NativeSwiftValue).self,
+                    genericArguments: [.type(type)]
+                )
             ),
             in: fixture.providerScope
         )
         let caller = try await runtime.resolve(
-            .function(
-                fixture.callerModule + ".callMoveTicketWithBody(_:)",
-                as: ((Int64) -> (Int64, Int64)).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".callMoveTicketWithBody(_:)",
+                    as: ((Int64) -> (Int64, Int64)).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -680,20 +751,24 @@ struct SwiftImportedFunctionHookTests {
         #expect(saved.output!.isConsumed && failures.withLock { $0 } == 1)
         hook.invalidate()
         let asyncTarget = try await runtime.resolve(
-            .function(
-                fixture.module + ".moveAsyncHookTicketWithBody(_:_:_:)",
-                as: (@concurrent (
-                    NativeSwiftConsuming<NativeSwiftValue>, NativeSwiftInout<Body>, Body
+            .swift(
+                .function(
+                    fixture.module + ".moveAsyncHookTicketWithBody(_:_:_:)",
+                    as: (@concurrent (
+                        NativeSwiftConsuming<NativeSwiftValue>, NativeSwiftInout<Body>, Body
+                    )
+                        async -> NativeSwiftValue).self,
+                    genericArguments: [.type(type)]
                 )
-                    async -> NativeSwiftValue).self,
-                genericArguments: [.type(type)]
             ),
             in: fixture.providerScope
         )
         let asyncCaller = try await runtime.resolve(
-            .function(
-                fixture.callerModule + ".callAsyncMoveTicketWithBody(_:)",
-                as: (@concurrent (Int64) async -> (Int64, Int64)).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".callAsyncMoveTicketWithBody(_:)",
+                    as: (@concurrent (Int64) async -> (Int64, Int64)).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -711,9 +786,11 @@ struct SwiftImportedFunctionHookTests {
         #expect(try unsafe await asyncCaller.unsafeInvoke(42) == (42, 42))
         #expect(saved.output!.isConsumed && failures.withLock { $0 } == 2)
         let counts = try await runtime.resolve(
-            .function(
-                fixture.module + ".hookTicketCounts()",
-                as: (() -> (Int64, Int64)).self
+            .swift(
+                .function(
+                    fixture.module + ".hookTicketCounts()",
+                    as: (() -> (Int64, Int64)).self
+                )
             ),
             in: fixture.providerScope
         )
@@ -725,17 +802,21 @@ struct SwiftImportedFunctionHookTests {
         defer { fixture.cleanup() }
         typealias Body = NativeSwiftClosure<() -> String>
         let target = try await fixture.runtime.resolve(
-            .function(
-                fixture.module
-                    + ".hookPointerAndBorrow(Swift.UnsafeMutableRawPointer?, () -> Swift.String) -> Swift.UnsafeMutableRawPointer?",
-                as: ((OptionalHookPointer?, Body) -> OptionalHookPointer?).self
+            .swift(
+                .function(
+                    fixture.module
+                        + ".hookPointerAndBorrow(Swift.UnsafeMutableRawPointer?, () -> Swift.String) -> Swift.UnsafeMutableRawPointer?",
+                    as: ((OptionalHookPointer?, Body) -> OptionalHookPointer?).self
+                )
             ),
             in: fixture.providerScope
         )
         let caller = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".callHookPointerAndBorrow(_:_:)",
-                as: ((UnsafeMutableRawPointer?, String) -> UnsafeMutableRawPointer?).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".callHookPointerAndBorrow(_:_:)",
+                    as: ((UnsafeMutableRawPointer?, String) -> UnsafeMutableRawPointer?).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -764,17 +845,21 @@ struct SwiftImportedFunctionHookTests {
         defer { fixture.cleanup() }
         typealias Input = NativeSwiftConsuming<(NativeSwiftValue, Int64)>
         let target = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".consumeHookTuple(_:)",
-                as: ((Input) -> Int64).self,
-                genericArguments: [.type(NSObject.self)]
+            .swift(
+                .function(
+                    fixture.module + ".consumeHookTuple(_:)",
+                    as: ((Input) -> Int64).self,
+                    genericArguments: [.type(NSObject.self)]
+                )
             ),
             in: fixture.providerScope
         )
         let caller = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".callConsumeHookTuple(_:)",
-                as: ((NSObject) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".callConsumeHookTuple(_:)",
+                    as: ((NSObject) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -802,17 +887,21 @@ struct SwiftImportedFunctionHookTests {
         let fixture = try CompiledSwiftReplacementFixture()
         defer { fixture.cleanup() }
         let target = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".consumeHookTuple(_:)",
-                as: ((NativeSwiftConsuming<NativeSwiftValue>) -> Int64).self,
-                genericArguments: [.type(NSObject.self)]
+            .swift(
+                .function(
+                    fixture.module + ".consumeHookTuple(_:)",
+                    as: ((NativeSwiftConsuming<NativeSwiftValue>) -> Int64).self,
+                    genericArguments: [.type(NSObject.self)]
+                )
             ),
             in: fixture.providerScope
         )
         let caller = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".callConsumeHookTuple(_:)",
-                as: ((NSObject) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".callConsumeHookTuple(_:)",
+                    as: ((NSObject) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -842,17 +931,21 @@ struct SwiftImportedFunctionHookTests {
         defer { fixture.cleanup() }
         typealias Body = NativeSwiftClosure<() -> Int64>
         let target = try await fixture.runtime.resolve(
-            .function(
-                fixture.module
-                    + ".hookAdapterWriteback(Swift.UnsafeMutableRawPointer?, inout () -> Swift.Int64) -> ()",
-                as: ((OptionalHookPointer?, NativeSwiftInout<Body>) -> Void).self
+            .swift(
+                .function(
+                    fixture.module
+                        + ".hookAdapterWriteback(Swift.UnsafeMutableRawPointer?, inout () -> Swift.Int64) -> ()",
+                    as: ((OptionalHookPointer?, NativeSwiftInout<Body>) -> Void).self
+                )
             ),
             in: fixture.providerScope
         )
         let caller = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".callAdapterWriteback(_:)",
-                as: ((UnsafeMutableRawPointer?) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".callAdapterWriteback(_:)",
+                    as: ((UnsafeMutableRawPointer?) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -882,25 +975,32 @@ struct SwiftImportedFunctionHookTests {
             in: fixture.providerScope
         )
         let target = try await fixture.runtime.resolve(
-            .function(
-                fixture.module
-                    + ".hookDiscardTicket<A where A: ~Swift.Copyable>(__owned A, Swift.UnsafeMutableRawPointer?) -> Swift.Int64",
-                as: ((NativeSwiftConsuming<NativeSwiftValue>, OptionalHookPointer?) -> Int64).self,
-                genericArguments: [.type(type)]
+            .swift(
+                .function(
+                    fixture.module
+                        + ".hookDiscardTicket<A where A: ~Swift.Copyable>(__owned A, Swift.UnsafeMutableRawPointer?) -> Swift.Int64",
+                    as: ((NativeSwiftConsuming<NativeSwiftValue>, OptionalHookPointer?) -> Int64)
+                        .self,
+                    genericArguments: [.type(type)]
+                )
             ),
             in: fixture.providerScope
         )
         let caller = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".callDiscardTicket(_:)",
-                as: ((UnsafeMutableRawPointer?) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".callDiscardTicket(_:)",
+                    as: ((UnsafeMutableRawPointer?) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
         let counts = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".hookTicketCounts()",
-                as: (() -> (Int64, Int64)).self
+            .swift(
+                .function(
+                    fixture.module + ".hookTicketCounts()",
+                    as: (() -> (Int64, Int64)).self
+                )
             ),
             in: fixture.providerScope
         )
@@ -924,30 +1024,38 @@ struct SwiftImportedFunctionHookTests {
         let fixture = try CompiledSwiftReplacementFixture()
         defer { fixture.cleanup() }
         let target = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".consumeHookClosure(_:)",
-                as: ((NativeSwiftConsuming<NativeSwiftValue>) -> Int64).self
+            .swift(
+                .function(
+                    fixture.module + ".consumeHookClosure(_:)",
+                    as: ((NativeSwiftConsuming<NativeSwiftValue>) -> Int64).self
+                )
             ),
             in: fixture.providerScope
         )
         let caller = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".callConsumeHookClosure(_:)",
-                as: ((NSObject) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".callConsumeHookClosure(_:)",
+                    as: ((NSObject) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
         let asyncTarget = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".consumeAsyncHookClosure(_:)",
-                as: (@concurrent (NativeSwiftConsuming<NativeSwiftValue>) async -> Int64).self
+            .swift(
+                .function(
+                    fixture.module + ".consumeAsyncHookClosure(_:)",
+                    as: (@concurrent (NativeSwiftConsuming<NativeSwiftValue>) async -> Int64).self
+                )
             ),
             in: fixture.providerScope
         )
         let asyncCaller = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".callConsumeAsyncHookClosure(_:)",
-                as: (@concurrent (NSObject) async -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".callConsumeAsyncHookClosure(_:)",
+                    as: (@concurrent (NSObject) async -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -985,18 +1093,22 @@ struct SwiftImportedFunctionHookTests {
         let fixture = try CompiledSwiftReplacementFixture()
         defer { fixture.cleanup() }
         let target = try await fixture.runtime.resolve(
-            .function(
-                fixture.module
-                    + ".hookBorrowedTupleAndAdapter<A>((A, Swift.Int64), Swift.UnsafeMutableRawPointer?) -> Swift.Int64",
-                as: ((NativeSwiftBorrowedValue, OptionalHookPointer?) -> Int64).self,
-                genericArguments: [.type(NSObject.self)]
+            .swift(
+                .function(
+                    fixture.module
+                        + ".hookBorrowedTupleAndAdapter<A>((A, Swift.Int64), Swift.UnsafeMutableRawPointer?) -> Swift.Int64",
+                    as: ((NativeSwiftBorrowedValue, OptionalHookPointer?) -> Int64).self,
+                    genericArguments: [.type(NSObject.self)]
+                )
             ),
             in: fixture.providerScope
         )
         let caller = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".callBorrowedTupleAndAdapter(_:_:)",
-                as: ((NSObject, UnsafeMutableRawPointer?) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".callBorrowedTupleAndAdapter(_:_:)",
+                    as: ((NSObject, UnsafeMutableRawPointer?) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -1043,17 +1155,21 @@ struct SwiftImportedFunctionHookTests {
         )
         defer { fixture.cleanup() }
         let echo = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".runtimeHookEcho(_:)",
-                as: ((NativeSwiftValue) -> NativeSwiftValue).self,
-                genericArguments: [.type(Int64.self)]
+            .swift(
+                .function(
+                    fixture.module + ".runtimeHookEcho(_:)",
+                    as: ((NativeSwiftValue) -> NativeSwiftValue).self,
+                    genericArguments: [.type(Int64.self)]
+                )
             ),
             in: fixture.providerScope
         )
         let integer = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".runtimeHookInteger(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".runtimeHookInteger(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -1077,16 +1193,20 @@ struct SwiftImportedFunctionHookTests {
 
         typealias Pair = (Int64, NativeSwiftClosure<() -> String>)
         let tuple = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".runtimeHookTuple(_:)",
-                as: ((Pair) -> Pair).self
+            .swift(
+                .function(
+                    fixture.module + ".runtimeHookTuple(_:)",
+                    as: ((Pair) -> Pair).self
+                )
             ),
             in: fixture.providerScope
         )
         let nested = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".runtimeHookNested(_:_:)",
-                as: ((Int64, String) -> (Int64, String)).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".runtimeHookNested(_:_:)",
+                    as: ((Int64, String) -> (Int64, String)).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -1111,16 +1231,20 @@ struct SwiftImportedFunctionHookTests {
         second.invalidate()
 
         let edit = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".runtimeHookEdit(_:_:)",
-                as: ((NativeSwiftInout<String>, NativeSwiftConsuming<String>) -> Void).self
+            .swift(
+                .function(
+                    fixture.module + ".runtimeHookEdit(_:_:)",
+                    as: ((NativeSwiftInout<String>, NativeSwiftConsuming<String>) -> Void).self
+                )
             ),
             in: fixture.providerScope
         )
         let edited = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".runtimeHookEdited(_:)",
-                as: ((String) -> String).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".runtimeHookEdited(_:)",
+                    as: ((String) -> String).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -1162,43 +1286,53 @@ struct SwiftImportedFunctionHookTests {
         )
         defer { fixture.cleanup() }
         let short = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".hookStackPack(_:a:b:c:d:e:f:g:h:)",
-                as: ((Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64) -> String)
-                    .self,
-                genericArguments: [.pack([.type(Int64.self)])]
+            .swift(
+                .function(
+                    fixture.module + ".hookStackPack(_:a:b:c:d:e:f:g:h:)",
+                    as: ((Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64) -> String)
+                        .self,
+                    genericArguments: [.pack([.type(Int64.self)])]
+                )
             ),
             in: fixture.providerScope
         )
         let long = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".hookStackPack(_:a:b:c:d:e:f:g:h:)",
-                as: ((
-                    Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64,
-                    Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64
-                ) -> String).self,
-                genericArguments: [.pack(Array(repeating: .type(Int64.self), count: 10))]
+            .swift(
+                .function(
+                    fixture.module + ".hookStackPack(_:a:b:c:d:e:f:g:h:)",
+                    as: ((
+                        Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64,
+                        Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64
+                    ) -> String).self,
+                    genericArguments: [.pack(Array(repeating: .type(Int64.self), count: 10))]
+                )
             ),
             in: fixture.providerScope
         )
         let empty = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".stackPackEmpty()",
-                as: (() -> String).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".stackPackEmpty()",
+                    as: (() -> String).self
+                )
             ),
             in: fixture.callerScope
         )
         let one = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".stackPackOne()",
-                as: (() -> String).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".stackPackOne()",
+                    as: (() -> String).self
+                )
             ),
             in: fixture.callerScope
         )
         let ten = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".stackPackTen()",
-                as: (() -> String).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".stackPackTen()",
+                    as: (() -> String).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -1261,41 +1395,51 @@ struct SwiftImportedFunctionHookTests {
         defer { fixture.cleanup() }
         typealias Values = (Int64, String, object: NSObject)
         let plain = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".hookPlainTuplePack(_:)",
-                as: ((Values) -> NSObject).self,
-                genericArguments: [.pack([.type(Int64.self), .type(String.self)])]
+            .swift(
+                .function(
+                    fixture.module + ".hookPlainTuplePack(_:)",
+                    as: ((Values) -> NSObject).self,
+                    genericArguments: [.pack([.type(Int64.self), .type(String.self)])]
+                )
             ),
             in: fixture.providerScope
         )
         let bound = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".hookTuplePack(_:)",
-                as: ((Values) -> NSObject).self,
-                genericArguments: [
-                    .pack([.type(Int64.self), .type(String.self)]), .type(NSObject.self),
-                ]
+            .swift(
+                .function(
+                    fixture.module + ".hookTuplePack(_:)",
+                    as: ((Values) -> NSObject).self,
+                    genericArguments: [
+                        .pack([.type(Int64.self), .type(String.self)]), .type(NSObject.self),
+                    ]
+                )
             ),
             in: fixture.providerScope
         )
         let plainCaller = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".plainTuplePackObject(_:)",
-                as: ((NSObject) -> NSObject).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".plainTuplePackObject(_:)",
+                    as: ((NSObject) -> NSObject).self
+                )
             ),
             in: fixture.callerScope
         )
         let boundCaller = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".tuplePackObject(_:)",
-                as: ((NSObject) -> NSObject).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".tuplePackObject(_:)",
+                    as: ((NSObject) -> NSObject).self
+                )
             ),
             in: fixture.callerScope
         )
         let otherCaller = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".tuplePackOther(_:)",
-                as: ((NSObject) -> NSObject).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".tuplePackOther(_:)",
+                    as: ((NSObject) -> NSObject).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -1337,16 +1481,20 @@ struct SwiftImportedFunctionHookTests {
         defer { fixture.cleanup() }
         typealias Closure = NativeSwiftClosure<() -> AnyObject>
         let factory = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".hookFactory(_:)",
-                as: ((AnyObject) -> Closure).self
+            .swift(
+                .function(
+                    fixture.module + ".hookFactory(_:)",
+                    as: ((AnyObject) -> Closure).self
+                )
             ),
             in: fixture.providerScope
         )
         let oracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedFactory(_:)",
-                as: ((AnyObject) -> Closure).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedFactory(_:)",
+                    as: ((AnyObject) -> Closure).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -1425,25 +1573,27 @@ struct SwiftImportedFunctionHookTests {
         defer { caller.cleanup() }
         let runtime = ABIRuntime()
         let function = try await runtime.resolve(
-            .function(
-                module + ".lifetimeResult(_:_:)",
-                as: (((String, NativeSwiftValue), NativeSwiftConsuming<Int64>) -> Int64).self,
-                genericArguments: [.type(Int64.self), .type(String.self)],
-                declaredAs:
-                    "<A, B where A: ~Escapable> @_lifetime(borrow pair) (_ pair: (Swift.String, \(module).LifetimeBox<B>), _ value: consuming A) -> A"
+            .swift(
+                .function(
+                    module + ".lifetimeResult(_:_:)",
+                    as: (((String, NativeSwiftValue), NativeSwiftConsuming<Int64>) -> Int64).self,
+                    genericArguments: [.type(Int64.self), .type(String.self)],
+                    declaredAs:
+                        "<A, B where A: ~Escapable> @_lifetime(borrow pair) (_ pair: (Swift.String, \(module).LifetimeBox<B>), _ value: consuming A) -> A"
+                )
             ),
             in: .path(provider.libraryURL)
         )
         let integer = try await runtime.resolve(
-            .function(module + ".integerBox()", as: (() -> AnyObject).self),
+            .swift(.function(module + ".integerBox()", as: (() -> AnyObject).self)),
             in: .path(provider.libraryURL)
         )
         let text = try await runtime.resolve(
-            .function(module + ".textBox()", as: (() -> AnyObject).self),
+            .swift(.function(module + ".textBox()", as: (() -> AnyObject).self)),
             in: .path(provider.libraryURL)
         )
         let tagSize = try await runtime.resolve(
-            .function(module + ".tagSize()", as: (() -> Int).self),
+            .swift(.function(module + ".tagSize()", as: (() -> Int).self)),
             in: .path(provider.libraryURL)
         )
         let oracle = try await runtime.resolveCFunction(
@@ -1509,39 +1659,49 @@ struct SwiftImportedFunctionHookTests {
         )
         defer { fixture.cleanup() }
         let integer = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".hookEcho(_:)",
-                as: ((Int64) -> Int64).self,
-                genericArguments: [.type(Int64.self)]
+            .swift(
+                .function(
+                    fixture.module + ".hookEcho(_:)",
+                    as: ((Int64) -> Int64).self,
+                    genericArguments: [.type(Int64.self)]
+                )
             ),
             in: fixture.providerScope
         )
         let text = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".hookEcho(_:)",
-                as: ((String) -> String).self,
-                genericArguments: [.type(String.self)]
+            .swift(
+                .function(
+                    fixture.module + ".hookEcho(_:)",
+                    as: ((String) -> String).self,
+                    genericArguments: [.type(String.self)]
+                )
             ),
             in: fixture.providerScope
         )
         let intOracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".echoInt(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".echoInt(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
         let textOracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".echoText(_:)",
-                as: ((String) -> String).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".echoText(_:)",
+                    as: ((String) -> String).self
+                )
             ),
             in: fixture.callerScope
         )
         let arrayOracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".echoArray(_:)",
-                as: (([String]) -> [String]).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".echoArray(_:)",
+                    as: (([String]) -> [String]).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -1573,17 +1733,21 @@ struct SwiftImportedFunctionHookTests {
         #expect(try unsafe textOracle.unsafeInvoke(input) == input)
 
         let object = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".hookEcho(_:)",
-                as: ((NSObject) -> NSObject).self,
-                genericArguments: [.type(NSObject.self)]
+            .swift(
+                .function(
+                    fixture.module + ".hookEcho(_:)",
+                    as: ((NSObject) -> NSObject).self,
+                    genericArguments: [.type(NSObject.self)]
+                )
             ),
             in: fixture.providerScope
         )
         let objectOracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".echoObject(_:)",
-                as: ((NSObject) -> NSObject).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".echoObject(_:)",
+                    as: ((NSObject) -> NSObject).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -1603,24 +1767,30 @@ struct SwiftImportedFunctionHookTests {
         objectHook.invalidate()
 
         let factory = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".hookGenericFactory(_:)",
-                as: ((Int64) -> NativeSwiftClosure<() -> Int64>).self,
-                genericArguments: [.type(Int64.self)]
+            .swift(
+                .function(
+                    fixture.module + ".hookGenericFactory(_:)",
+                    as: ((Int64) -> NativeSwiftClosure<() -> Int64>).self,
+                    genericArguments: [.type(Int64.self)]
+                )
             ),
             in: fixture.providerScope
         )
         let factoryOracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".genericFactoryInteger(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".genericFactoryInteger(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
         let factoryControl = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".genericFactoryString(_:)",
-                as: ((String) -> String).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".genericFactoryString(_:)",
+                    as: ((String) -> String).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -1639,18 +1809,22 @@ struct SwiftImportedFunctionHookTests {
         factoryHook.invalidate()
 
         let native = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".hookEcho(_:)",
-                as: ((SwiftHookDistinctABIValue) -> SwiftHookDistinctABIValue).self,
-                genericArguments: [.type(SwiftHookDistinctABIValue.self)]
+            .swift(
+                .function(
+                    fixture.module + ".hookEcho(_:)",
+                    as: ((SwiftHookDistinctABIValue) -> SwiftHookDistinctABIValue).self,
+                    genericArguments: [.type(SwiftHookDistinctABIValue.self)]
+                )
             ),
             in: fixture.providerScope
         )
         let nativeOracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".forwardGeneric(_:)",
-                as: ((SwiftHookDistinctABIValue) -> SwiftHookDistinctABIValue).self,
-                genericArguments: [.type(SwiftHookDistinctABIValue.self)]
+            .swift(
+                .function(
+                    fixture.callerModule + ".forwardGeneric(_:)",
+                    as: ((SwiftHookDistinctABIValue) -> SwiftHookDistinctABIValue).self,
+                    genericArguments: [.type(SwiftHookDistinctABIValue.self)]
+                )
             ),
             in: fixture.callerScope
         )
@@ -1667,16 +1841,20 @@ struct SwiftImportedFunctionHookTests {
         nativeHook.invalidate()
 
         let tuple = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".hookTuple(_:)",
-                as: (((Int64, String)) -> (Int64, String)).self
+            .swift(
+                .function(
+                    fixture.module + ".hookTuple(_:)",
+                    as: (((Int64, String)) -> (Int64, String)).self
+                )
             ),
             in: fixture.providerScope
         )
         let tupleOracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedTuple(_:)",
-                as: (((Int64, String)) -> (Int64, String)).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedTuple(_:)",
+                    as: (((Int64, String)) -> (Int64, String)).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -1691,16 +1869,20 @@ struct SwiftImportedFunctionHookTests {
         tupleHook.invalidate()
 
         let scalarAdapter = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".hookNativeScalar(Swift.Int64) -> Swift.Int64",
-                as: ((Int64) -> SwiftHookDistinctABIValue).self
+            .swift(
+                .function(
+                    fixture.module + ".hookNativeScalar(Swift.Int64) -> Swift.Int64",
+                    as: ((Int64) -> SwiftHookDistinctABIValue).self
+                )
             ),
             in: fixture.providerScope
         )
         let scalarOracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedNativeScalar(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedNativeScalar(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -1717,39 +1899,49 @@ struct SwiftImportedFunctionHookTests {
         scalarHook.invalidate()
 
         let pair = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".hookPack(_:)",
-                as: ((Int64, String) -> (Int64, String)).self,
-                genericArguments: [.pack([.type(Int64.self), .type(String.self)])]
+            .swift(
+                .function(
+                    fixture.module + ".hookPack(_:)",
+                    as: ((Int64, String) -> (Int64, String)).self,
+                    genericArguments: [.pack([.type(Int64.self), .type(String.self)])]
+                )
             ),
             in: fixture.providerScope
         )
         let single = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".hookPack(_:)",
-                as: ((Int64) -> Int64).self,
-                genericArguments: [.pack([.type(Int64.self)])]
+            .swift(
+                .function(
+                    fixture.module + ".hookPack(_:)",
+                    as: ((Int64) -> Int64).self,
+                    genericArguments: [.pack([.type(Int64.self)])]
+                )
             ),
             in: fixture.providerScope
         )
         let pairOracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".packPair(_:_:)",
-                as: ((Int64, String) -> (Int64, String)).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".packPair(_:_:)",
+                    as: ((Int64, String) -> (Int64, String)).self
+                )
             ),
             in: fixture.callerScope
         )
         let singleOracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".packSingle(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".packSingle(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
         let tripleOracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".packTriple(_:)",
-                as: ((String) -> (String, Int64, Double)).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".packTriple(_:)",
+                    as: ((String) -> (String, Int64, Double)).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -1804,30 +1996,38 @@ struct SwiftImportedFunctionHookTests {
         )
         defer { fixture.cleanup() }
         let any = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".throwsAny(_:_:)",
-                as: ((Int64, UnsafeMutablePointer<Int64>) throws -> Int64).self
+            .swift(
+                .function(
+                    fixture.module + ".throwsAny(_:_:)",
+                    as: ((Int64, UnsafeMutablePointer<Int64>) throws -> Int64).self
+                )
             ),
             in: fixture.providerScope
         )
         let anyOracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedThrowsAny(_:_:)",
-                as: ((Int64, UnsafeMutablePointer<Int64>) throws -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedThrowsAny(_:_:)",
+                    as: ((Int64, UnsafeMutablePointer<Int64>) throws -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
         let typed = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".throwsTyped(_:_:)",
-                as: ((Int64, UnsafeMutablePointer<Int64>) throws(NSError) -> Int64).self
+            .swift(
+                .function(
+                    fixture.module + ".throwsTyped(_:_:)",
+                    as: ((Int64, UnsafeMutablePointer<Int64>) throws(NSError) -> Int64).self
+                )
             ),
             in: fixture.providerScope
         )
         let typedOracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedThrowsTyped(_:_:)",
-                as: ((Int64, UnsafeMutablePointer<Int64>) throws(NSError) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedThrowsTyped(_:_:)",
+                    as: ((Int64, UnsafeMutablePointer<Int64>) throws(NSError) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -1917,16 +2117,20 @@ struct SwiftImportedFunctionHookTests {
         )
         defer { fixture.cleanup() }
         let function = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".byteValue(Swift.UInt8) -> Swift.Int64",
-                as: ((Bool) -> Int64).self
+            .swift(
+                .function(
+                    fixture.module + ".byteValue(Swift.UInt8) -> Swift.Int64",
+                    as: ((Bool) -> Int64).self
+                )
             ),
             in: fixture.providerScope
         )
         let caller = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedByteValue(_:)",
-                as: ((UInt8) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedByteValue(_:)",
+                    as: ((UInt8) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -1948,17 +2152,21 @@ struct SwiftImportedFunctionHookTests {
         let fixture = try CompiledSwiftReplacementFixture()
         defer { fixture.cleanup() }
         let scalar = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".opaqueScalar(Swift.Int64) -> some",
-                as: ((Int64) -> Int64).self,
-                declaredAs: "(Swift.Int64) -> some"
+            .swift(
+                .function(
+                    fixture.module + ".opaqueScalar(Swift.Int64) -> some",
+                    as: ((Int64) -> Int64).self,
+                    declaredAs: "(Swift.Int64) -> some"
+                )
             ),
             in: fixture.providerScope
         )
         let scalarOracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedOpaqueScalar(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedOpaqueScalar(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -1974,17 +2182,21 @@ struct SwiftImportedFunctionHookTests {
         #expect(try unsafe scalarOracle.unsafeInvoke(40) == 41)
 
         let text = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".opaqueText(Swift.String) -> some",
-                as: ((String) -> String).self,
-                declaredAs: "(Swift.String) -> some"
+            .swift(
+                .function(
+                    fixture.module + ".opaqueText(Swift.String) -> some",
+                    as: ((String) -> String).self,
+                    declaredAs: "(Swift.String) -> some"
+                )
             ),
             in: fixture.providerScope
         )
         let textOracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedOpaqueText(_:)",
-                as: ((String) -> String).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedOpaqueText(_:)",
+                    as: ((String) -> String).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -2025,16 +2237,20 @@ struct SwiftImportedFunctionHookTests {
     @Test func chainsTypedArgumentsResultsAndIndependentInvalidation() async throws {
         let fixture = try CompiledSwiftReplacementFixture(); defer { fixture.cleanup() }
         let target = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".scalar(_:)",
-                as: (@Sendable (Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.module + ".scalar(_:)",
+                    as: (@Sendable (Int64) -> Int64).self
+                )
             ),
             in: fixture.providerScope
         )
         let oracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedScalar(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedScalar(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -2071,16 +2287,20 @@ struct SwiftImportedFunctionHookTests {
     @Test func editsOwnedStringsAndPreservesLatestResultAfterFailure() async throws {
         let fixture = try CompiledSwiftReplacementFixture(); defer { fixture.cleanup() }
         let target = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".text(_:)",
-                as: ((String) -> String).self
+            .swift(
+                .function(
+                    fixture.module + ".text(_:)",
+                    as: ((String) -> String).self
+                )
             ),
             in: fixture.providerScope
         )
         let oracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedText(_:)",
-                as: ((String) -> String).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedText(_:)",
+                    as: ((String) -> String).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -2131,16 +2351,20 @@ struct SwiftImportedFunctionHookTests {
                 """
         ); defer { fixture.cleanup() }
         let target = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".objectLength(_:)",
-                as: ((NSMutableString) -> Int64).self
+            .swift(
+                .function(
+                    fixture.module + ".objectLength(_:)",
+                    as: ((NSMutableString) -> Int64).self
+                )
             ),
             in: fixture.providerScope
         )
         let oracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedObjectLength(_:)",
-                as: ((NSMutableString) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedObjectLength(_:)",
+                    as: ((NSMutableString) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -2165,16 +2389,20 @@ struct SwiftImportedFunctionHookTests {
     @Test @MainActor func mainActorCallbacksBypassBackgroundEntry() async throws {
         let fixture = try CompiledSwiftReplacementFixture(); defer { fixture.cleanup() }
         let target = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".scalar(_:)",
-                as: (@Sendable (Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.module + ".scalar(_:)",
+                    as: (@Sendable (Int64) -> Int64).self
+                )
             ),
             in: fixture.providerScope
         )
         let oracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedScalar(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedScalar(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -2198,17 +2426,21 @@ struct SwiftImportedFunctionHookTests {
     @Test func preservesIndirectResultsThroughTheCompiledCaller() async throws {
         let fixture = try CompiledSwiftReplacementFixture(); defer { fixture.cleanup() }
         let target = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".payload(Swift.Int64) -> " + fixture.module
-                    + ".ReplacementPayload",
-                as: ((Int64) -> SwiftABIFive).self
+            .swift(
+                .function(
+                    fixture.module + ".payload(Swift.Int64) -> " + fixture.module
+                        + ".ReplacementPayload",
+                    as: ((Int64) -> SwiftABIFive).self
+                )
             ),
             in: fixture.providerScope
         )
         let oracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedPayload(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedPayload(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -2241,16 +2473,20 @@ struct SwiftImportedFunctionHookTests {
                 """
         ); defer { fixture.cleanup() }
         let zero = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".zero()",
-                as: (() -> Int64).self
+            .swift(
+                .function(
+                    fixture.module + ".zero()",
+                    as: (() -> Int64).self
+                )
             ),
             in: fixture.providerScope
         )
         let zeroOracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedZero()",
-                as: (() -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedZero()",
+                    as: (() -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -2263,16 +2499,20 @@ struct SwiftImportedFunctionHookTests {
         defer { zeroHook.invalidate() }
         #expect(try unsafe zeroOracle.unsafeInvoke() == 142)
         let touch = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".touch(_:)",
-                as: ((UnsafeMutablePointer<Int64>) -> Void).self
+            .swift(
+                .function(
+                    fixture.module + ".touch(_:)",
+                    as: ((UnsafeMutablePointer<Int64>) -> Void).self
+                )
             ),
             in: fixture.providerScope
         )
         let touchOracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedTouch(_:)",
-                as: ((UnsafeMutablePointer<Int64>) -> Void).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedTouch(_:)",
+                    as: ((UnsafeMutablePointer<Int64>) -> Void).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -2289,19 +2529,23 @@ struct SwiftImportedFunctionHookTests {
         try withUnsafeMutablePointer(to: &value) { try unsafe touchOracle.unsafeInvoke($0) }
         #expect(value == 13)
         let many = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".many(_:_:_:_:_:_:_:_:_:_:_:_:)",
-                as: ((
-                    Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64,
-                    Int64
-                ) -> Int64).self
+            .swift(
+                .function(
+                    fixture.module + ".many(_:_:_:_:_:_:_:_:_:_:_:_:)",
+                    as: ((
+                        Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64, Int64,
+                        Int64
+                    ) -> Int64).self
+                )
             ),
             in: fixture.providerScope
         )
         let manyOracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedMany()",
-                as: (() -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedMany()",
+                    as: (() -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -2318,23 +2562,29 @@ struct SwiftImportedFunctionHookTests {
     @Test func preservesDisplacementAndSavedDispatcherLifetime() async throws {
         let fixture = try CompiledSwiftReplacementFixture(); defer { fixture.cleanup() }
         let target = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".scalar(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.module + ".scalar(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.providerScope
         )
         let replacement = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".replacementScalar(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.module + ".replacementScalar(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.providerScope
         )
         let oracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedScalar(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedScalar(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -2363,16 +2613,20 @@ struct SwiftImportedFunctionHookTests {
     @Test func failedPublicationKeepsProtectionOnlyRecoveryReachable() async throws {
         let fixture = try CompiledSwiftReplacementFixture(); defer { fixture.cleanup() }
         let target = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".scalar(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.module + ".scalar(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.providerScope
         )
         let oracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedScalar(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedScalar(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -2441,16 +2695,20 @@ struct SwiftImportedFunctionHookTests {
     @Test func releasesCapturesAndRejectsEscapedContinuations() async throws {
         let fixture = try CompiledSwiftReplacementFixture(); defer { fixture.cleanup() }
         let target = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".scalar(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.module + ".scalar(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.providerScope
         )
         let oracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedScalar(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedScalar(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -2480,16 +2738,20 @@ struct SwiftImportedFunctionHookTests {
     @Test func concurrentCallsKeepTheirSnapshotsWhileInvalidationReleasesCaptures() async throws {
         let fixture = try CompiledSwiftReplacementFixture(); defer { fixture.cleanup() }
         let target = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".scalar(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.module + ".scalar(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.providerScope
         )
         let oracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedScalar(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedScalar(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -2556,9 +2818,11 @@ struct SwiftImportedFunctionHookTests {
     @Test func reusingAnEntryRetainsAdditionalCodeOwnersIndependentlyOfCallbacks() async throws {
         let fixture = try CompiledSwiftReplacementFixture(); defer { fixture.cleanup() }
         let target = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".scalar(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.module + ".scalar(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.providerScope
         )
@@ -2601,17 +2865,21 @@ struct SwiftImportedFunctionHookTests {
         )
         defer { fixture.cleanup() }
         let total = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".hookRangedTotal(_:)",
-                as: ((NativeSwiftValue) -> Int64).self,
-                genericArguments: [.type(Int64.self)]
+            .swift(
+                .function(
+                    fixture.module + ".hookRangedTotal(_:)",
+                    as: ((NativeSwiftValue) -> Int64).self,
+                    genericArguments: [.type(Int64.self)]
+                )
             ),
             in: fixture.providerScope
         )
         let caller = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedRangedTotal(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedRangedTotal(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )

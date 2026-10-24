@@ -231,39 +231,50 @@ struct SwiftReplacementTests {
     @Test func classMetadataUsesCompiledMethodsAndPreservesDirectControls() async throws {
         let fixture = try CompiledSwiftReplacementFixture(); defer { fixture.cleanup() }
         let make = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".makeRenderer() -> " + fixture.module + ".ReplacementRenderer",
-                as: (() -> AnyObject).self
+            .swift(
+                .function(
+                    fixture.module + ".makeRenderer() -> " + fixture.module
+                        + ".ReplacementRenderer",
+                    as: (() -> AnyObject).self
+                )
             ),
             in: fixture.providerScope
         )
         let object = try unsafe make.unsafeInvoke()
         let className = fixture.module + ".ReplacementRenderer"
         let scalar = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".classScalar(\(className), Swift.Int64) -> Swift.Int64",
-                as: ((AnyObject, Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".classScalar(\(className), Swift.Int64) -> Swift.Int64",
+                    as: ((AnyObject, Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
         let final = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".classFinal(\(className), Swift.Int64) -> Swift.Int64",
-                as: ((AnyObject, Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".classFinal(\(className), Swift.Int64) -> Swift.Int64",
+                    as: ((AnyObject, Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
         let devirtualized = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".knownClassScalar(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.module + ".knownClassScalar(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.providerScope
         )
         let captured = try await fixture.runtime.object(object).resolve(
-            .method(
-                "scalar(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .method(
+                    "scalar(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             )
         )
         #expect(try unsafe scalar.unsafeInvoke(object, 40) == 42)
@@ -279,9 +290,11 @@ struct SwiftReplacementTests {
         #expect(try unsafe scalar.unsafeInvoke(object, 40) == 42)
 
         let text = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".classText(\(className), Swift.String) -> Swift.String",
-                as: ((AnyObject, String) -> String).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".classText(\(className), Swift.String) -> Swift.String",
+                    as: ((AnyObject, String) -> String).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -300,9 +313,12 @@ struct SwiftReplacementTests {
         #expect(try unsafe text.unsafeInvoke(object, input) == "method:" + input)
 
         let payload = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".classPayload(\(className), Swift.Int64) -> Swift.Int64",
-                as: ((AnyObject, Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule
+                        + ".classPayload(\(className), Swift.Int64) -> Swift.Int64",
+                    as: ((AnyObject, Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -319,9 +335,11 @@ struct SwiftReplacementTests {
     @Test func compilerDynamicReplacementIsAnIndependentInstrumentedPath() async throws {
         let fixture = try CompiledSwiftReplacementFixture(); defer { fixture.cleanup() }
         let captured = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".dynamicScalar(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.module + ".dynamicScalar(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.providerScope
         )
@@ -347,16 +365,20 @@ struct SwiftReplacementTests {
     @Test func compiledImportsPreserveScalarStringIndirectResultAndStructContext() async throws {
         let fixture = try CompiledSwiftReplacementFixture(); defer { fixture.cleanup() }
         let scalar = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedScalar(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedScalar(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
         let original = try await fixture.runtime.resolve(
-            .function(
-                fixture.module + ".scalar(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.module + ".scalar(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.providerScope
         )
@@ -371,9 +393,11 @@ struct SwiftReplacementTests {
         #expect(try unsafe scalar.unsafeInvoke(40) == 41)
 
         let text = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedText(_:)",
-                as: ((String) -> String).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedText(_:)",
+                    as: ((String) -> String).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -390,9 +414,11 @@ struct SwiftReplacementTests {
         #expect(try unsafe text.unsafeInvoke(input) == "original:" + input)
 
         let large = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedPayload(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedPayload(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -406,9 +432,11 @@ struct SwiftReplacementTests {
         #expect(try unsafe large.unsafeInvoke(40) == 210)
 
         let valueMethod = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedValueMethod(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedValueMethod(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -426,9 +454,11 @@ struct SwiftReplacementTests {
         let fixture = try CompiledSwiftReplacementFixture(writable: false);
         defer { fixture.cleanup() }
         let oracle = try await fixture.runtime.resolve(
-            .function(
-                fixture.callerModule + ".importedScalar(_:)",
-                as: ((Int64) -> Int64).self
+            .swift(
+                .function(
+                    fixture.callerModule + ".importedScalar(_:)",
+                    as: ((Int64) -> Int64).self
+                )
             ),
             in: fixture.callerScope
         )
@@ -453,9 +483,11 @@ struct SwiftReplacementTests {
             let fixture = try CompiledSwiftReplacementFixture(interposable: interposable)
             defer { fixture.cleanup() }
             let oracle = try await fixture.runtime.resolve(
-                .function(
-                    fixture.module + ".sameImageScalar(_:)",
-                    as: ((Int64) -> Int64).self
+                .swift(
+                    .function(
+                        fixture.module + ".sameImageScalar(_:)",
+                        as: ((Int64) -> Int64).self
+                    )
                 ),
                 in: fixture.providerScope
             )

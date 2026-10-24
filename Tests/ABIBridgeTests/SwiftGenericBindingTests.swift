@@ -363,10 +363,12 @@ struct SwiftGenericBindingTests {
         for name in ["save", "explicit"] {
             do {
                 _ = try await runtime.resolve(
-                    .function(
-                        module + "." + name + "<A>(A) -> Any",
-                        as: ((NativeSwiftBorrowedValue) -> Any).self,
-                        genericArguments: [.type(type)]
+                    .swift(
+                        .function(
+                            module + "." + name + "<A>(A) -> Any",
+                            as: ((NativeSwiftBorrowedValue) -> Any).self,
+                            genericArguments: [.type(type)]
+                        )
                     ),
                     in: .path(fixture.libraryURL)
                 )
@@ -374,11 +376,13 @@ struct SwiftGenericBindingTests {
             } catch ABIResolutionError.signatureMismatch {}
         }
         let inspect = try await runtime.resolve(
-            .function(
-                module
-                    + ".inspect<A where A: ~Swift.Copyable, A: ~Swift.Escapable>(A) -> Swift.Int64",
-                as: ((NativeSwiftBorrowedValue) -> Int64).self,
-                genericArguments: [.type(type)]
+            .swift(
+                .function(
+                    module
+                        + ".inspect<A where A: ~Swift.Copyable, A: ~Swift.Escapable>(A) -> Swift.Int64",
+                    as: ((NativeSwiftBorrowedValue) -> Int64).self,
+                    genericArguments: [.type(type)]
+                )
             ),
             in: .path(fixture.libraryURL)
         )
@@ -388,10 +392,12 @@ struct SwiftGenericBindingTests {
             copied.accept($0)
         }
         let visit = try await runtime.resolve(
-            .function(
-                module + ".visit((" + module + ".View) -> ()) -> ()",
-                as: ((NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Void>) -> Void).self,
-                valueABIs: [type: .opaque(named: type.name)]
+            .swift(
+                .function(
+                    module + ".visit((" + module + ".View) -> ()) -> ()",
+                    as: ((NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Void>) -> Void).self,
+                    valueABIs: [type: .opaque(named: type.name)]
+                )
             ),
             in: .path(fixture.libraryURL)
         )
@@ -506,16 +512,20 @@ struct SwiftGenericBindingTests {
                 operation == .addressReceiverResult || operation == .asyncAddressReceiverResult
                     || operation == .borrowedCallback ? "makeRecord()" : "make()"
             let makeFirst = try runtime.resolveAndWait(
-                .function(
-                    module + "First." + factoryName,
-                    as: (() -> NativeSwiftValue).self
+                .swift(
+                    .function(
+                        module + "First." + factoryName,
+                        as: (() -> NativeSwiftValue).self
+                    )
                 ),
                 in: .path(first.libraryURL)
             )
             let makeSecond = try runtime.resolveAndWait(
-                .function(
-                    module + "Second." + factoryName,
-                    as: (() -> NativeSwiftValue).self
+                .swift(
+                    .function(
+                        module + "Second." + factoryName,
+                        as: (() -> NativeSwiftValue).self
+                    )
                 ),
                 in: .path(second.libraryURL)
             )
@@ -527,11 +537,13 @@ struct SwiftGenericBindingTests {
             )
             if operation == .asyncMovedResult {
                 let move = try runtime.resolveAndWait(
-                    .function(
-                        "ManagedSwiftFixtures.moveRuntimeValueAsync<A where A: ~Swift.Copyable>(__owned A) async -> A",
-                        as: ((NativeSwiftConsuming<NativeSwiftValue>) async -> NativeSwiftValue)
-                            .self,
-                        genericArguments: [.type(binding.type)]
+                    .swift(
+                        .function(
+                            "ManagedSwiftFixtures.moveRuntimeValueAsync<A where A: ~Swift.Copyable>(__owned A) async -> A",
+                            as: ((NativeSwiftConsuming<NativeSwiftValue>) async -> NativeSwiftValue)
+                                .self,
+                            genericArguments: [.type(binding.type)]
+                        )
                     )
                 )
                 return try unsafe await move.unsafeInvoke(NativeSwiftConsuming(argument))
@@ -542,10 +554,12 @@ struct SwiftGenericBindingTests {
             case .hostCallbackMutation, .hostAsyncCallbackMutation, .storedHostCallbackMutation,
                 .scopedCopyMutation:
                 let update = try runtime.resolveAndWait(
-                    .function(
-                        module + "Second.update<A>(A) -> ()",
-                        as: ((AnyObject) -> Void).self,
-                        genericArguments: [.type(AnyObject.self)]
+                    .swift(
+                        .function(
+                            module + "Second.update<A>(A) -> ()",
+                            as: ((AnyObject) -> Void).self,
+                            genericArguments: [.type(AnyObject.self)]
+                        )
                     ),
                     in: .path(second.libraryURL)
                 )
@@ -562,13 +576,15 @@ struct SwiftGenericBindingTests {
                         nonisolated(nonsending) (AnyObject) async throws -> Void
                     >(body)
                     let apply = try binding.type.resolveAndWait(
-                        .method(
-                            "applyAsyncThrowing(_:)",
-                            as: (nonisolated(nonsending) (
-                                NativeSwiftClosure<
-                                    nonisolated(nonsending) (AnyObject) async throws -> Void
-                                >
-                            ) async throws -> Void).self
+                        .swift(
+                            .method(
+                                "applyAsyncThrowing(_:)",
+                                as: (nonisolated(nonsending) (
+                                    NativeSwiftClosure<
+                                        nonisolated(nonsending) (AnyObject) async throws -> Void
+                                    >
+                                ) async throws -> Void).self
+                            )
                         )
                     )
                     try unsafe await apply.unsafeInvoke(on: binding, callback)
@@ -579,34 +595,44 @@ struct SwiftGenericBindingTests {
                     let callback = try NativeSwiftClosure<(AnyObject) throws -> Void>(body)
                     if operation == .storedHostCallbackMutation {
                         let store = try binding.type.resolveAndWait(
-                            .method(
-                                "store(_:)",
-                                as: ((NativeSwiftClosure<(AnyObject) throws -> Void>) -> Void).self
+                            .swift(
+                                .method(
+                                    "store(_:)",
+                                    as: ((NativeSwiftClosure<(AnyObject) throws -> Void>) -> Void)
+                                        .self
+                                )
                             )
                         )
                         try unsafe store.unsafeInvoke(on: binding, callback)
                         let fire = try runtime.resolveAndWait(
-                            .function(
-                                module + ".fire(_:)",
-                                as: ((AnyObject) throws -> Void).self
+                            .swift(
+                                .function(
+                                    module + ".fire(_:)",
+                                    as: ((AnyObject) throws -> Void).self
+                                )
                             ),
                             in: .path(provider.libraryURL)
                         )
                         let object = try binding.withCopy { $0 as AnyObject }
                         try unsafe fire.unsafeInvoke(object)
                         let clear = try binding.type.resolveAndWait(
-                            .method(
-                                "clear()",
-                                as: (() -> Void).self
+                            .swift(
+                                .method(
+                                    "clear()",
+                                    as: (() -> Void).self
+                                )
                             )
                         )
                         try unsafe clear.unsafeInvoke(on: binding)
                     } else {
                         let apply = try binding.type.resolveAndWait(
-                            .method(
-                                "applyThrowing(_:)",
-                                as: ((NativeSwiftClosure<(AnyObject) throws -> Void>) throws -> Void)
-                                    .self
+                            .swift(
+                                .method(
+                                    "applyThrowing(_:)",
+                                    as: ((NativeSwiftClosure<(AnyObject) throws -> Void>) throws
+                                        -> Void)
+                                        .self
+                                )
                             )
                         )
                         try unsafe apply.unsafeInvoke(on: binding, callback)
@@ -615,62 +641,76 @@ struct SwiftGenericBindingTests {
                 return binding
             case .callbackMutation:
                 let make = try runtime.resolveAndWait(
-                    .function(
-                        module + "Second.callback()",
-                        as: (() -> NativeSwiftClosure<(AnyObject) -> Void>).self
+                    .swift(
+                        .function(
+                            module + "Second.callback()",
+                            as: (() -> NativeSwiftClosure<(AnyObject) -> Void>).self
+                        )
                     ),
                     in: .path(second.libraryURL)
                 )
                 argumentLease = make.symbol.image.lease
                 let callback = try unsafe make.unsafeInvoke()
                 let apply = try binding.type.resolveAndWait(
-                    .method(
-                        "apply(_:)",
-                        as: ((NativeSwiftClosure<(AnyObject) -> Void>) -> Void).self
+                    .swift(
+                        .method(
+                            "apply(_:)",
+                            as: ((NativeSwiftClosure<(AnyObject) -> Void>) -> Void).self
+                        )
                     )
                 )
                 try unsafe apply.unsafeInvoke(on: binding, callback)
                 return binding
             case .asyncCallbackMutation:
                 let make = try runtime.resolveAndWait(
-                    .function(
-                        module + "Second.asyncCallback()",
-                        as: (() -> NativeSwiftClosure<
-                            nonisolated(nonsending) (AnyObject) async -> Void
-                        >)
-                        .self
+                    .swift(
+                        .function(
+                            module + "Second.asyncCallback()",
+                            as: (() -> NativeSwiftClosure<
+                                nonisolated(nonsending) (AnyObject) async -> Void
+                            >)
+                            .self
+                        )
                     ),
                     in: .path(second.libraryURL)
                 )
                 argumentLease = make.symbol.image.lease
                 let callback = try unsafe make.unsafeInvoke()
                 let apply = try binding.type.resolveAndWait(
-                    .method(
-                        "applyAsync(_:)",
-                        as: (nonisolated(nonsending) (
-                            NativeSwiftClosure<nonisolated(nonsending) (AnyObject) async -> Void>
-                        ) async -> Void).self
+                    .swift(
+                        .method(
+                            "applyAsync(_:)",
+                            as: (nonisolated(nonsending) (
+                                NativeSwiftClosure<
+                                    nonisolated(nonsending) (AnyObject) async -> Void
+                                >
+                            ) async -> Void).self
+                        )
                     )
                 )
                 try unsafe await apply.unsafeInvoke(on: binding, callback)
                 return binding
             case .receiverResult, .addressReceiverResult:
                 let method = try argument.type.resolveAndWait(
-                    .method(
-                        "opaqueSelf()",
-                        as: (() -> NativeSwiftValue).self,
-                        receiverABI: receiverABI,
-                        receiver: .consuming
+                    .swift(
+                        .method(
+                            "opaqueSelf()",
+                            as: (() -> NativeSwiftValue).self,
+                            receiverABI: receiverABI,
+                            receiver: .consuming
+                        )
                     )
                 )
                 return try unsafe method.unsafeInvoke(on: argument)
             case .asyncReceiverResult, .asyncAddressReceiverResult:
                 let method = try argument.type.resolveAndWait(
-                    .method(
-                        "opaqueSelfAsync()",
-                        as: (() async -> NativeSwiftValue).self,
-                        receiverABI: receiverABI,
-                        receiver: .consuming
+                    .swift(
+                        .method(
+                            "opaqueSelfAsync()",
+                            as: (() async -> NativeSwiftValue).self,
+                            receiverABI: receiverABI,
+                            receiver: .consuming
+                        )
                     )
                 )
                 return try unsafe await method.unsafeInvoke(on: argument)
@@ -678,14 +718,16 @@ struct SwiftGenericBindingTests {
                 let buffer = try NativeSwiftInout(binding)
                 if operation == .throwingInout {
                     let replace = try runtime.resolveAndWait(
-                        .function(
-                            module
-                                + ".replaceAndThrow<A where A: ~Swift.Copyable>(inout A, __owned A) throws -> ()",
-                            as: ((
-                                NativeSwiftInout<NativeSwiftValue>,
-                                NativeSwiftConsuming<NativeSwiftValue>
-                            ) throws -> Void).self,
-                            genericArguments: [.type(binding.type)]
+                        .swift(
+                            .function(
+                                module
+                                    + ".replaceAndThrow<A where A: ~Swift.Copyable>(inout A, __owned A) throws -> ()",
+                                as: ((
+                                    NativeSwiftInout<NativeSwiftValue>,
+                                    NativeSwiftConsuming<NativeSwiftValue>
+                                ) throws -> Void).self,
+                                genericArguments: [.type(binding.type)]
+                            )
                         ),
                         in: .path(provider.libraryURL)
                     )
@@ -695,13 +737,15 @@ struct SwiftGenericBindingTests {
                     } catch is NativeSwiftError {}
                 } else {
                     let replace = try runtime.resolveAndWait(
-                        .function(
-                            "ManagedSwiftFixtures.replaceRuntimeValue<A where A: ~Swift.Copyable>(inout A, __owned A) -> ()",
-                            as: ((
-                                NativeSwiftInout<NativeSwiftValue>,
-                                NativeSwiftConsuming<NativeSwiftValue>
-                            ) -> Void).self,
-                            genericArguments: [.type(binding.type)]
+                        .swift(
+                            .function(
+                                "ManagedSwiftFixtures.replaceRuntimeValue<A where A: ~Swift.Copyable>(inout A, __owned A) -> ()",
+                                as: ((
+                                    NativeSwiftInout<NativeSwiftValue>,
+                                    NativeSwiftConsuming<NativeSwiftValue>
+                                ) -> Void).self,
+                                genericArguments: [.type(binding.type)]
+                            )
                         )
                     )
                     try unsafe replace.unsafeInvoke(buffer, NativeSwiftConsuming(argument))
@@ -713,10 +757,13 @@ struct SwiftGenericBindingTests {
                     copied.accept($0)
                 }
                 let visit = try runtime.resolveAndWait(
-                    .function(
-                        module + "Second.visit((" + module + ".Record) -> ()) -> ()",
-                        as: ((NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Void>) -> Void).self,
-                        valueABIs: [binding.type: .opaque(named: binding.type.name)]
+                    .swift(
+                        .function(
+                            module + "Second.visit((" + module + ".Record) -> ()) -> ()",
+                            as: ((NativeSwiftClosure<(NativeSwiftBorrowedValue) -> Void>) -> Void)
+                                .self,
+                            valueABIs: [binding.type: .opaque(named: binding.type.name)]
+                        )
                     ),
                     in: .path(second.libraryURL)
                 )
@@ -726,10 +773,12 @@ struct SwiftGenericBindingTests {
             case .calleeMutation, .throwingCalleeMutation:
                 if operation == .throwingCalleeMutation {
                     let update = try runtime.resolveAndWait(
-                        .function(
-                            module + "Second.updateAndThrow<A>(A) throws -> ()",
-                            as: ((NativeSwiftValue) throws -> Void).self,
-                            genericArguments: [.type(binding.type)]
+                        .swift(
+                            .function(
+                                module + "Second.updateAndThrow<A>(A) throws -> ()",
+                                as: ((NativeSwiftValue) throws -> Void).self,
+                                genericArguments: [.type(binding.type)]
+                            )
                         ),
                         in: .path(second.libraryURL)
                     )
@@ -740,10 +789,12 @@ struct SwiftGenericBindingTests {
                     } catch is NativeSwiftError {}
                 } else {
                     let update = try runtime.resolveAndWait(
-                        .function(
-                            module + "Second.update<A>(A) -> ()",
-                            as: ((NativeSwiftValue) -> Void).self,
-                            genericArguments: [.type(binding.type)]
+                        .swift(
+                            .function(
+                                module + "Second.update<A>(A) -> ()",
+                                as: ((NativeSwiftValue) -> Void).self,
+                                genericArguments: [.type(binding.type)]
+                            )
                         ),
                         in: .path(second.libraryURL)
                     )
@@ -757,19 +808,23 @@ struct SwiftGenericBindingTests {
                     alias = try binding.copy()
                 } else {
                     let copy = try runtime.resolveAndWait(
-                        .function(
-                            "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
-                            as: ((NativeSwiftValue) -> NativeSwiftValue).self,
-                            genericArguments: [.type(binding.type)]
+                        .swift(
+                            .function(
+                                "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+                                as: ((NativeSwiftValue) -> NativeSwiftValue).self,
+                                genericArguments: [.type(binding.type)]
+                            )
                         )
                     )
                     alias = try unsafe copy.unsafeInvoke(binding)
                 }
                 let update = try runtime.resolveAndWait(
-                    .function(
-                        module + ".update<A>(A, A) -> ()",
-                        as: ((NativeSwiftValue, NativeSwiftValue) -> Void).self,
-                        genericArguments: [.type(binding.type)]
+                    .swift(
+                        .function(
+                            module + ".update<A>(A, A) -> ()",
+                            as: ((NativeSwiftValue, NativeSwiftValue) -> Void).self,
+                            genericArguments: [.type(binding.type)]
+                        )
                     ),
                     in: .path(provider.libraryURL)
                 )
@@ -780,10 +835,12 @@ struct SwiftGenericBindingTests {
                 return alias
             case .copiedResult, .asyncMovedResult:
                 let copy = try runtime.resolveAndWait(
-                    .function(
-                        "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
-                        as: ((NativeSwiftValue) -> NativeSwiftValue).self,
-                        genericArguments: [.type(binding.type)]
+                    .swift(
+                        .function(
+                            "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+                            as: ((NativeSwiftValue) -> NativeSwiftValue).self,
+                            genericArguments: [.type(binding.type)]
+                        )
                     )
                 )
                 preparedCopy = copy
@@ -804,10 +861,12 @@ struct SwiftGenericBindingTests {
                     || operation == .borrowedCallback
                 ? try .opaque(named: result!.type.name) : nil
             let read = try result!.type.resolveAndWait(
-                .method(
-                    "read()",
-                    as: (() -> Int64).self,
-                    receiverABI: receiverABI
+                .swift(
+                    .method(
+                        "read()",
+                        as: (() -> Int64).self,
+                        receiverABI: receiverABI
+                    )
                 )
             )
             #expect(try unsafe read.unsafeInvoke(on: result!) == 42)
@@ -1206,33 +1265,41 @@ struct SwiftGenericBindingTests {
             genericArguments: [.type(String.self)]
         )
         let initialize = try await type.resolve(
-            .initializer(
-                "init(_:)",
-                as: ((String) -> GenericTypeClass<String>).self
+            .swift(
+                .initializer(
+                    "init(_:)",
+                    as: ((String) -> GenericTypeClass<String>).self
+                )
             )
         )
         let receiver = try unsafe initialize.unsafeInvoke(String(repeating: "initial", count: 20))
         let erasedInitialize = try await type.resolve(
-            .initializer(
-                "init(_:)",
-                as: ((String) -> AnyObject).self
+            .swift(
+                .initializer(
+                    "init(_:)",
+                    as: ((String) -> AnyObject).self
+                )
             )
         )
         let erasedReceiver = try unsafe erasedInitialize.unsafeInvoke("erased")
         #expect((erasedReceiver as? GenericTypeClass<String>)?.value == "erased")
-        let get = try await type.resolve(.getter("value", as: (() -> String).self))
-        let set = try await type.resolve(.setter("value", as: ((String) -> Void).self))
+        let get = try await type.resolve(.swift(.getter("value", as: (() -> String).self)))
+        let set = try await type.resolve(.swift(.setter("value", as: ((String) -> Void).self)))
         let identity = try await type.resolve(
-            .staticMethod(
-                "identity(_:)",
-                as: ((String) -> String).self
+            .swift(
+                .staticMethod(
+                    "identity(_:)",
+                    as: ((String) -> String).self
+                )
             )
         )
         let compare = try await type.resolve(
-            .method(
-                "compare(_:)",
-                as: ((Int) -> (String, Int, Bool)).self,
-                genericArguments: [.type(Int.self)]
+            .swift(
+                .method(
+                    "compare(_:)",
+                    as: ((Int) -> (String, Int, Bool)).self,
+                    genericArguments: [.type(Int.self)]
+                )
             )
         )
         #expect(try unsafe get.unsafeInvoke(on: receiver) == receiver.value)

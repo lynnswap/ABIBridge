@@ -67,9 +67,9 @@ Search, image acquisition, and call preparation run on a worker while the caller
 For an already-loaded module defining `func decorate(_ value: String) -> String`:
 
 ```swift
-let decorate = try runtime.resolveAndWait(.function(
+let decorate = try runtime.resolveAndWait(.swift(.function(
     "Example.decorate(_:)", as: ((String) -> String).self
-))
+)))
 let message = try unsafe decorate.unsafeInvoke("Hello")
 ```
 
@@ -78,22 +78,22 @@ Await `resolve` for lookup on a worker queue while the caller suspends:
 ```swift
 @MainActor
 func makeMessage() async throws -> String {
-    let decorate = try await ABIRuntime.shared.resolve(.function(
+    let decorate = try await ABIRuntime.shared.resolve(.swift(.function(
         "Example.decorate(_:)", as: ((String) -> String).self
-    ))
+    )))
     return try unsafe decorate.unsafeInvoke("Hello")
 }
 ```
 
-`resolveAndWait` selects synchronous lookup. Invocation needs `await` only when the native signature is async; see [Swift function calls](https://lynnswap.github.io/ABIBridge/documentation/abibridge/swiftfunctioninvocation).
+Save a reusable declaration with `NativeRequest.swift(.function(...))`, or pass it inline as above. Retain the resolved handle for repeated calls. `resolveAndWait` selects synchronous lookup. Invocation needs `await` only when the native signature is async; see [Swift function calls](https://lynnswap.github.io/ABIBridge/documentation/abibridge/swiftfunctioninvocation).
 
 Generic declarations use the same callable handles with explicit type arguments:
 
 ```swift
-let echo = try runtime.resolveAndWait(.function(
+let echo = try runtime.resolveAndWait(.swift(.function(
     "Example.echo(_:)", as: ((String) -> String).self,
     genericArguments: [.type(String.self)]
-))
+)))
 let message = try unsafe echo.unsafeInvoke("Hello")
 ```
 
@@ -107,7 +107,7 @@ A type resolves requests for its members with the same `resolve` and `resolveAnd
 @MainActor
 func readTitle(from renderer: AnyObject) async throws -> String {
     let type = try await ABIRuntime.shared.resolveSwiftType(named: "Example.Renderer")
-    let title = try await type.resolve(.method("title()", as: (() -> String).self))
+    let title = try await type.resolve(.swift(.method("title()", as: (() -> String).self)))
     return try unsafe title.unsafeInvoke(on: renderer)
 }
 ```
@@ -138,9 +138,9 @@ For a native factory returning `some View`, add the optional `ABIBridgeSwiftUI` 
 ```swift
 import ABIBridgeSwiftUI
 
-let makePanel = try runtime.resolveAndWait(.function(
+let makePanel = try runtime.resolveAndWait(.swift(.function(
     "Example.makePanel(_:)", as: ((String) -> NativeSwiftValue).self
-))
+)))
 let panel = try NativeSwiftView(unsafe makePanel.unsafeInvoke("Hello"))
 ```
 

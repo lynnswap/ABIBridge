@@ -61,9 +61,11 @@ private func expectRecordsAndWords(
 struct SwiftIndirectValueTests {
     @Test func smallResilientValuesUseDeclaredIndirection() async throws {
         let echo = try await ABIRuntime.shared.resolve(
-            .function(
-                "ManagedSwiftFixtures.echoIndirectRecord(_:)",
-                as: ((IndirectRecord) -> IndirectRecord).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.echoIndirectRecord(_:)",
+                    as: ((IndirectRecord) -> IndirectRecord).self
+                )
             )
         )
         weak var observed: LifetimeToken?
@@ -82,10 +84,12 @@ struct SwiftIndirectValueTests {
 
     @Test func resilientClosuresReabstractArgumentsAndResults() async throws {
         let apply = try await ABIRuntime.shared.resolve(
-            .function(
-                "ManagedSwiftFixtures.applyIndirectRecord(_:_:)",
-                as: ((NativeSwiftClosure<(IndirectRecord) -> IndirectRecord>, IndirectRecord)
-                    -> IndirectRecord).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.applyIndirectRecord(_:_:)",
+                    as: ((NativeSwiftClosure<(IndirectRecord) -> IndirectRecord>, IndirectRecord)
+                        -> IndirectRecord).self
+                )
             )
         )
         let callback = try NativeSwiftClosure { (value: IndirectRecord) in value.advanced(7) }
@@ -94,9 +98,11 @@ struct SwiftIndirectValueTests {
         let actual = try unsafe apply.unsafeInvoke(callback, input)
         #expect(actual.token === token && actual.number == 42)
         let make = try await ABIRuntime.shared.resolve(
-            .function(
-                "ManagedSwiftFixtures.makeIndirectRecordClosure(_:)",
-                as: ((Int64) -> NativeSwiftClosure<(IndirectRecord) -> IndirectRecord>).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.makeIndirectRecordClosure(_:)",
+                    as: ((Int64) -> NativeSwiftClosure<(IndirectRecord) -> IndirectRecord>).self
+                )
             )
         )
         let returned = try unsafe make.unsafeInvoke(7)
@@ -109,15 +115,17 @@ struct SwiftIndirectValueTests {
             named: "ManagedSwiftFixtures.IndirectRecord",
                                                          as: IndirectRecord.self)
         let initialize = try await type.resolve(
-            .initializer(
-                "init(token:number:)",
-                as: ((LifetimeToken, Int64) -> IndirectRecord).self
+            .swift(
+                .initializer(
+                    "init(token:number:)",
+                    as: ((LifetimeToken, Int64) -> IndirectRecord).self
+                )
             )
         )
         let advance = try await type.resolve(
-            .method("advanced(_:)", as: ((Int64) -> IndirectRecord).self)
+            .swift(.method("advanced(_:)", as: ((Int64) -> IndirectRecord).self))
         )
-        let number = try await type.resolve(.getter("number", as: (() -> Int64).self))
+        let number = try await type.resolve(.swift(.getter("number", as: (() -> Int64).self)))
         let token = LifetimeToken()
         let original = try unsafe initialize.unsafeInvoke(token, 35)
         let result = try unsafe advance.unsafeInvoke(on: original, 7)
@@ -129,34 +137,40 @@ struct SwiftIndirectValueTests {
     @Test func genericNominalCallbacksUseDifferentPhysicalLayouts() async throws {
         let runtime = ABIRuntime.shared
         let integer = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.applyExplicitBox(_:_:)",
-                as: ((
-                    NativeSwiftClosure<(ExplicitBox<Int64>) -> ExplicitBox<Int64>>,
-                    ExplicitBox<Int64>
-                ) -> ExplicitBox<Int64>).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.applyExplicitBox(_:_:)",
+                    as: ((
+                        NativeSwiftClosure<(ExplicitBox<Int64>) -> ExplicitBox<Int64>>,
+                        ExplicitBox<Int64>
+                    ) -> ExplicitBox<Int64>).self
+                )
             )
         )
         let integerBody = try NativeSwiftClosure { (value: ExplicitBox<Int64>) in ExplicitBox(value.value + 7) }
         #expect(try unsafe integer.unsafeInvoke(integerBody, ExplicitBox(35)).value == 42)
         let floating = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.applyDoubleBox(_:_:)",
-                as: ((
-                    NativeSwiftClosure<(ExplicitBox<Double>) -> ExplicitBox<Double>>,
-                    ExplicitBox<Double>
-                ) -> ExplicitBox<Double>).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.applyDoubleBox(_:_:)",
+                    as: ((
+                        NativeSwiftClosure<(ExplicitBox<Double>) -> ExplicitBox<Double>>,
+                        ExplicitBox<Double>
+                    ) -> ExplicitBox<Double>).self
+                )
             )
         )
         let floatingBody = try NativeSwiftClosure { (value: ExplicitBox<Double>) in ExplicitBox(value.value + 0.5) }
         #expect(try unsafe floating.unsafeInvoke(floatingBody, ExplicitBox(1.5)).value == 2)
         let string = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.applyStringBox(_:_:)",
-                as: ((
-                    NativeSwiftClosure<(ExplicitBox<String>) -> ExplicitBox<String>>,
-                    ExplicitBox<String>
-                ) -> ExplicitBox<String>).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.applyStringBox(_:_:)",
+                    as: ((
+                        NativeSwiftClosure<(ExplicitBox<String>) -> ExplicitBox<String>>,
+                        ExplicitBox<String>
+                    ) -> ExplicitBox<String>).self
+                )
             )
         )
         let stringBody = try NativeSwiftClosure { (value: ExplicitBox<String>) in ExplicitBox(value.value + "!") }
@@ -166,9 +180,12 @@ struct SwiftIndirectValueTests {
 
     @Test func genericReturnedClosuresKeepTheirNominalIdentity() async throws {
         let make = try await ABIRuntime.shared.resolve(
-            .function(
-                "ManagedSwiftFixtures.makeExplicitBoxClosure(_:)",
-                as: ((Int64) -> NativeSwiftClosure<(ExplicitBox<Int64>) -> ExplicitBox<Int64>>).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.makeExplicitBoxClosure(_:)",
+                    as: ((Int64) -> NativeSwiftClosure<(ExplicitBox<Int64>) -> ExplicitBox<Int64>>)
+                        .self
+                )
             )
         )
         let returned = try unsafe make.unsafeInvoke(7)
@@ -178,14 +195,16 @@ struct SwiftIndirectValueTests {
     @Test func nestedAndUnicodeNominalNamesNeedNoCallerMangling() async throws {
         let runtime = ABIRuntime.shared
         let nested = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.applyNestedBox(_:_:)",
-                as: ((
-                    NativeSwiftClosure<
-                        (BoxNamespace.Container<Int64>) -> BoxNamespace.Container<Int64>
-                    >,
-                    BoxNamespace.Container<Int64>
-                ) -> BoxNamespace.Container<Int64>).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.applyNestedBox(_:_:)",
+                    as: ((
+                        NativeSwiftClosure<
+                            (BoxNamespace.Container<Int64>) -> BoxNamespace.Container<Int64>
+                        >,
+                        BoxNamespace.Container<Int64>
+                    ) -> BoxNamespace.Container<Int64>).self
+                )
             )
         )
         let nestedBody = try NativeSwiftClosure { (value: BoxNamespace.Container<Int64>) in
@@ -193,9 +212,11 @@ struct SwiftIndirectValueTests {
         }
         #expect(try unsafe nested.unsafeInvoke(nestedBody, BoxNamespace.Container(35)).value == 42)
         let unicode = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.applyUnicodeBox(_:_:)",
-                as: ((NativeSwiftClosure<(箱<Int64>) -> 箱<Int64>>, 箱<Int64>) -> 箱<Int64>).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.applyUnicodeBox(_:_:)",
+                    as: ((NativeSwiftClosure<(箱<Int64>) -> 箱<Int64>>, 箱<Int64>) -> 箱<Int64>).self
+                )
             )
         )
         let unicodeBody = try NativeSwiftClosure { (value: 箱<Int64>) in 箱(value.value + 7) }
@@ -209,18 +230,22 @@ struct SwiftIndirectValueTests {
         typealias Body = NativeSwiftClosure<(IndirectRecord, IndirectRecord) -> RecordsAndWords>
         let runtime = ABIRuntime.shared
         let call = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.indirectRecordsAndWords(_:_:)",
-                as: ((IndirectRecord, IndirectRecord) -> RecordsAndWords).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.indirectRecordsAndWords(_:_:)",
+                    as: ((IndirectRecord, IndirectRecord) -> RecordsAndWords).self
+                )
             )
         )
         try await expectRecordsAndWords(numbers: (2, 4), words: [10, 20, 30, 40, 50]) {
             try unsafe call.unsafeInvoke($0, $1)
         }
         let make = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.makeIndirectRecordsAndWordsClosure(_:)",
-                as: ((Int64) -> Body).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.makeIndirectRecordsAndWordsClosure(_:)",
+                    as: ((Int64) -> Body).self
+                )
             )
         )
         let closure = try unsafe make.unsafeInvoke(5)
@@ -228,9 +253,11 @@ struct SwiftIndirectValueTests {
             try unsafe closure.unsafeInvoke($0, $1)
         }
         let apply = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.applyIndirectRecordsAndWords(_:_:_:)",
-                as: ((Body, IndirectRecord, IndirectRecord) -> RecordsAndWords).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.applyIndirectRecordsAndWords(_:_:_:)",
+                    as: ((Body, IndirectRecord, IndirectRecord) -> RecordsAndWords).self
+                )
             )
         )
         let body = try Body { first, second in
@@ -248,19 +275,23 @@ struct SwiftIndirectValueTests {
         >
         let runtime = ABIRuntime.shared
         let call = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.asyncIndirectRecordsAndWords(_:_:)",
-                as: (@concurrent (IndirectRecord, IndirectRecord) async -> RecordsAndWords).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.asyncIndirectRecordsAndWords(_:_:)",
+                    as: (@concurrent (IndirectRecord, IndirectRecord) async -> RecordsAndWords).self
+                )
             )
         )
         try await expectRecordsAndWords(numbers: (2, 4), words: [10, 20, 30, 40, 50]) {
             try unsafe await call.unsafeInvoke($0, $1)
         }
         let apply = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.applyAsyncIndirectRecordsAndWords(_:_:_:)",
-                as: (@concurrent (Body, IndirectRecord, IndirectRecord) async -> RecordsAndWords)
-                    .self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.applyAsyncIndirectRecordsAndWords(_:_:_:)",
+                    as: (@concurrent (Body, IndirectRecord, IndirectRecord) async -> RecordsAndWords)
+                        .self
+                )
             )
         )
         let advance: @Sendable (IndirectRecord, IndirectRecord) async -> RecordsAndWords = {

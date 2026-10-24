@@ -488,11 +488,11 @@ extension ABIRuntime {
     /// - Throws: A resolution, unsupported representation, or call
     ///   preparation error.
     public nonisolated func resolveAndWait<Signature>(
-        _ request: NativeSwiftFunctionRequest<Signature>,
+        _ request: NativeRequest<NativeSwiftFunctionRequest<Signature>>,
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeSwiftFunction<Signature> {
-        try prepareSwiftFunction(request) {
+        try prepareSwiftFunction(request.declaration) {
             try resolver.swiftDeclarationCandidates(
                 $0,
                 in: scope,
@@ -518,7 +518,7 @@ extension ABIRuntime {
     /// - Throws: The same resolution, representation, and preparation errors
     ///   as synchronous resolution.
     public nonisolated func resolve<Signature>(
-        _ request: NativeSwiftFunctionRequest<Signature>,
+        _ request: NativeRequest<NativeSwiftFunctionRequest<Signature>>,
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
     ) async throws -> NativeSwiftFunction<Signature> {
@@ -538,11 +538,11 @@ extension ABIRuntime {
     /// - Throws: A resolution, unsupported representation, or call
     ///   preparation error.
     public nonisolated func resolveAndWait<Signature>(
-        _ request: NativeSwiftFunctionRequest<Signature>,
+        _ request: NativeRequest<NativeSwiftFunctionRequest<Signature>>,
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeSwiftFunction<Signature> {
-        try prepareSwiftFunction(request) {
+        try prepareSwiftFunction(request.declaration) {
             try resolver.swiftDeclarationCandidates(
                 $0,
                 in: image,
@@ -565,7 +565,7 @@ extension ABIRuntime {
     /// - Throws: The same resolution, representation, and preparation errors
     ///   as synchronous resolution.
     public nonisolated func resolve<Signature>(
-        _ request: NativeSwiftFunctionRequest<Signature>,
+        _ request: NativeRequest<NativeSwiftFunctionRequest<Signature>>,
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
     ) async throws -> NativeSwiftFunction<Signature> {

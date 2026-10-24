@@ -3,9 +3,9 @@
 Include the declaration's native error type in the function metatype. The same API accepts nonthrowing functions, untyped `throws`, and concrete `throws(Failure)`.
 
 ```swift
-let load = try ABIRuntime.shared.resolveAndWait(.function(
+let load = try ABIRuntime.shared.resolveAndWait(.swift(.function(
     "Example.load(_:)", as: ((String) throws -> String).self
-))
+)))
 do {
     let contents = try unsafe load.unsafeInvoke("settings")
     print(contents)
@@ -25,9 +25,9 @@ For `func checked(_ value: Int64) throws(CheckFailure) -> String`, pass `((Int64
 Instance and static methods and allocating initializers accept the same throwing function metatypes. A throwing getter uses a zero-argument signature:
 
 ```swift
-let getter = try type.resolveAndWait(.getter(
+let getter = try type.resolveAndWait(.swift(.getter(
     "contents", as: (() throws -> String).self
-))
+)))
 let contents = try unsafe getter.unsafeInvoke(on: receiver)
 ```
 

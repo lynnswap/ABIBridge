@@ -46,14 +46,18 @@ struct ResolutionRequestTests {
         let renderer = SwiftMemberRenderer(text: "four")
         let type = try await runtime.resolveSwiftType(named: "ABIBridgeTests.SwiftMemberRenderer")
         let object = runtime.object(renderer)
-        let render = NativeSwiftInstanceMemberRequest.method("render(_:)", as: ((Int) -> Int).self)
-        let text = NativeSwiftInstanceMemberRequest.getter("text", as: (() -> String).self)
-        let setText = NativeSwiftInstanceMemberRequest.setter(
-            "text",
-            as: ((String) -> Void).self
+        let render = NativeRequest.swift(.method("render(_:)", as: ((Int) -> Int).self))
+        let text = NativeRequest.swift(.getter("text", as: (() -> String).self))
+        let setText = NativeRequest.swift(
+            .setter(
+                "text",
+                as: ((String) -> Void).self
+            )
         )
 
-        let unboundRender = try type.resolveAndWait(render)
+        let unboundRender = try await runtime.prepare { _ in
+            try type.resolveAndWait(render)
+        }
         let boundRender = try await object.resolve(render)
         #expect(try unsafe unboundRender.unsafeInvoke(on: renderer, 1) == 5)
         #expect(try unsafe boundRender.unsafeInvoke(1) == 5)
@@ -71,22 +75,22 @@ struct ResolutionRequestTests {
         let runtime = ABIRuntime()
         let object = runtime.object(SwiftMemberRenderer(text: "base"))
         let decorate = try object.resolveAndWait(
-            .staticMethod("decorate(_:)", as: ((String) -> String).self)
+            .swift(.staticMethod("decorate(_:)", as: ((String) -> String).self))
         )
         #expect(try unsafe decorate.unsafeInvoke("ready") == "ready!")
         let standard = try await object.resolve(
-            .staticGetter("standard", as: (() -> String).self)
+            .swift(.staticGetter("standard", as: (() -> String).self))
         )
         #expect(try unsafe standard.unsafeInvoke() == "standard")
         let make = try await object.resolve(
-            .initializer("init(text:)", as: ((String) -> SwiftMemberRenderer).self)
+            .swift(.initializer("init(text:)", as: ((String) -> SwiftMemberRenderer).self))
         )
         let made = try unsafe make.unsafeInvoke("made")
         #expect(made.text == "made")
         // The object's class is the lookup type, as it is for instance members.
         let derived = runtime.object(SwiftMemberDerived(text: "derived"))
         let derivedMake = try derived.resolveAndWait(
-            .initializer("init(text:)", as: ((String) -> SwiftMemberRenderer).self)
+            .swift(.initializer("init(text:)", as: ((String) -> SwiftMemberRenderer).self))
         )
         #expect(try unsafe derivedMake.unsafeInvoke("again") is SwiftMemberDerived)
     }
@@ -121,14 +125,16 @@ struct ResolutionRequestTests {
             in: .path(library.libraryURL)
         )
         let uint32 = try await runtime.resolveSwiftType(named: "Swift.UInt32")
-        let make = try await screen.resolve(.initializer("init()", as: (() -> AnyObject).self))
+        let make = try await screen.resolve(
+            .swift(.initializer("init()", as: (() -> AnyObject).self))
+        )
         let object = runtime.object(try unsafe make.unsafeInvoke())
         let getter = "target.getter : __C.RequestTarget"
         await #expect(throws: ABIResolutionError.self) {
-            _ = try await object.resolve(.getter(getter, as: (() -> UInt32).self))
+            _ = try await object.resolve(.swift(.getter(getter, as: (() -> UInt32).self)))
         }
         let target = try await object.resolve(
-            .getter(getter, as: (() -> UInt32).self, valueABIs: [uint32: .uint32])
+            .swift(.getter(getter, as: (() -> UInt32).self, valueABIs: [uint32: .uint32]))
         )
         #expect(try unsafe target.unsafeInvoke() == 7)
     }
@@ -137,37 +143,45 @@ struct ResolutionRequestTests {
     @MainActor @Test func subscriptAccessorsResolveByTheirMemberName() async throws {
         let runtime = ABIRuntime.shared
         let make = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.makeGenericIdentifiedLookup(_:)",
-                as: ((String) -> NativeSwiftValue).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.makeGenericIdentifiedLookup(_:)",
+                    as: ((String) -> NativeSwiftValue).self
+                )
             )
         )
         let makeKey = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.makeGenericLookupKey(_:)",
-                as: ((String) -> NativeSwiftValue).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.makeGenericLookupKey(_:)",
+                    as: ((String) -> NativeSwiftValue).self
+                )
             )
         )
         let source = try unsafe make.unsafeInvoke("a")
         let key = try unsafe makeKey.unsafeInvoke("a")
         let abis = [key.type: try NativeType.opaque(named: key.type.name)]
         let get = try await source.type.resolve(
-            .getter(
-                "subscript",
-                as: ((NativeSwiftValue) -> NativeSwiftValue).self,
-                valueABIs: abis,
-                receiverABI: .opaque(named: source.type.name)
+            .swift(
+                .getter(
+                    "subscript",
+                    as: ((NativeSwiftValue) -> NativeSwiftValue).self,
+                    valueABIs: abis,
+                    receiverABI: .opaque(named: source.type.name)
+                )
             )
         )
         let original = try unsafe get.unsafeInvoke(on: source, key)
         #expect(try original.take(as: GenericIdentifiedRecord?.self)?.value == 41)
         // A value's setter receives it inout unless a convention says otherwise.
         let set = try await source.type.resolve(
-            .setter(
-                "subscript",
-                as: ((GenericIdentifiedRecord?, String) -> Void).self,
-                valueABIs: abis,
-                receiverABI: .opaque(named: source.type.name)
+            .swift(
+                .setter(
+                    "subscript",
+                    as: ((GenericIdentifiedRecord?, String) -> Void).self,
+                    valueABIs: abis,
+                    receiverABI: .opaque(named: source.type.name)
+                )
             )
         )
         try unsafe set.unsafeInvoke(on: source, GenericIdentifiedRecord(id: "a", value: 42), "a")
@@ -177,10 +191,12 @@ struct ResolutionRequestTests {
         // A generic subscript binds its own parameters.
         let table = runtime.object(SwiftRequestTable())
         let described = try await table.resolve(
-            .getter(
-                "subscript",
-                as: ((Int) -> Int64).self,
-                genericArguments: [.type(Int.self)]
+            .swift(
+                .getter(
+                    "subscript",
+                    as: ((Int) -> Int64).self,
+                    genericArguments: [.type(Int.self)]
+                )
             )
         )
         #expect(try unsafe described.unsafeInvoke(7) == 70)
@@ -190,11 +206,13 @@ struct ResolutionRequestTests {
             named: "Swift.Array",
             genericArguments: [.type(Int.self)]
         )
-        let element = try await array.resolve(.getter("subscript", as: ((Int) -> Int).self))
+        let element = try await array.resolve(.swift(.getter("subscript", as: ((Int) -> Int).self)))
         #expect(try unsafe element.unsafeInvoke(on: [10, 20, 30], 1) == 20)
         // A complete accessor declaration qualified by the type selects it too.
         let declared = try await array.resolve(
-            .getter("Swift.Array.subscript.getter : (Swift.Int) -> A", as: ((Int) -> Int).self)
+            .swift(
+                .getter("Swift.Array.subscript.getter : (Swift.Int) -> A", as: ((Int) -> Int).self)
+            )
         )
         #expect(try unsafe declared.unsafeInvoke(on: [10, 20, 30], 2) == 30)
     }
@@ -205,13 +223,13 @@ struct ResolutionRequestTests {
             named: "(extension in ManagedSwiftFixtures):Swift.Int.RuntimeNestedCounter"
         )
         let make = try await type.resolve(
-            .initializer("init()", as: (() -> Int.RuntimeNestedCounter).self)
+            .swift(.initializer("init()", as: (() -> Int.RuntimeNestedCounter).self))
         )
         for name in [
             "value()",
             "(extension in ManagedSwiftFixtures):Swift.Int.RuntimeNestedCounter.value() -> Swift.Int",
         ] {
-            let value = try await type.resolve(.method(name, as: (() -> Int).self))
+            let value = try await type.resolve(.swift(.method(name, as: (() -> Int).self)))
             #expect(try unsafe value.unsafeInvoke(on: make.unsafeInvoke()) == 7)
         }
     }
@@ -268,7 +286,7 @@ struct ResolutionRequestTests {
             named: "(extension in " + second + "):Swift.Int.Nested",
             in: .path(library.libraryURL)
         )
-        let request = NativeSwiftInstanceMemberRequest.method("foreignOnly()", as: (() -> Int).self)
+        let request = NativeRequest.swift(.method("foreignOnly()", as: (() -> Int).self))
         _ = try right.resolveAndWait(request)
         #expect {
             _ = try left.resolveAndWait(request)
@@ -294,10 +312,10 @@ struct ResolutionRequestTests {
             named: "ManagedSwiftFixtures.RuntimeAllocatorNamedMethod"
         )
         await #expect(throws: ABIResolutionError.self) {
-            try await type.resolve(.method("init(_:)", as: ((Int64) -> Int64).self))
+            try await type.resolve(.swift(.method("init(_:)", as: ((Int64) -> Int64).self)))
         }
         let method = try await type.resolve(
-            .method("__allocating_init(_:)", as: ((Int64) -> Int64).self)
+            .swift(.method("__allocating_init(_:)", as: ((Int64) -> Int64).self))
         )
         #expect(try unsafe method.unsafeInvoke(on: RuntimeAllocatorNamedMethod(), 41) == 42)
         for name in [
@@ -305,7 +323,7 @@ struct ResolutionRequestTests {
             "ManagedSwiftFixtures.__allocating_init(Swift.Int64) -> Swift.Int64",
         ] {
             let function = try await runtime.resolve(
-                .function(name, as: ((Int64) -> Int64).self)
+                .swift(.function(name, as: ((Int64) -> Int64).self))
             )
             #expect(try unsafe function.unsafeInvoke(40) == 42)
         }
@@ -316,30 +334,30 @@ struct ResolutionRequestTests {
         let type = try await runtime.resolveSwiftType(named: "ABIBridgeTests.SwiftRequestToggle")
         let toggle = SwiftRequestToggle(offset: 2)
         let nonmutating = try await type.resolve(
-            .setter("value", as: ((Int64) -> Void).self, receiver: .borrowing)
+            .swift(.setter("value", as: ((Int64) -> Void).self, receiver: .borrowing))
         )
         try unsafe nonmutating.unsafeInvoke(on: toggle, 42)
         #expect(SwiftRequestToggle.stored == 40 && toggle.value == 42)
 
         // A setter's default follows its declaration: a value's is mutating.
         var adjustable = SwiftRequestToggle(offset: 0)
-        let adjust = try await type.resolve(.setter("adjusted", as: ((Int64) -> Void).self))
+        let adjust = try await type.resolve(.swift(.setter("adjusted", as: ((Int64) -> Void).self)))
         try unsafe adjust.unsafeInvoke(on: &adjustable, 5)
         #expect(adjustable.offset == 5)
 
         let pointType = try await runtime.resolveSwiftType(named: "ABIBridgeTests.SwiftMemberPoint")
         let change = try await pointType.resolve(
-            .method("change(_:)", as: ((Int64) -> Void).self, receiver: .mutating)
+            .swift(.method("change(_:)", as: ((Int64) -> Void).self, receiver: .mutating))
         )
         var point = SwiftMemberPoint(value: 1)
         try unsafe change.unsafeInvoke(on: &point, 9)
         #expect(point.value == 9)
         let consume = try await pointType.resolve(
-            .method("consumeValue()", as: (() -> Int64).self, receiver: .consuming)
+            .swift(.method("consumeValue()", as: (() -> Int64).self, receiver: .consuming))
         )
         #expect(try unsafe consume.unsafeInvoke(on: point) == 9)
         let read = try await pointType.resolve(
-            .method("read(_:)", as: ((Int64) -> Int64).self, receiver: .borrowing)
+            .swift(.method("read(_:)", as: ((Int64) -> Int64).self, receiver: .borrowing))
         )
         #expect(try unsafe read.unsafeInvoke(on: point, 1) == 10)
     }

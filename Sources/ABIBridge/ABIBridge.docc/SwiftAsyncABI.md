@@ -3,20 +3,20 @@
 Resolve an async function with its native function metatype, then await ``NativeSwiftFunction``:
 
 ```swift
-let load = try await ABIRuntime.shared.resolve(.function(
+let load = try await ABIRuntime.shared.resolve(.swift(.function(
     "Example.load(_:)",
     as: (@concurrent (String) async throws -> String).self
-))
+)))
 let contents = try unsafe await load.unsafeInvoke("settings")
 ```
 
 For a `nonisolated(nonsending)` declaration, use its caller-isolated metatype:
 
 ```swift
-let process = try await ABIRuntime.shared.resolve(.function(
+let process = try await ABIRuntime.shared.resolve(.swift(.function(
     "Example.process(_:)",
     as: (nonisolated(nonsending) (String) async -> String).self
-))
+)))
 let result = try unsafe await process.unsafeInvoke("input")
 ```
 

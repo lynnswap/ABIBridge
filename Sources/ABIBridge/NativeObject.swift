@@ -152,7 +152,7 @@ public final class NativeObject {
     /// - Returns: A reusable method bound to this object.
     /// - Throws: A lookup, representation, or preparation error.
     public func resolveAndWait<Signature>(
-        _ request: NativeSwiftInstanceMemberRequest<Signature>
+        _ request: NativeRequest<NativeSwiftInstanceMemberRequest<Signature>>
     ) throws -> NativeBoundSwiftMethod<Signature> {
         let object = receiver!
         let method = try swiftType().resolveAndWait(request)
@@ -171,7 +171,7 @@ public final class NativeObject {
     /// - Throws: The same lookup, representation, and preparation errors as
     ///   synchronous resolution.
     public nonisolated(nonsending) func resolve<Signature>(
-        _ request: NativeSwiftInstanceMemberRequest<Signature>
+        _ request: NativeRequest<NativeSwiftInstanceMemberRequest<Signature>>
     ) async throws -> NativeBoundSwiftMethod<Signature> {
         let objectType: AnyClass = Swift.type(of: receiver!)
         let method = try await runtime.prepare { runtime in
@@ -192,7 +192,7 @@ public final class NativeObject {
     ///   implementation images.
     /// - Throws: A lookup, representation, or preparation error.
     public func resolveAndWait<Signature>(
-        _ request: NativeSwiftTypeMemberRequest<Signature>
+        _ request: NativeRequest<NativeSwiftTypeMemberRequest<Signature>>
     ) throws -> NativeSwiftFunction<Signature> {
         try swiftType().resolveAndWait(request)
     }
@@ -206,7 +206,7 @@ public final class NativeObject {
     /// - Throws: The same lookup, representation, and preparation errors as
     ///   synchronous resolution.
     public nonisolated(nonsending) func resolve<Signature>(
-        _ request: NativeSwiftTypeMemberRequest<Signature>
+        _ request: NativeRequest<NativeSwiftTypeMemberRequest<Signature>>
     ) async throws -> NativeSwiftFunction<Signature> {
         let objectType: AnyClass = Swift.type(of: receiver!)
         return try await runtime.prepare { runtime in

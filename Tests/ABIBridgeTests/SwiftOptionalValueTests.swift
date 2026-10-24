@@ -18,34 +18,42 @@ struct SwiftOptionalValueTests {
     @Test func optionalValuesPassAsTheirEnumStorage() async throws {
         let runtime = ABIRuntime.shared
         let doubled = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.doubledOptional(_:)",
-                as: ((Double?) -> Double?).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.doubledOptional(_:)",
+                    as: ((Double?) -> Double?).self
+                )
             )
         )
         #expect(try unsafe doubled.unsafeInvoke(1.5) == 3)
         #expect(try unsafe doubled.unsafeInvoke(nil) == nil)
         let inverted = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.invertedOptional(_:)",
-                as: ((Bool?) -> Bool?).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.invertedOptional(_:)",
+                    as: ((Bool?) -> Bool?).self
+                )
             )
         )
         #expect(try unsafe inverted.unsafeInvoke(true) == false)
         #expect(try unsafe inverted.unsafeInvoke(nil) == nil)
         let nested = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.incrementedNestedOptional(_:)",
-                as: ((Int64??) -> Int64??).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.incrementedNestedOptional(_:)",
+                    as: ((Int64??) -> Int64??).self
+                )
             )
         )
         for value: Int64?? in [.some(.some(41)), .some(.none), .none] {
             #expect(try unsafe nested.unsafeInvoke(value) == incrementedNestedOptional(value))
         }
         let pair = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.swappedOptionalPair(_:)",
-                as: (((Int64, Double)?) -> (Double, Int64)?).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.swappedOptionalPair(_:)",
+                    as: (((Int64, Double)?) -> (Double, Int64)?).self
+                )
             )
         )
         let swapped = try unsafe pair.unsafeInvoke((7, 0.5))
@@ -59,27 +67,33 @@ struct SwiftOptionalValueTests {
     @Test func optionalScalarsAndPointersPassByValue() async throws {
         let runtime = ABIRuntime.shared
         let increment = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.incrementedOptionalUInt32(_:)",
-                as: ((UInt32?) -> UInt32?).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.incrementedOptionalUInt32(_:)",
+                    as: ((UInt32?) -> UInt32?).self
+                )
             )
         )
         #expect(try unsafe increment.unsafeInvoke(41) == 42)
         #expect(try unsafe increment.unsafeInvoke(.max) == 0)
         #expect(try unsafe increment.unsafeInvoke(nil) == nil)
         let negate = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.negatedOptionalInt64(Swift.Optional<Swift.Int64>)"
-                    + " -> Swift.Optional<Swift.Int64>",
-                as: ((Int64?) -> Int64?).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.negatedOptionalInt64(Swift.Optional<Swift.Int64>)"
+                        + " -> Swift.Optional<Swift.Int64>",
+                    as: ((Int64?) -> Int64?).self
+                )
             )
         )
         #expect(try unsafe negate.unsafeInvoke(42) == -42)
         #expect(try unsafe negate.unsafeInvoke(nil) == nil)
         let advance = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.advancedOptionalPointer(_:)",
-                as: ((UnsafePointer<Int64>?) -> UnsafePointer<Int64>?).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.advancedOptionalPointer(_:)",
+                    as: ((UnsafePointer<Int64>?) -> UnsafePointer<Int64>?).self
+                )
             )
         )
         let values: [Int64] = [1, 2]
@@ -89,9 +103,11 @@ struct SwiftOptionalValueTests {
         #expect(next == 2)
         #expect(try unsafe advance.unsafeInvoke(nil) == nil)
         let describe = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.describeOptionalScalars(_:_:_:_:_:)",
-                as: ((UInt32?, Int64?, Double?, Bool?, UnsafeRawPointer?) -> String).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.describeOptionalScalars(_:_:_:_:_:)",
+                    as: ((UInt32?, Int64?, Double?, Bool?, UnsafeRawPointer?) -> String).self
+                )
             )
         )
         #expect(try unsafe describe.unsafeInvoke(nil, nil, nil, nil, nil) == "nil,nil,nil,nil,nil")
@@ -106,9 +122,11 @@ struct SwiftOptionalValueTests {
             (UInt32?, Int64?, Double?, Bool?, UnsafeRawPointer?) -> String
         >
         let visit = try await ABIRuntime.shared.resolve(
-            .function(
-                "ManagedSwiftFixtures.visitOptionalScalars(_:)",
-                as: ((Describe) -> String).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.visitOptionalScalars(_:)",
+                    as: ((Describe) -> String).self
+                )
             )
         )
         let describe = try Describe { id, count, scale, flag, pointer in
@@ -121,9 +139,11 @@ struct SwiftOptionalValueTests {
         let visited = try unsafe visit.unsafeInvoke(describe)
         #expect(visited == "nil,nil,nil,nil,nil|4000000000,-5,0.5,false,7")
         let make = try await ABIRuntime.shared.resolve(
-            .function(
-                "ManagedSwiftFixtures.makeOptionalScalarDescriber()",
-                as: (() -> Describe).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.makeOptionalScalarDescriber()",
+                    as: (() -> Describe).self
+                )
             )
         )
         let native = try unsafe make.unsafeInvoke()
@@ -143,9 +163,12 @@ struct SwiftOptionalValueTests {
             as: OptionalScreenAdapter.self
         )
         let register = try await type.resolve(
-            .method(
-                "register(screenID:queue:handler:)",
-                as: ((UInt32?, DispatchQueue, Handler) -> OptionalScreenAdapter.Registration).self
+            .swift(
+                .method(
+                    "register(screenID:queue:handler:)",
+                    as: ((UInt32?, DispatchQueue, Handler) -> OptionalScreenAdapter.Registration)
+                        .self
+                )
             )
         )
         let adapter = OptionalScreenAdapter(screens: [1, 2])
@@ -169,12 +192,17 @@ struct SwiftOptionalValueTests {
         )
         let name = "ManagedSwiftFixtures.incrementedOptionalUInt32(_:)"
         let increment = try await runtime.resolve(
-            .function(
-                name,
-                as: ((UInt32?) -> UInt32?).self,
-                valueABIs: [
-                    optional: try .structure(named: "Optional<UInt32>", fields: [.uint32, .uint8])
-                ]
+            .swift(
+                .function(
+                    name,
+                    as: ((UInt32?) -> UInt32?).self,
+                    valueABIs: [
+                        optional: try .structure(
+                            named: "Optional<UInt32>",
+                            fields: [.uint32, .uint8]
+                        )
+                    ]
+                )
             )
         )
         #expect(try unsafe increment.unsafeInvoke(41) == 42)
@@ -187,10 +215,12 @@ struct SwiftOptionalValueTests {
         ] {
             await #expect {
                 _ = try await runtime.resolve(
-                    .function(
-                        name,
-                        as: ((UInt32?) -> UInt32?).self,
-                        valueABIs: [optional: abi]
+                    .swift(
+                        .function(
+                            name,
+                            as: ((UInt32?) -> UInt32?).self,
+                            valueABIs: [optional: abi]
+                        )
                     )
                 )
             } throws: { Self.rejectsExplicitABI($0, statedBy: "The valueABIs entry") }
@@ -204,19 +234,23 @@ struct SwiftOptionalValueTests {
         abis[frozenOptional] = try .opaque(named: "Optional<OptionalFrozenRecord>")
         await #expect {
             _ = try await runtime.resolve(
-                .function(
-                    "ManagedSwiftFixtures.describeOptionalFrozenRecord(_:)",
-                    as: ((OptionalFrozenRecord?) -> String).self,
-                    valueABIs: abis
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.describeOptionalFrozenRecord(_:)",
+                        as: ((OptionalFrozenRecord?) -> String).self,
+                        valueABIs: abis
+                    )
                 )
             )
         } throws: { Self.rejectsExplicitABI($0, statedBy: "The valueABIs entry") }
         // A conformance is checked the same way.
         await #expect {
             _ = try await runtime.resolve(
-                .function(
-                    "ManagedSwiftFixtures.nextOptionalScreenNumber(_:)",
-                    as: ((OptionalScreenNumber?) -> OptionalScreenNumber?).self
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.nextOptionalScreenNumber(_:)",
+                        as: ((OptionalScreenNumber?) -> OptionalScreenNumber?).self
+                    )
                 )
             )
         } throws: { Self.rejectsExplicitABI($0, statedBy: "The ABIBridgeSwiftValue conformance") }
@@ -240,10 +274,12 @@ struct SwiftOptionalValueTests {
         // The UInt32 entry makes ABIBridge read the tuple's other element.
         for entries: [NativeSwiftType: NativeType] in [[:], [uint32: .uint32]] {
             let describe = try await runtime.resolve(
-                .function(
-                    "ManagedSwiftFixtures.describeOptionalScreenBox(_:)",
-                    as: ((Payload?) -> String).self,
-                    valueABIs: entries.merging([optional: abi]) { $1 }
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.describeOptionalScreenBox(_:)",
+                        as: ((Payload?) -> String).self,
+                        valueABIs: entries.merging([optional: abi]) { $1 }
+                    )
                 )
             )
             #expect(try unsafe describe.unsafeInvoke((7, OptionalScreenBox(5))) == "7:5")
@@ -263,10 +299,12 @@ struct SwiftOptionalValueTests {
         // A generic extension's method takes self by address.
         for receiverABI in [nil, opaque] {
             let size = try await type.resolve(
-                .method(
-                    "optionalPayloadSize()",
-                    as: (() -> Int64).self,
-                    receiverABI: receiverABI
+                .swift(
+                    .method(
+                        "optionalPayloadSize()",
+                        as: (() -> Int64).self,
+                        receiverABI: receiverABI
+                    )
                 )
             )
             #expect(try unsafe size.unsafeInvoke(on: UInt32?(7)) == 4)
@@ -274,36 +312,44 @@ struct SwiftOptionalValueTests {
         }
         // A concrete self passes as the Optional's storage.
         let screenID = try await type.resolve(
-            .method(
-                "screenIDOrMinusOne()",
-                as: (() -> Int64).self
+            .swift(
+                .method(
+                    "screenIDOrMinusOne()",
+                    as: (() -> Int64).self
+                )
             )
         )
         #expect(try unsafe screenID.unsafeInvoke(on: UInt32?(7)) == 7)
         #expect(try unsafe screenID.unsafeInvoke(on: UInt32?.none) == -1)
         await #expect {
             _ = try await type.resolve(
-                .method(
-                    "screenIDOrMinusOne()",
-                    as: (() -> Int64).self,
-                    receiverABI: opaque
+                .swift(
+                    .method(
+                        "screenIDOrMinusOne()",
+                        as: (() -> Int64).self,
+                        receiverABI: opaque
+                    )
                 )
             )
         } throws: { Self.rejectsExplicitABI($0, statedBy: "receiverABI") }
         // A mutating method or setter takes self by address.
         let advance = try await type.resolve(
-            .method(
-                "advanceScreenID()",
-                as: (() -> Void).self,
-                receiverABI: opaque,
-                receiver: .mutating
+            .swift(
+                .method(
+                    "advanceScreenID()",
+                    as: (() -> Void).self,
+                    receiverABI: opaque,
+                    receiver: .mutating
+                )
             )
         )
         let setScreenID = try await type.resolve(
-            .setter(
-                "screenIDValue",
-                as: ((Int64) -> Void).self,
-                receiverABI: opaque
+            .swift(
+                .setter(
+                    "screenIDValue",
+                    as: ((Int64) -> Void).self,
+                    receiverABI: opaque
+                )
             )
         )
         var screen: UInt32? = 7
@@ -339,39 +385,47 @@ struct SwiftOptionalValueTests {
         let runtime = ABIRuntime.shared
         let abis = try await Self.recordABIs()
         let make = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.makeOptionalRuntimeRecord(_:)",
-                as: ((Int64) -> NativeSwiftValue?).self,
-                valueABIs: abis
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.makeOptionalRuntimeRecord(_:)",
+                    as: ((Int64) -> NativeSwiftValue?).self,
+                    valueABIs: abis
+                )
             )
         )
         #expect(try unsafe make.unsafeInvoke(-1) == nil)
         let record = try #require(try unsafe make.unsafeInvoke(3))
         #expect(try record.withCopy { ($0 as? OptionalRuntimeRecord)?.count } == 3)
         let describe = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.describeOptionalRuntimeRecord(_:)",
-                as: ((NativeSwiftValue?) -> String).self,
-                valueABIs: abis
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.describeOptionalRuntimeRecord(_:)",
+                    as: ((NativeSwiftValue?) -> String).self,
+                    valueABIs: abis
+                )
             )
         )
         #expect(try unsafe describe.unsafeInvoke(nil) == "nil")
         #expect(try unsafe describe.unsafeInvoke(record) == "record#3")
         let describeBorrowed = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.describeOptionalRuntimeRecord(_:)",
-                as: ((NativeSwiftBorrowedValue?) -> String).self,
-                valueABIs: abis
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.describeOptionalRuntimeRecord(_:)",
+                    as: ((NativeSwiftBorrowedValue?) -> String).self,
+                    valueABIs: abis
+                )
             )
         )
         #expect(try record.withBorrowedValue { try unsafe describeBorrowed.unsafeInvoke($0) } == "record#3")
         #expect(try unsafe describeBorrowed.unsafeInvoke(nil) == "nil")
         // A consuming parameter takes the handle's value.
         let bump = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.bumpOptionalRuntimeRecord(_:)",
-                as: ((NativeSwiftConsuming<NativeSwiftValue?>) -> NativeSwiftValue?).self,
-                valueABIs: abis
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.bumpOptionalRuntimeRecord(_:)",
+                    as: ((NativeSwiftConsuming<NativeSwiftValue?>) -> NativeSwiftValue?).self,
+                    valueABIs: abis
+                )
             )
         )
         #expect(try unsafe bump.unsafeInvoke(NativeSwiftConsuming(nil)) == nil)
@@ -382,17 +436,21 @@ struct SwiftOptionalValueTests {
 
         // A frozen payload makes the Optional a direct value.
         let makeFrozen = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.makeOptionalFrozenRecord(_:)",
-                as: ((Int64) -> NativeSwiftValue?).self,
-                valueABIs: abis
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.makeOptionalFrozenRecord(_:)",
+                    as: ((Int64) -> NativeSwiftValue?).self,
+                    valueABIs: abis
+                )
             )
         )
         let describeFrozen = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.describeOptionalFrozenRecord(_:)",
-                as: ((NativeSwiftValue?) -> String).self,
-                valueABIs: abis
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.describeOptionalFrozenRecord(_:)",
+                    as: ((NativeSwiftValue?) -> String).self,
+                    valueABIs: abis
+                )
             )
         )
         #expect(try unsafe makeFrozen.unsafeInvoke(-1) == nil)
@@ -405,18 +463,22 @@ struct SwiftOptionalValueTests {
         #expect(throws: ABIInvocationError.self) { try unsafe describe.unsafeInvoke(frozen) }
         await #expect(throws: ABIResolutionError.self) {
             _ = try await runtime.resolve(
-                .function(
-                    "ManagedSwiftFixtures.compatibilityOpaqueCount()",
-                    as: (() -> NativeSwiftValue?).self
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.compatibilityOpaqueCount()",
+                        as: (() -> NativeSwiftValue?).self
+                    )
                 )
             )
         }
         await #expect(throws: ABIResolutionError.self) {
             _ = try await runtime.resolve(
-                .function(
-                    "ManagedSwiftFixtures.makeOptionalRuntimeRecord(Swift.Int64) -> Swift.Optional<ManagedSwiftFixtures.OptionalRuntimeRecord>",
-                    as: ((NativeSwiftValue?) -> NativeSwiftValue?).self,
-                    valueABIs: abis
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.makeOptionalRuntimeRecord(Swift.Int64) -> Swift.Optional<ManagedSwiftFixtures.OptionalRuntimeRecord>",
+                        as: ((NativeSwiftValue?) -> NativeSwiftValue?).self,
+                        valueABIs: abis
+                    )
                 )
             )
         }
@@ -428,17 +490,21 @@ struct SwiftOptionalValueTests {
         let runtime = ABIRuntime.shared
         let abis = try await Self.recordABIs()
         let make = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.makeOptionalFrozenRecord(_:)",
-                as: ((Int64) -> OptionalFrozenRecord?).self,
-                valueABIs: abis
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.makeOptionalFrozenRecord(_:)",
+                    as: ((Int64) -> OptionalFrozenRecord?).self,
+                    valueABIs: abis
+                )
             )
         )
         let describe = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.describeOptionalFrozenRecord(_:)",
-                as: ((OptionalFrozenRecord?) -> String).self,
-                valueABIs: abis
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.describeOptionalFrozenRecord(_:)",
+                    as: ((OptionalFrozenRecord?) -> String).self,
+                    valueABIs: abis
+                )
             )
         )
         #expect(try unsafe make.unsafeInvoke(-1) == nil)
@@ -449,17 +515,21 @@ struct SwiftOptionalValueTests {
 
         // The opaque ABI of the resilient record passes its Optional by address.
         let makeRecord = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.makeOptionalRuntimeRecord(_:)",
-                as: ((Int64) -> OptionalRuntimeRecord?).self,
-                valueABIs: abis
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.makeOptionalRuntimeRecord(_:)",
+                    as: ((Int64) -> OptionalRuntimeRecord?).self,
+                    valueABIs: abis
+                )
             )
         )
         let describeRecord = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.describeOptionalRuntimeRecord(_:)",
-                as: ((OptionalRuntimeRecord?) -> String).self,
-                valueABIs: abis
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.describeOptionalRuntimeRecord(_:)",
+                    as: ((OptionalRuntimeRecord?) -> String).self,
+                    valueABIs: abis
+                )
             )
         )
         #expect(try unsafe makeRecord.unsafeInvoke(-1) == nil)
@@ -467,17 +537,21 @@ struct SwiftOptionalValueTests {
         #expect(try unsafe describeRecord.unsafeInvoke(nil) == "nil")
 
         let makePair = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.makeOptionalFrozenRecordPair(_:)",
-                as: ((Int64) -> (OptionalFrozenRecord?, Int64)).self,
-                valueABIs: abis
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.makeOptionalFrozenRecordPair(_:)",
+                    as: ((Int64) -> (OptionalFrozenRecord?, Int64)).self,
+                    valueABIs: abis
+                )
             )
         )
         let describePair = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.describeOptionalFrozenRecordPair(_:)",
-                as: (((OptionalFrozenRecord?, Int64)) -> String).self,
-                valueABIs: abis
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.describeOptionalFrozenRecordPair(_:)",
+                    as: (((OptionalFrozenRecord?, Int64)) -> String).self,
+                    valueABIs: abis
+                )
             )
         )
         let pair = try unsafe makePair.unsafeInvoke(6)
@@ -487,17 +561,21 @@ struct SwiftOptionalValueTests {
 
         // A tuple payload's element takes its entry too.
         let makeTuple = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.makeOptionalRuntimeRecordTuple(_:)",
-                as: ((Int64) -> (OptionalRuntimeRecord, Int64)?).self,
-                valueABIs: abis
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.makeOptionalRuntimeRecordTuple(_:)",
+                    as: ((Int64) -> (OptionalRuntimeRecord, Int64)?).self,
+                    valueABIs: abis
+                )
             )
         )
         let describeTuple = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.describeOptionalRuntimeRecordTuple(_:)",
-                as: (((OptionalRuntimeRecord, Int64)?) -> String).self,
-                valueABIs: abis
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.describeOptionalRuntimeRecordTuple(_:)",
+                    as: (((OptionalRuntimeRecord, Int64)?) -> String).self,
+                    valueABIs: abis
+                )
             )
         )
         #expect(try unsafe makeTuple.unsafeInvoke(-1) == nil)
@@ -510,11 +588,14 @@ struct SwiftOptionalValueTests {
     @Test func callbacksExchangeOptionalRuntimeValues() async throws {
         let abis = try await Self.recordABIs()
         let visit = try await ABIRuntime.shared.resolve(
-            .function(
-                "ManagedSwiftFixtures.visitOptionalRuntimeRecords(_:)",
-                as: ((NativeSwiftClosure<(NativeSwiftValue?) throws -> NativeSwiftValue?>) throws
-                    -> String).self,
-                valueABIs: abis
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.visitOptionalRuntimeRecords(_:)",
+                    as: ((NativeSwiftClosure<(NativeSwiftValue?) throws -> NativeSwiftValue?>)
+                        throws
+                        -> String).self,
+                    valueABIs: abis
+                )
             )
         )
         let counts = Mutex<[Int64?]>([])
@@ -527,10 +608,12 @@ struct SwiftOptionalValueTests {
         #expect(try unsafe visit.unsafeInvoke(identity) == "nil,visit#1")
         #expect(counts.withLock { $0 } == [nil, 1])
         let make = try await ABIRuntime.shared.resolve(
-            .function(
-                "ManagedSwiftFixtures.makeOptionalRuntimeRecord(_:)",
-                as: ((Int64) -> NativeSwiftValue?).self,
-                valueABIs: abis
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.makeOptionalRuntimeRecord(_:)",
+                    as: ((Int64) -> NativeSwiftValue?).self,
+                    valueABIs: abis
+                )
             )
         )
         let swapped = try NativeSwiftClosure<(NativeSwiftValue?) throws -> NativeSwiftValue?> { value in
@@ -540,13 +623,15 @@ struct SwiftOptionalValueTests {
 
         // Ownership wrappers and borrowed inputs receive the payload or nil too.
         let wrapped = try await ABIRuntime.shared.resolve(
-            .function(
-                "ManagedSwiftFixtures.visitOptionalRuntimeRecords(_:)",
-                as: ((NativeSwiftClosure<
-                    (NativeSwiftBorrowing<NativeSwiftValue?>) throws -> NativeSwiftValue?
-                >) throws
-                    -> String).self,
-                valueABIs: abis
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.visitOptionalRuntimeRecords(_:)",
+                    as: ((NativeSwiftClosure<
+                        (NativeSwiftBorrowing<NativeSwiftValue?>) throws -> NativeSwiftValue?
+                    >) throws
+                        -> String).self,
+                    valueABIs: abis
+                )
             )
         )
         let unwrapped = try NativeSwiftClosure<(NativeSwiftBorrowing<NativeSwiftValue?>) throws -> NativeSwiftValue?> {
@@ -554,11 +639,15 @@ struct SwiftOptionalValueTests {
         }
         #expect(try unsafe wrapped.unsafeInvoke(unwrapped) == "nil,visit#1")
         let borrowing = try await ABIRuntime.shared.resolve(
-            .function(
-                "ManagedSwiftFixtures.visitOptionalRuntimeRecords(_:)",
-                as: ((NativeSwiftClosure<(NativeSwiftBorrowedValue?) throws -> NativeSwiftValue?>)
-                    throws -> String).self,
-                valueABIs: abis
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.visitOptionalRuntimeRecords(_:)",
+                    as: ((NativeSwiftClosure<
+                        (NativeSwiftBorrowedValue?) throws -> NativeSwiftValue?
+                    >)
+                        throws -> String).self,
+                    valueABIs: abis
+                )
             )
         )
         let copied = try NativeSwiftClosure<(NativeSwiftBorrowedValue?) throws -> NativeSwiftValue?> { try $0?.copy() }
@@ -567,17 +656,21 @@ struct SwiftOptionalValueTests {
 
     @Test func aGenericParameterCanBindTheOptionalHandleItself() async throws {
         let echo = try await ABIRuntime.shared.resolve(
-            .function(
-                "ManagedSwiftFixtures.echoGeneric(_:)",
-                as: ((NativeSwiftValue?) -> NativeSwiftValue?).self,
-                genericArguments: [.type(NativeSwiftValue?.self)]
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.echoGeneric(_:)",
+                    as: ((NativeSwiftValue?) -> NativeSwiftValue?).self,
+                    genericArguments: [.type(NativeSwiftValue?.self)]
+                )
             )
         )
         let make = try await ABIRuntime.shared.resolve(
-            .function(
-                "ManagedSwiftFixtures.makeOptionalRuntimeRecord(_:)",
-                as: ((Int64) -> NativeSwiftValue?).self,
-                valueABIs: try await Self.recordABIs()
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.makeOptionalRuntimeRecord(_:)",
+                    as: ((Int64) -> NativeSwiftValue?).self,
+                    valueABIs: try await Self.recordABIs()
+                )
             )
         )
         let record = try #require(try unsafe make.unsafeInvoke(2))
@@ -588,18 +681,22 @@ struct SwiftOptionalValueTests {
     @Test func optionalClosuresUseANullFunctionForNil() async throws {
         let runtime = ABIRuntime.shared
         let apply = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.applyOptionalClosure(_:_:)",
-                as: ((NativeSwiftClosure<(Int64) -> Int64>?, Int64) -> Int64).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.applyOptionalClosure(_:_:)",
+                    as: ((NativeSwiftClosure<(Int64) -> Int64>?, Int64) -> Int64).self
+                )
             )
         )
         let tripled = try NativeSwiftClosure<(Int64) -> Int64> { $0 * 3 }
         #expect(try unsafe apply.unsafeInvoke(tripled, 5) == 15)
         #expect(try unsafe apply.unsafeInvoke(nil, 5) == -1)
         let make = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.makeOptionalClosure(_:)",
-                as: ((Bool) -> NativeSwiftClosure<(Int64) -> Int64>?).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.makeOptionalClosure(_:)",
+                    as: ((Bool) -> NativeSwiftClosure<(Int64) -> Int64>?).self
+                )
             )
         )
         #expect(try unsafe make.unsafeInvoke(false) == nil)
@@ -607,10 +704,13 @@ struct SwiftOptionalValueTests {
         #expect(try unsafe increment.unsafeInvoke(41) == 42)
         // Native code passes nil and a closure to the host callback.
         let pass = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.passOptionalClosures(_:)",
-                as: ((NativeSwiftClosure<(NativeSwiftClosure<(Int64) -> Int64>?) -> Int64>) -> Int64)
-                    .self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.passOptionalClosures(_:)",
+                    as: ((NativeSwiftClosure<(NativeSwiftClosure<(Int64) -> Int64>?) -> Int64>)
+                        -> Int64)
+                        .self
+                )
             )
         )
         let callback = try NativeSwiftClosure<(NativeSwiftClosure<(Int64) -> Int64>?) -> Int64> { body in
@@ -620,9 +720,11 @@ struct SwiftOptionalValueTests {
         #expect(try unsafe pass.unsafeInvoke(callback) == 740)
         // A returned closure returns an Optional closure.
         let factory = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.makeOptionalClosureFactory()",
-                as: (() -> NativeSwiftClosure<() -> NativeSwiftClosure<() -> Int64>?>).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.makeOptionalClosureFactory()",
+                    as: (() -> NativeSwiftClosure<() -> NativeSwiftClosure<() -> Int64>?>).self
+                )
             )
         )
         let produce = try unsafe factory.unsafeInvoke()
@@ -633,16 +735,20 @@ struct SwiftOptionalValueTests {
     @Test func reabstractedClosuresPassANilOptionalClosureThrough() async throws {
         typealias Checker = NativeSwiftClosure<(Int64, NativeSwiftClosure<(Int64) -> Int64>?) -> Int64>
         let make = try await ABIRuntime.shared.resolve(
-            .function(
-                "ManagedSwiftFixtures.makeGenericOptionalChecker(_:)",
-                as: ((Int64.Type) -> Checker).self,
-                genericArguments: [.type(Int64.self)]
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.makeGenericOptionalChecker(_:)",
+                    as: ((Int64.Type) -> Checker).self,
+                    genericArguments: [.type(Int64.self)]
+                )
             )
         )
         let check = try await ABIRuntime.shared.resolve(
-            .function(
-                "ManagedSwiftFixtures.checkNilOptionalClosure(_:)",
-                as: ((Checker) -> Int64).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.checkNilOptionalClosure(_:)",
+                    as: ((Checker) -> Int64).self
+                )
             )
         )
         // The generic closure is adapted for the concrete consumer.
@@ -656,19 +762,23 @@ struct SwiftOptionalValueTests {
         let runtime = ABIRuntime.shared
         typealias Increment = NativeSwiftClosure<(Int64) -> Int64>
         let apply = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.applyGenericOptionalClosure(_:_:)",
-                as: ((Increment?, Int64) -> Int64).self,
-                genericArguments: [.type(Int64.self)]
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.applyGenericOptionalClosure(_:_:)",
+                    as: ((Increment?, Int64) -> Int64).self,
+                    genericArguments: [.type(Int64.self)]
+                )
             )
         )
         #expect(try unsafe apply.unsafeInvoke(Increment { $0 * 3 }, 5) == 15)
         #expect(try unsafe apply.unsafeInvoke(nil, 5) == 5)
         let make = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.makeGenericOptionalClosure(_:)",
-                as: ((Int64?) -> Increment?).self,
-                genericArguments: [.type(Int64.self)]
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.makeGenericOptionalClosure(_:)",
+                    as: ((Int64?) -> Increment?).self,
+                    genericArguments: [.type(Int64.self)]
+                )
             )
         )
         #expect(try unsafe make.unsafeInvoke(nil) == nil)
@@ -676,11 +786,13 @@ struct SwiftOptionalValueTests {
         #expect(try unsafe constant.unsafeInvoke(1) == 9)
         // Native code passes nil and a closure to the host callback.
         let pass = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.passGenericOptionalClosures(_:_:)",
-                as: ((Int64, NativeSwiftClosure<(Increment?, Int64) -> Int64>) -> (Int64, Int64))
-                    .self,
-                genericArguments: [.type(Int64.self)]
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.passGenericOptionalClosures(_:_:)",
+                    as: ((Int64, NativeSwiftClosure<(Increment?, Int64) -> Int64>) -> (Int64, Int64))
+                        .self,
+                    genericArguments: [.type(Int64.self)]
+                )
             )
         )
         let callback = try NativeSwiftClosure<(Increment?, Int64) -> Int64> { body, value in
@@ -693,19 +805,23 @@ struct SwiftOptionalValueTests {
         // and from a concrete native consumer through a reabstraction adapter.
         typealias Applier = NativeSwiftClosure<(Increment?, Int64) -> Int64>
         let makeApplier = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.makeGenericOptionalApplier(_:)",
-                as: ((Int64.Type) -> Applier).self,
-                genericArguments: [.type(Int64.self)]
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.makeGenericOptionalApplier(_:)",
+                    as: ((Int64.Type) -> Applier).self,
+                    genericArguments: [.type(Int64.self)]
+                )
             )
         )
         let applier = try unsafe makeApplier.unsafeInvoke(Int64.self)
         #expect(try unsafe applier.unsafeInvoke(Increment { $0 + 10 }, 1) == 11)
         #expect(try unsafe applier.unsafeInvoke(nil, 1) == 1)
         let consume = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.applyOptionalApplier(_:)",
-                as: ((Applier) -> Int64).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.applyOptionalApplier(_:)",
+                    as: ((Applier) -> Int64).self
+                )
             )
         )
         #expect(try unsafe consume.unsafeInvoke(applier) == 102)
@@ -717,9 +833,11 @@ struct SwiftOptionalValueTests {
         typealias Increment = (Int64) -> Int64
         let runtime = ABIRuntime.shared
         let make = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.makeOptionalClosure(_:)",
-                as: ((Bool) -> NativeSwiftValue).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.makeOptionalClosure(_:)",
+                    as: ((Bool) -> NativeSwiftValue).self
+                )
             )
         )
         let some = try unsafe make.unsafeInvoke(true)
@@ -727,18 +845,22 @@ struct SwiftOptionalValueTests {
         #expect(try some.withCopy { ($0 as? Increment?)??(5) } == 6)
         #expect(try none.withCopy { ($0 as? Increment?).map { $0 == nil } } == true)
         let apply = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.applyOptionalClosure(_:_:)",
-                as: ((NativeSwiftValue, Int64) -> Int64).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.applyOptionalClosure(_:_:)",
+                    as: ((NativeSwiftValue, Int64) -> Int64).self
+                )
             )
         )
         #expect(try unsafe apply.unsafeInvoke(some, 41) == 42)
         #expect(try unsafe apply.unsafeInvoke(none, 41) == -1)
         // An Optional handle projects the closure as its payload.
         let makeHandle = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.makeOptionalClosure(_:)",
-                as: ((Bool) -> NativeSwiftValue?).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.makeOptionalClosure(_:)",
+                    as: ((Bool) -> NativeSwiftValue?).self
+                )
             )
         )
         #expect(try unsafe makeHandle.unsafeInvoke(false) == nil)
@@ -746,9 +868,11 @@ struct SwiftOptionalValueTests {
         #expect(try payload.withCopy { ($0 as? Increment)?(5) } == 6)
         // Native code passes nil and a closure to a host callback.
         let pass = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.passOptionalClosures(_:)",
-                as: ((NativeSwiftClosure<(NativeSwiftValue) -> Int64>) -> Int64).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.passOptionalClosures(_:)",
+                    as: ((NativeSwiftClosure<(NativeSwiftValue) -> Int64>) -> Int64).self
+                )
             )
         )
         let callback = try NativeSwiftClosure<(NativeSwiftValue) -> Int64> { value in
@@ -757,15 +881,19 @@ struct SwiftOptionalValueTests {
         #expect(try unsafe pass.unsafeInvoke(callback) == 740)
         // A tuple element stores its Optional closure the same way.
         let makePair = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.makeOptionalClosurePair(_:)",
-                as: ((Bool) -> NativeSwiftValue).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.makeOptionalClosurePair(_:)",
+                    as: ((Bool) -> NativeSwiftValue).self
+                )
             )
         )
         let applyPair = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.applyOptionalClosurePair(_:)",
-                as: ((NativeSwiftValue) -> Int64).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.applyOptionalClosurePair(_:)",
+                    as: ((NativeSwiftValue) -> Int64).self
+                )
             )
         )
         let pair = try unsafe makePair.unsafeInvoke(true)
@@ -774,9 +902,11 @@ struct SwiftOptionalValueTests {
         #expect(try unsafe applyPair.unsafeInvoke(makePair.unsafeInvoke(false)) == -1)
         // A stored closure's Optional closure parameter is adapted too.
         let makeConsumer = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.makeOptionalClosureConsumer()",
-                as: (() -> NativeSwiftValue).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.makeOptionalClosureConsumer()",
+                    as: (() -> NativeSwiftValue).self
+                )
             )
         )
         let consumer = try unsafe makeConsumer.unsafeInvoke()
@@ -792,10 +922,13 @@ struct SwiftOptionalValueTests {
 
     @Test func nilClosureStorageReleasesAClosureStoredThroughInout() async throws {
         let replace = try await ABIRuntime.shared.resolve(
-            .function(
-                "ManagedSwiftFixtures.replaceOptionalClosure(_:_:)",
-                as: ((NativeSwiftInout<NativeSwiftClosure<(Int64) -> Int64>?>, AnyObject) -> Void)
-                    .self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.replaceOptionalClosure(_:_:)",
+                    as: ((NativeSwiftInout<NativeSwiftClosure<(Int64) -> Int64>?>, AnyObject)
+                        -> Void)
+                        .self
+                )
             )
         )
         weak var released: OptionalClosureOwner?
@@ -812,10 +945,14 @@ struct SwiftOptionalValueTests {
     @Test func nilClosureWritebackKeepsTheUnspecifiedContext() async throws {
         typealias Increment = NativeSwiftClosure<(Int64) -> Int64>
         let pass = try await ABIRuntime.shared.resolve(
-            .function(
-                "ManagedSwiftFixtures.passStaleNilClosure(_:_:)",
-                as: ((NativeSwiftClosure<(NativeSwiftInout<Increment?>) throws -> Void>, AnyObject)
-                    throws -> Bool).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.passStaleNilClosure(_:_:)",
+                    as: ((
+                        NativeSwiftClosure<(NativeSwiftInout<Increment?>) throws -> Void>, AnyObject
+                    )
+                        throws -> Bool).self
+                )
             )
         )
         let owner = NSObject()
@@ -829,9 +966,11 @@ struct SwiftOptionalValueTests {
         let runtime = ABIRuntime.shared
         // The tuple alone needs five registers, but its Optional is three words.
         let first = try await runtime.resolve(
-            .function(
-                "ManagedSwiftFixtures.firstOptionalFloat(_:)",
-                as: (((Float, Float, Float, Float, Float)?) -> Float).self
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.firstOptionalFloat(_:)",
+                    as: (((Float, Float, Float, Float, Float)?) -> Float).self
+                )
             )
         )
         #expect(try unsafe first.unsafeInvoke((1, 2, 3, 4, 5)) == 1)
@@ -839,26 +978,32 @@ struct SwiftOptionalValueTests {
         // Thin metatypes and nested closure Optionals have other representations.
         await #expect(throws: ABIResolutionError.self) {
             _ = try await runtime.resolve(
-                .function(
-                    "ManagedSwiftFixtures.areOptionalMetatypesNil(_:)",
-                    as: (((Int.Type, Int.Type)?) -> Bool).self
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.areOptionalMetatypesNil(_:)",
+                        as: (((Int.Type, Int.Type)?) -> Bool).self
+                    )
                 )
             )
         }
         await #expect(throws: ABIResolutionError.self) {
             _ = try await runtime.resolve(
-                .function(
-                    "ManagedSwiftFixtures.applyNestedOptionalClosure(_:)",
-                    as: ((NativeSwiftClosure<(Int64) -> Int64>??) -> Int64).self
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.applyNestedOptionalClosure(_:)",
+                        as: ((NativeSwiftClosure<(Int64) -> Int64>??) -> Int64).self
+                    )
                 )
             )
         }
         // An Optional handle cannot stand for a required closure.
         await #expect(throws: ABIResolutionError.self) {
             _ = try await runtime.resolve(
-                .function(
-                    "ManagedSwiftFixtures.applyEscapingClosure(_:)",
-                    as: ((NativeSwiftClosure<(Int64) -> Int64>?) -> Int64).self
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.applyEscapingClosure(_:)",
+                        as: ((NativeSwiftClosure<(Int64) -> Int64>?) -> Int64).self
+                    )
                 )
             )
         }

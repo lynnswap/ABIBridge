@@ -24,16 +24,20 @@ import Synchronization
         failures.withLock { $0.append(String(describing: error)) }
     }
     let target = try await runtime.resolve(
-        .function(
-            "SwiftImportProvider.scalar(_:)",
-            as: ((Int64) -> Int64).self
+        .swift(
+            .function(
+                "SwiftImportProvider.scalar(_:)",
+                as: ((Int64) -> Int64).self
+            )
         ),
         in: provider
     )
     let normal = try await runtime.resolve(
-        .function(
-            "SwiftImportCaller.importedScalar(_:)",
-            as: ((Int64) -> Int64).self
+        .swift(
+            .function(
+                "SwiftImportCaller.importedScalar(_:)",
+                as: ((Int64) -> Int64).self
+            )
         ),
         in: path("SwiftImportCaller")
     )
@@ -55,9 +59,11 @@ import Synchronization
     }
 
     let scalar = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.importedScalar(_:)",
-            as: ((Int64) -> Int64).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.importedScalar(_:)",
+                as: ((Int64) -> Int64).self
+            )
         ),
         in: control
     )
@@ -76,17 +82,21 @@ import Synchronization
     try check(try unsafe scalar.unsafeInvoke(40) == 41, "Empty generated Swift entries call their retained predecessor")
 
     let opaqueScalar = try await runtime.resolve(
-        .function(
-            "SwiftImportProvider.opaqueScalar(Swift.Int64) -> some",
-            as: ((Int64) -> Int64).self,
-            declaredAs: "(Swift.Int64) -> some"
+        .swift(
+            .function(
+                "SwiftImportProvider.opaqueScalar(Swift.Int64) -> some",
+                as: ((Int64) -> Int64).self,
+                declaredAs: "(Swift.Int64) -> some"
+            )
         ),
         in: provider
     )
     let opaqueScalarCaller = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.importedOpaqueScalar(_:)",
-            as: ((Int64) -> Int64).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.importedOpaqueScalar(_:)",
+                as: ((Int64) -> Int64).self
+            )
         ),
         in: control
     )
@@ -99,17 +109,21 @@ import Synchronization
     try check(try unsafe opaqueScalarCaller.unsafeInvoke(40) == 41,
         "Opaque scalar fallback preserves the original indirect result")
     let opaqueText = try await runtime.resolve(
-        .function(
-            "SwiftImportProvider.opaqueText(Swift.String) -> some",
-            as: ((String) -> String).self,
-            declaredAs: "(Swift.String) -> some"
+        .swift(
+            .function(
+                "SwiftImportProvider.opaqueText(Swift.String) -> some",
+                as: ((String) -> String).self,
+                declaredAs: "(Swift.String) -> some"
+            )
         ),
         in: provider
     )
     let opaqueTextCaller = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.importedOpaqueText(_:)",
-            as: ((String) -> String).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.importedOpaqueText(_:)",
+                as: ((String) -> String).self
+            )
         ),
         in: control
     )
@@ -131,16 +145,20 @@ import Synchronization
         "Opaque managed-result fallback survives invalidation")
 
     let text = try await runtime.resolve(
-        .function(
-            "SwiftImportProvider.text(_:)",
-            as: ((String) -> String).self
+        .swift(
+            .function(
+                "SwiftImportProvider.text(_:)",
+                as: ((String) -> String).self
+            )
         ),
         in: provider
     )
     let textCaller = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.importedText(_:)",
-            as: ((String) -> String).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.importedText(_:)",
+                as: ((String) -> String).self
+            )
         ),
         in: control
     )
@@ -160,16 +178,20 @@ import Synchronization
     try check(try unsafe textCaller.unsafeInvoke(input) == "original:" + input, "String fallback survives logical invalidation")
 
     let payload = try await runtime.resolve(
-        .function(
-            "SwiftImportProvider.payload(Swift.Int64) -> SwiftImportProvider.ReplacementPayload",
-            as: ((Int64) -> VirtualPayload).self
+        .swift(
+            .function(
+                "SwiftImportProvider.payload(Swift.Int64) -> SwiftImportProvider.ReplacementPayload",
+                as: ((Int64) -> VirtualPayload).self
+            )
         ),
         in: provider
     )
     let payloadCaller = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.importedPayload(_:)",
-            as: ((Int64) -> Int64).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.importedPayload(_:)",
+                as: ((Int64) -> Int64).self
+            )
         ),
         in: control
     )
@@ -184,54 +206,68 @@ import Synchronization
     try check(try unsafe payloadCaller.unsafeInvoke(40) == 210, "Indirect-result fallback survives logical invalidation")
 
     let genericInteger = try await runtime.resolve(
-        .function(
-            "SwiftImportProvider.composedHookEcho(_:)",
-            as: ((Int64) -> Int64).self,
-            genericArguments: [.type(Int64.self)]
+        .swift(
+            .function(
+                "SwiftImportProvider.composedHookEcho(_:)",
+                as: ((Int64) -> Int64).self,
+                genericArguments: [.type(Int64.self)]
+            )
         ),
         in: provider
     )
     let genericText = try await runtime.resolve(
-        .function(
-            "SwiftImportProvider.composedHookEcho(_:)",
-            as: ((String) -> String).self,
-            genericArguments: [.type(String.self)]
+        .swift(
+            .function(
+                "SwiftImportProvider.composedHookEcho(_:)",
+                as: ((String) -> String).self,
+                genericArguments: [.type(String.self)]
+            )
         ),
         in: provider
     )
     let genericObject = try await runtime.resolve(
-        .function(
-            "SwiftImportProvider.composedHookEcho(_:)",
-            as: ((NSObject) -> NSObject).self,
-            genericArguments: [.type(NSObject.self)]
+        .swift(
+            .function(
+                "SwiftImportProvider.composedHookEcho(_:)",
+                as: ((NSObject) -> NSObject).self,
+                genericArguments: [.type(NSObject.self)]
+            )
         ),
         in: provider
     )
     let integerCaller = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.composedHookInteger(_:)",
-            as: ((Int64) -> Int64).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.composedHookInteger(_:)",
+                as: ((Int64) -> Int64).self
+            )
         ),
         in: control
     )
     let stringCaller = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.composedHookString(_:)",
-            as: ((String) -> String).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.composedHookString(_:)",
+                as: ((String) -> String).self
+            )
         ),
         in: control
     )
     let objectCaller = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.composedHookObject(_:)",
-            as: ((NSObject) -> NSObject).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.composedHookObject(_:)",
+                as: ((NSObject) -> NSObject).self
+            )
         ),
         in: control
     )
     let booleanCaller = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.composedHookBoolean(_:)",
-            as: ((Bool) -> Bool).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.composedHookBoolean(_:)",
+                as: ((Bool) -> Bool).self
+            )
         ),
         in: control
     )
@@ -258,17 +294,21 @@ import Synchronization
     integerHook.invalidate(); stringHook.invalidate(); objectHook.invalidate()
 
     let genericFactory = try await runtime.resolve(
-        .function(
-            "SwiftImportProvider.composedHookFactory(_:)",
-            as: ((Int64) -> NativeSwiftClosure<() -> Int64>).self,
-            genericArguments: [.type(Int64.self)]
+        .swift(
+            .function(
+                "SwiftImportProvider.composedHookFactory(_:)",
+                as: ((Int64) -> NativeSwiftClosure<() -> Int64>).self,
+                genericArguments: [.type(Int64.self)]
+            )
         ),
         in: provider
     )
     let factoryCaller = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.composedHookFactoryResult(_:)",
-            as: ((Int64) -> Int64).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.composedHookFactoryResult(_:)",
+                as: ((Int64) -> Int64).self
+            )
         ),
         in: control
     )
@@ -280,16 +320,20 @@ import Synchronization
     factoryHook.invalidate()
 
     let throwing = try await runtime.resolve(
-        .function(
-            "SwiftImportProvider.composedHookError(_:)",
-            as: ((Int64) throws(NSError) -> Int64).self
+        .swift(
+            .function(
+                "SwiftImportProvider.composedHookError(_:)",
+                as: ((Int64) throws(NSError) -> Int64).self
+            )
         ),
         in: provider
     )
     let throwingCaller = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.composedHookErrorResult(_:)",
-            as: ((Int64) throws(NSError) -> Int64).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.composedHookErrorResult(_:)",
+                as: ((Int64) throws(NSError) -> Int64).self
+            )
         ),
         in: control
     )
@@ -331,39 +375,49 @@ private struct RuntimeHookProbeError: Error {}
     caller: ImageSelector) async throws -> [String] {
     let type = try await runtime.resolveSwiftType(named: "SwiftImportProvider.HookTicket", in: provider)
     let consume = try await runtime.resolve(
-        .function(
-            "SwiftImportProvider.consumeHookTicket(_:)",
-            as: ((NativeSwiftConsuming<NativeSwiftValue>) -> Int64).self,
-            genericArguments: [.type(type)]
+        .swift(
+            .function(
+                "SwiftImportProvider.consumeHookTicket(_:)",
+                as: ((NativeSwiftConsuming<NativeSwiftValue>) -> Int64).self,
+                genericArguments: [.type(type)]
+            )
         ),
         in: provider
     )
     let move = try await runtime.resolve(
-        .function(
-            "SwiftImportProvider.moveHookTicket(_:)",
-            as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self,
-            genericArguments: [.type(type)]
+        .swift(
+            .function(
+                "SwiftImportProvider.moveHookTicket(_:)",
+                as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self,
+                genericArguments: [.type(type)]
+            )
         ),
         in: provider
     )
     let consumeCaller = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.callConsumeTicket(_:)",
-            as: ((Int64) -> Int64).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.callConsumeTicket(_:)",
+                as: ((Int64) -> Int64).self
+            )
         ),
         in: caller
     )
     let moveCaller = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.callMoveTicket(_:)",
-            as: ((Int64) -> Int64).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.callMoveTicket(_:)",
+                as: ((Int64) -> Int64).self
+            )
         ),
         in: caller
     )
     let counts = try await runtime.resolve(
-        .function(
-            "SwiftImportProvider.hookTicketCounts()",
-            as: (() -> (Int64, Int64)).self
+        .swift(
+            .function(
+                "SwiftImportProvider.hookTicketCounts()",
+                as: (() -> (Int64, Int64)).self
+            )
         ),
         in: provider
     )
@@ -423,16 +477,20 @@ private struct RuntimeHookProbeError: Error {}
         in: provider
     )
     let virtualMove = try await renderer.resolve(
-        .method(
-            "move(_:)",
-            as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self,
-            genericArguments: [.type(type)]
+        .swift(
+            .method(
+                "move(_:)",
+                as: ((NativeSwiftConsuming<NativeSwiftValue>) -> NativeSwiftValue).self,
+                genericArguments: [.type(type)]
+            )
         )
     )
     let virtualCaller = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.callVirtualMoveTicket(_:)",
-            as: ((Int64) -> Int64).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.callVirtualMoveTicket(_:)",
+                as: ((Int64) -> Int64).self
+            )
         ),
         in: caller
     )
@@ -449,18 +507,22 @@ private struct RuntimeHookProbeError: Error {}
     checks.append("Virtual generic methods use the same noncopyable ownership plan and authenticated continuation")
     virtual.invalidate()
     let asyncMove = try await runtime.resolve(
-        .function(
-            "SwiftImportProvider.moveAsyncHookTicket(_:)",
-            as: (@concurrent (NativeSwiftConsuming<NativeSwiftValue>) async -> NativeSwiftValue)
-                .self,
-            genericArguments: [.type(type)]
+        .swift(
+            .function(
+                "SwiftImportProvider.moveAsyncHookTicket(_:)",
+                as: (@concurrent (NativeSwiftConsuming<NativeSwiftValue>) async -> NativeSwiftValue)
+                    .self,
+                genericArguments: [.type(type)]
+            )
         ),
         in: provider
     )
     let asyncCaller = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.callAsyncMoveTicket(_:)",
-            as: (@concurrent (Int64) async -> Int64).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.callAsyncMoveTicket(_:)",
+                as: (@concurrent (Int64) async -> Int64).self
+            )
         ),
         in: caller
     )
@@ -480,16 +542,20 @@ private struct RuntimeHookProbeError: Error {}
     checks.append("Async runtime hooks transfer noncopyable inputs and recover completed results through suspension")
     asyncHook.invalidate()
     let objectTarget = try await runtime.resolve(
-        .function(
-            "SwiftImportProvider.consumeHookObject(_:)",
-            as: ((NativeSwiftConsuming<NSObject>) -> Int64).self
+        .swift(
+            .function(
+                "SwiftImportProvider.consumeHookObject(_:)",
+                as: ((NativeSwiftConsuming<NSObject>) -> Int64).self
+            )
         ),
         in: provider
     )
     let objectCaller = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.callConsumeHookObject(_:)",
-            as: ((NativeSwiftConsuming<NSObject>) -> Int64).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.callConsumeHookObject(_:)",
+                as: ((NativeSwiftConsuming<NSObject>) -> Int64).self
+            )
         ),
         in: caller
     )
@@ -508,16 +574,20 @@ private struct RuntimeHookProbeError: Error {}
     checks.append("Ordinary consuming object arguments release every callback and continuation copy")
     objectHook.invalidate()
     let optionalTarget = try await runtime.resolve(
-        .function(
-            "SwiftImportProvider.hookOptionalPointer(Swift.UnsafeMutableRawPointer?) -> Swift.UnsafeMutableRawPointer?",
-            as: ((HookPointerValue?) -> HookPointerValue?).self
+        .swift(
+            .function(
+                "SwiftImportProvider.hookOptionalPointer(Swift.UnsafeMutableRawPointer?) -> Swift.UnsafeMutableRawPointer?",
+                as: ((HookPointerValue?) -> HookPointerValue?).self
+            )
         ),
         in: provider
     )
     let optionalCaller = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.callOptionalHookPointer(_:)",
-            as: ((UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer?).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.callOptionalHookPointer(_:)",
+                as: ((UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer?).self
+            )
         ),
         in: caller
     )
@@ -533,16 +603,20 @@ private struct RuntimeHookProbeError: Error {}
     checks.append("Optional pointer adapters decode and encode nil and nonnil native values through hooks")
     optionalHook.invalidate()
     let borrowingTarget = try await runtime.resolve(
-        .function(
-            "SwiftImportProvider.hookBorrowedPointer(Swift.UnsafeMutableRawPointer?) -> Swift.UnsafeMutableRawPointer?",
-            as: ((NativeSwiftBorrowing<HookPointerValue?>) -> HookPointerValue?).self
+        .swift(
+            .function(
+                "SwiftImportProvider.hookBorrowedPointer(Swift.UnsafeMutableRawPointer?) -> Swift.UnsafeMutableRawPointer?",
+                as: ((NativeSwiftBorrowing<HookPointerValue?>) -> HookPointerValue?).self
+            )
         ),
         in: provider
     )
     let borrowingCaller = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.callBorrowedHookPointer(_:)",
-            as: ((UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer?).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.callBorrowedHookPointer(_:)",
+                as: ((UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer?).self
+            )
         ),
         in: caller
     )
@@ -556,18 +630,22 @@ private struct RuntimeHookProbeError: Error {}
     borrowingHook.invalidate()
     typealias Body = NativeSwiftClosure<() -> Int64>
     let writebackTarget = try await runtime.resolve(
-        .function(
-            "SwiftImportProvider.moveHookTicketWithBody(_:_:_:)",
-            as: ((NativeSwiftConsuming<NativeSwiftValue>, NativeSwiftInout<Body>, Body)
-                -> NativeSwiftValue).self,
-            genericArguments: [.type(type)]
+        .swift(
+            .function(
+                "SwiftImportProvider.moveHookTicketWithBody(_:_:_:)",
+                as: ((NativeSwiftConsuming<NativeSwiftValue>, NativeSwiftInout<Body>, Body)
+                    -> NativeSwiftValue).self,
+                genericArguments: [.type(type)]
+            )
         ),
         in: provider
     )
     let writebackCaller = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.callMoveTicketWithBody(_:)",
-            as: ((Int64) -> (Int64, Int64)).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.callMoveTicketWithBody(_:)",
+                as: ((Int64) -> (Int64, Int64)).self
+            )
         ),
         in: caller
     )
@@ -583,18 +661,24 @@ private struct RuntimeHookProbeError: Error {}
     checks.append("Inout conversion failure preserves native noncopyable result ownership until recovery publication")
     writebackHook.invalidate()
     let asyncWritebackTarget = try await runtime.resolve(
-        .function(
-            "SwiftImportProvider.moveAsyncHookTicketWithBody(_:_:_:)",
-            as: (@concurrent (NativeSwiftConsuming<NativeSwiftValue>, NativeSwiftInout<Body>, Body)
-                async -> NativeSwiftValue).self,
-            genericArguments: [.type(type)]
+        .swift(
+            .function(
+                "SwiftImportProvider.moveAsyncHookTicketWithBody(_:_:_:)",
+                as: (@concurrent (
+                    NativeSwiftConsuming<NativeSwiftValue>, NativeSwiftInout<Body>, Body
+                )
+                    async -> NativeSwiftValue).self,
+                genericArguments: [.type(type)]
+            )
         ),
         in: provider
     )
     let asyncWritebackCaller = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.callAsyncMoveTicketWithBody(_:)",
-            as: (@concurrent (Int64) async -> (Int64, Int64)).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.callAsyncMoveTicketWithBody(_:)",
+                as: (@concurrent (Int64) async -> (Int64, Int64)).self
+            )
         ),
         in: caller
     )
@@ -611,16 +695,20 @@ private struct RuntimeHookProbeError: Error {}
     }
     checks.append("Async result ownership transfers only after inout writeback succeeds")
     let closureTarget = try await runtime.resolve(
-        .function(
-            "SwiftImportProvider.consumeHookClosure(_:)",
-            as: ((NativeSwiftConsuming<NativeSwiftValue>) -> Int64).self
+        .swift(
+            .function(
+                "SwiftImportProvider.consumeHookClosure(_:)",
+                as: ((NativeSwiftConsuming<NativeSwiftValue>) -> Int64).self
+            )
         ),
         in: provider
     )
     let closureCaller = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.callConsumeHookClosure(_:)",
-            as: ((NSObject) -> Int64).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.callConsumeHookClosure(_:)",
+                as: ((NSObject) -> Int64).self
+            )
         ),
         in: caller
     )
@@ -641,16 +729,20 @@ private struct RuntimeHookProbeError: Error {}
     checks.append("Runtime closure conversion consumes saved aliases and releases authenticated captures")
     closureHook.invalidate()
     let asyncClosureTarget = try await runtime.resolve(
-        .function(
-            "SwiftImportProvider.consumeAsyncHookClosure(_:)",
-            as: (@concurrent (NativeSwiftConsuming<NativeSwiftValue>) async -> Int64).self
+        .swift(
+            .function(
+                "SwiftImportProvider.consumeAsyncHookClosure(_:)",
+                as: (@concurrent (NativeSwiftConsuming<NativeSwiftValue>) async -> Int64).self
+            )
         ),
         in: provider
     )
     let asyncClosureCaller = try await runtime.resolve(
-        .function(
-            "SwiftImportCallerControl.callConsumeAsyncHookClosure(_:)",
-            as: (@concurrent (NSObject) async -> Int64).self
+        .swift(
+            .function(
+                "SwiftImportCallerControl.callConsumeAsyncHookClosure(_:)",
+                as: (@concurrent (NSObject) async -> Int64).self
+            )
         ),
         in: caller
     )

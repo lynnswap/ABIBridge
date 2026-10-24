@@ -29,10 +29,10 @@ Automatic lookup works without configuration. When you know which framework prov
 
 ```swift
 let decorate = try runtime.resolveAndWait(
-    .function(
+    .swift(.function(
         "Example.decorate(_:)",
         as: ((String) -> String).self
-    ),
+    )),
     in: .framework(named: "Example")
 )
 let first = try unsafe decorate.unsafeInvoke("Hello")
@@ -210,7 +210,9 @@ See <doc:NativeInspection> for C++ adoption and retention. These operations keep
 
 ## Cache and loader lifetime
 
-Call `removeCachedResults()` to release cached indexes and results. Existing image, symbol, and callable handles stay valid; subsequent lookups rebuild the required indexes. Known Swift classes reuse their defining image while it remains retained.
+Call `runtime.removeCachedResults()` to release that runtime's resolver indexes and Swift type cache. Existing image, symbol, and callable handles stay valid, as do resolutions already in progress; subsequent lookups rebuild the required indexes. Results from an older cache generation are not republished after removal. The process-shared native call-interface cache and the image catalog remain available. Known Swift classes reuse their defining image while it remains retained.
+
+A callable ``NativeRequest`` describes what to resolve. It has no public `Hashable` conformance, and saving it does not save a prepared handle. Repeated resolution reuses existing indexes and native call interfaces; it still captures the selected implementation for each handle. Retain the returned handle for repeated invocation. There is no request-keyed handle cache or per-request removal operation.
 
 Each image load has a process-local generation, so a later image at the same address cannot inherit the previous generation's identity. The native catalog registers process-lifetime dyld observers and pins the image containing their callback code. Executables and dyld shared-cache images already have process lifetime, so their leases do not reopen a filesystem path. Other image leases acquire loader references without loading missing code.
 

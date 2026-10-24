@@ -574,24 +574,30 @@ extension ConformanceCase {
                 """
         ) { f in
             let point = try await f.type("CMPoint")
-            let sum = try await point.resolve(.method("cmSum()", as: (() -> Double).self))
+            let sum = try await point.resolve(.swift(.method("cmSum()", as: (() -> Double).self)))
             let scale = try await point.resolve(
-                .method(
-                    "cmScale(_:)",
-                    as: ((Double) -> Void).self,
-                    receiver: .mutating
+                .swift(
+                    .method(
+                        "cmScale(_:)",
+                        as: ((Double) -> Void).self,
+                        receiver: .mutating
+                    )
                 )
             )
             let openSum = try await f.type("CMOpenPoint").resolve(
-                .method(
-                    "cmSum()",
-                    as: (() -> Double).self
+                .swift(
+                    .method(
+                        "cmSum()",
+                        as: (() -> Double).self
+                    )
                 )
             )
             let wideSum = try await f.type("CMWide5").resolve(
-                .method(
-                    "cmSum()",
-                    as: (() -> Int64).self
+                .swift(
+                    .method(
+                        "cmSum()",
+                        as: (() -> Int64).self
+                    )
                 )
             )
             let make = try await f.function("cmMakePoint()", as: (() -> NativeSwiftValue).self)
@@ -607,9 +613,11 @@ extension ConformanceCase {
             // Nothing records whether CMWide is frozen, but its frozen
             // lowering already passes self by address.
             let total = try await f.type("CMWide").resolve(
-                .method(
-                    "cmTotal()",
-                    as: (() -> Int64).self
+                .swift(
+                    .method(
+                        "cmTotal()",
+                        as: (() -> Int64).self
+                    )
                 )
             )
             let undecided = try await f.function("cmMakeWide()", as: (() -> NativeSwiftValue).self)

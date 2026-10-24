@@ -8,10 +8,10 @@ For a loaded module declaring `func apply(_ callback: (Int64) -> Int64, value: I
 
 ```swift
 let callback = try NativeSwiftClosure { (value: Int64) in value + 7 }
-let apply = try ABIRuntime.shared.resolveAndWait(.function(
+let apply = try ABIRuntime.shared.resolveAndWait(.swift(.function(
     "Example.apply(_:value:)",
     as: ((NativeSwiftClosure<(Int64) -> Int64>, Int64) -> Int64).self
-))
+)))
 let result = try unsafe apply.unsafeInvoke(callback, 35)
 ```
 
@@ -30,10 +30,10 @@ Simple existential arguments and results, including Any, protocol compositions, 
 For a loaded module declaring `func makeAdder(_ bias: Int64) -> (Int64) -> Int64`:
 
 ```swift
-let factory = try ABIRuntime.shared.resolveAndWait(.function(
+let factory = try ABIRuntime.shared.resolveAndWait(.swift(.function(
     "Example.makeAdder(_:)",
     as: ((Int64) -> NativeSwiftClosure<(Int64) -> Int64>).self
-))
+)))
 let addSeven = try unsafe factory.unsafeInvoke(7)
 let result = try unsafe addSeven.unsafeInvoke(35)
 ```
@@ -52,14 +52,14 @@ When a returned closure's result can borrow an input, include its effective life
 
 ```swift
 let runtime = ABIRuntime.shared
-let read = try runtime.resolveAndWait(.function(
+let read = try runtime.resolveAndWait(.swift(.function(
     "Example.read(_:)", as: ((NativeSwiftBorrowedValue) -> Int64).self
-))
-let factory = try runtime.resolveAndWait(.function(
+)))
+let factory = try runtime.resolveAndWait(.swift(.function(
     "Example.makeView()",
     as: (() -> NativeSwiftClosure<(String) -> NativeSwiftBorrowedValue>).self,
     declaredAs: "() -> @_lifetime(borrow text) (_ text: Swift.String) -> Example.View"
-))
+)))
 let view = try unsafe factory.unsafeInvoke()
 let number = try unsafe view.unsafeInvoke("123", withResult: { value in
     try unsafe read.unsafeInvoke(value)
@@ -100,10 +100,10 @@ Use `NativeSwiftClosure` inside the callback's signature for a native closure pa
 let callback = try NativeSwiftClosure<(NativeSwiftClosure<(Int64) -> Int64>) throws -> Int64> { value in
     try unsafe value.unsafeInvoke(42)
 }
-let visit = try ABIRuntime.shared.resolveAndWait(.function(
+let visit = try ABIRuntime.shared.resolveAndWait(.swift(.function(
     "Example.visit(_:)",
     as: ((NativeSwiftClosure<(NativeSwiftClosure<(Int64) -> Int64>) throws -> Int64>) throws -> Int64).self
-))
+)))
 let result = try unsafe visit.unsafeInvoke(callback)
 ```
 
@@ -128,11 +128,11 @@ A returned closure can accept and return `NativeSwiftValue` through the same arg
 For `func makeProducer<Value>(_ value: Value) -> () -> Value`:
 
 ```swift
-let factory = try ABIRuntime.shared.resolveAndWait(.function(
+let factory = try ABIRuntime.shared.resolveAndWait(.swift(.function(
     "Example.makeProducer<A>(A) -> () -> A",
     as: ((String) -> NativeSwiftClosure<() -> NativeSwiftValue>).self,
     genericArguments: [.type(String.self)]
-))
+)))
 let produce = try unsafe factory.unsafeInvoke("captured")
 let value = try unsafe produce.unsafeInvoke()
 let text = try value.take(as: String.self)
@@ -163,11 +163,11 @@ A host callback returning ``NativeSwiftValue`` requires `throws(any Error)`. Con
 For `func produce<Value: ~Copyable>(_ body: () throws -> Value) rethrows -> Value`, a runtime-only value uses the ordinary closure type:
 
 ```swift
-let produce = try ABIRuntime.shared.resolveAndWait(.function(
+let produce = try ABIRuntime.shared.resolveAndWait(.swift(.function(
     "Example.produce<A where A: ~Swift.Copyable>(() throws -> A) throws -> A",
     as: ((NativeSwiftClosure<() throws -> NativeSwiftValue>) throws -> NativeSwiftValue).self,
     genericArguments: [.type(value.type)]
-))
+)))
 ```
 
 Prepare a Sendable body that obtains an owned value and returns it, then pass that callback to `produce.unsafeInvoke`. A host callback returning a runtime handle cannot use a nonthrowing or narrower typed-error native declaration: those channels cannot represent handle conversion failures. This restriction does not apply to calling a returned native closure, where `unsafeInvoke` already has a bridge-error channel.
@@ -186,11 +186,11 @@ let recordType = try runtime.resolveSwiftTypeAndWait(named: "Example.Record")
 typealias Callback = NativeSwiftClosure<(Int64) -> Int64>
 typealias Snapshot = (record: NativeSwiftValue, callback: Callback)
 
-let makeSnapshot = try runtime.resolveAndWait(.function(
+let makeSnapshot = try runtime.resolveAndWait(.swift(.function(
     "Example.makeSnapshot() -> (record: Example.Record, callback: (Swift.Int64) -> Swift.Int64)",
     as: (() -> Snapshot).self,
     valueABIs: [recordType: .opaque(named: recordType.name)]
-))
+)))
 let snapshot = try unsafe makeSnapshot.unsafeInvoke()
 let result = try unsafe snapshot.callback.unsafeInvoke(35)
 ```
@@ -210,10 +210,10 @@ let callback = try NativeSwiftClosure<(Bool) throws -> String> { fail in
     if fail { throw ExampleError.unavailable }
     return "ready"
 }
-let apply = try ABIRuntime.shared.resolveAndWait(.function(
+let apply = try ABIRuntime.shared.resolveAndWait(.swift(.function(
     "Example.apply(_:_:)",
     as: ((NativeSwiftClosure<(Bool) throws -> String>, Bool) throws -> String).self
-))
+)))
 let result = try unsafe apply.unsafeInvoke(callback, false)
 ```
 
@@ -241,10 +241,10 @@ A caller-isolated signature carries the native caller's hidden isolation argumen
 Pass the appropriate wrapper in an async function's metatype just as with synchronous closures:
 
 ```swift
-let apply = try ABIRuntime.shared.resolveAndWait(.function(
+let apply = try ABIRuntime.shared.resolveAndWait(.swift(.function(
     "Example.apply(_:_:)",
     as: (@concurrent (NativeSwiftClosure<@Sendable @concurrent (Int64) async -> Int64>, Int64) async -> Int64).self
-))
+)))
 ```
 
 For a native factory returning a closure, put the wrapper in the factory's result type. Its descriptor, implementation image, arguments, result storage, and captured context remain alive across suspension. Native escaping copies carry the same code leases, including after repeated handoffs. Native errors use ``NativeSwiftError`` and retain their code dependencies without keeping unrelated callback captures alive.

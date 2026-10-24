@@ -27,21 +27,27 @@ private final class InvocationTimingReceiver: NSObject {
         as: ((UnsafeMutablePointer<CChar>, Int) -> UnsafeMutableRawPointer).self
     )
     let sum = try await runtime.resolve(
-        .function(
-            "ArchitectureValidation.architectureSum(_:_:_:_:_:_:_:_:_:_:)",
-            as: ((Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Int).self
+        .swift(
+            .function(
+                "ArchitectureValidation.architectureSum(_:_:_:_:_:_:_:_:_:_:)",
+                as: ((Int, Int, Int, Int, Int, Int, Int, Int, Int, Int) -> Int).self
+            )
         )
     )
     let decorate = try await runtime.resolve(
-        .function(
-            "ArchitectureValidation.architectureDecorate(_:)",
-            as: ((String) -> String).self
+        .swift(
+            .function(
+                "ArchitectureValidation.architectureDecorate(_:)",
+                as: ((String) -> String).self
+            )
         )
     )
     let mix = try await runtime.resolve(
-        .function(
-            "ArchitectureValidation.architectureTimingMix(_:_:_:_:)",
-            as: ((Int32, Double, Float, UInt64) -> Double).self
+        .swift(
+            .function(
+                "ArchitectureValidation.architectureTimingMix(_:_:_:_:)",
+                as: ((Int32, Double, Float, UInt64) -> Double).self
+            )
         )
     )
     let counter = ABIValidationCreateCounter()!
