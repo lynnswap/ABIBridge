@@ -1,7 +1,7 @@
 /// A native callable declaration and the language used to resolve it.
 ///
 /// Language factories wrap typed declarations without performing lookup or
-/// preparing a call. Save a request to resolve it again in another scope, or
+/// preparing a call. Save a request for later resolution, or
 /// pass it directly to `resolve` or `resolveAndWait`. Scope and loading options
 /// belong to resolution, and each returned handle retains its existing
 /// invocation and ownership contract.
@@ -352,7 +352,8 @@ public struct NativeSwiftInstanceMemberRequest<Signature>: Sendable {
 /// Wrap the declaration with `NativeRequest.swift`, then resolve it on a
 /// ``NativeSwiftType``, or on a ``NativeObject`` for
 /// the object's type, to get a ``NativeSwiftFunction``. The type's metadata
-/// is supplied as the member's `self`.
+/// is supplied as `self` where the declaration receives a thick metatype;
+/// concrete struct and enum type members have no metatype `self` argument.
 ///
 /// Names follow the rules of ``NativeSwiftInstanceMemberRequest``. A name
 /// qualified by a protocol, such as `Example.Shape.make()` or

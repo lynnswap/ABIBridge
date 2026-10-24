@@ -250,7 +250,7 @@ let standard = try type.resolveAndWait(.swift(.staticGetter("standard", as: (() 
 let value = try unsafe standard.unsafeInvoke()
 ```
 
-Allocating class initializers and static members receive the type metadata automatically. Initializers transfer ordinary arguments to the callee. Use NativeSwiftBorrowing for explicitly borrowed initializer arguments (`__shared` in the demangled declaration); see <doc:SwiftArgumentConventions>. A failable class initializer can use an optional class result. Initializers are resolved on the requested type; inherited allocation behavior must have its own compiler-generated initializer entry.
+Type metadata is supplied where the declaration receives a thick metatype, including allocating class initializers and protocol type requirements. Concrete struct and enum type members have no metatype `self` argument. Initializers transfer ordinary arguments to the callee. Use NativeSwiftBorrowing for explicitly borrowed initializer arguments (`__shared` in the demangled declaration); see <doc:SwiftArgumentConventions>. A failable class initializer can use an optional class result. Initializers are resolved on the requested type; inherited allocation behavior must have its own compiler-generated initializer entry.
 
 Opaque some results use NativeSwiftValue for functions, methods, and getters; see <doc:SwiftOpaqueResults>.
 

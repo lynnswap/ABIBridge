@@ -78,7 +78,7 @@ extension NativeSwiftMethod {
     ///
     /// Declaration descriptors select the lookup type's copied slot, including inherited and overridden methods. Separate superclass and sibling entries are unchanged. Saved dispatchers and later-initialized subclasses copying this entry share its chain, including future registrations. Direct, final, inlined, and devirtualized calls bypass the slot.
     ///
-    /// Callbacks run on the incoming thread with an initialized instance. The caller establishes the native ABI, ownership, isolation, and coordination with external writers; source types alone do not establish those contracts. Protocol-qualified requirements also support value receivers, static members, and initializers through their conformance table. Generic tables can be shared; callbacks filter incoming Self and generic bindings. Deinitializers and yielding accessors need separate support. See <doc:SwiftMethodHooks> for receiver access and failure handling.
+    /// Callbacks run on the incoming thread with an initialized instance. The caller establishes the native ABI, ownership, isolation, and coordination with external writers; source types alone do not establish those contracts. Protocol-qualified instance requirements also support value receivers through their conformance table. Generic tables can be shared; callbacks filter incoming Self and generic bindings. Deinitializers and yielding accessors need separate support. See <doc:SwiftMethodHooks> for receiver access and failure handling.
     ///
     /// - Parameters:
     ///   - owner: Keeps generated predecessor code alive.

@@ -42,13 +42,13 @@ public struct NativeMethodOptions: Sendable {
 public enum ABIInvocationError: Error, Sendable, Equatable {
     /// An argument or returned value cannot be converted to its required type.
     case incompatibleValue(expected: String, actual: String)
-    /// A native method returned nil for a nonoptional Swift result.
+    /// A native call returned a null pointer or object for a nonoptional Swift result.
     case unexpectedNilResult(expected: String)
 }
 
 /// A retained object used to look up bound Objective-C or Swift methods.
 ///
-/// The receiver and its handles remain in the caller's isolation domain. This type does not make an object safe to use from another actor or thread.
+/// The receiver and bound method handles remain in the caller's isolation domain. This type does not make an object safe to use from another actor or thread.
 public final class NativeObject {
     private(set) var receiver: AnyObject?
     private let runtime: ABIRuntime

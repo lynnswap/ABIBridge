@@ -402,8 +402,10 @@ extension ABIRuntime {
     /// - Parameters:
     ///   - storage: A live object or caller-adjusted subobject view.
     ///   - typeName: The qualified C++ class name.
-    ///   - scope: Images to search; automatic scope stays loaded-only.
-    ///   - loading: Whether an explicit target may be acquired and initialized.
+    ///   - scope: Images searched during direct member resolution; automatic
+    ///     scope stays loaded-only.
+    ///   - loading: Whether direct member resolution may acquire and initialize
+    ///     an explicit image.
     /// - Returns: A receiver scope using this runtime's shared indexes.
     public nonisolated func cxxObject(
         _ storage: NativeValue,
@@ -426,7 +428,8 @@ extension ABIRuntime {
     ///   - storage: A live object or caller-adjusted subobject view.
     ///   - typeName: The qualified C++ class name.
     ///   - image: The image whose symbol index can be reused.
-    ///   - loading: Whether to ask dyld to acquire and initialize the image.
+    ///   - loading: Whether direct member resolution may ask dyld to acquire
+    ///     and initialize the image.
     /// - Returns: A receiver scope retaining its storage and image.
     public nonisolated func cxxObject(
         _ storage: NativeValue,

@@ -21,7 +21,7 @@ The synchronous initializer accepts a nonisolated `@Sendable` body matching the 
 
 Construction validates function metadata. The first invocation or publication prepares the native layout and entry, reporting failures before native code runs. Subsequent calls reuse that preparation. Native context copies keep the entry, body, and captures alive after the original wrapper is released. The final context release ends that lifetime.
 
-For a caller-isolated body passed to a synchronous native nonescaping parameter, use ``NativeSwiftClosure/withUnsafeNonescaping(_:_:)-4ragm``. The body and invocation stay on the current executor. Neither native code nor the use body may save or return the callback.
+For a caller-isolated body passed to a synchronous native nonescaping parameter, use ``NativeSwiftClosure/withUnsafeNonescaping(_:_:)-4ragm``. The caller must keep native invocations on the body's executor; this operation performs no executor hop. Neither native code nor the use body may save or return the callback.
 
 Simple existential arguments and results, including Any, protocol compositions, class constraints, and Error, use their compiler-established container and authentication conventions; see <doc:SwiftExistentialValues>.
 

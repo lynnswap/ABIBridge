@@ -3,7 +3,7 @@ import ABIBridgeCore
 extension NativeVTable {
     /// One selected absolute entry, retaining its bounded table and metadata image. This describes a slot; capturing a callable reads its current contents.
     public struct Entry {
-        /// The zero-based offset from this table's address point.
+        /// The zero-based function-slot index from this table's address point.
         public let index: Int
         /// The function-pointer schema recorded in the original fixup or adapter.
         public let authentication: NativePointerAuthentication
@@ -19,7 +19,7 @@ extension NativeVTable {
     ///
     /// Include argument types and qualifiers, such as `Example::Derived::value(int) const`. Selection reads the loaded image's original fixups and symbols, preserving secondary and covariant-return thunk identity and authentication. Existing hooks do not change selection.
     ///
-    /// Use ``entry(at:authentication:)`` adapter metadata for stripped identities, missing files, ambiguous aliases, or unsupported layouts. Construction of this view establishes table bounds and the subobject; the name does not establish class layout or a method signature.
+    /// Use ``entry(at:authentication:)`` adapter metadata for stripped identities, missing files, ambiguous aliases, or unsupported layouts. The table bounds and receiver's subobject view remain caller responsibilities; the name does not establish class layout or a method signature.
     ///
     /// Search runs synchronously on the caller's thread and joins shared index preparation already in progress. Known null slots in the original image can still be selected by name. A live zero alone cannot identify a missing original entry.
     public nonisolated func resolveEntryAndWait(

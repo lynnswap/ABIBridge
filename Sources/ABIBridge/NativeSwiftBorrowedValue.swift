@@ -6,9 +6,9 @@ import Darwin
 public enum NativeSwiftBorrowError: Error, Sendable, Equatable {
     /// The scope providing this value has returned.
     case expiredBorrow
-    /// Access attempted to leave the thread executing the callback.
+    /// Access attempted to leave the thread of a synchronous borrow.
     case wrongThread
-    /// The native source guarantees this borrowed storage only until its synchronous callback returns.
+    /// The supplying scope guarantees this storage only until its synchronous body returns.
     case synchronousBorrow
 }
 
@@ -87,9 +87,9 @@ private final class SwiftBorrowAccess {
 
 /// A scoped view of a runtime-only Swift value.
 ///
-/// The storage belongs to a native caller or `NativeSwiftValue`. Saving this view does not extend its scope: new access after return throws, and synchronous scopes also reject access from another thread. The view is not `Sendable` and keeps the declaration's isolation contract.
+/// The storage belongs to a native caller, a `NativeSwiftValue`, or an invocation providing a `withResult` body. Saving this view does not extend its scope: new access after the supplying scope returns throws, and synchronous scopes also reject access from another thread. The view is not `Sendable` and keeps the declaration's isolation contract.
 ///
-/// An owned-value borrow retains read access for an async member already started, until completion. Native async callbacks may await operations on their borrow and must finish them before returning. Synchronous native callbacks reject async member entry with `synchronousBorrow` because their storage cannot survive suspension.
+/// An owned-value borrow retains read access for an async member already started, until completion. Native async callbacks and async `withResult` bodies may await operations on their borrow and must finish them before returning. Synchronous callback and `withResult` borrows reject async member entry with `synchronousBorrow` because their storage cannot survive suspension.
 ///
 /// Native inout callback parameters permit mutation through mutating members and inout arguments. Other borrows are read-only. Overlapping mutations and consuming borrowed storage are rejected.
 public final class NativeSwiftBorrowedValue {

@@ -99,7 +99,7 @@ public enum NativeDispatchError: Error, Sendable, Equatable {
 
 /// A borrowed table of absolute function pointers with an explicit entry count.
 ///
-/// The address points to the first function slot, excluding ABI headers such as RTTI and offset-to-top fields. Relative table formats require a native adapter. A method lookup captures its selected entry and code owner; later table changes do not alter it. Receiver-backed views retain the receiver only while inspecting the table. See <doc:CXXObjectInvocation>.
+/// The address points to the first function slot, excluding ABI headers such as RTTI and offset-to-top fields. Relative table formats require a native adapter. A method lookup captures its selected entry and code owner; later table changes do not alter it. A receiver-backed table retains its receiver while the table or a request retaining it remains alive. Captured targets retain their code owner and implementation image independently of the table. See <doc:CXXObjectInvocation>.
 public final class NativeVTable {
     /// The number of function-pointer slots accessible from the address point.
     public let entryCount: Int

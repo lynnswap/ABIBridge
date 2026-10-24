@@ -118,8 +118,9 @@ public struct NativeFunction<Result, each Argument>: Sendable {
     ///
     /// - Parameter values: All concrete arguments, including the anonymous tail.
     /// - Returns: The result converted to the requested Swift type.
-    /// - Throws: An invocation error for a null nonoptional pointer result, or a
-    ///   native call-interface error. ABI mismatches are not recoverable errors.
+    /// - Throws: An argument-layout or value-conversion error, including a null
+    ///   nonoptional pointer result, or a native call-interface error. Native ABI
+    ///   mismatches are not recoverable errors.
     @unsafe public func unsafeInvoke(_ values: repeat each Argument) throws -> Result {
         try unsafe symbol.withUnsafeAddress {
             try unsafe call.unsafeInvoke(ABIUnsafeFunctionAtAddress($0), repeat each values)

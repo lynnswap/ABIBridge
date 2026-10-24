@@ -59,7 +59,7 @@ let panel = try NativeSwiftView(result)
 let controller = UIHostingController(rootView: panel)
 ```
 
-NativeSwiftView retains the opaque result and implementation images through the view's lifetime. Copies share that owner; the original result and call handle may be released after construction. It throws ABIInvocationError.incompatibleValue when the result is not a View. The core ABIBridge product remains independent of SwiftUI.
+NativeSwiftView retains the opaque result and implementation images through the view's lifetime. Copies share that owner; the original result and call handle may be released after construction. It throws ABIInvocationError.incompatibleValue when the result is not a View. Construction copies the value and can also throw NativeSwiftValueError when copying or access fails. The core ABIBridge product remains independent of SwiftUI.
 
 Compose or host `panel` using standard SwiftUI APIs. See [ABIBridgeSwiftUI](https://lynnswap.github.io/ABIBridge/documentation/abibridgeswiftui) for its API contract.
 

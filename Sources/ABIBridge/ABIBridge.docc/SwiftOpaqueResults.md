@@ -69,7 +69,7 @@ print(try unsafe read.unsafeInvoke(on: result))
 
 The opaque descriptor describes the factory's result convention, not every underlying member's self convention. Supply receiverABI when that convention is unavailable from the type's representation, its generic declaration, or the convention inferred from its metadata; see <doc:SwiftFunctionInvocation#Infer-struct-and-enum-conventions>. Fixed components use the same NativeType contract as ABIBridgeSwiftValue; an opaque descriptor selects formally indirect self. Class receivers use their reference representation without an override.
 
-Members prepared with `consuming: true` transfer the owned payload, including noncopyable values. Active borrowed views support nonconsuming members, with mutation allowed only by their borrow contract. Getter signatures use a complete zero-argument function type. For earlier borrowed-member APIs, see <doc:SwiftAPIMigration>.
+Members prepared with `receiver: .consuming` in their request transfer the owned payload, including noncopyable values. Active borrowed views support nonconsuming members, with mutation allowed only by their borrow contract. Getter signatures use a complete zero-argument function type. For earlier borrowed-member APIs, see <doc:SwiftAPIMigration>.
 
 ## Pass values through generic calls
 

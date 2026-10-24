@@ -86,6 +86,8 @@ public struct NativeObjCMessageRequest<Result, each Argument>: Sendable {
     /// object method that fails with `nil`. Invocation supplies the error slot
     /// and throws the method's `NSError`, or ``NativeObjCUnreportedFailure``
     /// when it failed without one.
+    /// Object results must be nonoptional; nil represents failure. Variadic
+    /// arguments cannot be combined with this error convention.
     ///
     /// - Parameters:
     ///   - selector: The selector, including argument colons and the error

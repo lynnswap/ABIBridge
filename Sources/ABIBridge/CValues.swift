@@ -158,8 +158,10 @@ struct CValueCodec<Value>: Sendable {
         }
     }
 
-    /// Whether `init` finds a representation for Value. It checks the same
-    /// cases without building one.
+    /// Whether Value belongs to a supported C codec category.
+    ///
+    /// This does not construct or validate its layout. `init` can still reject
+    /// an optional wrapper, an opaque representation, or a Swift layout mismatch.
     static var hasRepresentation: Bool {
         let baseType = (Value.self as? any NativeOptionalValue.Type)?.wrappedType ?? Value.self
         return Value.self == Void.self || Value.self == Bool.self || isScalar

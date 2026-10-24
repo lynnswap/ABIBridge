@@ -753,8 +753,9 @@ package final class SymbolIndex {
     /// The declaration under which this image names the Swift nominal type
     /// descriptor at `address`, in its exports or its symbol table. The
     /// symbol table keeps local symbols, such as the descriptors of private
-    /// and local types, until the image is stripped. Nil when neither names
-    /// the descriptor, or one names it twice.
+    /// and local types, until the image is stripped. Exports take precedence;
+    /// each source omits addresses named by distinct descriptor symbols. Nil
+    /// when neither source supplies an unambiguous name for the descriptor.
     package func swiftTypeDeclaration(at address: UInt64) -> String? {
         swiftTypeDescriptorSymbol(at: address).map(Self.declaration(ofDescriptor:))
     }

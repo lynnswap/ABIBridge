@@ -90,7 +90,7 @@ public struct NativeSwiftMethod<Signature>: Sendable {
         return NativeBoundSwiftMethod(method: self, receiver: receiver)
     }
 
-    /// Calls a class member or nonmutating value member.
+    /// Calls the prepared instance member with an explicit receiver.
     ///
     /// Typed receivers transfer an independent copy to consuming members. NativeSwiftValue accesses its owned storage directly: mutating members update that value and consuming members leave its handle consumed. NativeSwiftBorrowedValue permits mutation when supplied by a native inout callback; other borrows are read-only. Borrowed storage cannot be consumed. The lookup's ownership options must match the actual native declaration.
     ///
@@ -213,7 +213,7 @@ extension NativeSwiftMethod {
     // decomposes Signature into a parameter pack. Transparent entry thunks keep
     // that requirement out of the implementation frame, including in Debug builds.
 
-    /// Awaits a class member or nonmutating value member.
+    /// Awaits the prepared instance member with an explicit receiver.
     ///
     /// The supplied receiver and native signature must match. The caller satisfies the target's actor/thread contract. NativeSwiftValue retains access across suspension and transfers its owned value to consuming members. Typed receivers transfer a copy. Cancellation remains cooperative.
     @_transparent
@@ -247,7 +247,7 @@ extension NativeSwiftMethod {
         try unsafe await invokeAsync(on: &receiver, repeat each values)
     }
 
-    /// Awaits a class member or nonmutating value member.
+    /// Awaits the prepared instance member with an explicit receiver.
     ///
     /// The supplied receiver and native signature must match. The caller satisfies the target's actor/thread contract. NativeSwiftValue retains access across suspension and transfers its owned value to consuming members. Typed receivers transfer a copy. Cancellation remains cooperative.
     @_transparent

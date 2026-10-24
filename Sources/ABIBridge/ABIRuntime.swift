@@ -4,7 +4,7 @@ import Foundation
 ///
 /// Use ``shared`` to reuse indexes across callers, or create a runtime with an independent cache. Explicit scopes acquire images by default. Image and symbol handles retain their images until the last owner releases them.
 ///
-/// Searches prepare indexes on demand. `resolve…` factories search and prepare on a worker; `resolve…AndWait` factories run on the caller's thread and wait for any required work already in progress. Use `prepare(_:)` to start that work early without occupying the caller's actor.
+/// Searches prepare indexes on demand. Async resolution moves search and call preparation to a worker; bound Objective-C receiver callbacks and C++ virtual-slot capture stay on the caller's executor. `resolve…AndWait` factories run on the caller's thread and wait for any required work already in progress. Use `prepare(_:)` to start that work early without occupying the caller's actor.
 ///
 /// See <doc:SymbolLookup> for search scopes and the raw-address contract.
 public actor ABIRuntime {
@@ -171,9 +171,9 @@ public actor ABIRuntime {
         try await NativePreparation.run { try operation(self) }
     }
 
-    /// Releases cached declarations and image indexes.
+    /// Releases this runtime's resolver indexes and Swift type cache.
     ///
-    /// Existing image and symbol handles remain valid. Subsequent lookups rebuild indexes as needed. The process-lifetime native image catalog remains active.
+    /// Existing image, symbol, and callable handles remain valid, and in-progress resolutions may finish. Subsequent lookups rebuild the required indexes. This does not clear the process-shared call-interface cache or the native image catalog.
     public nonisolated func removeCachedResults() {
         swiftTypeCache.removeCachedResults()
         resolver.removeCachedResults()

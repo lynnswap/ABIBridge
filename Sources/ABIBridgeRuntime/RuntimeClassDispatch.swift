@@ -154,11 +154,11 @@ package struct RuntimeClassDispatch {
         }
     }
 
-    /// The tree that names `type` as the context of its members: its nominal
-    /// type descriptor's symbol, or else its runtime name, which spells the
-    /// same declaration unless the class is private or local. Such a class's
-    /// runtime name spells an anonymous context by its address instead, which
-    /// names no declaration.
+    /// The tree that names `type` as the context of its members, preferring
+    /// its nominal type descriptor's symbol over its runtime mangling.
+    /// Runtime manglings can omit constrained-extension generic requirements
+    /// or encode a private or local context by its address instead of its
+    /// declaration, so that fallback may not identify the declared context.
     private static func context(
         of type: AnyClass,
         descriptor: UInt,

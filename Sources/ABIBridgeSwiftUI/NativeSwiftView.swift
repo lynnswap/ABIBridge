@@ -14,7 +14,8 @@ public nonisolated struct NativeSwiftView: View {
     /// Creates an owned, type-erased view from an opaque native result.
     ///
     /// - Parameter value: A live result whose underlying type conforms to View.
-    /// - Throws: ABIInvocationError.incompatibleValue if the result is not a View.
+    /// - Throws: `ABIInvocationError.incompatibleValue` if the result is not a View,
+    ///   or `NativeSwiftValueError` if the value cannot be copied or accessed.
     @MainActor public init(_ value: NativeSwiftValue) throws {
         let content = try value.withCopy { payload in
             guard let view = payload as? any View else {
