@@ -1,6 +1,6 @@
 # Architecture and replacement validation
 
-This package compares compiler-generated calls with ABIBridge's invocation machinery. ABIBridge supports only arm64, arm64e, and arm64_32, so the probes and recorded runs cover those architectures. Use the [contributor guide](../../CONTRIBUTING.md) to run tests and device probes. The `replacement` mode checks the internal Objective-C callback boundary on a signed device host; public hook APIs have separate probes below.
+This package compares compiler-generated calls with ABIBridge's invocation machinery. The probes cover arm64, arm64e, and arm64_32. Use the [contributor guide](../../CONTRIBUTING.md) to run tests and device probes. The `replacement` mode checks the internal Objective-C callback boundary on a signed device host; public hook APIs have separate probes below.
 
 ## Full iPhone Air validation
 
