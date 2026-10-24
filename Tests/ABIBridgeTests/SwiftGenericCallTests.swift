@@ -1,4 +1,5 @@
 import ABIBridge
+import ABIBridgeTestSupport
 import Foundation
 import ManagedSwiftFixtures
 import Synchronization
@@ -47,6 +48,41 @@ private final class GenericCaptureState: Sendable {
 
 @Suite(.serialized)
 struct SwiftGenericCallTests {
+    @Test func extensionNestedTypesKeepTheirDeclaringModules() async throws {
+        typealias Other = SupportExtensionIdentity
+        let runtime = ABIRuntime.shared
+        let name = "ManagedSwiftFixtures.echoGeneric(_:)"
+        let valid = try await runtime.resolve(
+            .function(
+                name,
+                as: ((FixtureExtensionIdentity) -> FixtureExtensionIdentity).self,
+                genericArguments: [.type(FixtureExtensionIdentity.self)]
+            )
+        )
+        #expect(try unsafe valid.unsafeInvoke(FixtureExtensionIdentity(42)).value == 42)
+        let mismatch = ABIResolutionError.declarationNotFound(
+            NativeDeclaration(name: name, language: .swift, kind: .function)
+        )
+        await #expect(throws: mismatch) {
+            _ = try await runtime.resolve(
+                .function(
+                    name,
+                    as: ((Other) -> Other).self,
+                    genericArguments: [.type(FixtureExtensionIdentity.self)]
+                )
+            )
+        }
+        await #expect(throws: mismatch) {
+            _ = try await runtime.resolve(
+                .function(
+                    "ManagedSwiftFixtures.echoGeneric(_:)",
+                    as: (([Other?]) -> [Other?]).self,
+                    genericArguments: [.type([FixtureExtensionIdentity?].self)]
+                )
+            )
+        }
+    }
+
     @Test func labelOnlyFreeFunctionsBindTheirNativeDeclarations() async throws {
         let runtime = ABIRuntime.shared
         let name = "ManagedSwiftFixtures.labelLookupGeneric(_:)"

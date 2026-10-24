@@ -63,8 +63,8 @@ struct SwiftEntry: Sendable {
 
     /// The class slot that calls of this entry's declaration read in the
     /// metadata of `metadata`: the slot lookup selected, or else the slot
-    /// the declaration's method descriptors name. A protocol requirement has
-    /// none: conformances' witness tables dispatch it.
+    /// the declaration's method descriptors name. Protocol requirements use
+    /// the separate conformance-table path in SwiftVirtualDispatch.
     ///
     /// - Parameter asynchronous: Whether the declaration is async.
     func classDispatch(
@@ -72,11 +72,6 @@ struct SwiftEntry: Sendable {
         resolver: SymbolResolver,
         asynchronous: Bool
     ) throws -> SwiftClassDispatch {
-        if record?.context == .protocolRequirement {
-            throw ABIResolutionError.unsupportedDeclaration(
-                "Conformances' witness tables dispatch a protocol requirement, and virtual hooks and replacements change only class virtual-table entries."
-            )
-        }
         if let dispatch { return dispatch }
         return try SwiftClassDispatch(
             metadata: metadata,

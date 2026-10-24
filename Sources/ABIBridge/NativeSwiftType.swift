@@ -523,22 +523,28 @@ public actor NativeSwiftType: Hashable {
         }
     }
 
-    // A library-evolution class can export only the dispatch thunk and method
-    // descriptor of a member. The member's code is then this type's
-    // virtual-table entry: the implementation visible to this type, which
-    // calls run without redispatching on the receiver.
+    // A dispatch thunk reads a class or conformance table. Capture its
+    // selected implementation so member handles never redispatch after a
+    // hook or replacement changes that table.
     ///
-    /// - Parameter asynchronous: The requested effect, when known. A slot
+    /// - Parameter asynchronous: The requested effect. A slot
     ///   with another effect does not apply to the request.
     private nonisolated func dispatchedEntry(
         _ candidate: SwiftCandidate,
-        asynchronous: Bool?
+        asynchronous: Bool
     ) throws -> SwiftEntry {
         var entry = candidate.entry
-        let dispatch = try SwiftClassDispatch(
-            metadata: metadata,
+        if entry.record?.context != .protocolRequirement {
+            entry.dispatch = try SwiftClassDispatch(
+                metadata: metadata,
+                entry: entry,
+                resolver: resolver,
+                asynchronous: asynchronous
+            )
+        }
+        let dispatch = try SwiftVirtualDispatch(
+            type: self,
             entry: entry,
-            resolver: resolver,
             asynchronous: asynchronous
         )
         let code = try SwiftSlotCode(
@@ -552,7 +558,6 @@ public actor NativeSwiftType: Hashable {
         }
         entry.implementation = implementation
         entry.asyncEntry = code.asyncEntry
-        entry.dispatch = dispatch
         return entry
     }
 
