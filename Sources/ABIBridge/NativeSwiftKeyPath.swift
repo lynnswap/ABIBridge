@@ -78,14 +78,8 @@ extension NativeSwiftType {
                 "The writable key path property must belong to " + rootName + "."
             )
         }
+        // The descriptors' records decide which property the name spells.
         let property = query.member
-        guard !property.isEmpty,
-            property.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" })
-        else {
-            throw ABIResolutionError.unsupportedDeclaration(
-                "Name the writable key path's property by its name, such as text."
-            )
-        }
         // The diagnostics' spelling of the property.
         let displayed = NativeDeclaration(
             name: query.qualifier == nil ? rootName + "." + property : name,
@@ -126,15 +120,14 @@ extension NativeSwiftType {
                 images.append(getter.symbol.image)
             }
         }
-        let descriptors = images.flatMap {
-            resolver.swiftPropertyDescriptors(
-                named: property,
-                ofTypeAt: typeDescriptor,
-                in: image,
-                inExtensionOf: query.extensionModule,
-                image: $0
-            )
-        }
+        let descriptors = resolver.swiftPropertyDescriptors(
+            named: property,
+            ofType: rootName,
+            at: typeDescriptor,
+            in: image,
+            inExtensionOf: query.extensionModule,
+            images: images
+        )
         guard descriptors.count <= 1 else {
             throw ABIResolutionError.ambiguousDeclaration(
                 displayed,

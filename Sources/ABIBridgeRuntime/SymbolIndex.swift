@@ -573,17 +573,20 @@ package final class SymbolIndex {
         guard !additions.isEmpty else { return }
         let fallback = (
             sourceSymbols.filter { $0.key.candidates == .swiftFallback },
-            decoded[Self.swiftFallbackScope], swiftMembers[Self.swiftFallbackScope]
+            decoded[Self.swiftFallbackScope], swiftMembers[Self.swiftFallbackScope],
+            propertyDescriptors[Self.swiftFallbackScope]
         )
         localSymbols += additions
         sourceSymbols.removeAll()
         decoded.removeAll()
         swiftMembers.removeAll()
+        propertyDescriptors.removeAll()
         linkerNames.removeAll()
         if !changesFallback {
             sourceSymbols = fallback.0
             decoded[Self.swiftFallbackScope] = fallback.1
             swiftMembers[Self.swiftFallbackScope] = fallback.2
+            propertyDescriptors[Self.swiftFallbackScope] = fallback.3
         }
     }
 
@@ -876,20 +879,45 @@ package final class SymbolIndex {
 
     private var propertyDeclarations: [UInt64: [String: Bool]] = [:]
 
-    /// The descriptors in this image's exports or symbol table of the
-    /// instance property `name` of the type whose nominal type descriptor
-    /// symbol is `typeDescriptor`. The symbols' trees state the type, the
-    /// name, and the extension that declares the property.
+    /// The descriptors among the query's symbols of the instance property
+    /// `name` of the type whose nominal type descriptor symbol is
+    /// `typeDescriptor`. The symbols' trees state the type, the name, and the
+    /// extension that declares the property.
     ///
-    /// - Parameter extensionModule: The module of another module's extension
-    ///   that declares the property, or nil for the type's own property.
+    /// - Parameters:
+    ///   - extensionModule: The module of another module's extension that
+    ///     declares the property, or nil for the type's own property.
+    ///   - query: Selects the symbols of the module whose name starts the
+    ///     descriptors' mangling, the type's own module.
     package func swiftPropertyDescriptors(
         named name: String,
         ofTypeNamed typeDescriptor: String,
-        inExtensionOf extensionModule: String?
+        inExtensionOf extensionModule: String?,
+        query: SymbolQuery,
+        source: RuntimeSymbol.Source
     ) -> [(symbol: RuntimeSymbol, property: RuntimeSwiftPropertySymbol)] {
-        (propertyDescriptors[typeDescriptor] ?? []).compactMap { symbol, property in
-            guard property.name == name, property.extensionModule == extensionModule,
+        var found: [(symbol: IndexedSymbol, property: RuntimeSwiftPropertySymbol)] = []
+        for bucket in [SwiftBucket.knownModule, .fallback] {
+            let scope = swiftScope(bucket, query: query)
+            if propertyDescriptors[scope] == nil {
+                // Swift mangles an instance property's descriptor with the
+                // suffix `vpMV`.
+                var descriptors:
+                    [String: [(symbol: IndexedSymbol, property: RuntimeSwiftPropertySymbol)]] = [:]
+                for symbol in symbols(for: query, swiftBucket: bucket)
+                where symbol.name.hasSuffix("vpMV") {
+                    guard let property = RuntimeSwiftPropertySymbol(linkageName: symbol.name),
+                        property.isDescriptor, !property.isStatic
+                    else { continue }
+                    descriptors[property.name, default: []].append((symbol, property))
+                }
+                propertyDescriptors[scope] = descriptors
+            }
+            found += propertyDescriptors[scope]?[name] ?? []
+        }
+        return found.compactMap { symbol, property in
+            guard symbol.source == source, property.typeDescriptor == typeDescriptor,
+                property.extensionModule == extensionModule,
                 let section = sections.first(where: { $0.range.contains(symbol.address) }),
                 let spelling = DeclarationKey.demangle(symbol.name, language: .swift)
             else { return nil }
@@ -907,24 +935,17 @@ package final class SymbolIndex {
         }
     }
 
-    // Swift mangles an instance property's descriptor with the suffix `vpMV`.
-    private lazy var propertyDescriptors:
-        [String: [(symbol: IndexedSymbol, property: RuntimeSwiftPropertySymbol)]] = {
-            var result: [String: [(symbol: IndexedSymbol, property: RuntimeSwiftPropertySymbol)]] =
-                [:]
-            for symbol in swiftSymbols(endingWith: (77, 86)) where symbol.name.hasSuffix("vpMV") {
-                guard let property = RuntimeSwiftPropertySymbol(linkageName: symbol.name),
-                    property.isDescriptor, !property.isStatic
-                else { continue }
-                result[property.typeDescriptor, default: []].append((symbol, property))
-            }
-            return result
-        }()
+    private var propertyDescriptors:
+        [Scope: [String: [(symbol: IndexedSymbol, property: RuntimeSwiftPropertySymbol)]]] = [:]
 
     /// The nominal type descriptor symbol at `address` in this image's
-    /// exports or symbol table, without its leading underscore.
+    /// exports, symbol table, or loaded shared-cache local symbols, without
+    /// its leading underscore.
     package func swiftTypeDescriptorName(at address: UInt64) -> String? {
         swiftTypeDescriptorSymbol(at: address)
+            ?? localSymbols.first {
+                $0.address == address && $0.name.hasPrefix("_$s") && $0.name.hasSuffix("Mn")
+            }.map { String($0.name.dropFirst()) }
     }
 
     private func symbols(
@@ -1090,6 +1111,17 @@ package final class SymbolIndex {
         return Self.matching(decoded[scope]?[query.fingerprint] ?? [], query: query)
     }
 
+    // The scope whose Swift symbols a bucket of the query reads.
+    private func swiftScope(_ bucket: SwiftBucket, query: SymbolQuery) -> Scope {
+        bucket == .fallback
+            ? Self.swiftFallbackScope
+            : Scope(
+                language: .swift,
+                fragments: query.swiftModule.map { [$0.module] } ?? [],
+                swiftFallback: false
+            )
+    }
+
     /// The candidates of the member that the query's declaration spells.
     package func swiftDeclarationCandidates(
         _ query: SymbolQuery,
@@ -1117,14 +1149,7 @@ package final class SymbolIndex {
     ) -> [RuntimeSwiftCandidate] {
         var symbols: [IndexedSymbol] = []
         for bucket in [SwiftBucket.knownModule, .fallback] {
-            let scope =
-                bucket == .fallback
-                ? Self.swiftFallbackScope
-                : Scope(
-                    language: .swift,
-                    fragments: query.swiftModule.map { [$0.module] } ?? [],
-                    swiftFallback: false
-                )
+            let scope = swiftScope(bucket, query: query)
             if swiftMembers[scope] == nil {
                 var members: [SwiftMemberPath: [IndexedSymbol]] = [:]
                 for symbol in self.symbols(for: query, swiftBucket: bucket) {

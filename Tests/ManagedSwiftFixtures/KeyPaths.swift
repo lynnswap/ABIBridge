@@ -76,6 +76,11 @@ public final class RuntimeKeyPathReferenceRoot {
         get { storage }
         set { storage = newValue }
     }
+
+    public var 🐱: String {
+        get { storage }
+        set { storage = newValue }
+    }
 }
 
 public final class RuntimeKeyPathObservedRoot: NSObject {

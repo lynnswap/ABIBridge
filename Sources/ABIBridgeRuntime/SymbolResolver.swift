@@ -755,36 +755,59 @@ package final class RuntimeSymbolResolver: Sendable {
         }
     }
 
-    /// The descriptors in `image` of the instance property `name` of the type
-    /// whose nominal type descriptor is at `typeDescriptor` in `typeImage`.
+    /// The descriptors in `images` of the instance property `name` of the
+    /// type whose nominal type descriptor is at `typeDescriptor` in
+    /// `typeImage`.
     ///
-    /// - Parameter extensionModule: The module of another module's extension
-    ///   that declares the property, or nil for the type's own property.
+    /// Image symbols take precedence; shared-cache local symbols describe the
+    /// descriptors, and the type descriptor, that the images do not.
+    ///
+    /// - Parameters:
+    ///   - owner: The type's declaration name, whose module's symbols are
+    ///     read.
+    ///   - extensionModule: The module of another module's extension that
+    ///     declares the property, or nil for the type's own property.
     package func swiftPropertyDescriptors(
         named name: String,
-        ofTypeAt typeDescriptor: UInt64,
+        ofType owner: String,
+        at typeDescriptor: UInt64,
         in typeImage: RuntimeImage,
         inExtensionOf extensionModule: String?,
-        image: RuntimeImage
+        images: [RuntimeImage]
     ) -> [(symbol: RuntimeSymbol, property: RuntimeSwiftPropertySymbol)] {
-        let typeIndex = state.withLock { $0.index(for: typeImage) }
-        guard
-            let typeName = withExtendedLifetime(
-                typeIndex,
-                {
-                    state.withLock { _ in typeIndex.swiftTypeDescriptorName(at: typeDescriptor) }
+        let query = SymbolQuery(.init(name: owner, language: .swift))
+        let (typeIndex, indexes) = state.withLock { state in
+            (state.index(for: typeImage), images.map { state.index(for: $0) })
+        }
+        return withExtendedLifetime((typeIndex, indexes)) {
+            func matches(
+                _ sources: [RuntimeSymbol.Source]
+            ) -> [(symbol: RuntimeSymbol, property: RuntimeSwiftPropertySymbol)] {
+                state.withLock { _ in
+                    guard let typeName = typeIndex.swiftTypeDescriptorName(at: typeDescriptor)
+                    else { return [] }
+                    return sources.flatMap { source in
+                        indexes.flatMap {
+                            $0.swiftPropertyDescriptors(
+                                named: name,
+                                ofTypeNamed: typeName,
+                                inExtensionOf: extensionModule,
+                                query: query,
+                                source: source
+                            )
+                        }
+                    }
                 }
-            )
-        else { return [] }
-        let index = state.withLock { $0.index(for: image) }
-        return withExtendedLifetime(index) {
-            state.withLock { _ in
-                index.swiftPropertyDescriptors(
-                    named: name,
-                    ofTypeNamed: typeName,
-                    inExtensionOf: extensionModule
-                )
             }
+            let primary = matches([.image])
+            if !primary.isEmpty { return primary }
+            loadSharedCacheSymbols(
+                for: query,
+                into: indexes.contains { $0 === typeIndex } ? indexes : indexes + [typeIndex]
+            )
+            // The type descriptor's symbol can be one that only the shared
+            // cache describes, so image descriptors are read again.
+            return matches([.image, .sharedCache])
         }
     }
 
