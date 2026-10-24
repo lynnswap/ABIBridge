@@ -662,12 +662,13 @@ struct SwiftGenericCallPlan: Sendable {
             $0.arguments.isEmpty ? nil : try SwiftGenericTypeContext(metadata: $0.value)
         }
         let declared = try declaredSignature.map(SwiftDeclaredSignature.init)
-        let declaration = try SwiftGenericDeclaration(
+        var declaration = try SwiftGenericDeclaration(
             linkageName: entry.linkageName,
             enclosing: context,
             declaredSignature: declared,
             caller: signature
         )
+        if let declared { try declaration.overlayLifetimeEvidence(from: declared.function) }
         let implicitArguments = implicitSelf.map { [.type($0)] } ?? enclosing?.arguments ?? []
         // Callers supply only the parameters the declaration itself introduces.
         let introduced = declaration.parameters.count - implicitArguments.count
@@ -703,13 +704,6 @@ struct SwiftGenericCallPlan: Sendable {
             guard !attributes.lifetimeUsesReceiver || allowsReceiverDependencies else {
                 throw ABIResolutionError.unsupportedDeclaration(
                     "@_lifetime self in declaredAs: requires an instance member."
-                )
-            }
-            guard !arguments.contains(where: \.hasDeclaredLifetime), !result.hasDeclaredLifetime,
-                failure?.hasDeclaredLifetime != true
-            else {
-                throw ABIResolutionError.metadataUnavailable(
-                    "declaredAs: states a nested closure's lifetime dependencies, but its lowering and pointer authentication are not yet supported."
                 )
             }
             let declaredArguments = attributes.loweredParameters(arguments).enumerated().map {
@@ -1807,6 +1801,9 @@ struct SwiftGenericCallPlan: Sendable {
             }
             return _openExistential(signature, do: marker)
         }
+        if owned, !SwiftEscapability.accepts(try binding.types(canonical)[0]) {
+            return NativeSwiftBorrowedValue.self
+        }
         if case .tuple(let fields, let labels) = canonical {
             var elements: [Any.Type] = [], names: [String] = []
             for (index, field) in fields.enumerated() {
@@ -1886,6 +1883,20 @@ struct SwiftGenericCallPlan: Sendable {
                     convention: convention
                 )
             }
+        let resultPlan = try Self.result(
+            result, actual: signature.result, binding: binding, position: .result
+        )
+        let values = try SwiftCallValues(
+            signature: signature, consumesArguments: false, opaqueResult: nil,
+            arguments: parameterPlan.arguments, result: resultPlan
+        )
+        parameterPlan = try parameterPlan.passingByAddress(
+            values.borrowedArgumentTypes(
+                parameters: parameterPlan, formal: parameters, binding: binding,
+                stated: attributes.borrowedInputs,
+                canBorrow: values.resultCanBorrowInputs(binding: binding, formal: result)
+            ), binding: binding
+        )
         var logicalTypes: [CValueType] = []
         var nativeParameters: [Any.Type] = []
         var authentication =
@@ -1933,7 +1944,7 @@ struct SwiftGenericCallPlan: Sendable {
                     let underlying = formal.argumentConvention?.value ?? formal
                     let wrapper = signature.parameters[index] as! any SwiftConventionArgument.Type
                     authentication.append(
-                        contentsOf: wrapper.convention == .inoutValue
+                        contentsOf: wrapper.convention == .inoutValue || parameterPlan.passesByAddress(index)
                             ? ["-indirect"]
                             : try authTypes(
                                 underlying,
@@ -1962,12 +1973,9 @@ struct SwiftGenericCallPlan: Sendable {
                     ).type
                 )
                 authentication.append(
-                    contentsOf: try authTypes(
-                        formal,
-                        actual: actual,
-                        binding: binding,
-                        position: .parameter
-                    )
+                    contentsOf: try parameterPlan.passesByAddress(index)
+                        ? ["-indirect"]
+                        : authTypes(formal, actual: actual, binding: binding, position: .parameter)
                 )
             }
         }
@@ -2016,12 +2024,6 @@ struct SwiftGenericCallPlan: Sendable {
                 binding: binding,
                 position: .result
             ).type
-        let resultPlan = try Self.result(
-            result,
-            actual: signature.result,
-            binding: binding,
-            position: .result
-        )
         #if DEBUG
         if case .host = resultPlan, !usesStorageConvention {
             checkSchema(
@@ -2147,7 +2149,7 @@ struct SwiftGenericCallPlan: Sendable {
             return try authTypes(function, actual: payload, binding: binding, position: position)
                 .map { "Optional<" + $0 + ">" }
         }
-        if case .function(let parameters, let result, _, let attributes) = formal {
+        if case .function = formal {
             if let closure = actual as? any SwiftClosureValue.Type {
                 let plan = try Self.closure(
                     formal,
@@ -2156,27 +2158,7 @@ struct SwiftGenericCallPlan: Sendable {
                 )
                 return ["(" + plan.authentication + ")"]
             }
-            var inputs = attributes.isAsync && attributes.isolation == .caller ? ["-class"] : []
-            for parameter in parameters {
-                if case .pack = parameter { inputs.append("-"); continue }
-                if case .inoutValue = parameter { inputs.append("-indirect"); continue }
-                let value = parameter.argumentConvention?.value ?? parameter
-                inputs.append(
-                    contentsOf: try authTypes(
-                        value,
-                        actual: binding.types(value)[0],
-                        binding: binding,
-                        position: .parameter
-                    )
-                )
-            }
-            let outputs = try authTypes(
-                result,
-                actual: binding.types(result)[0],
-                binding: binding,
-                position: .result
-            )
-            return ["(" + swiftClosureAuthDescription(parameters: inputs, results: outputs) + ")"]
+            return ["(" + (try nativeClosurePlan(formal, binding: binding)).authentication + ")"]
         }
         return [
             try SwiftValueSchema(formal, actual: actual, binding: binding, position: position)

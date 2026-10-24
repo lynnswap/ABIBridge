@@ -44,6 +44,32 @@ Returning a closure does not capture temporary receiver or argument storage. Res
 
 Calling stays on the caller's executor. The caller must satisfy the returned closure's actor, thread, and argument requirements. The wrapper is not Sendable: an arbitrary returned context may contain isolated or otherwise non-Sendable state.
 
+## Use a closure result within its lifetime
+
+For a native closure returning a nonescapable value, request `NativeSwiftBorrowedValue` and use `unsafeInvoke(_:withResult:)`. The body runs while the result, actual input storage, and native context remain active. The view expires when the body returns or throws. Async closure signatures accept an async body and retain that storage while the body suspends.
+
+When a returned closure's result can borrow an input, include its effective lifetime dependencies in the factory's `declaredAs:`. For `func makeView() -> @_lifetime(borrow text) (_ text: String) -> View`:
+
+```swift
+let runtime = ABIRuntime.shared
+let read = try runtime.resolveAndWait(.function(
+    "Example.read(_:)", as: ((NativeSwiftBorrowedValue) -> Int64).self
+))
+let factory = try runtime.resolveAndWait(.function(
+    "Example.makeView()",
+    as: (() -> NativeSwiftClosure<(String) -> NativeSwiftBorrowedValue>).self,
+    declaredAs: "() -> @_lifetime(borrow text) (_ text: Swift.String) -> Example.View"
+))
+let view = try unsafe factory.unsafeInvoke()
+let number = try unsafe view.unsafeInvoke("123", withResult: { value in
+    try unsafe read.unsafeInvoke(value)
+})
+```
+
+Each attribute applies to its own function node, including functions inside tuples, Optionals, and generic arguments. Only an outer instance member can name `self`. The compiler's verified effects, ownership, and declaration types remain authoritative. The caller supplies lifetime information that symbols and metadata omit. See <doc:SwiftOpaqueResults#Inputs-that-the-result-can-borrow-from> for supported dependency forms and the distinction between explicitly borrowing no input and missing information.
+
+A closure resolved from an owned runtime value already uses indirect storage for every input. Its scoped result uses the same `withResult:` form. Host callback bodies still require an owned result that can escape; `withResult:` supports using native results without extending a callback-produced value's lifetime.
+
 ## Resolve a closure stored in a runtime value
 
 Use `resolveClosure(as:)` when a ``NativeSwiftValue`` already owns the native function value, including a closure extracted from an enum or tuple with the APIs in <doc:SwiftOpaqueResults>. Owned runtime values use the maximally abstracted function convention; enum payload resolution adapts concrete function fields to that convention before returning. The native function metadata supplies its parameter and result types. `NativeSwiftValue` in the requested signature represents the actual native argument or result, including a runtime-only type.

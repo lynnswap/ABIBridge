@@ -16,9 +16,9 @@ struct SwiftGenericDeclaration: Sendable, Equatable {
     }
     let parameters: [Parameter]
     var requirements: [Requirement]
-    let arguments: [SwiftFormalType]
-    let result: SwiftFormalType
-    let failure: SwiftFormalType?
+    var arguments: [SwiftFormalType]
+    var result: SwiftFormalType
+    var failure: SwiftFormalType?
     let isAsync: Bool
     let consumesArguments: Bool
     // An explicit canonical signature describes physical generic arguments.
@@ -29,6 +29,22 @@ struct SwiftGenericDeclaration: Sendable, Equatable {
     var dispatchProtocol: String? = nil
     var borrowedInputs: Set<SwiftBorrowedInputs.Input>? = nil
 
+    mutating func overlayLifetimeEvidence(from source: SwiftFormalType) throws {
+        guard case .function(let parameters, let output, let error, let attributes) = source else {
+            preconditionFailure("A declared signature is a function.")
+        }
+        let inputs = attributes.loweredParameters(parameters)
+        guard inputs.contains(where: \.hasDeclaredLifetime) || output.hasDeclaredLifetime
+            || error?.hasDeclaredLifetime == true else { return }
+        guard inputs.count == arguments.count else {
+            throw ABIResolutionError.signatureMismatch(
+                .init(expected: "The declaration's parameter count", found: [source.spelling])
+            )
+        }
+        arguments = try zip(arguments, inputs).map { try $0.overlayingLifetimeEvidence(from: $1) }
+        result = try result.overlayingLifetimeEvidence(from: output)
+        if let known = failure, let error { failure = try known.overlayingLifetimeEvidence(from: error) }
+    }
 }
 
 /// Source-level information omitted from a callable's mangling, supplied by the caller using the provider's canonical generic signature.
@@ -425,14 +441,26 @@ indirect enum SwiftFormalType: Sendable, Equatable {
             }
             return
         }
-        if let group = SwiftGenericSyntax.groups(in: text).last,
-            group.range.upperBound == text.endIndex
-        {
-            self = .named(
-                String(text[..<group.range.lowerBound]),
-                try SwiftFormalSyntax.fields(group.contents).map { try Self($0) }
-            )
-            return
+        let groups = SwiftGenericSyntax.groups(in: text)
+        if let group = groups.last {
+            let hasArguments = group.range.upperBound == text.endIndex
+            let nameEnd = hasArguments ? group.range.lowerBound : text.endIndex
+            let parentEnd = hasArguments ? groups.dropLast().last?.range.upperBound : group.range.upperBound
+            if let parentEnd, let separator = text[parentEnd..<nameEnd].lastIndex(of: ".") {
+                self = .nested(
+                    try Self(String(text[..<separator])),
+                    String(text[text.index(after: separator)..<nameEnd]),
+                    hasArguments ? try SwiftFormalSyntax.fields(group.contents).map { try Self($0) } : []
+                )
+                return
+            }
+            if hasArguments {
+                self = .named(
+                    String(text[..<group.range.lowerBound]),
+                    try SwiftFormalSyntax.fields(group.contents).map { try Self($0) }
+                )
+                return
+            }
         }
         guard !text.isEmpty else {
             throw ABIResolutionError.unsupportedDeclaration("Missing Swift type in " + source)
@@ -614,6 +642,93 @@ extension SwiftFormalType {
 }
 
 extension SwiftFormalType {
+    /// Only lifetime evidence is supplied by source; the compiler's effects,
+    /// ownership, abstraction, and declaration identities remain authoritative.
+    func overlayingLifetimeEvidence(from source: Self) throws -> Self {
+        guard source.hasDeclaredLifetime else { return self }
+        func mismatch() -> ABIResolutionError {
+            .signatureMismatch(.init(expected: spelling, found: [source.spelling]))
+        }
+        func fields(_ known: [Self], _ source: [Self]) throws -> [Self] {
+            guard known.count == source.count else { throw mismatch() }
+            return try zip(known, source).map { try $0.overlayingLifetimeEvidence(from: $1) }
+        }
+        if let convention = argumentConvention {
+            let value = try convention.value.overlayingLifetimeEvidence(
+                from: source.argumentConvention?.value ?? source
+            )
+            switch convention.convention {
+            case .borrowing: return .borrowing(value)
+            case .consuming: return .consuming(value)
+            case .inoutValue: return .inoutValue(value)
+            }
+        }
+        if let convention = source.argumentConvention {
+            return try overlayingLifetimeEvidence(from: convention.value)
+        }
+        switch (self, source) {
+        case (.function(let inputs, let result, let failure, var attributes),
+              .function(let provided, let output, let error, let stated)):
+            guard !stated.lifetimeUsesReceiver else {
+                throw ABIResolutionError.unsupportedDeclaration(
+                    "@_lifetime self in declaredAs: requires the outer instance member."
+                )
+            }
+            if let inputs = stated.borrowedInputs { attributes.borrowedInputs = inputs }
+            return .function(
+                try fields(inputs, provided),
+                try result.overlayingLifetimeEvidence(from: output),
+                failure: try failure.map { known in
+                    guard let error else { return known }
+                    return try known.overlayingLifetimeEvidence(from: error)
+                }, attributes: attributes
+            )
+        case (.tuple(let values, let labels), .tuple(let provided, _)):
+            return .tuple(try fields(values, provided), labels: labels)
+        case (.nested(let parent, let name, let values, let module),
+              .nested(let providedParent, _, let providedValues, _)):
+            return .nested(
+                try parent.overlayingLifetimeEvidence(from: providedParent), name,
+                try fields(values, providedValues), extensionModule: module
+            )
+        case (.pack(let value, let shape), .pack(let provided, let providedShape)):
+            return .pack(
+                try value.overlayingLifetimeEvidence(from: provided),
+                shape: try shape.map { try $0.overlayingLifetimeEvidence(from: providedShape ?? provided) }
+            )
+        case (.packValue(let values), .packValue(let provided)):
+            return .packValue(try fields(values, provided))
+        case (.metatype(let value), .metatype(let provided)):
+            return .metatype(try value.overlayingLifetimeEvidence(from: provided))
+        case (.existentialMetatype(let value), .existentialMetatype(let provided)):
+            return .existentialMetatype(try value.overlayingLifetimeEvidence(from: provided))
+        case (.foreignFunction(let convention, let values, let result),
+              .foreignFunction(_, let provided, let output)):
+            return .foreignFunction(
+                convention, try fields(values, provided),
+                try result.overlayingLifetimeEvidence(from: output)
+            )
+        default:
+            func arguments(of type: Self) throws -> [Self] {
+                switch type {
+                case .named(_, let values), .nominal(_, let values), .reference(_, let values): values
+                case .nested(let parent, _, let values, _): try arguments(of: parent) + values
+                default: throw mismatch()
+                }
+            }
+            let provided = try arguments(of: source)
+            switch self {
+            case .named(let name, let values): return .named(name, try fields(values, provided))
+            case .nominal(let name, let values): return .nominal(name, try fields(values, provided))
+            case .reference(let descriptor, let values):
+                return .reference(descriptor, try fields(values, provided))
+            case .nested(let parent, let name, let values, let module):
+                return .nested(parent, name, try fields(values, provided), extensionModule: module)
+            default: throw mismatch()
+            }
+        }
+    }
+
     var hasDeclaredLifetime: Bool {
         switch self {
         case .function(let arguments, let result, let failure, let attributes):

@@ -832,9 +832,10 @@ final class SwiftNativeClosureAdapter: Sendable {
         let offsets = Set(
             source.closureOffsets() + target.closureOffsets()
         ).sorted()
-        return try offsets.map { offset in
+        return try offsets.compactMap { offset in
             let incoming = try source.closure(at: offset)
             let expected = try target.closure(at: offset)
+            guard !incoming.hasSameNativeABI(as: expected) else { return nil }
             return Field(
                 offset: offset,
                 adapter: try SwiftNativeClosureAdapter(source: incoming, target: expected),
@@ -920,6 +921,7 @@ final class SwiftNativeClosureAdapter: Sendable {
         let unpacked = target.parameters.unpack(incoming)
         var addresses = unpacked.addresses
         var storage = unpacked.storage
+        var nativeAddresses = unpacked.nativeAddresses
         var consumed: [NativeValueStorage] = []
         var writebacks: [() -> Void] = []
         for argument in arguments {
@@ -968,6 +970,27 @@ final class SwiftNativeClosureAdapter: Sendable {
                 }
             case .tuple(let incoming, let expected, let fields):
                 let mutable = argument.convention == .inoutValue
+                if argument.convention == .borrowing, fields.isEmpty,
+                   let original = nativeAddresses[argument.index]
+                        ?? (incoming.expanded == nil ? address : nil) {
+                    nativeAddresses[argument.index] = original
+                    if expected.expanded == nil { addresses[argument.index] = original }
+                    else if incoming.expanded == nil {
+                        let vector = NativeValueStorage(
+                            size: expected.projections.count * MemoryLayout<UnsafeMutableRawPointer?>.stride,
+                            alignment: MemoryLayout<UnsafeMutableRawPointer?>.alignment
+                        )
+                        for (index, projection) in expected.projections.enumerated() {
+                            vector.address.storeBytes(of: Optional(original.advanced(by: projection.offset)),
+                                toByteOffset: index * MemoryLayout<UnsafeMutableRawPointer?>.stride,
+                                as: UnsafeMutableRawPointer?.self)
+                        }
+                        storage.append(vector)
+                        addresses[argument.index] = vector.address
+                    }
+                    continue
+                }
+                nativeAddresses.removeValue(forKey: argument.index)
                 let native: NativeValueStorage
                 if mutable {
                     native = incoming.makeResultStorage()
@@ -1029,7 +1052,7 @@ final class SwiftNativeClosureAdapter: Sendable {
             }
         }
         return Arguments(
-            encoded: source.parameters.encode(addresses),
+            encoded: source.parameters.encode(addresses, nativeAddresses: nativeAddresses),
             storage: storage,
             consumed: consumed,
             writebacks: writebacks
