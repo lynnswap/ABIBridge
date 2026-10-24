@@ -42,9 +42,13 @@ In a caller that also imports `Example`, use ``NativeValue`` for the storage and
 import ABIBridge
 import Example
 
-let function = try ABIRuntime.shared.resolveCFunctionAndWait(
-    named: "ExampleTransformRecord",
-    as: ((UnsafeRawPointer, UnsafeMutableRawPointer) -> Void).self
+let function = try ABIRuntime.shared.resolveAndWait(
+    .c(
+        .function(
+            "ExampleTransformRecord",
+            as: ((UnsafeRawPointer, UnsafeMutableRawPointer) -> Void).self
+        )
+    )
 )
 let layout = try NativeType.opaque(
     named: "Example.Record",

@@ -15,29 +15,29 @@ struct SwiftObjectConsumer {
         guard let loader = dlopen(url.path, RTLD_NOW | RTLD_LOCAL) else { throw Failure.loadFailed }
         defer { dlclose(loader) }
         let runtime = ABIRuntime()
-        let make = try runtime.resolveCFunctionAndWait(
-            named: "ABIBridgeFixtureCreateVirtualCounter",
-            as: ((Int32) -> UnsafeMutableRawPointer?).self,
+        let make = try runtime.resolveAndWait(
+            .c(
+                .function(
+                    "ABIBridgeFixtureCreateVirtualCounter",
+                    as: ((Int32) -> UnsafeMutableRawPointer?).self
+                )
+            ),
             in: .path(url)
         )
-        let size = try runtime.resolveCFunctionAndWait(
-            named: "ABIBridgeFixtureVirtualSize",
-            as: (() -> Int).self,
+        let size = try runtime.resolveAndWait(
+            .c(.function("ABIBridgeFixtureVirtualSize", as: (() -> Int).self)),
             in: .path(url)
         )
-        let alignment = try runtime.resolveCFunctionAndWait(
-            named: "ABIBridgeFixtureVirtualAlignment",
-            as: (() -> Int).self,
+        let alignment = try runtime.resolveAndWait(
+            .c(.function("ABIBridgeFixtureVirtualAlignment", as: (() -> Int).self)),
             in: .path(url)
         )
-        let tableDiscriminator = try runtime.resolveCFunctionAndWait(
-            named: "ABIBridgeFixtureVTableDiscriminator",
-            as: (() -> UInt).self,
+        let tableDiscriminator = try runtime.resolveAndWait(
+            .c(.function("ABIBridgeFixtureVTableDiscriminator", as: (() -> UInt).self)),
             in: .path(url)
         )
-        let slotDiscriminator = try runtime.resolveCFunctionAndWait(
-            named: "ABIBridgeFixtureSlotDiscriminator",
-            as: (() -> UInt).self,
+        let slotDiscriminator = try runtime.resolveAndWait(
+            .c(.function("ABIBridgeFixtureSlotDiscriminator", as: (() -> UInt).self)),
             in: .path(url)
         )
         guard let address = try unsafe make.unsafeInvoke(13) else { throw Failure.allocationFailed }

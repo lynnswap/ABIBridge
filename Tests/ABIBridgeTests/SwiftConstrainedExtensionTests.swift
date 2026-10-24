@@ -471,9 +471,8 @@ struct SwiftConstrainedExtensionTests {
         )
         defer { extensionImage.cleanup() }
         let runtime = ABIRuntime()
-        let make = try runtime.resolveCFunctionAndWait(
-            named: "ABIQualifiedCollectionBox",
-            as: (() -> UnsafeMutableRawPointer).self,
+        let make = try runtime.resolveAndWait(
+            .c(.function("ABIQualifiedCollectionBox", as: (() -> UnsafeMutableRawPointer).self)),
             in: .path(provider.libraryURL),
             loading: .loadedOnly
         )
@@ -737,9 +736,8 @@ struct SwiftConstrainedExtensionTests {
         )
         defer { provider.cleanup() }
         let runtime = ABIRuntime()
-        let make = try runtime.resolveCFunctionAndWait(
-            named: "ABIConstraintInstance",
-            as: (() -> UnsafeMutableRawPointer).self,
+        let make = try runtime.resolveAndWait(
+            .c(.function("ABIConstraintInstance", as: (() -> UnsafeMutableRawPointer).self)),
             in: .path(provider.libraryURL),
             loading: .loadedOnly
         )
@@ -825,9 +823,13 @@ struct SwiftConstrainedExtensionTests {
         )
         defer { fixture.cleanup() }
         let runtime = ABIRuntime()
-        let make = try runtime.resolveCFunctionAndWait(
-            named: "ABIMetatypeConstraintInstance",
-            as: ((Int32) -> UnsafeMutableRawPointer).self,
+        let make = try runtime.resolveAndWait(
+            .c(
+                .function(
+                    "ABIMetatypeConstraintInstance",
+                    as: ((Int32) -> UnsafeMutableRawPointer).self
+                )
+            ),
             in: .path(fixture.libraryURL),
             loading: .loadedOnly
         )
@@ -961,9 +963,13 @@ struct SwiftConstrainedExtensionTests {
         )
         defer { fixture.cleanup() }
         let runtime = ABIRuntime()
-        let make = try runtime.resolveCFunctionAndWait(
-            named: "ABIAmbiguousConstraintInstance",
-            as: ((Int32) -> UnsafeMutableRawPointer).self,
+        let make = try runtime.resolveAndWait(
+            .c(
+                .function(
+                    "ABIAmbiguousConstraintInstance",
+                    as: ((Int32) -> UnsafeMutableRawPointer).self
+                )
+            ),
             in: .path(fixture.libraryURL),
             loading: .loadedOnly
         )

@@ -678,9 +678,8 @@ struct SymbolResolutionTests {
             }
             for _ in 0..<8 {
                 runtime.removeCachedResults()
-                let function = try runtime.resolveCFunctionAndWait(
-                    named: "getpid",
-                    as: (() -> Int32).self
+                let function = try runtime.resolveAndWait(
+                    .c(.function("getpid", as: (() -> Int32).self))
                 )
                 #expect(try unsafe function.unsafeInvoke() == getpid())
             }
@@ -764,20 +763,17 @@ struct SymbolResolutionTests {
         defer { fixture.cleanup() }
         let runtime = ABIRuntime()
         let name = "\(fixture.namespace)::add(int, int)"
-        let function = try runtime.resolveCXXFunctionAndWait(
-            named: name,
-            as: ((Int32, Int32) -> Int32).self,
+        let function = try runtime.resolveAndWait(
+            .cxx(.function(name, as: ((Int32, Int32) -> Int32).self)),
             in: .path(fixture.libraryURL)
         )
         let image = function.symbol.image
-        let again = try runtime.resolveCXXFunctionAndWait(
-            named: name,
-            as: ((Int32, Int32) -> Int32).self,
+        let again = try runtime.resolveAndWait(
+            .cxx(.function(name, as: ((Int32, Int32) -> Int32).self)),
             in: image
         )
-        let address = try runtime.resolveCFunctionAndWait(
-            named: "ABIFixtureAddress",
-            as: ((Int32) -> UInt).self,
+        let address = try runtime.resolveAndWait(
+            .c(.function("ABIFixtureAddress", as: ((Int32) -> UInt).self)),
             in: image
         )
         let expectedAddress = try fixture.address(kind: 0)

@@ -52,9 +52,8 @@ Await a resolution factory directly to search and prepare without blocking `Main
 ```swift
 @MainActor
 func calculate() async throws -> Int32 {
-    let add = try await ABIRuntime.shared.resolveCXXFunction(
-        named: "Example::Math::add(int, int)",
-        as: ((Int32, Int32) -> Int32).self,
+    let add = try await ABIRuntime.shared.resolve(
+        .cxx(.function("Example::Math::add(int, int)", as: ((Int32, Int32) -> Int32).self)),
         in: .framework(named: "Example")
     )
     return try unsafe add.unsafeInvoke(20, 22)
@@ -66,9 +65,8 @@ Synchronous lookup works without a preceding preparation call:
 ```swift
 @MainActor
 func calculate(using runtime: ABIRuntime) throws -> Int32 {
-    let add = try runtime.resolveCXXFunctionAndWait(
-        named: "Example::Math::add(int, int)",
-        as: ((Int32, Int32) -> Int32).self,
+    let add = try runtime.resolveAndWait(
+        .cxx(.function("Example::Math::add(int, int)", as: ((Int32, Int32) -> Int32).self)),
         in: .framework(named: "Example")
     )
     return try unsafe add.unsafeInvoke(20, 22)
@@ -82,9 +80,8 @@ Use the asynchronous closure overload of `prepare(_:)` to obtain the same handle
 func calculateWithPreparation() async throws -> Int32 {
     let runtime = ABIRuntime.shared
     async let prepared = runtime.prepare { runtime in
-        try runtime.resolveCXXFunctionAndWait(
-            named: "Example::Math::add(int, int)",
-            as: ((Int32, Int32) -> Int32).self,
+        try runtime.resolveAndWait(
+            .cxx(.function("Example::Math::add(int, int)", as: ((Int32, Int32) -> Int32).self)),
             in: .framework(named: "Example")
         )
     }

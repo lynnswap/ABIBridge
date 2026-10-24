@@ -7,9 +7,8 @@ Resolve declarations in an explicitly selected library without a separate loadin
 On a platform that provides JavaScriptCore, the framework does not need to be imported into the source file:
 
 ```swift
-let create = try runtime.resolveCFunctionAndWait(
-    named: "JSContextGroupCreate",
-    as: (() -> UnsafeMutableRawPointer?).self,
+let create = try runtime.resolveAndWait(
+    .c(.function("JSContextGroupCreate", as: (() -> UnsafeMutableRawPointer?).self)),
     in: .framework(named: "JavaScriptCore")
 )
 ```
@@ -21,9 +20,8 @@ Loading runs on the resolution thread: the caller for synchronous lookup, or a w
 Framework lookup first checks matching loaded images, then application and system public/private framework locations, including shared-cache-only images. Multiple candidates throw `ABIResolutionError.ambiguousImage`; use an executable URL to distinguish them. Discovery does not guarantee loadability.
 
 ```swift
-let function = try runtime.resolveCXXFunctionAndWait(
-    named: "Example::Renderer::version()",
-    as: (() -> Int32).self,
+let function = try runtime.resolveAndWait(
+    .cxx(.function("Example::Renderer::version()", as: (() -> Int32).self)),
     in: .path(binaryURL)
 )
 ```

@@ -89,9 +89,13 @@ struct ImageMetadataTests {
         runtime.removeCachedResults()
         try {
             let retained = try #require(metadata)
-            let function = try runtime.resolveCXXFunctionAndWait(
-                named: fixture.namespace + "::add(int, int)",
-                as: ((Int32, Int32) -> Int32).self,
+            let function = try runtime.resolveAndWait(
+                .cxx(
+                    .function(
+                        fixture.namespace + "::add(int, int)",
+                        as: ((Int32, Int32) -> Int32).self
+                    )
+                ),
                 in: retained.image
             )
             let starts = try #require(retained.functionStartAddresses)

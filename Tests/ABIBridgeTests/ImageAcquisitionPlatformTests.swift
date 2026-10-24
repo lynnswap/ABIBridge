@@ -8,16 +8,14 @@ struct ImageAcquisitionPlatformTests {
         let scope = ImageSelector.framework(named: "CoreFoundation")
         let before = try runtime.resolveImagesAndWait(matching: scope)
         let image = try #require(before.first)
-        let function = try runtime.resolveCFunctionAndWait(
-            named: "CFRunLoopGetTypeID",
-            as: (() -> UInt).self,
+        let function = try runtime.resolveAndWait(
+            .c(.function("CFRunLoopGetTypeID", as: (() -> UInt).self)),
             in: scope
         )
         #expect(function.symbol.image.identity == image.identity)
         #expect(try unsafe function.unsafeInvoke() == CFRunLoopGetTypeID())
-        let fromLease = try runtime.resolveCFunctionAndWait(
-            named: "CFRunLoopGetTypeID",
-            as: (() -> UInt).self,
+        let fromLease = try runtime.resolveAndWait(
+            .c(.function("CFRunLoopGetTypeID", as: (() -> UInt).self)),
             in: image
         )
         #expect(fromLease.symbol.image.identity == image.identity)

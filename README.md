@@ -40,27 +40,27 @@ Lookup prepares the required indexes automatically. `resolveAndWait` can block i
 To call that function, provide its signature as a Swift function type. Specifying a framework acquires it when needed:
 
 ```swift
-let add = try runtime.resolveCXXFunctionAndWait(
-    named: "Example::Math::add(int, int)", as: ((Int32, Int32) -> Int32).self,
+let add = try runtime.resolveAndWait(
+    .cxx(.function("Example::Math::add(int, int)", as: ((Int32, Int32) -> Int32).self)),
     in: .framework(named: "Example")
 )
 let sum = try unsafe add.unsafeInvoke(20, 22)
 ```
 
-Retain the handle for repeated calls, and invoke it on the thread required by the native function. For lookup from `MainActor`, await `resolveCXXFunction`:
+Retain the handle for repeated calls, and invoke it on the thread required by the native function. For lookup from `MainActor`, await `resolve` with the same `.cxx(...)` request:
 
 ```swift
 @MainActor
 func calculate() async throws -> Int32 {
-    let add = try await ABIRuntime.shared.resolveCXXFunction(
-        named: "Example::Math::add(int, int)", as: ((Int32, Int32) -> Int32).self,
+    let add = try await ABIRuntime.shared.resolve(
+        .cxx(.function("Example::Math::add(int, int)", as: ((Int32, Int32) -> Int32).self)),
         in: .framework(named: "Example")
     )
     return try unsafe add.unsafeInvoke(20, 22)
 }
 ```
 
-Search, image acquisition, and call preparation run on a worker while the caller suspends. `resolveCFunction` provides the same async lookup for C declarations. Optional earlier `prepare` shares its work with either lookup form; callers join only the preparation they need.
+Search, image acquisition, and call preparation run on a worker while the caller suspends. Use `.c(.function(...))` for a C declaration, or save either form with `NativeRequest.c(...)` or `NativeRequest.cxx(...)`. Optional earlier `prepare` shares its work with either lookup form; callers join only the preparation they need.
 
 ### Call Swift by its source-level name
 

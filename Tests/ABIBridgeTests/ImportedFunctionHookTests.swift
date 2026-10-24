@@ -35,9 +35,8 @@ private final class ImportHookFixture {
     func cleanup() { consumer.cleanup(); provider.cleanup() }
     var scope: ImageSelector { .path(consumer.libraryURL) }
     func call(_ runtime: ABIRuntime) async throws -> NativeFunction<Int32, Int32, Int32> {
-        try runtime.resolveCFunctionAndWait(
-            named: "ABIHookCall",
-            as: ((Int32, Int32) -> Int32).self,
+        try runtime.resolveAndWait(
+            .c(.function("ABIHookCall", as: ((Int32, Int32) -> Int32).self)),
             in: scope
         )
     }
@@ -98,9 +97,8 @@ struct ImportedFunctionHookTests {
         }
         #expect(try unsafe call.unsafeInvoke(20, 22) == 42)
         #expect(try unsafe call.unsafeInvoke(-1, 43) == 42)
-        let count = try runtime.resolveCFunctionAndWait(
-            named: "ABIHookCalls",
-            as: (() -> Int32).self,
+        let count = try runtime.resolveAndWait(
+            .c(.function("ABIHookCalls", as: (() -> Int32).self)),
             in: .path(fixture.provider.libraryURL)
         )
         #expect(try unsafe count.unsafeInvoke() == 2)
@@ -335,9 +333,8 @@ struct ImportedFunctionHookTests {
                 ) { next, a, b in try next.proceed(a, b) + 2 }
                 Issue.record("The same protected slot should still reject publication")
             } catch is NativeImportedHookInstallationError {}
-            let call = try runtime.resolveCFunctionAndWait(
-                named: "ABIHookCall",
-                as: ((Int32, Int32) -> Int32).self,
+            let call = try runtime.resolveAndWait(
+                .c(.function("ABIHookCall", as: ((Int32, Int32) -> Int32).self)),
                 in: .path(paths[0])
             )
             #expect(retry.slots.allSatisfy { $0.status == .active })
@@ -384,14 +381,12 @@ struct ImportedFunctionHookTests {
             let next = try call.proceed(value);
             return CGSize(width: next.width + 1, height: next.height + 1)
         }
-        let narrowCall = try runtime.resolveCFunctionAndWait(
-            named: "ABIImportedNarrowCall",
-            as: ((Int8) -> Int8).self,
+        let narrowCall = try runtime.resolveAndWait(
+            .c(.function("ABIImportedNarrowCall", as: ((Int8) -> Int8).self)),
             in: scope
         )
-        let sizeCall = try runtime.resolveCFunctionAndWait(
-            named: "ABIImportedSizeCall",
-            as: ((CGSize) -> CGSize).self,
+        let sizeCall = try runtime.resolveAndWait(
+            .c(.function("ABIImportedSizeCall", as: ((CGSize) -> CGSize).self)),
             in: scope
         )
         #expect(try unsafe narrowCall.unsafeInvoke(-41) == -42)
@@ -435,15 +430,13 @@ struct ImportedFunctionHookTests {
         } catch ABIResolutionError.unsupportedDeclaration(let reason) {
             #expect(reason.contains("lazy-bound"))
         }
-        let count = try runtime.resolveCFunctionAndWait(
-            named: "ABILazyHookCount",
-            as: (() -> Int32).self,
+        let count = try runtime.resolveAndWait(
+            .c(.function("ABILazyHookCount", as: (() -> Int32).self)),
             in: .path(provider.libraryURL)
         )
         #expect(try unsafe count.unsafeInvoke() == 0)
-        let call = try runtime.resolveCFunctionAndWait(
-            named: "ABILazyHookCall",
-            as: ((Int32) -> Int32).self,
+        let call = try runtime.resolveAndWait(
+            .c(.function("ABILazyHookCall", as: ((Int32) -> Int32).self)),
             in: scope
         )
         #expect(try unsafe call.unsafeInvoke(42) == 42)

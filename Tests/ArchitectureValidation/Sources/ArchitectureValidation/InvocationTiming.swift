@@ -18,13 +18,16 @@ private final class InvocationTimingReceiver: NSObject {
 
 @MainActor func validateInvocationTiming() async throws -> [String] {
     let runtime = ABIRuntime()
-    let add = try runtime.resolveCFunctionAndWait(
-        named: "ABIValidationAdd",
-        as: ((Int32, Int32) -> Int32).self
+    let add = try runtime.resolveAndWait(
+        .c(.function("ABIValidationAdd", as: ((Int32, Int32) -> Int32).self))
     )
-    let pointer = try runtime.resolveCFunctionAndWait(
-        named: "ABIValidationAdvance",
-        as: ((UnsafeMutablePointer<CChar>, Int) -> UnsafeMutableRawPointer).self
+    let pointer = try runtime.resolveAndWait(
+        .c(
+            .function(
+                "ABIValidationAdvance",
+                as: ((UnsafeMutablePointer<CChar>, Int) -> UnsafeMutableRawPointer).self
+            )
+        )
     )
     let sum = try await runtime.resolve(
         .swift(

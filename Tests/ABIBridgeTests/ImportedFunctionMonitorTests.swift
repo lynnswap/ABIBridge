@@ -98,9 +98,8 @@ struct ImportedFunctionMonitorTests {
         try await waitForMonitoring { installed.withLock { $0 } || failed.withLock { $0 } }
         #expect(!failed.withLock { $0 })
         #expect(installed.withLock { $0 })
-        let call = try ABIRuntime().resolveCFunctionAndWait(
-            named: "ABIMonitoredCall",
-            as: ((Int32) -> Int32).self,
+        let call = try ABIRuntime().resolveAndWait(
+            .c(.function("ABIMonitoredCall", as: ((Int32) -> Int32).self)),
             in: .path(url)
         )
         #expect(try unsafe call.unsafeInvoke(41) == 42)
@@ -136,17 +135,15 @@ struct ImportedFunctionMonitorTests {
         try await waitForMonitoring { applied.withLock { $0.count == 2 } }
         #expect(monitor.images.count == 2)
         for url in [current, future] {
-            let call = try runtime.resolveCFunctionAndWait(
-                named: "ABIMonitoredCall",
-                as: ((Int32) -> Int32).self,
+            let call = try runtime.resolveAndWait(
+                .c(.function("ABIMonitoredCall", as: ((Int32) -> Int32).self)),
                 in: .path(url)
             )
             #expect(try unsafe call.unsafeInvoke(41) == 42)
         }
         monitor.invalidate()
-        let call = try runtime.resolveCFunctionAndWait(
-            named: "ABIMonitoredCall",
-            as: ((Int32) -> Int32).self,
+        let call = try runtime.resolveAndWait(
+            .c(.function("ABIMonitoredCall", as: ((Int32) -> Int32).self)),
             in: .path(future)
         )
         #expect(try unsafe call.unsafeInvoke(42) == 42)
@@ -208,9 +205,8 @@ struct ImportedFunctionMonitorTests {
         try fixture.load(later)
         let runtime = ABIRuntime()
         for url in [first, later] {
-            let call = try runtime.resolveCFunctionAndWait(
-                named: "ABIMonitoredCall",
-                as: ((Int32) -> Int32).self,
+            let call = try runtime.resolveAndWait(
+                .c(.function("ABIMonitoredCall", as: ((Int32) -> Int32).self)),
                 in: .path(url)
             )
             #expect(try unsafe call.unsafeInvoke(42) == 42)
@@ -251,9 +247,8 @@ struct ImportedFunctionMonitorTests {
         }
         defer { finish.signal(); monitor.invalidate() }
         try await waitForMonitoring { applied.withLock { $0 } }
-        let call = try ABIRuntime().resolveCFunctionAndWait(
-            named: "ABIMonitoredCall",
-            as: ((Int32) -> Int32).self,
+        let call = try ABIRuntime().resolveAndWait(
+            .c(.function("ABIMonitoredCall", as: ((Int32) -> Int32).self)),
             in: .path(url)
         )
         // This callback deliberately blocks until the async controller releases

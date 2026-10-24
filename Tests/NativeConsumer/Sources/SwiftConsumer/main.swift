@@ -163,20 +163,18 @@ struct SwiftConsumer {
             precondition(capturedData.length == 0)
         }
         let runtime = ABIRuntime()
-        let processID = try runtime.resolveCFunctionAndWait(named: "getpid", as: (() -> Int32).self)
+        let processID = try runtime.resolveAndWait(.c(.function("getpid", as: (() -> Int32).self)))
         let pid = try unsafe processID.unsafeInvoke()
         precondition(pid == getpid())
 
         let images = try runtime.resolveImagesAndWait(matching: .path(url))
         guard let image = images.first else { throw Failure.missingImage }
-        let add = try runtime.resolveCXXFunctionAndWait(
-            named: "ABIBridgeFixture::add(int, int)",
-            as: ((Int32, Int32) -> Int32).self,
+        let add = try runtime.resolveAndWait(
+            .cxx(.function("ABIBridgeFixture::add(int, int)", as: ((Int32, Int32) -> Int32).self)),
             in: image
         )
-        let cAdd = try runtime.resolveCFunctionAndWait(
-            named: "ABIBridgeFixtureCAdd",
-            as: ((Int32, Int32) -> Int32).self,
+        let cAdd = try runtime.resolveAndWait(
+            .c(.function("ABIBridgeFixtureCAdd", as: ((Int32, Int32) -> Int32).self)),
             in: .path(url)
         )
         let metadata = try await runtime.resolveImageMetadata(in: image)
@@ -187,24 +185,38 @@ struct SwiftConsumer {
             precondition(metadata.functionStartAddresses?.contains(functionAddress) == true)
             precondition(metadata.sections.contains { $0.addressRange.contains(functionAddress) })
         }
-        let large = try runtime.resolveCXXFunctionAndWait(
-            named: "ABIBridgeFixture::large(long)",
-            as: ((Int) -> LargeValue).self,
+        let large = try runtime.resolveAndWait(
+            .cxx(.function("ABIBridgeFixture::large(long)", as: ((Int) -> LargeValue).self)),
             in: image
         )
-        let dynamic = try runtime.resolveCXXFunctionAndWait(
-            named: "ABIBridgeFixture::large(long)",
-            signature: .init(parameters: [.int], returns: LargeValue.abiType),
+        let dynamic = try runtime.resolveAndWait(
+            .cxx(
+                .function(
+                    "ABIBridgeFixture::large(long)",
+                    signature: .init(parameters: [.int], returns: LargeValue.abiType)
+                )
+            ),
             in: image
         )
-        let padded = try runtime.resolveCXXFunctionAndWait(
-            named: "ABIBridgeFixture::shift(ABIBridgeFixture::Padded)",
-            as: ((PaddedValue) -> PaddedValue).self,
+        let padded = try runtime.resolveAndWait(
+            .cxx(
+                .function(
+                    "ABIBridgeFixture::shift(ABIBridgeFixture::Padded)",
+                    as: ((PaddedValue) -> PaddedValue).self
+                )
+            ),
             in: image
         )
-        let paddedC = try runtime.resolveCFunctionAndWait(
-            named: "ABIBridgeFixtureShiftPadded",
-            signature: .init(parameters: [PaddedValue.abiType], returns: PaddedValue.abiType),
+        let paddedC = try runtime.resolveAndWait(
+            .c(
+                .function(
+                    "ABIBridgeFixtureShiftPadded",
+                    signature: .init(
+                        parameters: [PaddedValue.abiType],
+                        returns: PaddedValue.abiType
+                    )
+                )
+            ),
             in: image
         )
         let paddedResult = try unsafe padded.unsafeInvoke(PaddedValue(value: 2, tag: 3))

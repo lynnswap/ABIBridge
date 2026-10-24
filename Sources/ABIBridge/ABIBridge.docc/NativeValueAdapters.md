@@ -23,15 +23,15 @@ import ABIBridge
 
 struct Pair: BitwiseCopyable, ABIBridgeValue {
     static let abiType = try! NativeType.structure(
-        named: "Example::Pair", fields: [.double, .double]
+        named: "Example::Pair",
+        fields: [.double, .double]
     )
     var left: Double
     var right: Double
 }
 
-let translate = try ABIRuntime.shared.resolveCXXFunctionAndWait(
-    named: "Example::translate(Example::Pair)",
-    as: ((Pair) -> Pair).self
+let translate = try ABIRuntime.shared.resolveAndWait(
+    .cxx(.function("Example::translate(Example::Pair)", as: ((Pair) -> Pair).self))
 )
 let result = try unsafe translate.unsafeInvoke(Pair(left: 2, right: 3))
 ```
@@ -47,9 +47,13 @@ A Swift enum's raw-value type can differ from its stored tag. For example, two c
 A ``NativeSignature`` accepts native parameter and result descriptions. The resulting ``DynamicNativeFunction`` accepts native values and returns storage that you can cast:
 
 ```swift
-let translate = try ABIRuntime.shared.resolveCXXFunctionAndWait(
-    named: "Example::translate(Example::Pair)",
-    signature: .init(parameters: [Pair.abiType], returns: Pair.abiType)
+let translate = try ABIRuntime.shared.resolveAndWait(
+    .cxx(
+        .function(
+            "Example::translate(Example::Pair)",
+            signature: .init(parameters: [Pair.abiType], returns: Pair.abiType)
+        )
+    )
 )
 let input = try Pair.nativeValue(from: Pair(left: 2, right: 3))
 let value = try unsafe translate.unsafeInvoke(with: [input])
