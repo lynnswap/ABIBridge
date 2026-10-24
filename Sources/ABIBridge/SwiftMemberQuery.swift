@@ -97,7 +97,10 @@ struct SwiftMemberQuery {
     func owner(in owner: String) -> String { qualifier ?? owner }
 
     /// What the symbols of the member of `owner` must state.
-    func match(in owner: String) throws -> SwiftMemberMatch {
+    func match(
+        in owner: String,
+        ownerIdentity: RuntimeSwiftTypeIdentity? = nil
+    ) throws -> SwiftMemberMatch {
         guard let path = SwiftMemberPath(owner: self.owner(in: owner), member: member) else {
             throw ABIResolutionError.unsupportedDeclaration(
                 "The member name \(request.name) does not name a Swift member."
@@ -107,7 +110,8 @@ struct SwiftMemberQuery {
             path: path,
             accessor: accessor,
             isStatic: isStatic,
-            initializer: role == .initializer ? .allocating : .excluded
+            initializer: role == .initializer ? .allocating : .excluded,
+            ownerIdentity: ownerIdentity
         )
     }
 

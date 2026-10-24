@@ -91,6 +91,19 @@ final class SymbolResolver: Sendable {
             ).map(SwiftCandidate.init)
         }
     }
+    func swiftTypeIdentity(
+        of metadata: Any.Type,
+        in image: NativeImage
+    ) throws -> RuntimeSwiftTypeIdentity {
+        try withRuntimeErrors {
+            try RuntimeSwiftTypeIdentity(
+                metadata: metadata,
+                in: image.runtimeValue,
+                resolver: runtime
+            )
+        }
+    }
+
     /// The candidates of a member of `owner`, whose records `match` accepts.
     func swiftMemberCandidates(
         _ match: SwiftMemberMatch,
