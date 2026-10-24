@@ -93,7 +93,10 @@ public struct NativeSwiftFunctionRequest<Signature>: Sendable {
     ///   - genericArguments: Scalar types and packs in declaration parameter
     ///     order.
     ///   - declaredSignature: The formal function type and optional canonical
-    ///     generic signature when binary metadata is insufficient.
+    ///     generic signature when binary metadata is insufficient. It can state
+    ///     result dependencies with `@_lifetime(borrow name)` using each
+    ///     parameter's internal name. Omitting the attribute leaves the
+    ///     dependencies unknown.
     ///   - valueABIs: Formal ABIs for closed nominal values in this lookup,
     ///     runtime-only or host types, such as structs and enums whose
     ///     conventions ABIBridge cannot infer from their metadata. They take
@@ -181,7 +184,10 @@ public struct NativeSwiftInstanceMemberRequest<Signature>: Sendable {
     ///     native error and async isolation conventions.
     ///   - genericArguments: Type arguments introduced by the method.
     ///   - declaredSignature: The formal function type and optional canonical
-    ///     generic signature when binary metadata is insufficient.
+    ///     generic signature when binary metadata is insufficient. It can state
+    ///     result dependencies with `@_lifetime(borrow name)`; use each
+    ///     parameter's internal name, or `self` for an instance member.
+    ///     Omitting the attribute leaves the dependencies unknown.
     ///   - valueABIs: Formal ABIs for closed nominal values in this lookup that
     ///     ABIBridge cannot infer from their metadata, as for
     ///     ``NativeSwiftFunctionRequest/function(_:as:genericArguments:declaredAs:valueABIs:)``.
@@ -341,7 +347,10 @@ public struct NativeSwiftTypeMemberRequest<Signature>: Sendable {
     ///   - signature: Explicit arguments and the constructed result.
     ///   - genericArguments: Type arguments introduced by the initializer.
     ///   - declaredSignature: The formal function type and optional canonical
-    ///     generic signature when binary metadata is insufficient.
+    ///     generic signature when binary metadata is insufficient. It can state
+    ///     result dependencies with `@_lifetime(borrow name)` using each
+    ///     parameter's internal name. Omitting the attribute leaves the
+    ///     dependencies unknown.
     ///   - valueABIs: Formal ABIs for closed nominal values in this lookup.
     public static func initializer(
         _ name: String,
@@ -366,7 +375,10 @@ public struct NativeSwiftTypeMemberRequest<Signature>: Sendable {
     ///   - signature: Explicit arguments and result.
     ///   - genericArguments: Type arguments introduced by the method.
     ///   - declaredSignature: The formal function type and optional canonical
-    ///     generic signature when binary metadata is insufficient.
+    ///     generic signature when binary metadata is insufficient. It can state
+    ///     result dependencies with `@_lifetime(borrow name)` using each
+    ///     parameter's internal name. Omitting the attribute leaves the
+    ///     dependencies unknown.
     ///   - valueABIs: Formal ABIs for closed nominal values in this lookup.
     public static func staticMethod(
         _ name: String,

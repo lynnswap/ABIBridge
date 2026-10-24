@@ -655,6 +655,7 @@ struct SwiftGenericCallPlan: Sendable {
         implicitSelf: NativeSwiftType? = nil,
         receiver: SwiftReceiverMode? = nil,
         declaredSignature: String? = nil,
+        allowsReceiverDependencies: Bool = false,
         valueABIs: [NativeSwiftType: NativeType] = [:]
     ) throws {
         let context = try (implicitSelf == nil ? enclosing : nil).flatMap {
@@ -695,12 +696,37 @@ struct SwiftGenericCallPlan: Sendable {
                 binding: binding
             )
         }
-        let opaque = declaration.result.opaqueIndex.flatMap { binding.opaqueResults[$0] }
+        let opaque = declaration.result.opaqueIndex.flatMap { binding.opaqueResults[$0]?.value }
         if case .function(let arguments, let result, let failure, let attributes) = declared?
             .function
         {
+            guard !attributes.lifetimeUsesReceiver || allowsReceiverDependencies else {
+                throw ABIResolutionError.unsupportedDeclaration(
+                    "@_lifetime self in declaredAs: requires an instance member."
+                )
+            }
+            guard !arguments.contains(where: \.hasDeclaredLifetime), !result.hasDeclaredLifetime,
+                failure?.hasDeclaredLifetime != true
+            else {
+                throw ABIResolutionError.metadataUnavailable(
+                    "declaredAs: states a nested closure's lifetime dependencies, but its lowering and pointer authentication are not yet supported."
+                )
+            }
+            let declaredArguments = attributes.loweredParameters(arguments).enumerated().map {
+                index,
+                type in
+                // Source `borrowing` canonicalizes away in a function type,
+                // while an initializer's verified Shared parameter overrides
+                // its default owned convention.
+                if type.argumentConvention == nil, index < declaration.arguments.count,
+                    declaration.arguments[index].argumentConvention?.convention == .borrowing
+                {
+                    return SwiftFormalType.borrowing(type)
+                }
+                return type
+            }
             _ = try SwiftGenericParameters(
-                formal: attributes.loweredParameters(arguments),
+                formal: declaredArguments,
                 actual: signature.parameters,
                 binding: binding,
                 defaultConsuming: declaration.consumesArguments
@@ -873,17 +899,35 @@ struct SwiftGenericCallPlan: Sendable {
         let index: Int
         let expected: AnyClass
         let isMetatype: Bool
+        var indirectOffset: Int? = nil
     }
 
-    func hookClassArguments() throws -> [HookClassArgument] {
+    func hookClassArguments(
+        parameters prepared: SwiftGenericParameters? = nil
+    ) throws -> [HookClassArgument] {
+        let parameters = prepared ?? self.parameters
         var sources: [HookClassArgument] = []
         var nativeIndex = 0
-        func add(_ type: Any.Type, layout: CValueType, at index: Int) {
+        func add(_ type: Any.Type, layout: CValueType, at index: Int, indirectOffset: Int? = nil) {
             guard !ABISwiftValueIsIndirect(layout.handle) else { return }
             if let instance = SwiftMetatypeMetadata(type)?.instance as? AnyClass {
-                sources.append(.init(index: index, expected: instance, isMetatype: true))
+                sources.append(
+                    .init(
+                        index: index,
+                        expected: instance,
+                        isMetatype: true,
+                        indirectOffset: indirectOffset
+                    )
+                )
             } else if let expected = type as? AnyClass {
-                sources.append(.init(index: index, expected: expected, isMetatype: false))
+                sources.append(
+                    .init(
+                        index: index,
+                        expected: expected,
+                        isMetatype: false,
+                        indirectOffset: indirectOffset
+                    )
+                )
             }
         }
         func add(_ tuple: SwiftTupleValuePlan, at start: Int) {
@@ -912,12 +956,24 @@ struct SwiftGenericCallPlan: Sendable {
             case .value(let logical):
                 let argument = parameters.arguments[logical]
                 let tuple = SwiftGenericParameters.expandedTuple(argument)
-                defer { nativeIndex += tuple?.argumentTypes.count ?? 1 }
+                let addressed = parameters.passesByAddress(logical)
+                defer { nativeIndex += addressed ? 1 : tuple?.argumentTypes.count ?? 1 }
                 guard argument.convention != .inoutValue, binding.dependsOnParameters(formal) else {
                     continue
                 }
                 if let tuple {
-                    add(tuple, at: nativeIndex)
+                    if addressed {
+                        for leaf in tuple.leaves {
+                            add(
+                                leaf.nativeType,
+                                layout: leaf.type,
+                                at: nativeIndex,
+                                indirectOffset: leaf.nativeOffset
+                            )
+                        }
+                    } else {
+                        add(tuple, at: nativeIndex)
+                    }
                 } else {
                     let value = formal.argumentConvention?.value ?? formal
                     let native = try binding.types(value)[0]

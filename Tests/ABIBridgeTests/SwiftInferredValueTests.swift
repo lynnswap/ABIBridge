@@ -1532,6 +1532,325 @@ struct SwiftInferredValueTests {
         }
     }
 
+    @available(macOS 26.0, *)
+    @Test func declaredLifetimeInputsSelectTheirNativeStorage() async throws {
+        let (library, module) = try provider(
+            """
+            @available(macOS 26.0, *)
+            public struct View: ~Escapable {
+                let bytes: Span<UInt8>
+                @_lifetime(copy bytes) init(_ bytes: Span<UInt8>) { self.bytes = bytes }
+                @_lifetime(borrow text) public init(text: borrowing String) { self.bytes = text.utf8Span.span }
+            }
+            @available(macOS 26.0, *)
+            @_lifetime(borrow a) @inline(never) public func first(_ a: String, _ b: String) -> View { View(a.utf8Span.span) }
+            @available(macOS 26.0, *)
+            @_lifetime(borrow b) @inline(never) public func second(_ a: String, _ b: String) -> View { View(b.utf8Span.span) }
+            @available(macOS 26.0, *)
+            @_lifetime(borrow text) @inline(never) public nonisolated(nonsending) func asyncText(_ text: String) async -> View {
+                await Task.yield()
+                return View(text.utf8Span.span)
+            }
+            @available(macOS 26.0, *)
+            @_lifetime(copy view) @inline(never) public func copied(_ text: String, _ view: View) -> View { view }
+            @available(macOS 26.0, *)
+            @_lifetime(borrow pair) @inline(never) public func tuple(_ pair: (String, Int64)) -> Number { Number(Int64(pair.0.utf8.count) + pair.1) }
+            // Copyable stored vars expose both this module's AFD support and
+            // its lack of library evolution; nonescapable accessors do not.
+            public struct LifetimeEvidence { public var text: String = "evidence" }
+            public struct Number: ~Escapable {
+                let value: Int64
+                @_lifetime(immortal) init(_ value: Int64) { self.value = value }
+            }
+            @_lifetime(borrow pair) @inline(never) public func genericTuple<T>(_ pair: (T, Int64)) -> Number { Number(pair.1) }
+            public final class ClassBoundOwner { public init() {} }
+            @inline(never) public func classBoundOwner() -> ClassBoundOwner { ClassBoundOwner() }
+            @_lifetime(borrow pair) @inline(never) public func classBoundTuple<T: AnyObject>(_ pair: (T, Int64)) -> Number { Number(pair.1) }
+            @inline(never) public func readNumber(_ number: borrowing Number) -> Int64 { number.value }
+            @_lifetime(borrow text) @inline(never) public func projected<T: ~Escapable>(_ text: String, _ value: consuming T?) -> T? {
+                unsafe _overrideLifetime(value, borrowing: text)
+            }
+            @_lifetime(borrow text) @inline(never) public func opaqueProjected<T: ~Escapable>(_ text: String, _ value: consuming T) -> some ~Escapable {
+                unsafe _overrideLifetime(value, borrowing: text)
+            }
+            extension String {
+                @available(macOS 26.0, *)
+                @_lifetime(borrow self) @inline(never) public func declaredScoped<T>(_ value: T) -> View { View(utf8Span.span) }
+                @_lifetime(borrow self) @inline(never) public func declaredProjected<T: ~Escapable>(_ value: consuming T) -> T {
+                    unsafe _overrideLifetime(value, borrowing: self)
+                }
+            }
+            @available(macOS 26.0, *)
+            @inline(never) public func read(_ view: borrowing View) -> Int64 {
+                var number: Int64 = 0
+                for i in view.bytes.indices { number = number * 10 + (Int64(view.bytes[i]) - 48) }
+                return number
+            }
+            """,
+            arguments: ["-enable-experimental-feature", "Lifetimes"]
+        )
+        defer { library.cleanup() }
+        let scope = ImageSelector.path(library.libraryURL)
+        let read = try await runtime.resolve(
+            .function(
+                module + ".read(_:)",
+                as: ((NativeSwiftBorrowedValue) -> Int64).self
+            ),
+            in: scope
+        )
+        for (name, source, expected) in [("first", "a", Int64(123)), ("second", "b", Int64(456))] {
+            let borrow = try await runtime.resolve(
+                .function(
+                    module + "." + name + "(_:_:)",
+                    as: ((String, String) -> NativeSwiftBorrowedValue).self,
+                    declaredAs:
+                        "@_lifetime(borrow \(source)) (_ a: Swift.String, _ b: Swift.String) -> \(module).View"
+                ),
+                in: scope
+            )
+            #expect(
+                try unsafe borrow.unsafeInvoke(
+                    "123",
+                    "456",
+                    withResult: { view in
+                        // The result reads small-string bytes in the very input storage
+                        // passed to native code, until this body finishes.
+                        try unsafe read.unsafeInvoke(view)
+                    }
+                ) == expected
+            )
+        }
+        let asyncText = try await runtime.resolve(
+            .function(
+                module + ".asyncText(_:)",
+                as: (nonisolated(nonsending) (String) async -> NativeSwiftBorrowedValue).self,
+                declaredAs:
+                    "nonisolated(nonsending) @_lifetime(borrow text) (_ text: Swift.String) async -> \(module).View"
+            ),
+            in: scope
+        )
+        #expect(
+            try unsafe await asyncText.unsafeInvoke(
+                "123",
+                withResult: { value in
+                    await Task.yield()
+                    return try unsafe read.unsafeInvoke(value)
+                }
+            ) == 123
+        )
+        let tuple = try await runtime.resolve(
+            .function(
+                module + ".tuple(_:)",
+                as: (((String, Int64)) -> NativeSwiftBorrowedValue).self,
+                declaredAs:
+                    "@_lifetime(borrow pair) (_ pair: (Swift.String, Swift.Int64)) -> \(module).Number"
+            ),
+            in: scope
+        )
+        let generic = try await runtime.resolve(
+            .function(
+                module + ".genericTuple(_:)",
+                as: (((Int64, Int64)) -> NativeSwiftBorrowedValue).self,
+                genericArguments: [.type(Int64.self)],
+                declaredAs:
+                    "<A> @_lifetime(borrow pair) (_ pair: (A, Swift.Int64)) -> \(module).Number"
+            ),
+            in: scope
+        )
+        let readNumber = try await runtime.resolve(
+            .function(
+                module + ".readNumber(_:)",
+                as: ((NativeSwiftBorrowedValue) -> Int64).self
+            ),
+            in: scope
+        )
+        let owner = try await runtime.resolve(
+            .function(module + ".classBoundOwner()", as: (() -> NativeSwiftValue).self),
+            in: scope
+        )
+        let ownerType = try await runtime.resolveSwiftType(
+            named: module + ".ClassBoundOwner",
+            in: scope
+        )
+        let classBound = try await runtime.resolve(
+            .function(
+                module + ".classBoundTuple(_:)",
+                as: (((NativeSwiftValue, Int64)) -> NativeSwiftBorrowedValue).self,
+                genericArguments: [.type(ownerType)]
+            ),
+            in: scope
+        )
+        #expect(
+            try unsafe classBound.unsafeInvoke(
+                (owner.unsafeInvoke(), Int64(42)),
+                withResult: { try unsafe readNumber.unsafeInvoke($0) }
+            ) == 42
+        )
+        #expect(
+            try unsafe tuple.unsafeInvoke(
+                ("123", Int64(7)),
+                withResult: { try unsafe readNumber.unsafeInvoke($0) }
+            ) == 10
+        )
+        await #expect {
+            _ = try await runtime.resolve(
+                .function(
+                    module + ".projected(_:_:)",
+                    as: ((String, NativeSwiftConsuming<Int64?>) -> Int64?).self,
+                    genericArguments: [.type(Int64.self)]
+                ),
+                in: scope
+            )
+        } throws: { error in
+            guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                return false
+            }
+            return message.contains(
+                "Cannot decide how Swift passes argument 0 of type Swift.String"
+            )
+        }
+        let projected = try await runtime.resolve(
+            .function(
+                module + ".projected(_:_:)",
+                as: ((String, NativeSwiftConsuming<Int64?>) -> Int64?).self,
+                genericArguments: [.type(Int64.self)],
+                declaredAs:
+                    "<A where A: ~Escapable> @_lifetime(borrow text) (_ text: Swift.String, _ value: consuming A?) -> A?"
+            ),
+            in: scope
+        )
+        #expect(
+            try unsafe projected.unsafeInvoke("123", NativeSwiftConsuming(Optional(Int64(789))))
+                == 789
+        )
+        await #expect {
+            _ = try await runtime.resolve(
+                .function(
+                    module + ".opaqueProjected(_:_:)",
+                    as: ((String, NativeSwiftConsuming<Int64>) -> NativeSwiftValue).self,
+                    genericArguments: [.type(Int64.self)]
+                ),
+                in: scope
+            )
+        } throws: { error in
+            guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                return false
+            }
+            return message.contains(
+                "Cannot decide how Swift passes argument 0 of type Swift.String"
+            )
+        }
+        let opaqueProjected = try await runtime.resolve(
+            .function(
+                module + ".opaqueProjected(_:_:)",
+                as: ((String, NativeSwiftConsuming<Int64>) -> NativeSwiftValue).self,
+                genericArguments: [.type(Int64.self)],
+                declaredAs:
+                    "<A where A: ~Escapable> @_lifetime(borrow text) (_ text: Swift.String, _ value: consuming A) -> some"
+            ),
+            in: scope
+        )
+        #expect(
+            try unsafe opaqueProjected.unsafeInvoke("123", NativeSwiftConsuming(Int64(987)))
+                .take(as: Int64.self) == 987
+        )
+        #expect(
+            try unsafe generic.unsafeInvoke(
+                (Int64(7), Int64(456)),
+                withResult: { try unsafe readNumber.unsafeInvoke($0) }
+            ) == 456
+        )
+        let viewType = try await runtime.resolveSwiftType(named: module + ".View", in: scope)
+        let makeView = try await viewType.resolve(
+            .initializer(
+                "init(text:)",
+                as: ((NativeSwiftBorrowing<String>) -> NativeSwiftBorrowedValue).self,
+                declaredAs:
+                    "@_lifetime(borrow text) (text: borrowing Swift.String) -> \(module).View"
+            )
+        )
+        #expect(
+            try unsafe makeView.unsafeInvoke(
+                NativeSwiftBorrowing("123"),
+                withResult: { try unsafe read.unsafeInvoke($0) }
+            ) == 123
+        )
+        let string = try await runtime.resolveSwiftType(named: "Swift.String")
+        let method = try await string.resolve(
+            .method(
+                "declaredScoped(_:)",
+                as: ((Int64) -> NativeSwiftBorrowedValue).self,
+                genericArguments: [.type(Int64.self)],
+                declaredAs: "<A> @_lifetime(borrow self) (_ value: A) -> \(module).View"
+            )
+        )
+        #expect(
+            try unsafe method.unsafeInvoke(
+                on: "789",
+                Int64(7),
+                withResult: { try unsafe read.unsafeInvoke($0) }
+            ) == 789
+        )
+        await #expect {
+            _ = try await string.resolve(
+                .method(
+                    "declaredProjected(_:)",
+                    as: ((NativeSwiftConsuming<Int64>) -> Int64).self,
+                    genericArguments: [.type(Int64.self)]
+                )
+            )
+        } throws: { error in
+            guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                return false
+            }
+            return message.contains("Cannot decide how Swift passes self of type Swift.String")
+        }
+        let projectedMethod = try await string.resolve(
+            .method(
+                "declaredProjected(_:)",
+                as: ((NativeSwiftConsuming<Int64>) -> Int64).self,
+                genericArguments: [.type(Int64.self)],
+                declaredAs:
+                    "<A where A: ~Escapable> @_lifetime(borrow self) (_ value: consuming A) -> A"
+            )
+        )
+        #expect(
+            try unsafe projectedMethod.unsafeInvoke(on: "123", NativeSwiftConsuming(Int64(456)))
+                == 456
+        )
+        let copied = try await runtime.resolve(
+            .function(
+                module + ".copied(_:_:)",
+                as: ((String, NativeSwiftBorrowedValue) -> NativeSwiftBorrowedValue).self,
+                declaredAs:
+                    "@_lifetime(copy view) (_ text: Swift.String, _ view: \(module).View) -> \(module).View"
+            ),
+            in: scope
+        )
+        let first = try await runtime.resolve(
+            .function(
+                module + ".first(_:_:)",
+                as: ((String, String) -> NativeSwiftBorrowedValue).self,
+                declaredAs:
+                    "@_lifetime(borrow a) (_ a: Swift.String, _ b: Swift.String) -> \(module).View"
+            ),
+            in: scope
+        )
+        #expect(
+            try unsafe first.unsafeInvoke(
+                "123",
+                "456",
+                withResult: { view in
+                    try unsafe copied.unsafeInvoke(
+                        "456",
+                        view,
+                        withResult: { try unsafe read.unsafeInvoke($0) }
+                    )
+                }
+            ) == 123
+        )
+    }
+
     /// Swift passes an input that a result borrows from by address when its
     /// type sets the addressable-for-dependencies bit, a tuple as one
     /// address instead of its elements, and no symbol or metadata records
@@ -1687,6 +2006,24 @@ struct SwiftInferredValueTests {
                 ),
                 in: scope
             )
+        }
+        // A stated dependency supplies the position, not the missing AFD evidence.
+        await #expect {
+            _ = try await runtime.resolve(
+                .function(
+                    module + ".borrowPair(_:)",
+                    as: ((NativeSwiftValue) -> NativeSwiftBorrowedValue).self,
+                    declaredAs:
+                        "@_lifetime(borrow p) (_ p: \(module).Pair<Swift.Int64>) -> \(module).View"
+                ),
+                in: scope
+            )
+        } throws: { error in
+            guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                return false
+            }
+            return message.contains("The declared result borrows argument 0")
+                && message.contains("generic instance")
         }
         await expectUndecided("self of type \(module).Label", naming: labelSets) {
             _ = try await label.resolve(

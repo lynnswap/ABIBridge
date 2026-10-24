@@ -413,7 +413,8 @@ public actor NativeSwiftType: Hashable {
             isMutating: isMutating,
             isConsuming: isConsuming,
             protocolSelf: protocolSelf,
-            validateClass: representation != nil && representation != metadata
+            validateClass: representation != nil && representation != metadata,
+            borrowed: generic?.binding.declaration.borrowedInputs.map { $0.contains(.receiver) }
         )
         if receiverABI != nil, metadata is any NativeOptionalValue.Type {
             try checkOptionalReceiverABI(
@@ -580,6 +581,7 @@ public actor NativeSwiftType: Hashable {
         signature: Any.Type,
         genericArguments: [NativeSwiftGenericArgument],
         inherited: Bool,
+        allowsReceiverDependencies: Bool,
         declaredSignature: String?,
         valueABIs: [NativeSwiftType: NativeType],
         _ request: (_ owner: String) throws -> NativeDeclaration
@@ -631,6 +633,7 @@ public actor NativeSwiftType: Hashable {
                     enclosing: enclosing,
                     implicitSelf: isProtocolMember ? self : nil,
                     declaredSignature: declaredSignature,
+                    allowsReceiverDependencies: allowsReceiverDependencies,
                     valueABIs: valueABIs
                 )
                 if isComplete {
@@ -962,6 +965,7 @@ public actor NativeSwiftType: Hashable {
             signature: signature,
             genericArguments: request.options.genericArguments,
             inherited: request.role != .initializer,
+            allowsReceiverDependencies: !isStatic && request.role != .initializer,
             declaredSignature: request.options.declaredSignature,
             valueABIs: request.options.valueABIs
         ) { owner in

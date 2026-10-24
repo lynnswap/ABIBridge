@@ -185,13 +185,37 @@ Prepare member handles such as `read` before entering a synchronous body. They u
 
 ### Inputs that the result can borrow from
 
-Swift passes an input that a result borrows from, as `@_lifetime(borrow input)` declares, by address when the input's type sets the addressable-for-dependencies bit, and such a tuple as one address instead of its elements. `String`, a value that stores one, and an imported C struct or union set the bit, while an imported C enum leaves it clear. Nothing that ABIBridge reads records which inputs a result borrows from: a function's mangled name, a closure's function type, and its metadata omit lifetime dependencies. Preparing a declaration with a `NativeSwiftBorrowedValue` result therefore accepts a parameter or `self` only where Swift passes it alike with or without the dependency:
+`declaredAs:` can state which inputs the result borrows from. Copy the provider's effective lifetime dependencies, including any inferred `self` dependency, into its formal function type. For a provider declaring `@_lifetime(borrow first) func view(_ first: String, _ second: String) -> View`:
 
-- Its type leaves the bit clear, as integers, floating-point values, `Bool`, pointers, class references, closures, metatypes, collections, and structs and enums whose static value witnesses leave it clear do.
-- It passes by address anyway, because it is address-only or too large for registers, or because it is an element of a parameter pack, which passes through a buffer of its elements' addresses. A tuple's elements pass separately, so the first two do not apply to a tuple.
+```swift
+let view = try runtime.resolveAndWait(.function(
+    "Example.view(_:_:)",
+    as: ((String, String) -> NativeSwiftBorrowedValue).self,
+    declaredAs: "@_lifetime(borrow first) (_ first: Swift.String, _ second: Swift.String) -> Example.View"
+))
+let read = try runtime.resolveAndWait(.function(
+    "Example.read(_:)", as: ((NativeSwiftBorrowedValue) -> Int64).self
+))
+let number = try unsafe view.unsafeInvoke("123", "456", withResult: { value in
+    try unsafe read.unsafeInvoke(value)
+})
+```
+
+The attribute applies to that function's result. Its names are the internal parameter names in `declaredAs:`: `first` in `_ first: String`, or `value` in `from value: String`. An instance member can name `self`, as in `declaredAs: "@_lifetime(borrow self) () -> Example.View"`. Parameter indices, dependencies targeting an input (`value: borrow source`), and sources without a dependency kind are unsupported.
+
+Swift passes a stated `borrow` input by address when its type sets the addressable-for-dependencies bit. A tuple then passes as one contiguous native value; its declaration's generic abstraction determines the bit before substitution. Other inputs keep their ordinary conventions. Invocation retains the actual input and receiver storage through the `withResult:` body, including storage containing a small string's inline bytes.
+
+`copy name`, `&name`, and `immortal` state dependencies that do not borrow any input. A function with only those sources preserves every input's ordinary convention. Omitting `@_lifetime` leaves the dependencies unknown. These two cases are distinct: unknown dependencies retain the checks below. An explicit attribute applies even when a generic result is bound to an escapable type. The caller must describe the compiled declaration accurately; symbols and metadata cannot verify a supplied lifetime dependency.
+
+An attribute on a nested closure type is parsed but currently fails preparation because that closure's lowering and pointer authentication are not yet supported. A closure without an attribute retains its existing checks.
+
+Without explicit dependencies, a result that can be nonescapable in the declaration accepts a parameter or `self` only where Swift passes it alike with or without a borrow dependency. This includes a `NativeSwiftBorrowedValue` result, a generic result declared `T: ~Escapable`, and an opaque result declared `some ~Escapable`. The check uses the declaration even when its type is bound to an escapable type. It also follows a container such as `Optional<T>` whose `Escapable` conformance depends on `T`:
+
+- Its type leaves the addressable-for-dependencies bit clear.
+- It already passes as one address, including a pack element. A tuple whose elements pass separately does not qualify.
 - It is consuming or inout. Swift rejects a borrow dependency on a consuming input, and passes an inout input by address either way.
 
-Preparing any other input throws ``ABIResolutionError/metadataUnavailable(_:)``, naming the input and its type, and what sets the bit or what does not show whether it is set, as for a generic instance, whose value witnesses the runtime builds, or for an imported option set, which the importer makes a struct and whose records do not tell it apart from a C struct. A `valueABIs` or `receiverABI` entry does not change the outcome, because it describes how the value passes without the dependency. Call such a declaration through a compiled adapter. The same applies to the parameters of a closure type whose result is `NativeSwiftBorrowedValue`.
+Other inputs throw ``ABIResolutionError/metadataUnavailable(_:)``, naming the input and what sets the bit or leaves it unknown. `String`, a value that stores one, and an imported C struct or union set the bit; an imported C enum leaves it clear. A generic instance's runtime-built witnesses and an imported option set's records do not establish the bit. A `valueABIs` or `receiverABI` entry describes ordinary passing and supplies no lifetime dependency. State the dependency with `declaredAs:` when the bit is established, or call through a compiled adapter.
 
 Invocation retains argument and receiver access through the body. On return or throw, the view expires, the result is destroyed, and writeback completes. Saving the view preserves type information only.
 

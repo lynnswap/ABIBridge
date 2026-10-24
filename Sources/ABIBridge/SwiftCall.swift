@@ -18,29 +18,46 @@ final class SwiftCall: Sendable {
         self.generic = generic
         self.closure = closure
         let signature = try SwiftFunctionSignature(signature)
-        parameters = try generic?.parameters ?? closure?.parameters ?? SwiftGenericParameters(actual: signature.parameters,
-            arguments: SwiftGenericParameters.concreteArguments(signature: signature, defaultConsuming: consumesArguments))
+        var parameters =
+            try generic?.parameters ?? closure?.parameters
+            ?? SwiftGenericParameters(
+                actual: signature.parameters,
+                arguments: SwiftGenericParameters.concreteArguments(
+                    signature: signature,
+                    defaultConsuming: consumesArguments
+                )
+            )
         values = try SwiftCallValues(signature: signature, consumesArguments: consumesArguments,
             opaqueResult: opaqueResult, arguments: parameters.arguments,
             result: generic?.result ?? closure?.result)
-        try values.requireBorrowableArguments(parameters: parameters, declaration: generic)
+        parameters = try parameters.passingByAddress(
+            values.borrowedArgumentTypes(parameters: parameters, declaration: generic)
+        )
+        self.parameters = parameters
         #if DEBUG
         generic?.checkClosedSchemas(signature, values: values)
         #endif
         let logical = values.arguments.map(\.type)
-        var parameters = self.parameters.types(from: logical)
-        if let trailingType { parameters.append(trailingType) }
+        var types = self.parameters.types(from: logical)
+        if let trailingType { types.append(trailingType) }
         if let generic {
-            parameters += Array(repeating: try CValueType(scalar: ABIValuePointer), count: generic.metadata.count)
+            types += Array(
+                repeating: try CValueType(scalar: ABIValuePointer),
+                count: generic.metadata.count
+            )
         }
-        parameterTypes = parameters
+        parameterTypes = types
         if let closure {
             guard case .synchronous(let original) = closure.transport else {
                 preconditionFailure("A synchronous closure has a synchronous transport.")
             }
             interface = original
         } else {
-            interface = try SwiftCallInterface.cached(result: values.result.type, parameters: parameters, errorPlan: errorPlan)
+            interface = try SwiftCallInterface.cached(
+                result: values.result.type,
+                parameters: types,
+                errorPlan: errorPlan
+            )
         }
         hasTrailingValue = trailingType != nil
 

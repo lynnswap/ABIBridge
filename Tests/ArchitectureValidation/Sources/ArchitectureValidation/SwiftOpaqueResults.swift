@@ -672,6 +672,55 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
     let metatypeResult = try unsafe metatype.unsafeInvoke("retained").take(as: (Int64.Type, String).self)
     try check(unsafeBitCast(metatypeResult.0, to: UInt.self) == unsafeBitCast(Int64.self, to: UInt.self) && metatypeResult.1 == "retained",
               "Runtime result storage restores elided singleton metatypes alongside managed generic fields")
+    #if !os(watchOS)
+    if #available(macOS 26.0, iOS 26.0, *) {
+        let textType = try await runtime.resolveSwiftType(
+            named: "SwiftValueFixtures.RuntimeScopedText"
+        )
+        let readText = try await textType.resolve(
+            .method(
+                "read()",
+                as: (() -> Int64).self,
+                receiverABI: .opaque(named: textType.name)
+            )
+        )
+        let makeText = try await runtime.resolve(
+            .function(
+                "SwiftValueFixtures.makeRuntimeScopedText(_:_:)",
+                as: ((String, String) -> NativeSwiftBorrowedValue).self,
+                declaredAs:
+                    "@_lifetime(borrow second) (_ first: Swift.String, _ second: Swift.String) -> some SwiftValueFixtures.RuntimeScopedReadable & ~Copyable & ~Escapable"
+            )
+        )
+        try check(
+            try unsafe makeText.unsafeInvoke(
+                "123",
+                "456",
+                withResult: { try unsafe readText.unsafeInvoke(on: $0) }
+            ) == 456,
+            "Declared second-input borrowing keeps small String storage alive through the scoped result body"
+        )
+        let stringType = try await runtime.resolveSwiftType(named: "Swift.String")
+        let member = try await stringType.resolve(
+            .method(
+                "runtimeScopedText(_:)",
+                as: ((Int64) -> NativeSwiftBorrowedValue).self,
+                genericArguments: [.type(Int64.self)],
+                declaredAs:
+                    "<A> @_lifetime(borrow self) (A) -> SwiftValueFixtures.RuntimeScopedText",
+                valueABIs: [textType: try .opaque(named: textType.name)]
+            )
+        )
+        try check(
+            try unsafe member.unsafeInvoke(
+                on: "789",
+                0,
+                withResult: { try unsafe readText.unsafeInvoke(on: $0) }
+            ) == 789,
+            "Declared generic member borrowing places address self after metadata and retains it through the body"
+        )
+    }
+    #endif
     let scopedCounts = ArgumentCounts()
     let scopedOwner = RuntimeScopedOwner(42, scopedCounts)
     let scopedType = try await runtime.resolveSwiftType(named: "SwiftValueFixtures.RuntimeScopedResult")

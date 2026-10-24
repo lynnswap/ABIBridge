@@ -625,7 +625,7 @@ final class SwiftHookSignature: @unchecked Sendable {
         self.parameters = parameters; self.generic = generic
         self.asyncInterface = asyncInterface; self.contextSize = contextSize
         metadataMatches = try generic?.hookMetadataArguments() ?? []
-        classMatches = try generic?.hookClassArguments() ?? []
+        classMatches = try generic?.hookClassArguments(parameters: parameters) ?? []
         self.consumesArguments = consumesArguments; self.consumedArguments = consumedArguments;
         self.owner = owner
         self.receiver = receiver
@@ -674,19 +674,27 @@ final class SwiftHookSignature: @unchecked Sendable {
 
     func matchesIncoming(_ call: OpaquePointer) throws -> Bool {
         guard generic != nil else { return true }
-        func pointer(at index: Int) throws -> UInt {
+        func pointer(at index: Int, indirect: Bool = false) throws -> UInt {
             var value: UInt = 0, error: OpaquePointer?
             let success =
                 if let asyncInterface {
-                    ABISwiftAsyncIncomingReadPointer(
+                    (indirect
+                        ? ABISwiftAsyncIncomingReadIndirectAddress
+                        : ABISwiftAsyncIncomingReadPointer)(
+                            call,
+                            asyncInterface.handle,
+                            index,
+                            &value,
+                            &error
+                        )
+                } else {
+                    (indirect ? ABISwiftIncomingReadIndirectAddress : ABISwiftIncomingReadPointer)(
                         call,
-                        asyncInterface.handle,
+                        interface.handle,
                         index,
                         &value,
                         &error
                     )
-                } else {
-                    ABISwiftIncomingReadPointer(call, interface.handle, index, &value, &error)
                 }
             guard success else {
                 throw consumeNativeCallFailure(error)
@@ -719,8 +727,23 @@ final class SwiftHookSignature: @unchecked Sendable {
             else { return false }
         }
         for source in classMatches {
-            guard let value = UnsafeRawPointer(bitPattern: try pointer(at: source.index)) else {
+            guard
+                let address = UnsafeRawPointer(
+                    bitPattern: try pointer(
+                        at: source.index,
+                        indirect: source.indirectOffset != nil
+                    )
+                )
+            else {
                 return false
+            }
+            let value: UnsafeRawPointer
+            if let offset = source.indirectOffset {
+                guard let field = address.load(fromByteOffset: offset, as: UnsafeRawPointer?.self)
+                else { return false }
+                value = field
+            } else {
+                value = address
             }
             let actual: AnyClass? =
                 source.isMetatype
