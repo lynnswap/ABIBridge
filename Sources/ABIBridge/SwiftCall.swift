@@ -27,12 +27,21 @@ final class SwiftCall: Sendable {
                     defaultConsuming: consumesArguments
                 )
             )
-        values = try SwiftCallValues(signature: signature, consumesArguments: consumesArguments,
+        var values = try SwiftCallValues(signature: signature, consumesArguments: consumesArguments,
             opaqueResult: opaqueResult, arguments: parameters.arguments,
             result: generic?.result ?? closure?.result)
-        parameters = try parameters.passingByAddress(
-            values.borrowedArgumentTypes(parameters: parameters, declaration: generic)
-        )
+        if closure == nil {
+            parameters = try parameters.passingByAddress(
+                values.borrowedArgumentTypes(parameters: parameters, declaration: generic),
+                binding: generic?.binding
+            )
+            if parameters.hasAddressedClosureFields {
+                values = try SwiftCallValues(signature: signature, consumesArguments: consumesArguments,
+                    opaqueResult: opaqueResult, arguments: parameters.arguments,
+                    result: generic?.result ?? closure?.result)
+            }
+        }
+        self.values = values
         self.parameters = parameters
         #if DEBUG
         generic?.checkClosedSchemas(signature, values: values)

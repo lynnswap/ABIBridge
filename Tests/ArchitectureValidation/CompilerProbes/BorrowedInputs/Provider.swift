@@ -86,6 +86,8 @@ extension String {
 public let importedTypes: [Any.Type] = [timespec.self, CFComparisonResult.self, CFStringCompareFlags.self]
 @_lifetime(borrow v) @inline(never) public func borrowStringTuple(_ v: (String, Int64)) -> View { View(v.1) }
 @inline(never) public func takeStringTuple(_ v: (String, Int64)) -> Int64 { v.1 }
+@_lifetime(borrow v) @inline(never) public func borrowFunctionTuple(_ v: (String, (Int64) -> Int64)) -> View { View(1) }
+@inline(never) public func takeFunctionTuple(_ v: (String, (Int64) -> Int64)) -> Int64 { 1 }
 @_lifetime(borrow v) @inline(never) public func borrowIntTuple(_ v: (Int64, Int64)) -> View { View(v.1) }
 @inline(never) public func takeIntTuple(_ v: (Int64, Int64)) -> Int64 { v.1 }
 // Too large for registers, but a tuple's elements pass separately.
@@ -128,6 +130,10 @@ public let importedTypes: [Any.Type] = [timespec.self, CFComparisonResult.self, 
 @inline(never) public func callString(_ f: (String) -> View, _ s: String) -> Int64 { f(s).n }
 @inline(never) public func callBorrowingPlain(_ f: @_lifetime(borrow p) (_ p: Plain) -> View, _ p: Plain) -> Int64 { f(p).n }
 @inline(never) public func callPlain(_ f: (Plain) -> View, _ p: Plain) -> Int64 { f(p).n }
+@inline(never) public func callBorrowingStringTuple(_ f: @_lifetime(borrow p) (_ p: (String, Int64)) -> View, _ p: (String, Int64)) -> Int64 { f(p).n }
+@inline(never) public func callStringTuple(_ f: ((String, Int64)) -> View, _ p: (String, Int64)) -> Int64 { f(p).n }
+@inline(never) public func callIndependentString(_ f: @_lifetime(immortal) (_ s: String) -> View, _ s: String) -> Int64 { f(s).n }
+@inline(never) public func callBorrowingGeneric<Value: ~Escapable>(_ f: @_lifetime(borrow s) (_ s: String) -> Value, _ s: String) { _ = f(s) }
 public struct HoldsBorrowing { public var f: @_lifetime(borrow s) (_ s: String) -> View }
 public struct HoldsString { public var f: (String) -> View }
 #endif

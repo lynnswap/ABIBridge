@@ -796,6 +796,86 @@ extension NativeSwiftClosure {
         try unsafe await invokeAsync(repeat each values)
     }
 
+    /// Uses the native result while its return storage and input lifetimes remain active, including while the body suspends.
+    @_transparent
+    @unsafe public nonisolated(nonsending) func unsafeInvoke<Output: ~Copyable, Failure: Error, each Argument>(
+        _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) async throws -> Output
+    ) async throws -> Output
+    where Signature == (repeat each Argument) async throws(Failure) -> NativeSwiftBorrowedValue {
+        try unsafe await invokeAsync(repeat each values, withResult: body)
+    }
+
+    /// Uses the native result while its return storage and input lifetimes remain active, including while the body suspends.
+    @_transparent
+    @unsafe public nonisolated(nonsending) func unsafeInvoke<Output: ~Copyable, Failure: Error, each Argument>(
+        _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) async throws -> Output
+    ) async throws -> Output
+    where Signature == @Sendable (repeat each Argument) async throws(Failure) -> NativeSwiftBorrowedValue {
+        try unsafe await invokeAsync(repeat each values, withResult: body)
+    }
+
+    /// Uses the native result while its return storage and input lifetimes remain active, including while the body suspends.
+    @_transparent
+    @unsafe public nonisolated(nonsending) func unsafeInvoke<Output: ~Copyable, Failure: Error, each Argument>(
+        _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) async throws -> Output
+    ) async throws -> Output
+    where Signature == @concurrent (repeat each Argument) async throws(Failure) -> NativeSwiftBorrowedValue {
+        try unsafe await invokeAsync(repeat each values, withResult: body)
+    }
+
+    /// Uses the native result while its return storage and input lifetimes remain active, including while the body suspends.
+    @_transparent
+    @unsafe public nonisolated(nonsending) func unsafeInvoke<Output: ~Copyable, Failure: Error, each Argument>(
+        _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) async throws -> Output
+    ) async throws -> Output
+    where Signature == @Sendable @concurrent (repeat each Argument) async throws(Failure) -> NativeSwiftBorrowedValue {
+        try unsafe await invokeAsync(repeat each values, withResult: body)
+    }
+
+    /// Uses the native result while its return storage and input lifetimes remain active, including while the body suspends.
+    @_transparent
+    @MainActor
+    @unsafe public func unsafeInvoke<Output: ~Copyable, Failure: Error, each Argument>(
+        _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) async throws -> Output
+    ) async throws -> Output
+    where Signature == @MainActor (repeat each Argument) async throws(Failure) -> NativeSwiftBorrowedValue {
+        try unsafe await invokeAsync(repeat each values, withResult: body)
+    }
+
+    @unsafe @usableFromInline nonisolated(nonsending) func invokeAsync<Output: ~Copyable, each Argument>(
+        _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) async throws -> Output
+    ) async throws -> Output {
+        let invocation = try call.retainingAsynchronousArgument(consuming: false)
+        return try unsafe await invokePreparedAsync(
+            call: invocation,
+            repeat try swiftRetainingAsynchronousClosureArgument(each values),
+            withResult: body
+        )
+    }
+
+    @unsafe private nonisolated(nonsending) func invokePreparedAsync<Output: ~Copyable, each Argument>(
+        call: SwiftClosureCall,
+        _ values: repeat each Argument,
+        withResult body: (NativeSwiftBorrowedValue) async throws -> Output
+    ) async throws -> Output {
+        guard case .asynchronous(let storage, let prepared) = try await call.resolvedAsync()
+        else { preconditionFailure("An async closure has an async call plan.") }
+        return try unsafe await prepared.unsafeInvoke(
+            entry: storage.entry,
+            context: storage.value.context.map { UnsafeRawPointer($0) },
+            retaining: storage,
+            retainingCode: storage.codeOwner,
+            repeat each values,
+            withResult: body
+        )
+    }
+
     @unsafe @usableFromInline nonisolated(nonsending) func invokeAsync<Result, each Argument>(
         _ values: repeat each Argument
     ) async throws -> Result {

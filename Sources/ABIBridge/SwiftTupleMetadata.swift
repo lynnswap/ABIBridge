@@ -402,6 +402,35 @@ struct SwiftTupleValuePlan: Sendable {
         takeHost = _openExistential(hostMetadata, do: prepare)
     }
 
+    // A whole tuple passed by address stores its functions at maximal
+    // abstraction, including when AFD rather than a generic parameter makes it indirect.
+    func usingStorageConvention(binding: SwiftGenericBinding) throws -> Self {
+        guard hasNestedClosures else { return self }
+        let fields = try fields.map { field in
+            let nested = try field.tuple?.usingStorageConvention(binding: binding)
+            let argument: SwiftGenericArgument
+            let closure: SwiftGenericClosurePlan?
+            if let host = field.hostType as? any SwiftClosureValue.Type {
+                let plan = try binding.storedClosurePlan(metadata: field.nativeType, as: host.swiftFunctionType)
+                argument = .closure(plan)
+                closure = plan
+            } else if let nested {
+                argument = .tuple(nested)
+                closure = nil
+            } else {
+                argument = field.argument
+                closure = try field.nativeClosure.map { _ in
+                    try SwiftGenericClosurePlan.nativeValue(swiftStoredFunction(field.nativeType)!)
+                }
+            }
+            return try Field(hostType: field.hostType, nativeType: field.nativeType,
+                hostOffset: field.hostOffset, nativeOffset: field.nativeOffset,
+                argument: argument, tuple: nested, nativeClosure: closure, position: .nested)
+        }
+        return try Self(hostMetadata: hostMetadata, nativeMetadata: nativeMetadata, type: type,
+                        fields: fields, groups: parameters.groups)
+    }
+
     func validateOwnedResult() throws {
         for leaf in leaves { try leaf.validateOwnedResult() }
     }

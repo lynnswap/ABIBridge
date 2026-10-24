@@ -207,7 +207,7 @@ Swift passes a stated `borrow` input by address when its type sets the addressab
 
 `copy name`, `&name`, and `immortal` state dependencies that do not borrow any input. A function with only those sources preserves every input's ordinary convention. Omitting `@_lifetime` leaves the dependencies unknown. These two cases are distinct: unknown dependencies retain the checks below. An explicit attribute applies even when a generic result is bound to an escapable type. The caller must describe the compiled declaration accurately; symbols and metadata cannot verify a supplied lifetime dependency.
 
-An attribute on a nested closure type is parsed but currently fails preparation because that closure's lowering and pointer authentication are not yet supported. A closure without an attribute retains its existing checks.
+Put an attribute on each nested closure type whose result has a dependency, using that closure's own parameter names. The same input plan supplies the closure's calling convention and pointer authentication. Call its `NativeSwiftBorrowedValue` result with `withResult:`; see <doc:SwiftClosureValues#Use-a-closure-result-within-its-lifetime>. A closure without an attribute retains its existing checks.
 
 Without explicit dependencies, a result that can be nonescapable in the declaration accepts a parameter or `self` only where Swift passes it alike with or without a borrow dependency. This includes a `NativeSwiftBorrowedValue` result, a generic result declared `T: ~Escapable`, and an opaque result declared `some ~Escapable`. The check uses the declaration even when its type is bound to an escapable type. It also follows a container such as `Optional<T>` whose `Escapable` conformance depends on `T`:
 

@@ -700,6 +700,40 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
             ) == 456,
             "Declared second-input borrowing keeps small String storage alive through the scoped result body"
         )
+        #if compiler(>=6.4)
+        let makeClosure = try await runtime.resolve(
+            .function(
+                "SwiftValueFixtures.makeRuntimeScopedTextClosure()",
+                as: (() -> NativeSwiftClosure<(String) -> NativeSwiftBorrowedValue>).self,
+                declaredAs:
+                    "() -> @_lifetime(borrow text) (_ text: Swift.String) -> SwiftValueFixtures.RuntimeScopedText",
+                valueABIs: [textType: try .opaque(named: textType.name)]
+            )
+        )
+        let closure = try unsafe makeClosure.unsafeInvoke()
+        try check(
+            try unsafe closure.unsafeInvoke("456", withResult: { try unsafe readText.unsafeInvoke(on: $0) }) == 456,
+            "A declared borrowing closure authenticates its call and reads the small String's actual bytes"
+        )
+        let makeAsyncClosure = try await runtime.resolve(
+            .function(
+                "SwiftValueFixtures.makeRuntimeScopedTextAsyncClosure()",
+                as: (() -> NativeSwiftClosure<nonisolated(nonsending) (String) async -> NativeSwiftBorrowedValue>).self,
+                declaredAs:
+                    "() -> nonisolated(nonsending) @_lifetime(borrow text) (_ text: Swift.String) async -> SwiftValueFixtures.RuntimeScopedText",
+                valueABIs: [textType: try .opaque(named: textType.name)]
+            )
+        )
+        let asyncClosure = try unsafe makeAsyncClosure.unsafeInvoke()
+        let asyncText = try unsafe await asyncClosure.unsafeInvoke("789", withResult: { value in
+            await Task.yield()
+            return try unsafe readText.unsafeInvoke(on: value)
+        })
+        try check(
+            asyncText == 789,
+            "A caller-isolated borrowing closure retains small String storage through its native call and result body suspension"
+        )
+        #endif
         let stringType = try await runtime.resolveSwiftType(named: "Swift.String")
         let member = try await stringType.resolve(
             .method(

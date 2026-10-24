@@ -1942,6 +1942,13 @@ struct SwiftGenericBinding: Sendable {
         )
     }
 
+    func storedClosurePlan(metadata: Any.Type, as host: Any.Type) throws -> SwiftGenericClosurePlan {
+        try SwiftGenericClosurePlan.storedValue(
+            swiftStoredFunction(metadata) ?? metadata, as: host,
+            resolver: resolver, retaining: images + typeOwners.flatMap(\.codeImages)
+        )
+    }
+
     /// The function type that a host closure lowers, unwrapping the formal
     /// Optional of an Optional closure.
     func closureFunction(
