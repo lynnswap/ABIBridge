@@ -223,14 +223,16 @@ extension NativeSwiftType {
     /// requirement of the member's kind has no established name, lookup fails
     /// instead of selecting the extension member.
     ///
-    /// An Objective-C protocol, imported or declared `@objc`, is not checked:
-    /// its runtime records name requirements only by selectors, which do not
-    /// establish their Swift names. Marker protocols cannot be extended.
+    /// Objective-C protocols use their transitive runtime requirement records,
+    /// with generated Swift names for NSObjectProtocol and otherwise a shape
+    /// check. Marker protocols cannot be extended.
     ///
     /// - Parameters:
     ///   - query: The member, whose name a protocol qualifies.
     ///   - match: What the requirement's records must state.
     ///   - displayed: The member's spelling in diagnostics.
+    ///   - extensionMember: The selected extension declaration, for diagnostics.
+    ///   - signature: The requested parameter and result types and effects.
     ///   - considered: The requirements that selection already considered.
     ///   - conformances: Conformance descriptors, with their images, whose
     ///     witnesses can name the requirements.
@@ -240,7 +242,8 @@ extension NativeSwiftType {
         excluding query: SwiftMemberQuery,
         match: SwiftMemberMatch,
         displayed: NativeDeclaration,
-        isAsync: Bool,
+        extensionMember: NativeDeclaration,
+        signature: SwiftFunctionSignature,
         considered: Set<String>,
         conformances: [UnsafeRawPointer: NativeImage],
         accepts: (SwiftCandidate) throws -> Bool
@@ -254,9 +257,16 @@ extension NativeSwiftType {
         }
         // Generic binding identifies an Objective-C protocol by this name
         // before a Swift protocol descriptor.
-        if NSProtocolFromString(
+        if let protocolRecord = NSProtocolFromString(
             protocolName.hasPrefix("__C.") ? String(protocolName.dropFirst(4)) : protocolName
-        ) != nil {
+        ) {
+            try SwiftObjectiveCRequirements.check(
+                protocolRecord,
+                query: query,
+                signature: signature,
+                displayed: displayed,
+                extensionMember: extensionMember
+            )
             return
         }
         guard let protocolSymbol = try protocolDescriptor(named: protocolName) else {
@@ -279,7 +289,7 @@ extension NativeSwiftType {
             .filter { _, requirement in
                 requirement.kind == kind
                     && (kind == 2 || requirement.isInstance != isStatic)
-                    && (kind == 4 || requirement.isAsync == isAsync)
+                    && (kind == 4 || requirement.isAsync == signature.isAsync)
             }.map { (slot: $0.offset + 1, requirement: $0.element) }
         guard !unnamed.isEmpty else { return }
         // Checks a named requirement that the request can name and selection

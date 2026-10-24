@@ -10,6 +10,8 @@ for task_check in \
     check-inferred-swift-value-codegen.py \
     check-inferred-swift-value-evidence-codegen.py \
     check-swift-borrowed-input-codegen.py \
+    check-objc-requirement-shape-codegen.py \
+    generate-objc-requirement-names.py \
     check-managed-swift-codegen.py \
     check-swift-closure-codegen.py \
     check-swift-optional-codegen.py \
@@ -30,7 +32,9 @@ for task_check in \
     check-swiftui-codegen.py
 do
     # Run every check so one failure does not hide the others.
-    if ! python3 "$task_root/scripts/$task_check"; then
+    task_command=(python3 "$task_root/scripts/$task_check")
+    if [[ "$task_check" == generate-objc-requirement-names.py ]]; then task_command+=(--check); fi
+    if ! "${task_command[@]}"; then
         task_failed+=("$task_check")
     fi
 done

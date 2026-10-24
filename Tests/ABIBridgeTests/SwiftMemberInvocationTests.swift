@@ -948,7 +948,7 @@ struct SwiftMemberInvocationTests {
         #expect(try unsafe read.unsafeInvoke(on: make.unsafeInvoke()) == -1)
     }
 
-    @Test func objectiveCProtocolExtensionMembersResolveWithoutRequirementChecks() async throws {
+    @Test func objectiveCProtocolExtensionMembersResolveAfterRequirementChecks() async throws {
         let module = "Foreign_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
         // Objective-C protocols have no Swift protocol descriptor, and their
         // runtime records name requirements only by selectors.
@@ -965,6 +965,10 @@ struct SwiftMemberInvocationTests {
                 }
                 extension NSCopying {
                     @inline(never) public func copied() -> Int64 { 3 }
+                }
+                extension NSObjectProtocol {
+                    @inline(never) public func extra() -> Int64 { 4 }
+                    @inline(never) public func isProxy() -> Bool { false }
                 }
                 public final class Impl: NSObject, Foreign, NSCopying {
                     public func storeValue(_ value: Int64) {}
@@ -1009,6 +1013,129 @@ struct SwiftMemberInvocationTests {
             )
         )
         #expect(try unsafe copied.unsafeInvoke(on: object) == 3)
+        let extra = try await type.resolve(
+            .method("__C.NSObject.extra()", as: (() -> Int64).self)
+        )
+        #expect(try unsafe extra.unsafeInvoke(on: object) == 4)
+        await #expect {
+            _ = try await type.resolve(.method("__C.NSObject.isProxy()", as: (() -> Bool).self))
+        } throws: { error in
+            guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                return false
+            }
+            return message.contains("isProxy") && message.contains("SDK imports it as isProxy()")
+        }
+    }
+
+    @Test func objectiveCRequirementsAreNotReplacedByExtensionMembers() async throws {
+        let module = "ObjCRequirements_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let library = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                import Foundation
+                @objc public protocol Ancestor { func inherited() -> Double }
+                @objc public protocol Parent: Ancestor {}
+                @objc public protocol Store: Parent {
+                    @objc(renamedSelector:) func extra(_ value: Int64) -> Int64
+                    @objc(isOn) var on: Bool { get }
+                    var value: Int64 { get set }
+                    static func make() -> Int64
+                }
+                @objc public protocol OptionalStore {
+                    @objc optional func maybe() -> Int64
+                    @objc optional var level: Int64 { get }
+                }
+                extension Store {
+                    @inline(never) public func extra(_ value: Int64) -> Int64 { -1 }
+                    @inline(never) public func inherited() -> Double { -1 }
+                    public var on: Bool { false }
+                    public var value: Int64 { get { -1 } set {} }
+                    @inline(never) public static func make() -> Int64 { -1 }
+                }
+                extension OptionalStore {
+                    @inline(never) public func maybe() -> Int64 { 42 }
+                    public var level: Int64 { 43 }
+                    public var nullableLevel: Int64? { 44 }
+                }
+                public final class Impl: NSObject, Store, OptionalStore {
+                    public func extra(_ value: Int64) -> Int64 { value }
+                    public func inherited() -> Double { 1 }
+                    public var on: Bool { true }
+                    public var value: Int64 = 2
+                    public static func make() -> Int64 { 3 }
+                    @objc public func maybe() -> Int64 { 45 }
+                    @objc public var level: Int64 { 46 }
+                }
+                public func makeImpl() -> AnyObject { Impl() }
+                """,
+            linkArguments: ["-O"]
+        )
+        defer { library.cleanup() }
+        let runtime = ABIRuntime()
+        let scope = ImageSelector.path(library.libraryURL)
+        let type = try await runtime.resolveSwiftType(named: module + ".Impl", in: scope)
+        func expectRequirement(_ selector: String, _ operation: () async throws -> Void) async {
+            await #expect { try await operation() } throws: { error in
+                guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                    return false
+                }
+                return message.contains(selector)
+                    && message.contains("no record establishes its Swift name")
+                    && message.contains("(extension in \(module)):")
+                    && message.contains("NativeObject")
+            }
+        }
+        await expectRequirement("renamedSelector:") {
+            _ = try await type.resolve(
+                .method(module + ".Store.extra(_:)", as: ((Int64) -> Int64).self)
+            )
+        }
+        await expectRequirement("inherited") {
+            _ = try await type.resolve(
+                .method(module + ".Store.inherited()", as: (() -> Double).self)
+            )
+        }
+        await expectRequirement("isOn") {
+            _ = try await type.resolve(.getter(module + ".Store.on", as: (() -> Bool).self))
+        }
+        await expectRequirement("setValue:") {
+            _ = try await type.resolve(.setter(module + ".Store.value", as: ((Int64) -> Void).self))
+        }
+        await expectRequirement("make") {
+            _ = try await type.resolve(
+                .staticMethod(module + ".Store.make()", as: (() -> Int64).self)
+            )
+        }
+        let make = try await runtime.resolve(
+            .function(module + ".makeImpl()", as: (() -> AnyObject).self),
+            in: scope
+        )
+        let object = try unsafe make.unsafeInvoke()
+        let exact = try await type.resolve(
+            .method(
+                "(extension in \(module)):\(module).Store.extra(Swift.Int64) -> Swift.Int64",
+                as: ((Int64) -> Int64).self
+            )
+        )
+        #expect(try unsafe exact.unsafeInvoke(on: object, 9) == -1)
+        let maybe = try await type.resolve(
+            .method(module + ".OptionalStore.maybe()", as: (() -> Int64).self)
+        )
+        #expect(try unsafe maybe.unsafeInvoke(on: object) == 42)
+        let level = try await type.resolve(
+            .getter(module + ".OptionalStore.level", as: (() -> Int64).self)
+        )
+        #expect(try unsafe level.unsafeInvoke(on: object) == 43)
+        await expectRequirement("level") {
+            _ = try await type.resolve(
+                .getter(module + ".OptionalStore.nullableLevel", as: (() -> Int64?).self)
+            )
+        }
+        await expectRequirement("level") {
+            _ = try await type.resolve(
+                .getter(module + ".OptionalStore.nullableLevel", as: (() -> NativeSwiftValue).self)
+            )
+        }
     }
 
     @Test func classMembersExportedOnlyThroughDispatchThunksCaptureTheSelectedEntry() async throws {
@@ -1067,7 +1194,8 @@ struct SwiftMemberInvocationTests {
         // the defining class's member; one with another effect remains
         // available.
         let extensions = try FixtureLibrary(
-            swiftModule: "ThunkExtension_" + UUID().uuidString.replacingOccurrences(of: "-", with: ""),
+            swiftModule: "ThunkExtension_"
+                + UUID().uuidString.replacingOccurrences(of: "-", with: ""),
             swiftSource: """
                 import \(module)
                 extension Base {
