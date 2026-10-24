@@ -192,6 +192,123 @@ struct ResolutionRequestTests {
         )
         let element = try await array.resolve(.getter("subscript", as: ((Int) -> Int).self))
         #expect(try unsafe element.unsafeInvoke(on: [10, 20, 30], 1) == 20)
+        // A complete accessor declaration qualified by the type selects it too.
+        let declared = try await array.resolve(
+            .getter("Swift.Array.subscript.getter : (Swift.Int) -> A", as: ((Int) -> Int).self)
+        )
+        #expect(try unsafe declared.unsafeInvoke(on: [10, 20, 30], 2) == 30)
+    }
+
+    @MainActor @Test func typesNestedInExtensionsResolveTheirMembers() async throws {
+        let runtime = ABIRuntime()
+        let type = try await runtime.resolveSwiftType(
+            named: "(extension in ManagedSwiftFixtures):Swift.Int.RuntimeNestedCounter"
+        )
+        let make = try await type.resolve(
+            .initializer("init()", as: (() -> Int.RuntimeNestedCounter).self)
+        )
+        for name in [
+            "value()",
+            "(extension in ManagedSwiftFixtures):Swift.Int.RuntimeNestedCounter.value() -> Swift.Int",
+        ] {
+            let value = try await type.resolve(.method(name, as: (() -> Int).self))
+            #expect(try unsafe value.unsafeInvoke(on: make.unsafeInvoke()) == 7)
+        }
+    }
+
+    #if os(macOS)
+    @Test func sameImageExtensionsKeepTheirNestedTypesDistinct() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString
+        )
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let first = "NestedOwnerA_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let second = "NestedOwnerB_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let source = directory.appendingPathComponent("First.swift")
+        let archive = directory.appendingPathComponent("first.a")
+        try """
+        extension Int {
+            public final class Nested {
+                public init() {}
+            }
+        }
+        """.write(to: source, atomically: true, encoding: .utf8)
+        try FixtureLibrary.run([
+            "--sdk", "macosx", "swiftc", "-module-name", first,
+            "-target", "arm64-apple-macosx15.4", "-parse-as-library", "-swift-version", "6",
+            "-emit-library", "-static", source.path, "-o", archive.path,
+        ])
+        let library = try FixtureLibrary(
+            swiftModule: second,
+            swiftSource: """
+                extension Int {
+                    public final class Nested {
+                        public init() {}
+                        public func foreignOnly() -> Int { 42 }
+                        public var foreignText: String {
+                            get { "second" }
+                            set {}
+                        }
+                    }
+                }
+                """,
+            linkArguments: [
+                "-parse-as-library", "-enable-library-evolution",
+                "-Xlinker", "-force_load", "-Xlinker", archive.path,
+            ]
+        )
+        defer { library.cleanup() }
+        let runtime = ABIRuntime()
+        let left = try runtime.resolveSwiftTypeAndWait(
+            named: "(extension in " + first + "):Swift.Int.Nested",
+            in: .path(library.libraryURL)
+        )
+        let right = try runtime.resolveSwiftTypeAndWait(
+            named: "(extension in " + second + "):Swift.Int.Nested",
+            in: .path(library.libraryURL)
+        )
+        let request = NativeSwiftInstanceMemberRequest.method("foreignOnly()", as: (() -> Int).self)
+        _ = try right.resolveAndWait(request)
+        #expect {
+            _ = try left.resolveAndWait(request)
+        } throws: { error in
+            guard case ABIResolutionError.declarationNotFound = error else { return false }
+            return true
+        }
+        let string = try runtime.resolveSwiftTypeAndWait(named: "Swift.String")
+        _ = try right.resolveWritableKeyPathAndWait(named: "foreignText", valueType: string)
+        #expect {
+            _ = try left.resolveWritableKeyPathAndWait(named: "foreignText", valueType: string)
+        } throws: { error in
+            guard case ABIResolutionError.declarationNotFound = error else { return false }
+            return true
+        }
+    }
+
+    #endif
+
+    @MainActor @Test func methodsNamedLikeAllocatorsKeepTheirNames() async throws {
+        let runtime = ABIRuntime()
+        let type = try await runtime.resolveSwiftType(
+            named: "ManagedSwiftFixtures.RuntimeAllocatorNamedMethod"
+        )
+        await #expect(throws: ABIResolutionError.self) {
+            try await type.resolve(.method("init(_:)", as: ((Int64) -> Int64).self))
+        }
+        let method = try await type.resolve(
+            .method("__allocating_init(_:)", as: ((Int64) -> Int64).self)
+        )
+        #expect(try unsafe method.unsafeInvoke(on: RuntimeAllocatorNamedMethod(), 41) == 42)
+        for name in [
+            "ManagedSwiftFixtures.__allocating_init(_:)",
+            "ManagedSwiftFixtures.__allocating_init(Swift.Int64) -> Swift.Int64",
+        ] {
+            let function = try await runtime.resolve(
+                .function(name, as: ((Int64) -> Int64).self)
+            )
+            #expect(try unsafe function.unsafeInvoke(40) == 42)
+        }
     }
 
     @MainActor @Test func receiverConventionsSelectHowSelfPasses() async throws {

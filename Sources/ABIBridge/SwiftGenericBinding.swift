@@ -1497,7 +1497,7 @@ struct SwiftGenericBinding: Sendable {
                 parameters.forEach(visit)
             case .nominal(_, let parameters), .reference(_, let parameters):
                 parameters.forEach(visit)
-            case .nested(let parent, _, let parameters): visit(parent); parameters.forEach(visit)
+            case .nested(let parent, _, let parameters, _): visit(parent); parameters.forEach(visit)
             case .associated(let base, _, _): visit(base)
             case .tuple(let fields, _), .packValue(let fields): fields.forEach(visit)
             case .function(let parameters, let result, let failure, let attributes):
@@ -1558,8 +1558,9 @@ struct SwiftGenericBinding: Sendable {
             return try types(type, packIndex: packIndex).map(swiftNativeTypeName).joined(
                 separator: ", "
             )
-        case .nested(let parent, let name, let parameters):
-            return try spelling(parent, packIndex: packIndex) + "." + name
+        case .nested(let parent, let name, let parameters, let module):
+            return try (module.map { "(extension in " + $0 + "):" } ?? "")
+                + spelling(parent, packIndex: packIndex) + "." + name
                 + (parameters.isEmpty
                     ? ""
                     : "<"
@@ -1899,7 +1900,7 @@ struct SwiftGenericBinding: Sendable {
                 (!arguments.isEmpty || self.arguments[String(name.prefix { $0 != "." })] == nil)
                     && arguments.allSatisfy(isSpelledByName)
             case .nominal(_, let arguments): arguments.allSatisfy(isSpelledByName)
-            case .nested(let parent, _, let arguments):
+            case .nested(let parent, _, let arguments, _):
                 isSpelledByName(parent) && arguments.allSatisfy(isSpelledByName)
             case .tuple(let fields, _): fields.allSatisfy(isSpelledByName)
             case .objectiveCClass: true

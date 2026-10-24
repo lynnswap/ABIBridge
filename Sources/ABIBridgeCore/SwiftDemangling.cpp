@@ -267,6 +267,16 @@ char *ABICopySwiftDispatchThunkSymbolName(const ABISwiftSyntaxNode *entity) {
     return copyGlobalSymbolName(nativeNode(entity), Node::Kind::DispatchThunk);
 }
 
+char *ABICopySwiftGetterSymbolName(const ABISwiftSyntaxNode *storage) {
+    auto node = nativeNode(storage);
+    if (!node) return nullptr;
+    switch (node->getKind()) {
+    case Node::Kind::Variable: case Node::Kind::Subscript: break;
+    default: return nullptr;
+    }
+    return copyGlobalSymbolName(node, Node::Kind::Getter);
+}
+
 const ABISwiftSyntaxNode *ABISwiftSyntaxEntityContext(const ABISwiftSyntaxNode *entity) {
     auto node = nativeNode(entity);
     while (node && !isDeclaration(node->getKind())) {

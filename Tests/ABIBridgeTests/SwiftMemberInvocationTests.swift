@@ -1462,11 +1462,11 @@ struct SwiftMemberInvocationTests {
             let expected: String
             switch operation {
             case "method": expected = owner + ".missing()"
-            case "getter": expected = owner + ".missing.getter : _"
-            case "setter": expected = owner + ".missing.setter : _"
+            case "getter": expected = owner + ".missing.getter"
+            case "setter": expected = owner + ".missing.setter"
             case "staticMethod": expected = "static " + owner + ".missing()"
-            case "staticGetter": expected = "static " + owner + ".missing.getter : _"
-            default: expected = "static " + owner + ".missing.setter : _"
+            case "staticGetter": expected = "static " + owner + ".missing.getter"
+            default: expected = "static " + owner + ".missing.setter"
             }
             await #expect(
                 throws: ABIResolutionError.declarationNotFound(

@@ -24,6 +24,19 @@ public struct RuntimeKeyPathRoot {
     public var readOnly: String { storage.text }
 }
 
+public struct RuntimeKeyPathSequenceRoot {
+    private var storage = [1]
+
+    public init() {}
+
+    public var sequence: any Sequence<Int> {
+        get { storage }
+        set { storage = Array(newValue) }
+    }
+
+    public var otherSequence: any Sequence<Int64> { [1] }
+}
+
 public func runtimePayloadKeyPath() -> AnyKeyPath { \RuntimeKeyPathRoot.payload }
 
 public func validateRuntimePayloadKeyPath(
@@ -75,6 +88,25 @@ public final class RuntimeKeyPathReferenceRoot {
     public var text: String {
         get { storage }
         set { storage = newValue }
+    }
+
+    public var 🐱: String {
+        get { storage }
+        set { storage = newValue }
+    }
+
+    public var `deinit`: String {
+        get { storage }
+        set { storage = newValue }
+    }
+}
+
+private let runtimeKeyPathTags = Mutex<[ObjectIdentifier: String]>([:])
+
+extension NSObject {
+    public var runtimeKeyPathTag: String {
+        get { runtimeKeyPathTags.withLock { $0[ObjectIdentifier(self)] } ?? "untagged" }
+        set { runtimeKeyPathTags.withLock { $0[ObjectIdentifier(self)] = newValue } }
     }
 }
 

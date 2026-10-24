@@ -454,7 +454,7 @@ package final class SymbolIndex {
     private var decoded: [Scope: [Int: [IndexedSymbol]]] = [:]
     private var linkerNames: [[UInt8]: [IndexedSymbol]] = [:]
     private var imageLinkerNames: [[UInt8]: [IndexedSymbol]] = [:]
-    private var swiftMembers: [Scope: [Int: [IndexedSymbol]]] = [:]
+    private var swiftMembers: [Scope: [SwiftMemberPath: [IndexedSymbol]]] = [:]
     private var swiftRecords: [IndexedSymbol: RuntimeSwiftDeclaration?] = [:]
 
     package init(image: RuntimeImage) {
@@ -1022,7 +1022,7 @@ package final class SymbolIndex {
                 var names = [name]
                 if declaration.language == .swift {
                     if let alias = Self.operatorAlias(name) { names.append(alias) }
-                    if let alias = Self.nominalDescriptorAlias(name) { names.append(alias) }
+                    names += Self.nominalDescriptorAliases(name)
                 }
                 for name in names {
                     index[
@@ -1038,15 +1038,31 @@ package final class SymbolIndex {
         return Self.matching(decoded[scope]?[query.fingerprint] ?? [], query: query)
     }
 
-    // A dispatch thunk is keyed by the member it dispatches, so one query
-    // returns a declaration's code and its thunk together. A conformance's
-    // witness is keyed by the requirement it serves.
+    /// The candidates of the member that the query's declaration spells.
     package func swiftDeclarationCandidates(
         _ query: SymbolQuery,
         source: RuntimeSymbol.Source,
         extensionsOnly: Bool
     ) -> [RuntimeSwiftCandidate] {
-        guard let key = SwiftMemberLookup.key(query.declaration.name) else { return [] }
+        guard let match = SwiftMemberMatch(declaration: query.declaration.name) else { return [] }
+        return swiftDeclarationCandidates(
+            match,
+            query: query,
+            source: source,
+            extensionsOnly: extensionsOnly
+        )
+    }
+
+    // A dispatch thunk is keyed by the member it dispatches, so one query
+    // returns a declaration's code and its thunk together. A conformance's
+    // witness is keyed by the requirement it serves. The path selects the
+    // symbols, and their records decide whether each declares the member.
+    package func swiftDeclarationCandidates(
+        _ match: SwiftMemberMatch,
+        query: SymbolQuery,
+        source: RuntimeSymbol.Source,
+        extensionsOnly: Bool
+    ) -> [RuntimeSwiftCandidate] {
         var symbols: [IndexedSymbol] = []
         for bucket in [SwiftBucket.knownModule, .fallback] {
             let scope =
@@ -1058,17 +1074,29 @@ package final class SymbolIndex {
                     swiftFallback: false
                 )
             if swiftMembers[scope] == nil {
-                var members: [Int: [IndexedSymbol]] = [:]
+                var members: [SwiftMemberPath: [IndexedSymbol]] = [:]
                 for symbol in self.symbols(for: query, swiftBucket: bucket) {
                     guard let name = memberName(of: symbol) else { continue }
+                    // An allocator's record also files its `__allocating_init`
+                    // with its initializer; a function or method can have
+                    // that name too.
+                    let allocates =
+                        SymbolIndex.byteOffset(of: "__allocating_init", in: name) != nil
+                        && record(of: symbol)?.kind == .allocator
                     for name in [name, Self.operatorAlias(name)].compactMap({ $0 }) {
-                        guard let key = SwiftMemberLookup.key(name) else { continue }
-                        members[DeclarationKey.fingerprint(key), default: []].append(symbol)
+                        guard let path = SwiftMemberPath(declaration: name) else { continue }
+                        members[path, default: []].append(symbol)
+                        if allocates,
+                            let initializer = SwiftMemberPath(declaration: name, allocates: true),
+                            initializer != path
+                        {
+                            members[initializer, default: []].append(symbol)
+                        }
                     }
                 }
                 swiftMembers[scope] = members
             }
-            symbols += swiftMembers[scope]?[DeclarationKey.fingerprint(key)] ?? []
+            symbols += swiftMembers[scope]?[match.path] ?? []
         }
         var addresses: Set<UInt64> = []
         var witnesses: Set<IndexedSymbol> = []
@@ -1076,10 +1104,8 @@ package final class SymbolIndex {
             guard symbol.source == source,
                 let record = record(of: symbol),
                 extensionsOnly == record.context.isExtension,
+                match.accepts(record),
                 let name = memberName(of: symbol),
-                [name, Self.operatorAlias(name)].compactMap({ $0 }).contains(where: {
-                    SwiftMemberLookup.key($0) == key
-                }),
                 let section = sections.first(where: { $0.range.contains(symbol.address) }),
                 section.accepts(query.declaration.kind),
                 let spelling = DeclarationKey.demangle(symbol.name, language: .swift)
@@ -1097,7 +1123,8 @@ package final class SymbolIndex {
                 record: record,
                 name: name,
                 spelling: spelling,
-                section: section
+                section: section,
+                kind: query.declaration.kind
             )
         }
     }
@@ -1191,11 +1218,12 @@ package final class SymbolIndex {
         record: RuntimeSwiftDeclaration,
         name: String,
         spelling: String,
-        section: SymbolSection
+        section: SymbolSection,
+        kind: RuntimeSymbolKind = .function
     ) -> RuntimeSwiftCandidate {
         RuntimeSwiftCandidate(
             symbol: RuntimeSymbol(
-                declaration: .init(name: spelling, language: .swift),
+                declaration: .init(name: spelling, language: .swift, kind: kind),
                 image: image,
                 sectionRange: section.range,
                 source: symbol.source,
@@ -1219,6 +1247,15 @@ package final class SymbolIndex {
     // witnesses. Swift mangles a dispatch thunk as its declaration followed by
     // `Tj`, and a protocol witness thunk with the suffix `TW`.
     private func memberName(of symbol: IndexedSymbol) -> String? {
+        // A property descriptor, mangled with the suffix `MV`, is filed with
+        // its storage's members under the spelling of the getter it describes.
+        if symbol.name.hasSuffix("MV"), let record = record(of: symbol),
+            record.role == .propertyDescriptor
+        {
+            return record.describedGetter.flatMap {
+                DeclarationKey.demangle($0, language: .swift)
+            }
+        }
         if symbol.name.hasSuffix("TW"), let record = record(of: symbol),
             case .witness = record.role, let requirement = record.requirement
         {
@@ -1245,7 +1282,7 @@ package final class SymbolIndex {
             var names = [name]
             if query.declaration.language == .swift {
                 if let alias = operatorAlias(name) { names.append(alias) }
-                if let alias = nominalDescriptorAlias(name) { names.append(alias) }
+                names += nominalDescriptorAliases(name)
             }
             return names.contains {
                 DeclarationKey.make($0, language: query.declaration.language) == query.key
@@ -1253,17 +1290,22 @@ package final class SymbolIndex {
         }
     }
 
-    package static func nominalDescriptorAlias(_ name: String) -> String? {
+    package static func nominalDescriptorAliases(_ name: String) -> [String] {
         let marker = "nominal type descriptor for "
-        guard name.hasPrefix(marker),
-            var nominal = extensionMemberName(String(name.dropFirst(marker.count)))
-        else { return nil }
+        guard name.hasPrefix(marker) else { return [] }
+        let original = String(name.dropFirst(marker.count))
+        var nominal = original
         // A nominal declaration is selected before its arguments are bound.
         // Its descriptor retains the extension constraints for runtime validation.
         for group in SwiftGenericSyntax.groups(in: nominal).reversed() {
             nominal.removeSubrange(group.range)
         }
-        return marker + nominal
+        guard let unqualified = extensionMemberName(nominal) else { return [] }
+        // Removing constraints must preserve the module that declares a nested
+        // type, while existing unqualified requests retain their lookup alias.
+        return nominal == original
+            ? [marker + unqualified]
+            : [marker + nominal, marker + unqualified]
     }
 
     package static func operatorAlias(_ name: String) -> String? {

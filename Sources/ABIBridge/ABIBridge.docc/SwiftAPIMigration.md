@@ -41,6 +41,7 @@ What changes besides the spelling:
 - A setter request takes the complete function type of the call, `(Value) -> Void`, like every other member. A subscript setter takes the new value followed by the indices.
 - An object accepts `valueABIs:`, `receiverABI:`, and `receiver:` as its type does, and resolves initializer and static member requests for its own type.
 - A subscript's accessors are `getter` and `setter` requests for the member named `subscript`, selected by their index and value types, or by a complete accessor declaration as before. Getter and setter requests accept `genericArguments:` for generic subscripts.
+- The request states the member's role. A method request whose name spells an accessor, such as `subscript.getter : (Swift.Int) -> Swift.String`, reports ``ABIResolutionError/unsupportedDeclaration(_:)``; pass that name to the matching getter or setter request.
 - ``NativeSwiftReceiverConvention`` replaces the `mutating:` and `consuming:` flags, whose combination was invalid. Without a convention, methods and getters borrow `self` and setters follow their declaration.
 - Throwing Objective-C messages and implementations also accept a `Selector`.
 

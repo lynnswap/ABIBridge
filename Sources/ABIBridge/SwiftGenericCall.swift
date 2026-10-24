@@ -851,7 +851,9 @@ struct SwiftGenericCallPlan: Sendable {
                     context.keyParameters.contains($0.name)
                 }.map { .named($0.name, []) }
             )
-            if receiver == .address, let enclosingMetadata {
+            // A lifetime dependency can address self even when same-type
+            // requirements fix its arguments and it supplies no metadata.
+            if receiver == .address, !fulfilled.isEmpty, let enclosingMetadata {
                 return ([unsafeBitCast(enclosingMetadata, to: UInt.self)], fulfilled)
             }
             return ([], fulfilled)
@@ -2339,7 +2341,7 @@ extension SwiftGenericBinding {
                 || parameters.contains(where: dependsOnParameters)
         case .nominal(_, let parameters), .reference(_, let parameters):
             parameters.contains(where: dependsOnParameters)
-        case .nested(let parent, _, let parameters):
+        case .nested(let parent, _, let parameters, _):
             dependsOnParameters(parent) || parameters.contains(where: dependsOnParameters)
         case .associated(let base, _, _): dependsOnParameters(base)
         case .tuple(let fields, _), .packValue(let fields):

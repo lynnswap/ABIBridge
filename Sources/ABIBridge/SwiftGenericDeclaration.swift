@@ -203,7 +203,7 @@ indirect enum SwiftFormalType: Sendable, Equatable {
     )
     case objectiveCClass(String)
     case opaqueResult(index: Int)
-    case nested(SwiftFormalType, String, [SwiftFormalType])
+    case nested(SwiftFormalType, String, [SwiftFormalType], extensionModule: String? = nil)
     case reference(SwiftNominalDescriptor, [SwiftFormalType])
     case associated(SwiftFormalType, String, protocolName: String? = nil)
     case tuple([SwiftFormalType], labels: [String]? = nil)
@@ -237,7 +237,7 @@ indirect enum SwiftFormalType: Sendable, Equatable {
         case .named(_, let values), .nominal(_, let values), .reference(_, let values),
             .tuple(let values, _), .packValue(let values):
             values.reduce(into: []) { $0.formUnion($1.opaqueIndices) }
-        case .nested(let parent, _, let values):
+        case .nested(let parent, _, let values, _):
             values.reduce(into: parent.opaqueIndices) { $0.formUnion($1.opaqueIndices) }
         case .associated(let parent, _, _), .inoutValue(let parent), .borrowing(let parent),
             .consuming(let parent), .metatype(let parent), .existentialMetatype(let parent):
@@ -476,8 +476,8 @@ indirect enum SwiftFormalType: Sendable, Equatable {
             descriptor.name
                 + (arguments.isEmpty
                     ? "" : "<" + arguments.map(\.spelling).joined(separator: ", ") + ">")
-        case .nested(let parent, let name, let arguments):
-            parent.spelling + "." + name
+        case .nested(let parent, let name, let arguments, let module):
+            (module.map { "(extension in " + $0 + "):" } ?? "") + parent.spelling + "." + name
                 + (arguments.isEmpty
                     ? "" : "<" + arguments.map(\.spelling).joined(separator: ", ") + ">")
         case .associated(let base, let name, let protocolName):
@@ -544,24 +544,6 @@ indirect enum SwiftFormalType: Sendable, Equatable {
     }
 }
 
-/// A lookup key preserves the member and labels while its bound signature is checked separately. This lets ordinary member names select generic entries.
-extension SwiftMemberLookup {
-    static func qualifiedName(
-        _ member: String,
-        owner: String,
-        isStatic: Bool = false
-    ) throws -> String {
-        guard isStatic || !member.hasPrefix("static ") else {
-            throw ABIResolutionError.unsupportedDeclaration(
-                "A static declaration requires a static member lookup."
-            )
-        }
-        let name = isQualified(member) ? member : owner + "." + member
-        return isStatic && !name.hasPrefix("static ") ? "static " + name : name
-    }
-
-}
-
 extension SwiftFormalSyntax {
     static func failure(in effects: String) throws -> SwiftFormalType? {
         if let range = effects.range(of: "throws(") {
@@ -622,7 +604,13 @@ extension SwiftFormalType {
         case .named(let name, let values): return .named(name, try values.map(qualify))
         case .nominal(let name, let values): return .nominal(name, try values.map(qualify))
         case .reference(let descriptor, let values): return .reference(descriptor, try values.map(qualify))
-        case .nested(let parent, let name, let values): return .nested(try qualify(parent), name, try values.map(qualify))
+        case .nested(let parent, let name, let values, let module):
+            return .nested(
+                try qualify(parent),
+                name,
+                try values.map(qualify),
+                extensionModule: module
+            )
         case .tuple(let values, let labels): return .tuple(try values.map(qualify), labels: labels)
         case .packValue(let values): return .packValue(try values.map(qualify))
         case .pack(let value, let shape): return .pack(try qualify(value), shape: try shape.map(qualify))
@@ -733,7 +721,7 @@ extension SwiftFormalType {
         case .named(_, let values), .nominal(_, let values), .reference(_, let values),
             .tuple(let values, _), .packValue(let values):
             values.contains(where: \.hasDeclaredLifetime)
-        case .nested(let parent, _, let values):
+        case .nested(let parent, _, let values, _):
             parent.hasDeclaredLifetime || values.contains(where: \.hasDeclaredLifetime)
         case .associated(let value, _, _), .inoutValue(let value), .borrowing(let value),
             .consuming(let value), .metatype(let value), .existentialMetatype(let value):

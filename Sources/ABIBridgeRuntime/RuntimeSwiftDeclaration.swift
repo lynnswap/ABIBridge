@@ -16,6 +16,9 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
         /// calling convention. `conformanceDescriptor` is the mangled name of
         /// the descriptor of the conformance it serves.
         case witness(conformanceDescriptor: String)
+        /// A property's or subscript's descriptor, which describes its
+        /// accessors to key paths and is not code.
+        case propertyDescriptor
     }
 
     package enum Accessor: Hashable, Sendable { case getter, setter }
@@ -62,10 +65,25 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
         switch role {
         case .implementation, .witness: true
         case .dispatchThunk: context == .protocolRequirement
+        // A descriptor is its own definition, which no thunk stands in for.
+        case .propertyDescriptor: true
         }
     }
     package let isStatic: Bool
     package let context: Context
+    /// The declared type that owns this member, including the contexts that
+    /// declare that type. An extension of that type does not change its identity.
+    package let ownerIdentity: RuntimeSwiftTypeIdentity?
+    /// Whether a class declares the declaration, rather than an extension of
+    /// the class or another type.
+    package let isClassMember: Bool
+    /// For an instance property's or subscript's descriptor, the mangled
+    /// name of the getter of the storage it describes. Lookup files the
+    /// descriptor under the getter's spelling, with the storage's members.
+    package let describedGetter: String?
+    /// For a property's descriptor, the property's declared type, as the
+    /// remangler mangles it.
+    package let declaredType: String?
     /// The mangled name of the declaration itself. A declaration's code and
     /// its dispatch thunk share this identity; a witness is its own.
     package let identity: String
@@ -74,8 +92,8 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
     /// symbol's tree so that every record of one requirement spells it alike.
     package let requirement: String?
 
-    /// Returns nil for names that are not Swift declarations, such as
-    /// metadata and descriptors.
+    /// Returns nil for names that are not Swift declarations or property
+    /// descriptors, such as metadata and type descriptors.
     package init?(linkageName: String) {
         let name = linkageName.hasPrefix("_") ? String(linkageName.dropFirst()) : linkageName
         guard
@@ -104,6 +122,10 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
             role = .witness(conformanceDescriptor: descriptor)
             identity = name
             node = entity
+        } else if node.kind == "PropertyDescriptor", let child = node.child(0) {
+            role = .propertyDescriptor
+            identity = name
+            node = child
         } else {
             role = .implementation
             identity = name
@@ -127,6 +149,18 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
         if case .witness = role, owner.kind != "Protocol" { return nil }
         self.kind = kind
         self.isStatic = isStatic
+        ownerIdentity = RuntimeSwiftTypeIdentity(node: owner.pointer)
+        isClassMember = owner.kind == "Class"
+        if role == .propertyDescriptor {
+            describedGetter =
+                isStatic ? nil : Self.copy(ABICopySwiftGetterSymbolName(node.pointer))
+            declaredType = node.children.first { $0.kind == "Type" }.flatMap {
+                Self.copy(ABICopySwiftSyntaxNodeMangledName($0.pointer))
+            }
+        } else {
+            describedGetter = nil
+            declaredType = nil
+        }
         requirement =
             owner.kind == "Protocol" ? Self.copy(ABICopySwiftEntitySymbolName(entity.pointer)) : nil
         switch owner.kind {
@@ -223,6 +257,65 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
                 as: UTF8.self
             )
         }
+    }
+}
+
+/// A nominal declaration's identity, as the remangler spells its type tree.
+/// Instantiation arguments and an immediate member extension are not part of
+/// the declaration; extension contexts within the nominal type's ancestry are.
+package struct RuntimeSwiftTypeIdentity: Hashable, Sendable {
+    private let mangled: String
+
+    fileprivate init?(node: OpaquePointer) {
+        var node = node
+        while true {
+            let kind = String(cString: ABISwiftSyntaxNodeKind(node))
+            let child: Int
+            switch kind {
+            case "Type", "BoundGenericStructure", "BoundGenericEnum", "BoundGenericClass",
+                "BoundGenericTypeAlias", "BoundGenericOtherNominalType":
+                child = 0
+            case "Extension": child = 1
+            default:
+                guard
+                    ["Structure", "Enum", "Class", "Protocol", "TypeAlias", "OtherNominalType"]
+                        .contains(kind),
+                    let name = ABICopySwiftSyntaxNodeMangledName(node)
+                else { return nil }
+                defer { ABIFreeString(name) }
+                mangled = String(cString: name)
+                return
+            }
+            guard let next = ABISwiftSyntaxNodeChild(node, child) else { return nil }
+            node = next
+        }
+    }
+
+    package init(
+        metadata: Any.Type,
+        in image: RuntimeImage,
+        resolver: RuntimeSymbolResolver
+    ) throws {
+        let pointer = unsafeBitCast(metadata, to: UnsafeRawPointer.self)
+        let declared = ABISwiftTypeDescriptor(pointer).flatMap {
+            resolver.swiftTypeDeclaration(at: UInt64(UInt(bitPattern: $0)), in: image)
+        }
+        guard let mangled = declared ?? _mangledTypeName(metadata),
+            let syntax = mangled.utf8CString.withUnsafeBufferPointer({
+                ABICopySwiftTypeSyntax($0.baseAddress, $0.count - 1)
+            })
+        else {
+            throw RuntimeResolutionError.metadataUnavailable(
+                "The member owner's type declaration is unavailable."
+            )
+        }
+        defer { ABIReleaseSwiftSyntax(syntax) }
+        guard let root = ABISwiftSyntaxRoot(syntax), let identity = Self(node: root) else {
+            throw RuntimeResolutionError.metadataUnavailable(
+                "The member owner's type declaration cannot be decoded."
+            )
+        }
+        self = identity
     }
 }
 

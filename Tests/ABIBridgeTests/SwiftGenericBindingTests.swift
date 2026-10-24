@@ -8,6 +8,7 @@ import ManagedSwiftFixtures
 import Testing
 
 private protocol GenericSwiftClassOnly: AnyObject {}
+private final class GenericObjectiveCSubclass: NSObject {}
 
 protocol GenericOrderingA {}
 private protocol GenericOrderingZ {}
@@ -141,6 +142,57 @@ struct SwiftGenericBindingTests {
                 signature: (() -> (Int64) -> Int64).self,
                 suppressesEscapable: true
             )
+        )
+    }
+
+    @Test func extensionNestedMetadataKeepsItsDeclarationIdentity() throws {
+        let formal = try SwiftFormalType(SwiftSyntax.metadataType(FixtureExtensionIdentity.self))
+        let binding = try SwiftGenericBinding(
+            declaration: SwiftGenericDeclaration(
+                parameters: [],
+                requirements: [],
+                arguments: [],
+                result: formal,
+                failure: nil,
+                isAsync: false,
+                consumesArguments: false
+            ),
+            arguments: [],
+            signature: SwiftFunctionSignature(((SupportExtensionIdentity) -> Void).self),
+            resolver: .shared
+        )
+        #expect(try binding.types(formal)[0] == FixtureExtensionIdentity.self)
+        let constrainedMetadata = GenericTypeOuter<Int64>.InExtension<String>.self
+        let constrained = try SwiftFormalType(SwiftSyntax.metadataType(constrainedMetadata))
+        #expect(try binding.types(constrained).first == constrainedMetadata)
+        #expect(
+            formal.nominalDeclaration?.name
+                == "(extension in ManagedSwiftFixtures):Swift.Int.RuntimeExtensionIdentity"
+        )
+        let generic = SwiftFormalType.nested(
+            .nominal("Swift.Int", []),
+            "RuntimeExtensionIdentity",
+            [.named("A", [])],
+            extensionModule: "ManagedSwiftFixtures"
+        )
+        let substituted = generic.substituting(["A": .nominal("Swift.Int64", [])])
+        #expect(try binding.types(substituted)[0] == FixtureExtensionIdentity.self)
+        #expect(try substituted.qualifyingAssociatedTypes(using: []) == formal)
+        for metadata: Any.Type in [
+            [FixtureExtensionIdentity].self,
+            ((FixtureExtensionIdentity, Int64)).self,
+            ((FixtureExtensionIdentity) -> FixtureExtensionIdentity).self,
+        ] {
+            let source = try SwiftFormalType(swiftNativeTypeName(metadata))
+            #expect(try binding.types(source)[0] == metadata)
+        }
+        let name = try swiftNativeTypeName(FixtureExtensionIdentity.self)
+        #expect(
+            try SwiftFormalType("[" + name + ": Swift.Int64]")
+                == .named(
+                    "Swift.Dictionary",
+                    [try SwiftFormalType(name), .named("Swift.Int64", [])]
+                )
         )
     }
 
@@ -751,7 +803,10 @@ struct SwiftGenericBindingTests {
         #expect(object.isSubclass(of: NSObject.self))
         #expect(!object.isSubclass(of: NSString.self))
         #expect(object.conforms(to: try #require(NSProtocolFromString("NSCopying"))))
-        #expect(object.conforms(to: try #require(NSProtocolFromString("NSObject"))))
+        let nsObject = try #require(NSProtocolFromString("NSObject"))
+        #expect(object.conforms(to: nsObject))
+        let subclass = try #require(SwiftObjectType(GenericObjectiveCSubclass.self))
+        #expect(subclass.conforms(to: nsObject))
         for type: Any.Type in [
             String.self, AnyObject.Type.self, AnyObject.Protocol.self,
             (any GenericSwiftClassOnly).self, (@convention(block) () -> Void).self,
@@ -970,6 +1025,16 @@ struct SwiftGenericBindingTests {
             )
         )
         #expect(singleton.count == 1 && singleton[0] == Int64.self)
+        let addressability = try SwiftBorrowedInputs.addressability(
+            of: .tuple([
+                .nominal("Swift.Int64", []), .pack(element, shape: element),
+                .nominal("Swift.Int64", []),
+            ]),
+            native: (Int64, Int64).self,
+            binding: empty
+        )
+        // Empty packs retain the declaration's generic tuple abstraction.
+        #expect(addressability.isSet)
     }
 
     @Test func explicitNominalSourcesRemoveOnlyFulfilledMetadataWords() throws {
