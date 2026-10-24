@@ -30,9 +30,8 @@ private func transformedStorage<Value>(
     _ value: Value,
     named name: String
 ) async throws -> NativeValue {
-    let function = try ABIRuntime.shared.resolveCFunctionAndWait(
-        named: name,
-        as: ((UnsafeRawPointer, UnsafeMutableRawPointer) -> Void).self
+    let function = try ABIRuntime.shared.resolveAndWait(
+        .c(.function(name, as: ((UnsafeRawPointer, UnsafeMutableRawPointer) -> Void).self))
     )
     let input = try copiedStorage(value)
     return try NativeValue(
@@ -168,9 +167,13 @@ struct ManagedSwiftValueTests {
     }
 
     @Test func failedArgumentConversionCleansUpWithoutDestroyingOutput() async throws {
-        let function = try ABIRuntime.shared.resolveCFunctionAndWait(
-            named: "ABIManagedRecordTransform",
-            as: ((ManagedArgument, RejectingPointer) -> Void).self
+        let function = try ABIRuntime.shared.resolveAndWait(
+            .c(
+                .function(
+                    "ABIManagedRecordTransform",
+                    as: ((ManagedArgument, RejectingPointer) -> Void).self
+                )
+            )
         )
         var destroys = 0
         weak var weakToken: LifetimeToken?
@@ -191,17 +194,24 @@ struct ManagedSwiftValueTests {
 
     @Test func runtimeOnlyHandlesRetainCopiedResources() async throws {
         let runtime = ABIRuntime()
-        let create = try runtime.resolveCFunctionAndWait(
-            named: "ABIResilientRecordCreate",
-            as: ((Int64, UnsafeMutablePointer<Int32>) -> UnsafeMutableRawPointer).self
+        let create = try runtime.resolveAndWait(
+            .c(
+                .function(
+                    "ABIResilientRecordCreate",
+                    as: ((Int64, UnsafeMutablePointer<Int32>) -> UnsafeMutableRawPointer).self
+                )
+            )
         )
-        let copy = try runtime.resolveCFunctionAndWait(
-            named: "ABIResilientRecordCopy",
-            as: ((UnsafeRawPointer) -> UnsafeMutableRawPointer).self
+        let copy = try runtime.resolveAndWait(
+            .c(
+                .function(
+                    "ABIResilientRecordCopy",
+                    as: ((UnsafeRawPointer) -> UnsafeMutableRawPointer).self
+                )
+            )
         )
-        let number = try runtime.resolveCFunctionAndWait(
-            named: "ABIResilientRecordNumber",
-            as: ((UnsafeRawPointer) -> Int64).self
+        let number = try runtime.resolveAndWait(
+            .c(.function("ABIResilientRecordNumber", as: ((UnsafeRawPointer) -> Int64).self))
         )
         let destructor = try runtime.resolveAndWait(
             .init(name: "ABIResilientRecordDestroy", language: .c)
@@ -235,9 +245,13 @@ struct ManagedSwiftValueTests {
     }
 
     @Test func failedResultConversionDestroysTransferredValue() async throws {
-        let create = try ABIRuntime.shared.resolveCFunctionAndWait(
-            named: "ABIResilientRecordCreate",
-            as: ((Int64, UnsafeMutablePointer<Int32>) -> RejectedOwnedResult).self
+        let create = try ABIRuntime.shared.resolveAndWait(
+            .c(
+                .function(
+                    "ABIResilientRecordCreate",
+                    as: ((Int64, UnsafeMutablePointer<Int32>) -> RejectedOwnedResult).self
+                )
+            )
         )
         var destroyed: Int32 = 0
         withUnsafeMutablePointer(to: &destroyed) { counter in

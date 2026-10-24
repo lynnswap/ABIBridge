@@ -119,9 +119,13 @@ private struct WrongPair: ABIBridgeValue {
 
 struct NativeValueTests {
     @Test func laterArgumentFailureKeepsEarlierOwnersAliveUntilCleanup() async throws {
-        let function = try ABIRuntime.shared.resolveCFunctionAndWait(
-            named: "ABICTransformPair",
-            as: ((ScopedPair, RejectedCounter) -> PairValue).self
+        let function = try ABIRuntime.shared.resolveAndWait(
+            .c(
+                .function(
+                    "ABICTransformPair",
+                    as: ((ScopedPair, RejectedCounter) -> PairValue).self
+                )
+            )
         )
         let events = Events()
         #expect(throws: ConversionFailure.rejected) {
@@ -131,9 +135,13 @@ struct NativeValueTests {
     }
 
     @Test func customWrappersUseTheirNativeLayout() async throws {
-        let function = try ABIRuntime.shared.resolveCFunctionAndWait(
-            named: "ABICTransformPair",
-            as: ((PairValue, UnsafeMutablePointer<Int32>) -> PairValue).self
+        let function = try ABIRuntime.shared.resolveAndWait(
+            .c(
+                .function(
+                    "ABICTransformPair",
+                    as: ((PairValue, UnsafeMutablePointer<Int32>) -> PairValue).self
+                )
+            )
         )
         var calls: Int32 = 0
         let result = try withUnsafeMutablePointer(to: &calls) {
@@ -148,9 +156,16 @@ struct NativeValueTests {
     }
 
     @Test func runtimeSignaturesReturnCastableValues() async throws {
-        let function = try ABIRuntime.shared.resolveCFunctionAndWait(
-            named: "ABICTransformPair",
-            signature: .init(parameters: [PairValue.abiType, .pointer], returns: PairValue.abiType)
+        let function = try ABIRuntime.shared.resolveAndWait(
+            .c(
+                .function(
+                    "ABICTransformPair",
+                    signature: .init(
+                        parameters: [PairValue.abiType, .pointer],
+                        returns: PairValue.abiType
+                    )
+                )
+            )
         )
         var calls: Int32 = 0
         let result = try withUnsafeMutablePointer(to: &calls) { pointer in
@@ -165,9 +180,16 @@ struct NativeValueTests {
     }
 
     @Test func runtimeSignaturesValidateArgumentsBeforeDispatch() async throws {
-        let function = try ABIRuntime.shared.resolveCFunctionAndWait(
-            named: "ABICTransformPair",
-            signature: .init(parameters: [PairValue.abiType, .pointer], returns: PairValue.abiType)
+        let function = try ABIRuntime.shared.resolveAndWait(
+            .c(
+                .function(
+                    "ABICTransformPair",
+                    signature: .init(
+                        parameters: [PairValue.abiType, .pointer],
+                        returns: PairValue.abiType
+                    )
+                )
+            )
         )
         #expect(throws: ABIResolutionError.self) { try unsafe function.unsafeInvoke(with: []) }
         var calls: Int32 = 0
@@ -215,17 +237,19 @@ struct NativeValueTests {
     }
 
     @Test func adoptedResourcesAndOptionalPointerWrappers() async throws {
-        let make = try ABIRuntime.shared.resolveCFunctionAndWait(
-            named: "ABICCreateResource",
-            as: ((UnsafeMutablePointer<Int32>) -> ResourceValue).self
+        let make = try ABIRuntime.shared.resolveAndWait(
+            .c(
+                .function(
+                    "ABICCreateResource",
+                    as: ((UnsafeMutablePointer<Int32>) -> ResourceValue).self
+                )
+            )
         )
-        let read = try ABIRuntime.shared.resolveCFunctionAndWait(
-            named: "ABICReadResource",
-            as: ((ResourceValue) -> Int32).self
+        let read = try ABIRuntime.shared.resolveAndWait(
+            .c(.function("ABICReadResource", as: ((ResourceValue) -> Int32).self))
         )
-        let echo = try ABIRuntime.shared.resolveCFunctionAndWait(
-            named: "ABICPointer",
-            as: ((BorrowedResource?) -> BorrowedResource?).self
+        let echo = try ABIRuntime.shared.resolveAndWait(
+            .c(.function("ABICPointer", as: ((BorrowedResource?) -> BorrowedResource?).self))
         )
         var live: Int32 = 0
         try withUnsafeMutablePointer(to: &live) { pointer in
@@ -241,9 +265,13 @@ struct NativeValueTests {
     }
 
     @Test func failedConversionsReleaseAdoptedResources() async throws {
-        let make = try ABIRuntime.shared.resolveCFunctionAndWait(
-            named: "ABICCreateResource",
-            as: ((UnsafeMutablePointer<Int32>) -> RejectingResource).self
+        let make = try ABIRuntime.shared.resolveAndWait(
+            .c(
+                .function(
+                    "ABICCreateResource",
+                    as: ((UnsafeMutablePointer<Int32>) -> RejectingResource).self
+                )
+            )
         )
         var live: Int32 = 0
         withUnsafeMutablePointer(to: &live) { pointer in
@@ -253,9 +281,13 @@ struct NativeValueTests {
     }
 
     @Test func invalidArgumentLayoutStopsBeforeDispatchAndCleansUp() async throws {
-        let function = try ABIRuntime.shared.resolveCFunctionAndWait(
-            named: "ABICTransformPair",
-            as: ((WrongPair, UnsafeMutablePointer<Int32>) -> PairValue).self
+        let function = try ABIRuntime.shared.resolveAndWait(
+            .c(
+                .function(
+                    "ABICTransformPair",
+                    as: ((WrongPair, UnsafeMutablePointer<Int32>) -> PairValue).self
+                )
+            )
         )
         let events = Events()
         var calls: Int32 = 0
@@ -344,15 +376,13 @@ struct NativeValueTests {
         }
         let opaque = try NativeType.opaque(named: "Opaque", size: 16, alignment: 8)
         #expect(throws: ABIResolutionError.self) {
-            _ = try ABIRuntime.shared.resolveCFunctionAndWait(
-                named: "ABICAnswer",
-                signature: .init(parameters: [], returns: opaque)
+            _ = try ABIRuntime.shared.resolveAndWait(
+                .c(.function("ABICAnswer", signature: .init(parameters: [], returns: opaque)))
             )
         }
         #expect(throws: ABIResolutionError.self) {
-            _ = try ABIRuntime.shared.resolveCFunctionAndWait(
-                named: "ABICAnswer",
-                as: (() -> PairValue?).self
+            _ = try ABIRuntime.shared.resolveAndWait(
+                .c(.function("ABICAnswer", as: (() -> PairValue?).self))
             )
         }
     }

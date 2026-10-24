@@ -33,15 +33,13 @@ struct ImageLoadingTests {
         #expect(throws: ABIResolutionError.imageNotLoaded) {
             _ = try runtime.resolveAndWait(declaration, in: scope, loading: .loadedOnly)
         }
-        var first: NativeFunction<Int32>? = try runtime.resolveCXXFunctionAndWait(
-            named: declaration.name,
-            as: (() -> Int32).self,
+        var first: NativeFunction<Int32>? = try runtime.resolveAndWait(
+            .cxx(.function(declaration.name, as: (() -> Int32).self)),
             in: scope
         )
         #expect(try unsafe first!.unsafeInvoke() == 42)
-        var second: NativeFunction<Int32>? = try runtime.resolveCXXFunctionAndWait(
-            named: declaration.name,
-            as: (() -> Int32).self,
+        var second: NativeFunction<Int32>? = try runtime.resolveAndWait(
+            .cxx(.function(declaration.name, as: (() -> Int32).self)),
             in: first!.symbol.image
         )
         #expect(first!.symbol.image.identity == second!.symbol.image.identity)
@@ -100,9 +98,8 @@ struct ImageLoadingTests {
         #expect(try runtime.resolveImagesAndWait(matching: .installName(path)).isEmpty)
         let identity = try runtime.resolveAndWait(declaration, in: .installName(path)).image
             .identity
-        let retained = try runtime.resolveCXXFunctionAndWait(
-            named: declaration.name,
-            as: ((Int32, Int32) -> Int32).self,
+        let retained = try runtime.resolveAndWait(
+            .cxx(.function(declaration.name, as: ((Int32, Int32) -> Int32).self)),
             in: .installName(alias),
             loading: .loadedOnly
         )
@@ -176,9 +173,8 @@ struct ImageLoadingTests {
         try FileManager.default.moveItem(at: dependency.libraryURL, to: saved)
         let runtime = ABIRuntime()
         do {
-            _ = try runtime.resolveCFunctionAndWait(
-                named: "ABILoadedValue",
-                as: (() -> Int32).self,
+            _ = try runtime.resolveAndWait(
+                .c(.function("ABILoadedValue", as: (() -> Int32).self)),
                 in: .path(fixture.libraryURL)
             )
             Issue.record("Missing dependency must fail acquisition")
@@ -187,9 +183,8 @@ struct ImageLoadingTests {
             #expect(message.contains(dependency.directory.lastPathComponent))
         }
         try FileManager.default.moveItem(at: saved, to: dependency.libraryURL)
-        let function = try runtime.resolveCFunctionAndWait(
-            named: "ABILoadedValue",
-            as: (() -> Int32).self,
+        let function = try runtime.resolveAndWait(
+            .c(.function("ABILoadedValue", as: (() -> Int32).self)),
             in: .path(fixture.libraryURL)
         )
         #expect(try unsafe function.unsafeInvoke() == 42)

@@ -127,208 +127,148 @@ public struct NativeFunction<Result, each Argument>: Sendable {
     }
 }
 
+/// A C or C-compatible C++ function declaration using an ordinary Swift function-type metatype.
+///
+/// Wrap the declaration with `NativeRequest.c` or `NativeRequest.cxx`, then
+/// resolve it with an `ABIRuntime`. Construction does not perform lookup or
+/// validate native layouts; resolution prepares the call and retains its image.
+public struct NativeFunctionRequest<Result, each Argument>: Sendable {
+    let name: String
+    var language: NativeLanguage
+    let variadicFrom: Int?
+
+    /// Describes the explicit arguments and result of a native function.
+    ///
+    /// Integer widths must match the native declaration; use `Int32` for C
+    /// `int`. The metatype describes all concrete arguments and the result.
+    /// `variadicFrom` is the first anonymous argument index, or nil for a
+    /// fixed declaration. Variadic arguments use standard C promotions.
+    /// C names omit the Mach-O underscore. C++ names are complete demangled
+    /// declarations that select an overload. The declaration name does not
+    /// establish that the supplied signature matches the native ABI.
+    public static func function(
+        _ name: String,
+        as signature: ((repeat each Argument) -> Result).Type,
+        variadicFrom: Int? = nil
+    ) -> Self {
+        Self(name: name, language: .c, variadicFrom: variadicFrom)
+    }
+}
+
+extension NativeRequest {
+    /// Describes a C function.
+    public static func c<Result, each Argument>(
+        _ declaration: NativeFunctionRequest<Result, repeat each Argument>
+    ) -> Self where Declaration == NativeFunctionRequest<Result, repeat each Argument> {
+        var declaration = declaration
+        declaration.language = .c
+        return Self(declaration: declaration)
+    }
+
+    /// Describes a C-compatible C++ free or static function.
+    public static func cxx<Result, each Argument>(
+        _ declaration: NativeFunctionRequest<Result, repeat each Argument>
+    ) -> Self where Declaration == NativeFunctionRequest<Result, repeat each Argument> {
+        var declaration = declaration
+        declaration.language = .cxx
+        return Self(declaration: declaration)
+    }
+}
+
 extension ABIRuntime {
-    /// Resolves a C function with an ordinary Swift function-type metatype.
+    /// Resolves a C or C-compatible C++ function using an ordinary Swift function-type metatype.
     ///
-    /// Integer widths must match the C declaration; for example, use Int32 for C int. Lookup does not infer a C signature from its linker name.
-    ///
-    /// Search and call preparation run synchronously on the caller's thread. An explicit prepare is optional; lookup joins any required work already in progress.
+    /// Search and call preparation run synchronously on the caller's thread.
+    /// An explicit prepare is optional; lookup joins any required work already
+    /// in progress. Nontrivial C++ values and exceptions require a compiler
+    /// adapter.
     ///
     /// - Parameters:
-    ///   - name: A C linker name without the Mach-O underscore.
-    ///   - signature: A synchronous function type describing all concrete inputs.
-    ///   - variadicFrom: The first anonymous argument index, or nil for a fixed declaration.
+    ///   - request: The language, declaration name, and concrete call signature.
     ///   - scope: Images to search; automatic scope considers only loaded images.
-    ///   - loading: Whether an explicit image may be acquired and initialized.
+    ///   - loading: Whether to acquire and initialize an explicit image.
     /// - Returns: A reusable function retaining its image and prepared signature.
     /// - Throws: A resolution error, unsupported representation, or call preparation error.
-    public nonisolated func resolveCFunctionAndWait<Result, each Argument>(
-        named name: String,
-        as signature: ((repeat each Argument) -> Result).Type,
-        variadicFrom: Int? = nil,
+    public nonisolated func resolveAndWait<Result, each Argument>(
+        _ request: NativeRequest<NativeFunctionRequest<Result, repeat each Argument>>,
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeFunction<Result, repeat each Argument> {
-        try NativeFunction(
-            symbol: resolver.resolve(.init(name: name, language: .c), in: scope, loading: loading),
-            variadicFrom: variadicFrom
-        )
-    }
-
-    /// Resolves and prepares a C function without blocking the caller's executor.
-    ///
-    /// Image acquisition, search, and call preparation run on a worker. An explicit prepare is optional; lookup joins any required work already in progress. Native invocation is a separate operation.
-    /// - Returns: A reusable function retaining its image and prepared call interface.
-    /// - Throws: The same resolution, representation, and preparation errors as synchronous lookup.
-    public nonisolated func resolveCFunction<Result, each Argument>(
-        named name: String,
-        as signature: ((repeat each Argument) -> Result).Type,
-        variadicFrom: Int? = nil,
-        in scope: ImageSelector = .automatic,
-        loading: ImageLoadingPolicy = .ifNeeded
-    ) async throws -> NativeFunction<Result, repeat each Argument> {
-        try await NativePreparation.run {
-            try self.resolveCFunctionAndWait(
-                named: name,
-                as: signature,
-                variadicFrom: variadicFrom,
-                in: scope,
-                loading: loading
-            )
-        }
-    }
-
-    /// Resolves a C function in an already retained image.
-    ///
-    /// Search and call preparation run synchronously on the caller's thread. An explicit prepare is optional; lookup joins any required work already in progress.
-    ///
-    /// - Parameters:
-    ///   - name: A C linker name without the Mach-O underscore.
-    ///   - signature: A synchronous function type describing all concrete inputs.
-    ///   - variadicFrom: The first anonymous argument index, or nil for a fixed declaration.
-    ///   - image: The retained image whose symbol index can be reused.
-    ///   - loading: Whether to ask dyld to acquire and initialize the image.
-    /// - Returns: A reusable typed function retaining the image.
-    /// - Throws: A resolution error, unsupported representation, or call preparation error.
-    public nonisolated func resolveCFunctionAndWait<Result, each Argument>(
-        named name: String,
-        as signature: ((repeat each Argument) -> Result).Type,
-        variadicFrom: Int? = nil,
-        in image: NativeImage,
-        loading: ImageLoadingPolicy = .ifNeeded
-    ) throws -> NativeFunction<Result, repeat each Argument> {
-        try NativeFunction(
-            symbol: resolver.resolve(.init(name: name, language: .c), in: image, loading: loading),
-            variadicFrom: variadicFrom
-        )
-    }
-
-    /// Resolves and prepares a C function without blocking the caller's executor.
-    ///
-    /// Image acquisition, search, and call preparation run on a worker. An explicit prepare is optional; lookup joins any required work already in progress. Native invocation is a separate operation.
-    /// - Returns: A reusable function retaining its image and prepared call interface.
-    /// - Throws: The same resolution, representation, and preparation errors as synchronous lookup.
-    public nonisolated func resolveCFunction<Result, each Argument>(
-        named name: String,
-        as signature: ((repeat each Argument) -> Result).Type,
-        variadicFrom: Int? = nil,
-        in image: NativeImage,
-        loading: ImageLoadingPolicy = .ifNeeded
-    ) async throws -> NativeFunction<Result, repeat each Argument> {
-        try await NativePreparation.run {
-            try self.resolveCFunctionAndWait(
-                named: name,
-                as: signature,
-                variadicFrom: variadicFrom,
-                in: image,
-                loading: loading
-            )
-        }
-    }
-
-    /// Resolves a C++ free or static function with C-compatible value representations.
-    ///
-    /// The complete demangled declaration selects an overload. It does not establish that the supplied Swift function type matches the native ABI.
-    ///
-    /// Search and call preparation run synchronously on the caller's thread. An explicit prepare is optional; lookup joins any required work already in progress.
-    ///
-    /// - Parameters:
-    ///   - name: A complete demangled C++ declaration.
-    ///   - signature: A synchronous function type describing all concrete inputs.
-    ///   - variadicFrom: The first anonymous argument index, or nil for a fixed declaration.
-    ///   - scope: Images to search; automatic scope considers only loaded images.
-    ///   - loading: Whether an explicit image may be acquired and initialized.
-    /// - Returns: A reusable function retaining its image and prepared signature.
-    /// - Throws: A resolution error, unsupported representation, or call preparation error.
-    public nonisolated func resolveCXXFunctionAndWait<Result, each Argument>(
-        named name: String,
-        as signature: ((repeat each Argument) -> Result).Type,
-        variadicFrom: Int? = nil,
-        in scope: ImageSelector = .automatic,
-        loading: ImageLoadingPolicy = .ifNeeded
-    ) throws -> NativeFunction<Result, repeat each Argument> {
-        try NativeFunction(
+        let declaration = request.declaration
+        return try NativeFunction(
             symbol: resolver.resolve(
-                .init(name: name, language: .cxx),
+                .init(name: declaration.name, language: declaration.language),
                 in: scope,
                 loading: loading
             ),
-            variadicFrom: variadicFrom
+            variadicFrom: declaration.variadicFrom
         )
     }
 
-    /// Resolves and prepares a C-compatible C++ function without blocking the caller's executor.
+    /// Resolves and prepares a C or C-compatible C++ function without blocking
+    /// the caller's executor.
     ///
-    /// Image acquisition, search, and call preparation run on a worker. An explicit prepare is optional; lookup joins any required work already in progress. Native invocation is a separate operation.
-    /// - Returns: A reusable function retaining its image and prepared call interface.
-    /// - Throws: The same resolution, representation, and preparation errors as synchronous lookup.
-    public nonisolated func resolveCXXFunction<Result, each Argument>(
-        named name: String,
-        as signature: ((repeat each Argument) -> Result).Type,
-        variadicFrom: Int? = nil,
+    /// Image acquisition, search, and call preparation run on a worker. An
+    /// explicit prepare is optional; lookup joins any required work already in
+    /// progress. Native invocation is a separate operation.
+    ///
+    /// - Returns: A reusable function retaining its image and prepared signature.
+    /// - Throws: The same errors as synchronous resolution.
+    public nonisolated func resolve<Result, each Argument>(
+        _ request: NativeRequest<NativeFunctionRequest<Result, repeat each Argument>>,
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
     ) async throws -> NativeFunction<Result, repeat each Argument> {
         try await NativePreparation.run {
-            try self.resolveCXXFunctionAndWait(
-                named: name,
-                as: signature,
-                variadicFrom: variadicFrom,
-                in: scope,
-                loading: loading
-            )
+            try self.resolveAndWait(request, in: scope, loading: loading)
         }
     }
 
-    /// Resolves a C-compatible C++ function in an already retained image.
+    /// Resolves a C or C-compatible C++ function using an ordinary Swift function-type metatype.
     ///
-    /// Search and call preparation run synchronously on the caller's thread. An explicit prepare is optional; lookup joins any required work already in progress.
+    /// Search and call preparation run synchronously on the caller's thread.
+    /// An explicit prepare is optional; lookup joins any required work already
+    /// in progress. Nontrivial C++ values and exceptions require a compiler
+    /// adapter.
     ///
     /// - Parameters:
-    ///   - name: A complete demangled C++ declaration.
-    ///   - signature: A synchronous function type describing all concrete inputs.
-    ///   - variadicFrom: The first anonymous argument index, or nil for a fixed declaration.
+    ///   - request: The language, declaration name, and concrete call signature.
     ///   - image: The retained image whose symbol index can be reused.
-    ///   - loading: Whether to ask dyld to acquire and initialize the image.
-    /// - Returns: A reusable typed function retaining the image.
+    ///   - loading: Whether to acquire and initialize an explicit image.
+    /// - Returns: A reusable function retaining its image and prepared signature.
     /// - Throws: A resolution error, unsupported representation, or call preparation error.
-    public nonisolated func resolveCXXFunctionAndWait<Result, each Argument>(
-        named name: String,
-        as signature: ((repeat each Argument) -> Result).Type,
-        variadicFrom: Int? = nil,
+    public nonisolated func resolveAndWait<Result, each Argument>(
+        _ request: NativeRequest<NativeFunctionRequest<Result, repeat each Argument>>,
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeFunction<Result, repeat each Argument> {
-        try NativeFunction(
+        let declaration = request.declaration
+        return try NativeFunction(
             symbol: resolver.resolve(
-                .init(name: name, language: .cxx),
+                .init(name: declaration.name, language: declaration.language),
                 in: image,
                 loading: loading
             ),
-            variadicFrom: variadicFrom
+            variadicFrom: declaration.variadicFrom
         )
     }
 
-    /// Resolves and prepares a C-compatible C++ function without blocking the caller's executor.
+    /// Resolves and prepares a C or C-compatible C++ function without blocking
+    /// the caller's executor.
     ///
-    /// Image acquisition, search, and call preparation run on a worker. An explicit prepare is optional; lookup joins any required work already in progress. Native invocation is a separate operation.
-    /// - Returns: A reusable function retaining its image and prepared call interface.
-    /// - Throws: The same resolution, representation, and preparation errors as synchronous lookup.
-    public nonisolated func resolveCXXFunction<Result, each Argument>(
-        named name: String,
-        as signature: ((repeat each Argument) -> Result).Type,
-        variadicFrom: Int? = nil,
+    /// Image acquisition, search, and call preparation run on a worker. An
+    /// explicit prepare is optional; lookup joins any required work already in
+    /// progress. Native invocation is a separate operation.
+    ///
+    /// - Returns: A reusable function retaining its image and prepared signature.
+    /// - Throws: The same errors as synchronous resolution.
+    public nonisolated func resolve<Result, each Argument>(
+        _ request: NativeRequest<NativeFunctionRequest<Result, repeat each Argument>>,
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
     ) async throws -> NativeFunction<Result, repeat each Argument> {
         try await NativePreparation.run {
-            try self.resolveCXXFunctionAndWait(
-                named: name,
-                as: signature,
-                variadicFrom: variadicFrom,
-                in: image,
-                loading: loading
-            )
+            try self.resolveAndWait(request, in: image, loading: loading)
         }
     }
 }

@@ -73,188 +73,144 @@ public struct DynamicNativeFunction: Sendable {
     }
 }
 
+/// A C or C-compatible C++ function declaration using runtime-known layouts.
+///
+/// Wrap the declaration with `NativeRequest.c` or `NativeRequest.cxx`, then
+/// resolve it with an `ABIRuntime`. Construction does not perform lookup or
+/// validate native layouts; resolution prepares the call and retains its image.
+public struct DynamicNativeFunctionRequest: Sendable {
+    let name: String
+    var language: NativeLanguage
+    let signature: NativeSignature
+
+    /// Describes the explicit arguments and result of a native function.
+    ///
+    /// The signature supplies all concrete layouts and its variadic boundary.
+    /// C names omit the Mach-O underscore. C++ names are complete demangled
+    /// declarations that select an overload. The declaration name does not
+    /// establish that the supplied signature matches the native ABI.
+    public static func function(
+        _ name: String,
+        signature: NativeSignature
+    ) -> Self {
+        Self(name: name, language: .c, signature: signature)
+    }
+}
+
+extension NativeRequest {
+    /// Describes a C function.
+    public static func c(
+        _ declaration: DynamicNativeFunctionRequest
+    ) -> Self where Declaration == DynamicNativeFunctionRequest {
+        var declaration = declaration
+        declaration.language = .c
+        return Self(declaration: declaration)
+    }
+
+    /// Describes a C-compatible C++ free or static function.
+    public static func cxx(
+        _ declaration: DynamicNativeFunctionRequest
+    ) -> Self where Declaration == DynamicNativeFunctionRequest {
+        var declaration = declaration
+        declaration.language = .cxx
+        return Self(declaration: declaration)
+    }
+}
+
 extension ABIRuntime {
-    /// Resolves a C function using runtime-known native layouts.
+    /// Resolves a C or C-compatible C++ function using runtime-known layouts.
     ///
-    /// Search and call preparation run synchronously on the caller's thread. An explicit prepare is optional; lookup joins any required work already in progress.
+    /// Search and call preparation run synchronously on the caller's thread.
+    /// An explicit prepare is optional; lookup joins any required work already
+    /// in progress. Nontrivial C++ values and exceptions require a compiler
+    /// adapter.
     ///
     /// - Parameters:
-    ///   - name: A C linker name without the Mach-O underscore.
-    ///   - signature: The explicit C-compatible parameter and result layouts.
+    ///   - request: The language, declaration name, and concrete call signature.
     ///   - scope: Images to search; automatic scope considers only loaded images.
-    ///   - loading: Whether an explicit image may be acquired and initialized.
-    /// - Returns: A reusable function retaining the image and call interface.
-    /// - Throws: A resolution error or unsupported call layout.
-    public nonisolated func resolveCFunctionAndWait(
-        named name: String,
-        signature: NativeSignature,
+    ///   - loading: Whether to acquire and initialize an explicit image.
+    /// - Returns: A reusable function retaining its image and prepared signature.
+    /// - Throws: A resolution error, unsupported representation, or call preparation error.
+    public nonisolated func resolveAndWait(
+        _ request: NativeRequest<DynamicNativeFunctionRequest>,
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> DynamicNativeFunction {
-        try .init(
-            symbol: resolver.resolve(.init(name: name, language: .c), in: scope, loading: loading),
-            signature: signature
-        )
-    }
-
-    /// Resolves and prepares a C function without blocking the caller's executor.
-    ///
-    /// Image acquisition, search, and call preparation run on a worker. An explicit prepare is optional; lookup joins any required work already in progress. Native invocation is a separate operation.
-    /// - Returns: A reusable function retaining its image and prepared call interface.
-    /// - Throws: The same resolution, representation, and preparation errors as synchronous lookup.
-    public nonisolated func resolveCFunction(
-        named name: String,
-        signature: NativeSignature,
-        in scope: ImageSelector = .automatic,
-        loading: ImageLoadingPolicy = .ifNeeded
-    ) async throws -> DynamicNativeFunction {
-        try await NativePreparation.run {
-            try self.resolveCFunctionAndWait(
-                named: name,
-                signature: signature,
-                in: scope,
-                loading: loading
-            )
-        }
-    }
-
-    /// Resolves a C function in a retained image using runtime-known layouts.
-    ///
-    /// Search and call preparation run synchronously on the caller's thread. An explicit prepare is optional; lookup joins any required work already in progress.
-    ///
-    /// - Parameters:
-    ///   - name: A C linker name without the Mach-O underscore.
-    ///   - signature: The explicit C-compatible parameter and result layouts.
-    ///   - image: The retained image whose symbol index can be reused.
-    ///   - loading: Whether to ask dyld to acquire and initialize the image.
-    /// - Returns: A reusable function retaining the image and call interface.
-    /// - Throws: A resolution error or unsupported call layout.
-    public nonisolated func resolveCFunctionAndWait(
-        named name: String,
-        signature: NativeSignature,
-        in image: NativeImage,
-        loading: ImageLoadingPolicy = .ifNeeded
-    ) throws -> DynamicNativeFunction {
-        try .init(
-            symbol: resolver.resolve(.init(name: name, language: .c), in: image, loading: loading),
-            signature: signature
-        )
-    }
-
-    /// Resolves and prepares a C function without blocking the caller's executor.
-    ///
-    /// Image acquisition, search, and call preparation run on a worker. An explicit prepare is optional; lookup joins any required work already in progress. Native invocation is a separate operation.
-    /// - Returns: A reusable function retaining its image and prepared call interface.
-    /// - Throws: The same resolution, representation, and preparation errors as synchronous lookup.
-    public nonisolated func resolveCFunction(
-        named name: String,
-        signature: NativeSignature,
-        in image: NativeImage,
-        loading: ImageLoadingPolicy = .ifNeeded
-    ) async throws -> DynamicNativeFunction {
-        try await NativePreparation.run {
-            try self.resolveCFunctionAndWait(
-                named: name,
-                signature: signature,
-                in: image,
-                loading: loading
-            )
-        }
-    }
-
-    /// Resolves a C-compatible C++ function using runtime-known native layouts.
-    ///
-    /// Search and call preparation run synchronously on the caller's thread. An explicit prepare is optional; lookup joins any required work already in progress.
-    ///
-    /// - Parameters:
-    ///   - name: A complete demangled C++ declaration.
-    ///   - signature: The explicit C-compatible parameter and result layouts.
-    ///   - scope: Images to search; automatic scope considers only loaded images.
-    ///   - loading: Whether an explicit image may be acquired and initialized.
-    /// - Returns: A reusable function retaining the image and call interface.
-    /// - Throws: A resolution error or unsupported call layout.
-    public nonisolated func resolveCXXFunctionAndWait(
-        named name: String,
-        signature: NativeSignature,
-        in scope: ImageSelector = .automatic,
-        loading: ImageLoadingPolicy = .ifNeeded
-    ) throws -> DynamicNativeFunction {
-        try .init(
+        let declaration = request.declaration
+        return try DynamicNativeFunction(
             symbol: resolver.resolve(
-                .init(name: name, language: .cxx),
+                .init(name: declaration.name, language: declaration.language),
                 in: scope,
                 loading: loading
             ),
-            signature: signature
+            signature: declaration.signature
         )
     }
 
-    /// Resolves and prepares a C-compatible C++ function without blocking the caller's executor.
+    /// Resolves and prepares a C or C-compatible C++ function without blocking
+    /// the caller's executor.
     ///
-    /// Image acquisition, search, and call preparation run on a worker. An explicit prepare is optional; lookup joins any required work already in progress. Native invocation is a separate operation.
-    /// - Returns: A reusable function retaining its image and prepared call interface.
-    /// - Throws: The same resolution, representation, and preparation errors as synchronous lookup.
-    public nonisolated func resolveCXXFunction(
-        named name: String,
-        signature: NativeSignature,
+    /// Image acquisition, search, and call preparation run on a worker. An
+    /// explicit prepare is optional; lookup joins any required work already in
+    /// progress. Native invocation is a separate operation.
+    ///
+    /// - Returns: A reusable function retaining its image and prepared signature.
+    /// - Throws: The same errors as synchronous resolution.
+    public nonisolated func resolve(
+        _ request: NativeRequest<DynamicNativeFunctionRequest>,
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
     ) async throws -> DynamicNativeFunction {
         try await NativePreparation.run {
-            try self.resolveCXXFunctionAndWait(
-                named: name,
-                signature: signature,
-                in: scope,
-                loading: loading
-            )
+            try self.resolveAndWait(request, in: scope, loading: loading)
         }
     }
 
-    /// Resolves a C-compatible C++ function in a retained image using runtime layouts.
+    /// Resolves a C or C-compatible C++ function using runtime-known layouts.
     ///
-    /// Search and call preparation run synchronously on the caller's thread. An explicit prepare is optional; lookup joins any required work already in progress.
+    /// Search and call preparation run synchronously on the caller's thread.
+    /// An explicit prepare is optional; lookup joins any required work already
+    /// in progress. Nontrivial C++ values and exceptions require a compiler
+    /// adapter.
     ///
     /// - Parameters:
-    ///   - name: A complete demangled C++ declaration.
-    ///   - signature: The explicit C-compatible parameter and result layouts.
+    ///   - request: The language, declaration name, and concrete call signature.
     ///   - image: The retained image whose symbol index can be reused.
-    ///   - loading: Whether to ask dyld to acquire and initialize the image.
-    /// - Returns: A reusable function retaining the image and call interface.
-    /// - Throws: A resolution error or unsupported call layout.
-    public nonisolated func resolveCXXFunctionAndWait(
-        named name: String,
-        signature: NativeSignature,
+    ///   - loading: Whether to acquire and initialize an explicit image.
+    /// - Returns: A reusable function retaining its image and prepared signature.
+    /// - Throws: A resolution error, unsupported representation, or call preparation error.
+    public nonisolated func resolveAndWait(
+        _ request: NativeRequest<DynamicNativeFunctionRequest>,
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> DynamicNativeFunction {
-        try .init(
+        let declaration = request.declaration
+        return try DynamicNativeFunction(
             symbol: resolver.resolve(
-                .init(name: name, language: .cxx),
+                .init(name: declaration.name, language: declaration.language),
                 in: image,
                 loading: loading
             ),
-            signature: signature
+            signature: declaration.signature
         )
     }
 
-    /// Resolves and prepares a C-compatible C++ function without blocking the caller's executor.
+    /// Resolves and prepares a C or C-compatible C++ function without blocking
+    /// the caller's executor.
     ///
-    /// Image acquisition, search, and call preparation run on a worker. An explicit prepare is optional; lookup joins any required work already in progress. Native invocation is a separate operation.
-    /// - Returns: A reusable function retaining its image and prepared call interface.
-    /// - Throws: The same resolution, representation, and preparation errors as synchronous lookup.
-    public nonisolated func resolveCXXFunction(
-        named name: String,
-        signature: NativeSignature,
+    /// Image acquisition, search, and call preparation run on a worker. An
+    /// explicit prepare is optional; lookup joins any required work already in
+    /// progress. Native invocation is a separate operation.
+    ///
+    /// - Returns: A reusable function retaining its image and prepared signature.
+    /// - Throws: The same errors as synchronous resolution.
+    public nonisolated func resolve(
+        _ request: NativeRequest<DynamicNativeFunctionRequest>,
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
     ) async throws -> DynamicNativeFunction {
         try await NativePreparation.run {
-            try self.resolveCXXFunctionAndWait(
-                named: name,
-                signature: signature,
-                in: image,
-                loading: loading
-            )
+            try self.resolveAndWait(request, in: image, loading: loading)
         }
     }
 }

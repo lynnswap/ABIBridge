@@ -14,13 +14,21 @@ private func genericStorage<Value: GenericMetric>(
     _ value: Value,
     runtime: ABIRuntime
 ) async throws -> NativeValue {
-    let initialize = try runtime.resolveCFunctionAndWait(
-        named: "ABIGenericRecordInitialize",
-        as: ((UnsafeRawPointer?, UnsafeRawPointer, UnsafeMutableRawPointer) -> Int32).self
+    let initialize = try runtime.resolveAndWait(
+        .c(
+            .function(
+                "ABIGenericRecordInitialize",
+                as: ((UnsafeRawPointer?, UnsafeRawPointer, UnsafeMutableRawPointer) -> Int32).self
+            )
+        )
     )
-    let destroy = try runtime.resolveCFunctionAndWait(
-        named: "ABIGenericRecordDestroy",
-        as: ((UnsafeRawPointer?, UnsafeMutableRawPointer) -> Int32).self
+    let destroy = try runtime.resolveAndWait(
+        .c(
+            .function(
+                "ABIGenericRecordDestroy",
+                as: ((UnsafeRawPointer?, UnsafeMutableRawPointer) -> Int32).self
+            )
+        )
     )
     let layout = try NativeType.opaque(
         named: String(reflecting: GenericRecord<Value>.self),
@@ -52,9 +60,13 @@ private func genericStorage<Value: GenericMetric>(
 
 struct SwiftGenericMetadataTests {
     @Test func metatypeSubstitutionsProduceCanonicalSpecializations() async throws {
-        let resolve = try ABIRuntime.shared.resolveCFunctionAndWait(
-            named: "ABIGenericRecordMetadata",
-            as: ((UnsafeRawPointer?, UnsafeMutablePointer<UnsafeRawPointer?>) -> Int32).self
+        let resolve = try ABIRuntime.shared.resolveAndWait(
+            .c(
+                .function(
+                    "ABIGenericRecordMetadata",
+                    as: ((UnsafeRawPointer?, UnsafeMutablePointer<UnsafeRawPointer?>) -> Int32).self
+                )
+            )
         )
         for (argument, expected): (Any.Type, Any.Type) in [
             (ManagedRecord.self, GenericRecord<ManagedRecord>.self),
@@ -80,9 +92,13 @@ struct SwiftGenericMetadataTests {
     }
 
     @Test func missingMetadataAndUnsatisfiedConstraintsLeaveOutputUntouched() async throws {
-        let resolve = try ABIRuntime.shared.resolveCFunctionAndWait(
-            named: "ABIGenericRecordMetadata",
-            as: ((UnsafeRawPointer?, UnsafeMutablePointer<UnsafeRawPointer?>) -> Int32).self
+        let resolve = try ABIRuntime.shared.resolveAndWait(
+            .c(
+                .function(
+                    "ABIGenericRecordMetadata",
+                    as: ((UnsafeRawPointer?, UnsafeMutablePointer<UnsafeRawPointer?>) -> Int32).self
+                )
+            )
         )
         for (argument, expected): (UnsafeRawPointer?, Int32) in [
             (nil, 1), (metadataPointer(String.self), 2),
@@ -116,9 +132,14 @@ struct SwiftGenericMetadataTests {
 
     @Test func constrainedGenericCallsPreserveManagedAndResilientValues() async throws {
         let runtime = ABIRuntime()
-        let measure = try runtime.resolveCFunctionAndWait(
-            named: "ABIGenericRecordMeasure",
-            as: ((UnsafeRawPointer?, UnsafeRawPointer, UnsafeMutablePointer<Int64>) -> Int32).self
+        let measure = try runtime.resolveAndWait(
+            .c(
+                .function(
+                    "ABIGenericRecordMeasure",
+                    as: ((UnsafeRawPointer?, UnsafeRawPointer, UnsafeMutablePointer<Int64>) -> Int32)
+                        .self
+                )
+            )
         )
         func check<Value: GenericMetric>(_ value: Value) async throws {
             let storage = try await genericStorage(value, runtime: runtime)
@@ -173,9 +194,14 @@ struct SwiftGenericMetadataTests {
     }
 
     @Test func rejectedGenericCallDoesNotInitializeResult() async throws {
-        let initialize = try ABIRuntime.shared.resolveCFunctionAndWait(
-            named: "ABIGenericRecordInitialize",
-            as: ((UnsafeRawPointer?, UnsafeRawPointer, UnsafeMutableRawPointer) -> Int32).self
+        let initialize = try ABIRuntime.shared.resolveAndWait(
+            .c(
+                .function(
+                    "ABIGenericRecordInitialize",
+                    as: ((UnsafeRawPointer?, UnsafeRawPointer, UnsafeMutableRawPointer) -> Int32)
+                        .self
+                )
+            )
         )
         var input: Int64 = 42, output: Int64 = 99
         let status = try withUnsafePointer(to: &input) { input in

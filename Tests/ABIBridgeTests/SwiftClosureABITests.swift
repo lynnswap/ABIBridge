@@ -18,9 +18,8 @@ private func closureStorage<Value>(_ value: Value) throws -> NativeValue {
 
 struct SwiftClosureABITests {
     @Test func noncapturingAndCapturingInputsUseCompilerReabstraction() async throws {
-        let apply = try ABIRuntime.shared.resolveCFunctionAndWait(
-            named: "ABIIntegerClosureApply",
-            as: ((UnsafeRawPointer, Int64) -> Int64).self
+        let apply = try ABIRuntime.shared.resolveAndWait(
+            .c(.function("ABIIntegerClosureApply", as: ((UnsafeRawPointer, Int64) -> Int64).self))
         )
         let bias: Int64 = 7
         let callbacks: [IntegerClosure] = [{ -$0 }, { $0 + bias }]
@@ -36,13 +35,21 @@ struct SwiftClosureABITests {
 
     @Test func nativeCalleeRetainsEscapingCaptureAfterInputRelease() async throws {
         let runtime = ABIRuntime.shared
-        let retain = try runtime.resolveCFunctionAndWait(
-            named: "ABIIntegerClosureRetain",
-            as: ((UnsafeRawPointer) -> UnsafeMutableRawPointer).self
+        let retain = try runtime.resolveAndWait(
+            .c(
+                .function(
+                    "ABIIntegerClosureRetain",
+                    as: ((UnsafeRawPointer) -> UnsafeMutableRawPointer).self
+                )
+            )
         )
-        let call = try runtime.resolveCFunctionAndWait(
-            named: "ABIIntegerClosureCallRetained",
-            as: ((UnsafeRawPointer, Int64) -> Int64).self
+        let call = try runtime.resolveAndWait(
+            .c(
+                .function(
+                    "ABIIntegerClosureCallRetained",
+                    as: ((UnsafeRawPointer, Int64) -> Int64).self
+                )
+            )
         )
         var owner: NativeValue?
         weak var observed: LifetimeToken?
@@ -76,9 +83,13 @@ struct SwiftClosureABITests {
     }
 
     @Test func returnedClosureOutlivesCallAndResultStorage() async throws {
-        let make = try ABIRuntime.shared.resolveCFunctionAndWait(
-            named: "ABIIntegerClosureReturn",
-            as: ((UnsafeRawPointer, Int64, UnsafeMutableRawPointer) -> Void).self
+        let make = try ABIRuntime.shared.resolveAndWait(
+            .c(
+                .function(
+                    "ABIIntegerClosureReturn",
+                    as: ((UnsafeRawPointer, Int64, UnsafeMutableRawPointer) -> Void).self
+                )
+            )
         )
         var callback: IntegerClosure?
         weak var observed: LifetimeToken?
@@ -120,9 +131,13 @@ struct SwiftClosureABITests {
     }
 
     @Test func sendableCallbackKeepsItsConcreteValueContract() async throws {
-        let apply = try ABIRuntime.shared.resolveCFunctionAndWait(
-            named: "ABISendableIntegerClosureApply",
-            as: ((UnsafeRawPointer, Int64) -> Int64).self
+        let apply = try ABIRuntime.shared.resolveAndWait(
+            .c(
+                .function(
+                    "ABISendableIntegerClosureApply",
+                    as: ((UnsafeRawPointer, Int64) -> Int64).self
+                )
+            )
         )
         let bias: Int64 = 7
         let callback: SendableIntegerClosure = { $0 + bias }
@@ -134,9 +149,13 @@ struct SwiftClosureABITests {
     }
 
     @MainActor @Test func isolatedCallbackRunsUnderTheCallersExplicitActorContract() async throws {
-        let apply = try ABIRuntime.shared.resolveCFunctionAndWait(
-            named: "ABIIsolatedIntegerClosureApply",
-            as: ((UnsafeRawPointer, Int64) -> Int64).self
+        let apply = try ABIRuntime.shared.resolveAndWait(
+            .c(
+                .function(
+                    "ABIIsolatedIntegerClosureApply",
+                    as: ((UnsafeRawPointer, Int64) -> Int64).self
+                )
+            )
         )
         var calls = 0
         let callback: IsolatedIntegerClosure = { value in

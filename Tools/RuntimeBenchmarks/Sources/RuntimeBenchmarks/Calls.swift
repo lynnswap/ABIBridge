@@ -124,21 +124,22 @@ struct Benchmark {
         try measure("Swift prepared Hashable generic", n: iterations, delta: 0) {
             try unsafe constrained.unsafeInvoke($0)
         }
-        let c = try runtime.resolveCFunctionAndWait(
-            named: "ABIPerfCAdd",
-            as: ((Int32, Int32) -> Int32).self
+        let c = try runtime.resolveAndWait(
+            .c(.function("ABIPerfCAdd", as: ((Int32, Int32) -> Int32).self))
         )
-        let cpp = try runtime.resolveCXXFunctionAndWait(
-            named: "ABIPerf::add(int, int)",
-            as: ((Int32, Int32) -> Int32).self
+        let cpp = try runtime.resolveAndWait(
+            .cxx(.function("ABIPerf::add(int, int)", as: ((Int32, Int32) -> Int32).self))
         )
-        let pointer = try runtime.resolveCFunctionAndWait(
-            named: "ABIPerfRead",
-            as: ((UnsafePointer<Int64>) -> Int64).self
+        let pointer = try runtime.resolveAndWait(
+            .c(.function("ABIPerfRead", as: ((UnsafePointer<Int64>) -> Int64).self))
         )
-        let dynamic = try runtime.resolveCFunctionAndWait(
-            named: "ABIPerfCAdd",
-            signature: .init(parameters: [.int32, .int32], returns: .int32)
+        let dynamic = try runtime.resolveAndWait(
+            .c(
+                .function(
+                    "ABIPerfCAdd",
+                    signature: .init(parameters: [.int32, .int32], returns: .int32)
+                )
+            )
         )
         try measure("Swift frontend C", n: iterations) {
             Int64(try unsafe c.unsafeInvoke(Int32($0), 7))

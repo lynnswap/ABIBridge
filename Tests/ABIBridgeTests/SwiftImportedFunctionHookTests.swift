@@ -1596,9 +1596,14 @@ struct SwiftImportedFunctionHookTests {
             .swift(.function(module + ".tagSize()", as: (() -> Int).self)),
             in: .path(provider.libraryURL)
         )
-        let oracle = try await runtime.resolveCFunction(
-            named: "ABIDeclaredLifetimeCall",
-            as: ((UnsafeRawPointer, Int64, UnsafeRawPointer, UnsafeRawPointer) -> Int64).self,
+        let oracle = try await runtime.resolve(
+            .c(
+                .function(
+                    "ABIDeclaredLifetimeCall",
+                    as: ((UnsafeRawPointer, Int64, UnsafeRawPointer, UnsafeRawPointer) -> Int64)
+                        .self
+                )
+            ),
             in: .path(caller.libraryURL)
         )
         let hook = try unsafe await function.hookImportedCalls(

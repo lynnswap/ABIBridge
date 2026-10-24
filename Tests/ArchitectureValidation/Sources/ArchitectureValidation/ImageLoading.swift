@@ -18,9 +18,8 @@ import Foundation
         "Fixture starts unloaded"
     )
     do {
-        _ = try runtime.resolveCFunctionAndWait(
-            named: "ABIImageLoadingFixtureValue",
-            as: (() -> Int32).self,
+        _ = try runtime.resolveAndWait(
+            .c(.function("ABIImageLoadingFixtureValue", as: (() -> Int32).self)),
             in: .path(binary),
             loading: .loadedOnly
         )
@@ -30,9 +29,8 @@ import Foundation
     } catch ABIResolutionError.imageNotLoaded {
         checks.append("Loaded-only lookup leaves the fixture unloaded")
     }
-    let value = try runtime.resolveCFunctionAndWait(
-        named: "ABIImageLoadingFixtureValue",
-        as: (() -> Int32).self,
+    let value = try runtime.resolveAndWait(
+        .c(.function("ABIImageLoadingFixtureValue", as: (() -> Int32).self)),
         in: .framework(named: framework)
     )
     try check(
@@ -43,9 +41,8 @@ import Foundation
         ImageSelector.path(binary), .installName("@rpath/\(framework).framework/\(framework)"),
         .installName("@executable_path/\(relative)"), .installName("@loader_path/\(relative)"),
     ] {
-        let count = try runtime.resolveCFunctionAndWait(
-            named: "ABIImageLoadingFixtureConstructorCount",
-            as: (() -> Int32).self,
+        let count = try runtime.resolveAndWait(
+            .c(.function("ABIImageLoadingFixtureConstructorCount", as: (() -> Int32).self)),
             in: target
         )
         try check(

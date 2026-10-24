@@ -68,9 +68,8 @@ private struct CallerNestedRecord: BitwiseCopyable, ABIBridgeValue {
 
 struct CallerDescribedValueTests {
     @Test func layoutOnlyConformanceWorksForCArgumentsAndResults() async throws {
-        let function = try ABIRuntime.shared.resolveCFunctionAndWait(
-            named: "ABICTransformRecord",
-            as: ((CallerRecord) -> CallerRecord).self
+        let function = try ABIRuntime.shared.resolveAndWait(
+            .c(.function("ABICTransformRecord", as: ((CallerRecord) -> CallerRecord).self))
         )
         let input = CallerRecord(value: 2, tag: 3)
         let actual = try unsafe function.unsafeInvoke(input)
@@ -83,9 +82,13 @@ struct CallerDescribedValueTests {
         struct UnregisteredRecord: BitwiseCopyable { var value: Double; var tag: Int8 }
         let layout = try NativeType.structure(named: "caller-supplied", fields: [.double, .int8])
         let input = try NativeValue(copying: UnregisteredRecord(value: 2, tag: 3), as: layout)
-        let call = try ABIRuntime.shared.resolveCFunctionAndWait(
-            named: "ABICTransformRecord",
-            signature: .init(parameters: [layout], returns: layout)
+        let call = try ABIRuntime.shared.resolveAndWait(
+            .c(
+                .function(
+                    "ABICTransformRecord",
+                    signature: .init(parameters: [layout], returns: layout)
+                )
+            )
         )
         let output = try unsafe call.unsafeInvoke(with: [input])
         let actual = try unsafe output.read(as: UnregisteredRecord.self)
@@ -98,9 +101,13 @@ struct CallerDescribedValueTests {
     }
 
     @Test func nestedCallerLayoutsUseTheExistingCCodec() async throws {
-        let function = try ABIRuntime.shared.resolveCFunctionAndWait(
-            named: "ABICTransformNestedRecord",
-            as: ((CallerNestedRecord) -> CallerNestedRecord).self
+        let function = try ABIRuntime.shared.resolveAndWait(
+            .c(
+                .function(
+                    "ABICTransformNestedRecord",
+                    as: ((CallerNestedRecord) -> CallerNestedRecord).self
+                )
+            )
         )
         let actual = try unsafe function.unsafeInvoke(
             CallerNestedRecord(first: CallerRecord(value: 2, tag: 3), second: 4)
@@ -110,9 +117,13 @@ struct CallerDescribedValueTests {
 
     @Test func cxxFreeAndReceiverCallsShareTheSameLayoutContract() async throws {
         let runtime = ABIRuntime.shared
-        let free = try runtime.resolveCXXFunctionAndWait(
-            named: "ABICXXFixture::transformRecord(ABICXXRecord)",
-            as: ((CallerRecord) -> CallerRecord).self
+        let free = try runtime.resolveAndWait(
+            .cxx(
+                .function(
+                    "ABICXXFixture::transformRecord(ABICXXRecord)",
+                    as: ((CallerRecord) -> CallerRecord).self
+                )
+            )
         )
         let actual = try unsafe free.unsafeInvoke(CallerRecord(value: 2, tag: 3))
         #expect(actual.value == 3.5 && actual.tag == 5)
@@ -187,13 +198,16 @@ struct CallerDescribedValueTests {
 
     @Test func rawValuesAndSwiftEnumTagsUseTheirDeclaredLanguageConventions() async throws {
         let runtime = ABIRuntime.shared
-        let c = try runtime.resolveCFunctionAndWait(
-            named: "ABICNextRecordMode",
-            as: ((CallerMode) -> CallerMode).self
+        let c = try runtime.resolveAndWait(
+            .c(.function("ABICNextRecordMode", as: ((CallerMode) -> CallerMode).self))
         )
-        let cxx = try runtime.resolveCXXFunctionAndWait(
-            named: "ABICXXFixture::nextMode(ABICXXFixture::RecordMode)",
-            as: ((CallerMode) -> CallerMode).self
+        let cxx = try runtime.resolveAndWait(
+            .cxx(
+                .function(
+                    "ABICXXFixture::nextMode(ABICXXFixture::RecordMode)",
+                    as: ((CallerMode) -> CallerMode).self
+                )
+            )
         )
         let swift = try await runtime.resolve(
             .swift(

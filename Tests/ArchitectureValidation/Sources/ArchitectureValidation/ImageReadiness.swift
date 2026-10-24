@@ -37,14 +37,12 @@ import Synchronization
         }
     ) { call in try call.proceed() + 7 }
     defer { monitor.invalidate() }
-    let call = try runtime.resolveCFunctionAndWait(
-        named: "ABIReadinessUID",
-        as: (() -> UInt32).self,
+    let call = try runtime.resolveAndWait(
+        .c(.function("ABIReadinessUID", as: (() -> UInt32).self)),
         in: scope
     )
-    let count = try runtime.resolveCFunctionAndWait(
-        named: "ABIReadinessInitializationCount",
-        as: (() -> Int32).self,
+    let count = try runtime.resolveAndWait(
+        .c(.function("ABIReadinessInitializationCount", as: (() -> Int32).self)),
         in: scope
     )
     let deadline = ContinuousClock.now + .seconds(10)
@@ -76,9 +74,8 @@ import Synchronization
     try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: binary)
     let outcome: Result<Void, any Error>
     do {
-        let aliased = try runtime.resolveCFunctionAndWait(
-            named: "ABIReadinessUID",
-            as: (() -> UInt32).self,
+        let aliased = try runtime.resolveAndWait(
+            .c(.function("ABIReadinessUID", as: (() -> UInt32).self)),
             in: .path(alias),
             loading: .loadedOnly
         )

@@ -24,9 +24,8 @@ import Foundation
     }
     for pass in ["cold", "warm"] {
         try await measure("C function \(pass)", repetitions: pass == "warm" ? 100 : 1) {
-            let function = try runtime.resolveCFunctionAndWait(
-                named: "ABIValidationAdd",
-                as: ((Int32, Int32) -> Int32).self
+            let function = try runtime.resolveAndWait(
+                .c(.function("ABIValidationAdd", as: ((Int32, Int32) -> Int32).self))
             )
             guard try unsafe function.unsafeInvoke(20, 22) == 42 else {
                 throw ArchitectureValidationFailure(

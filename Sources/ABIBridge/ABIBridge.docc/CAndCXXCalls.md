@@ -12,6 +12,9 @@ Use a Swift function type to describe the native signature, then prepare a funct
 
 - <doc:CFunctionInvocation>
 - ``NativeFunction``
+- ``NativeFunctionRequest``
+- ``DynamicNativeFunction``
+- ``DynamicNativeFunctionRequest``
 
 ### Object methods
 

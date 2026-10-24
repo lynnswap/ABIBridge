@@ -65,70 +65,26 @@ struct CFunctionInvocationTests {
         let name = cxx ? "ABIFactory::add(int, int)" : "ABIFactoryAdd"
         if dynamic {
             let signature = NativeSignature(parameters: [.int32, .int32], returns: .int32)
-            let function: DynamicNativeFunction
-            if cxx {
-                function = try await runtime.resolveCXXFunction(
-                    named: name,
-                    signature: signature,
-                    in: scope
-                )
-            } else {
-                function = try await runtime.resolveCFunction(
-                    named: name,
-                    signature: signature,
-                    in: scope
-                )
-            }
+            let request =
+                cxx
+                ? NativeRequest.cxx(.function(name, signature: signature))
+                : .c(.function(name, signature: signature))
+            let function = try await runtime.resolve(request, in: scope)
             let arguments = [
                 try NativeValue(copying: Int32(19), as: .int32),
                 try NativeValue(copying: Int32(23), as: .int32),
             ]
             #expect(try unsafe function.unsafeInvoke(with: arguments).read(as: Int32.self) == 42)
-            let retained: DynamicNativeFunction
-            if cxx {
-                retained = try await runtime.resolveCXXFunction(
-                    named: name,
-                    signature: signature,
-                    in: function.symbol.image
-                )
-            } else {
-                retained = try await runtime.resolveCFunction(
-                    named: name,
-                    signature: signature,
-                    in: function.symbol.image
-                )
-            }
+            let retained = try await runtime.resolve(request, in: function.symbol.image)
             #expect(try unsafe retained.unsafeInvoke(with: arguments).read(as: Int32.self) == 42)
         } else {
-            let function: NativeFunction<Int32, Int32, Int32>
-            if cxx {
-                function = try await runtime.resolveCXXFunction(
-                    named: name,
-                    as: ((Int32, Int32) -> Int32).self,
-                    in: scope
-                )
-            } else {
-                function = try await runtime.resolveCFunction(
-                    named: name,
-                    as: ((Int32, Int32) -> Int32).self,
-                    in: scope
-                )
-            }
+            let request =
+                cxx
+                ? NativeRequest.cxx(.function(name, as: ((Int32, Int32) -> Int32).self))
+                : .c(.function(name, as: ((Int32, Int32) -> Int32).self))
+            let function = try await runtime.resolve(request, in: scope)
             #expect(try unsafe function.unsafeInvoke(19, 23) == 42)
-            let retained: NativeFunction<Int32, Int32, Int32>
-            if cxx {
-                retained = try await runtime.resolveCXXFunction(
-                    named: name,
-                    as: ((Int32, Int32) -> Int32).self,
-                    in: function.symbol.image
-                )
-            } else {
-                retained = try await runtime.resolveCFunction(
-                    named: name,
-                    as: ((Int32, Int32) -> Int32).self,
-                    in: function.symbol.image
-                )
-            }
+            let retained = try await runtime.resolve(request, in: function.symbol.image)
             #expect(try unsafe retained.unsafeInvoke(19, 23) == 42)
         }
         MainActor.assertIsolated()
@@ -136,12 +92,16 @@ struct CFunctionInvocationTests {
     #endif
 
     @Test func twentyFixedArgumentsPreserveValuesAndOrder() async throws {
-        let call = try ABIRuntime().resolveCFunctionAndWait(
-            named: "ABICWeightedTwentyArguments",
-            as: ((
-                Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32,
-                Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32
-            ) -> Int32).self
+        let call = try ABIRuntime().resolveAndWait(
+            .c(
+                .function(
+                    "ABICWeightedTwentyArguments",
+                    as: ((
+                        Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32,
+                        Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32, Int32
+                    ) -> Int32).self
+                )
+            )
         )
         #expect(
             try unsafe call.unsafeInvoke(
@@ -175,9 +135,8 @@ struct CFunctionInvocationTests {
             variadicParameters: Array(repeating: .float, count: 20),
             returns: .double
         )
-        let call = try ABIRuntime().resolveCFunctionAndWait(
-            named: "ABICVariadicSum",
-            signature: signature
+        let call = try ABIRuntime().resolveAndWait(
+            .c(.function("ABICVariadicSum", signature: signature))
         )
         let values =
             [try NativeValue(copying: Int32(20), as: .int32)]
@@ -190,9 +149,13 @@ struct CFunctionInvocationTests {
             named: "ABICWideResult",
             fields: Array(repeating: .uint64, count: 12)
         )
-        let call = try ABIRuntime().resolveCFunctionAndWait(
-            named: "ABICMakeWideResult",
-            signature: .init(parameters: [.uint64], returns: result)
+        let call = try ABIRuntime().resolveAndWait(
+            .c(
+                .function(
+                    "ABICMakeWideResult",
+                    signature: .init(parameters: [.uint64], returns: result)
+                )
+            )
         )
         let value = try unsafe call.unsafeInvoke(with: [try .init(copying: UInt64(40), as: .uint64)]
         )
@@ -205,11 +168,16 @@ struct CFunctionInvocationTests {
     }
 
     @Test func variadicPromotionsMatchNativeCalls() async throws {
-        let call = try ABIRuntime().resolveCFunctionAndWait(
-            named: "ABICVariadicMix",
-            as: ((Float, Int32, Int8, UInt16, Bool, Float, UnsafeRawPointer?, CGPoint) -> Double)
-                .self,
-            variadicFrom: 2
+        let call = try ABIRuntime().resolveAndWait(
+            .c(
+                .function(
+                    "ABICVariadicMix",
+                    as: ((Float, Int32, Int8, UInt16, Bool, Float, UnsafeRawPointer?, CGPoint)
+                        -> Double)
+                        .self,
+                    variadicFrom: 2
+                )
+            )
         )
         let point = CGPoint(x: 2, y: 3)
         var token = Int32(0)
@@ -222,19 +190,22 @@ struct CFunctionInvocationTests {
 
     @Test func variadicEmptyAndStackTailsKeepTheirCallingConvention() async throws {
         let runtime = ABIRuntime()
-        let empty = try runtime.resolveCFunctionAndWait(
-            named: "ABICVariadicSum",
-            as: ((Int32) -> Double).self,
-            variadicFrom: 1
+        let empty = try runtime.resolveAndWait(
+            .c(.function("ABICVariadicSum", as: ((Int32) -> Double).self, variadicFrom: 1))
         )
         #expect(try unsafe empty.unsafeInvoke(0) == 0)
-        let stack = try runtime.resolveCFunctionAndWait(
-            named: "ABICVariadicSum",
-            as: ((
-                Int32, Float, Double, Float, Double, Float, Double, Float, Double, Double, Double,
-                Float, Double
-            ) -> Double).self,
-            variadicFrom: 1
+        let stack = try runtime.resolveAndWait(
+            .c(
+                .function(
+                    "ABICVariadicSum",
+                    as: ((
+                        Int32, Float, Double, Float, Double, Float, Double, Float, Double, Double,
+                        Double,
+                        Float, Double
+                    ) -> Double).self,
+                    variadicFrom: 1
+                )
+            )
         )
         #expect(
             try unsafe stack.unsafeInvoke(12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
@@ -248,9 +219,8 @@ struct CFunctionInvocationTests {
             variadicParameters: [.float, .double],
             returns: .double
         )
-        let call = try ABIRuntime().resolveCFunctionAndWait(
-            named: "ABICVariadicSum",
-            signature: signature
+        let call = try ABIRuntime().resolveAndWait(
+            .c(.function("ABICVariadicSum", signature: signature))
         )
         #expect(signature.fixedParameterCount == 1 && signature.parameters.count == 3)
         let values = [
@@ -259,9 +229,13 @@ struct CFunctionInvocationTests {
             try NativeValue(copying: Double(2.5), as: .double),
         ]
         #expect(try unsafe call.unsafeInvoke(with: values).read(as: Double.self) == 4)
-        let empty = try ABIRuntime().resolveCFunctionAndWait(
-            named: "ABICVariadicSum",
-            signature: .init(parameters: [.int32], variadicParameters: [], returns: .double)
+        let empty = try ABIRuntime().resolveAndWait(
+            .c(
+                .function(
+                    "ABICVariadicSum",
+                    signature: .init(parameters: [.int32], variadicParameters: [], returns: .double)
+                )
+            )
         )
         #expect(
             try unsafe empty.unsafeInvoke(with: [try .init(copying: Int32(0), as: .int32)]).read(
@@ -273,10 +247,14 @@ struct CFunctionInvocationTests {
     @Test func invalidVariadicBoundariesFailPreparation() async throws {
         for boundary in [-1, 0, 2] {
             #expect(throws: (any Error).self) {
-                _ = try ABIRuntime().resolveCFunctionAndWait(
-                    named: "ABICVariadicSum",
-                    as: ((Int32) -> Double).self,
-                    variadicFrom: boundary
+                _ = try ABIRuntime().resolveAndWait(
+                    .c(
+                        .function(
+                            "ABICVariadicSum",
+                            as: ((Int32) -> Double).self,
+                            variadicFrom: boundary
+                        )
+                    )
                 )
             }
         }
@@ -284,31 +262,30 @@ struct CFunctionInvocationTests {
 
     @Test func zeroNarrowAndBooleanResults() async throws {
         let runtime = ABIRuntime()
-        let answer = try runtime.resolveCFunctionAndWait(
-            named: "ABICAnswer",
-            as: (() -> Int32).self
-        )
+        let answer = try runtime.resolveAndWait(.c(.function("ABICAnswer", as: (() -> Int32).self)))
         #expect(try unsafe answer.unsafeInvoke() == ABICAnswer())
-        let negative = try runtime.resolveCFunctionAndWait(
-            named: "ABICNegative",
-            as: (() -> Int8).self
+        let negative = try runtime.resolveAndWait(
+            .c(.function("ABICNegative", as: (() -> Int8).self))
         )
         #expect(try unsafe negative.unsafeInvoke() == ABICNegative())
-        let negate = try runtime.resolveCFunctionAndWait(
-            named: "ABICNegate",
-            as: ((Bool) -> Bool).self
+        let negate = try runtime.resolveAndWait(
+            .c(.function("ABICNegate", as: ((Bool) -> Bool).self))
         )
         #expect(try unsafe negate.unsafeInvoke(false) == ABICNegate(false))
         #expect(try unsafe negate.unsafeInvoke(true) == ABICNegate(true))
     }
 
     @Test func twelveMixedArguments() async throws {
-        let function = try ABIRuntime.shared.resolveCFunctionAndWait(
-            named: "ABICMixed",
-            as: ((
-                Int8, UInt16, Int32, UInt64, Float, Double, Bool, UnsafeRawPointer?,
-                Int64, Double, UInt, Int32
-            ) -> Double).self
+        let function = try ABIRuntime.shared.resolveAndWait(
+            .c(
+                .function(
+                    "ABICMixed",
+                    as: ((
+                        Int8, UInt16, Int32, UInt64, Float, Double, Bool, UnsafeRawPointer?,
+                        Int64, Double, UInt, Int32
+                    ) -> Double).self
+                )
+            )
         )
         var token: Int32 = 0
         try withUnsafePointer(to: &token) { pointer in
@@ -335,24 +312,20 @@ struct CFunctionInvocationTests {
     @Test func importedCValueLayouts() async throws {
         let runtime = ABIRuntime()
         let rect = CGRect(x: 1, y: 2, width: 3, height: 4)
-        let rectangle = try runtime.resolveCFunctionAndWait(
-            named: "ABICRect",
-            as: ((CGRect) -> CGRect).self
+        let rectangle = try runtime.resolveAndWait(
+            .c(.function("ABICRect", as: ((CGRect) -> CGRect).self))
         )
         #expect(try unsafe rectangle.unsafeInvoke(rect) == ABICRect(rect))
-        let point = try runtime.resolveCFunctionAndWait(
-            named: "ABICPoint",
-            as: ((CGPoint) -> CGPoint).self
+        let point = try runtime.resolveAndWait(
+            .c(.function("ABICPoint", as: ((CGPoint) -> CGPoint).self))
         )
         #expect(try unsafe point.unsafeInvoke(rect.origin) == ABICPoint(rect.origin))
-        let size = try runtime.resolveCFunctionAndWait(
-            named: "ABICSize",
-            as: ((CGSize) -> CGSize).self
+        let size = try runtime.resolveAndWait(
+            .c(.function("ABICSize", as: ((CGSize) -> CGSize).self))
         )
         #expect(try unsafe size.unsafeInvoke(rect.size) == ABICSize(rect.size))
-        let range = try runtime.resolveCFunctionAndWait(
-            named: "ABICRange",
-            as: ((NSRange) -> NSRange).self
+        let range = try runtime.resolveAndWait(
+            .c(.function("ABICRange", as: ((NSRange) -> NSRange).self))
         )
         let interval = NSRange(location: 2, length: 3)
         #expect(try unsafe range.unsafeInvoke(interval) == ABICRange(interval))
@@ -360,13 +333,16 @@ struct CFunctionInvocationTests {
 
     @Test func optionalPointersAndVoidResults() async throws {
         let runtime = ABIRuntime()
-        let echo = try runtime.resolveCFunctionAndWait(
-            named: "ABICPointer",
-            as: ((UnsafeMutablePointer<Int32>?) -> UnsafeMutablePointer<Int32>?).self
+        let echo = try runtime.resolveAndWait(
+            .c(
+                .function(
+                    "ABICPointer",
+                    as: ((UnsafeMutablePointer<Int32>?) -> UnsafeMutablePointer<Int32>?).self
+                )
+            )
         )
-        let store = try runtime.resolveCFunctionAndWait(
-            named: "ABICStore",
-            as: ((UnsafeMutablePointer<Int32>) -> Void).self
+        let store = try runtime.resolveAndWait(
+            .c(.function("ABICStore", as: ((UnsafeMutablePointer<Int32>) -> Void).self))
         )
         var value: Int32 = 0
         try withUnsafeMutablePointer(to: &value) { pointer in
@@ -376,26 +352,37 @@ struct CFunctionInvocationTests {
         }
         #expect(value == 42)
         #expect(try unsafe echo.unsafeInvoke(nil) == nil)
-        let nonoptional = try runtime.resolveCFunctionAndWait(
-            named: "ABICPointer",
-            as: ((UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer).self
+        let nonoptional = try runtime.resolveAndWait(
+            .c(
+                .function(
+                    "ABICPointer",
+                    as: ((UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer).self
+                )
+            )
         )
         #expect(throws: ABIInvocationError.self) { try unsafe nonoptional.unsafeInvoke(nil) }
     }
 
     @Test func unmanagedReferencesPreserveExplicitCoreFoundationOwnership() async throws {
         let runtime = ABIRuntime()
-        let echo = try runtime.resolveCFunctionAndWait(
-            named: "ABICEchoCFValue",
-            as: ((Unmanaged<NSObject>?) -> Unmanaged<NSObject>?).self
+        let echo = try runtime.resolveAndWait(
+            .c(
+                .function(
+                    "ABICEchoCFValue",
+                    as: ((Unmanaged<NSObject>?) -> Unmanaged<NSObject>?).self
+                )
+            )
         )
-        let retain = try runtime.resolveCFunctionAndWait(
-            named: "ABICRetainCFValue",
-            as: ((Unmanaged<NSObject>) -> Unmanaged<NSObject>).self
+        let retain = try runtime.resolveAndWait(
+            .c(
+                .function(
+                    "ABICRetainCFValue",
+                    as: ((Unmanaged<NSObject>) -> Unmanaged<NSObject>).self
+                )
+            )
         )
-        let consume = try runtime.resolveCFunctionAndWait(
-            named: "ABICConsumeCFValue",
-            as: ((Unmanaged<NSObject>) -> Void).self
+        let consume = try runtime.resolveAndWait(
+            .c(.function("ABICConsumeCFValue", as: ((Unmanaged<NSObject>) -> Void).self))
         )
         let fixture = ABIOwnershipFixture()
         weak var observed: NSObject?
@@ -417,9 +404,8 @@ struct CFunctionInvocationTests {
     }
 
     @Test func preparedHandleCanCrossActorsAndBeReused() async throws {
-        let function = try ABIRuntime.shared.resolveCFunctionAndWait(
-            named: "ABICIncrement",
-            as: ((Int32) -> Int32).self
+        let function = try ABIRuntime.shared.resolveAndWait(
+            .c(.function("ABICIncrement", as: ((Int32) -> Int32).self))
         )
         #expect(ABICIncrement(1) == 2)
         try await withThrowingTaskGroup(of: Int32.self) { group in
@@ -435,15 +421,14 @@ struct CFunctionInvocationTests {
     @Test func unsupportedRepresentationsAndMissingNamesThrow() async throws {
         let runtime = ABIRuntime()
         #expect(throws: ABIResolutionError.self) {
-            _ = try runtime.resolveCFunctionAndWait(named: "ABICAnswer", as: (() -> String).self)
+            _ = try runtime.resolveAndWait(.c(.function("ABICAnswer", as: (() -> String).self)))
         }
         #expect(throws: ABIResolutionError.self) {
-            _ = try runtime.resolveCFunctionAndWait(named: "ABICAnswer", as: (() -> Int32?).self)
+            _ = try runtime.resolveAndWait(.c(.function("ABICAnswer", as: (() -> Int32?).self)))
         }
         #expect(throws: ABIResolutionError.self) {
-            _ = try runtime.resolveCFunctionAndWait(
-                named: "ABICAnswer",
-                as: ((NSObject) -> Int32).self
+            _ = try runtime.resolveAndWait(
+                .c(.function("ABICAnswer", as: ((NSObject) -> Int32).self))
             )
         }
         #expect(
@@ -451,9 +436,8 @@ struct CFunctionInvocationTests {
                 .init(name: "ABIAbsentCFunction", language: .c)
             )
         ) {
-            _ = try runtime.resolveCFunctionAndWait(
-                named: "ABIAbsentCFunction",
-                as: (() -> Void).self
+            _ = try runtime.resolveAndWait(
+                .c(.function("ABIAbsentCFunction", as: (() -> Void).self))
             )
         }
     }

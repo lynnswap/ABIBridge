@@ -331,14 +331,17 @@ func prepare(
     defer { dlclose(original) }
     let runtime = ABIRuntime()
     let scope = ImageSelector.path(URL(fileURLWithPath: path))
-    let argumentType = try runtime.resolveCFunctionAndWait(
-        named: "ABIGenericResilientArgument",
-        as: (() -> UnsafeRawPointer).self
+    let argumentType = try runtime.resolveAndWait(
+        .c(.function("ABIGenericResilientArgument", as: (() -> UnsafeRawPointer).self))
     )
     let argument = try unsafe argumentType.unsafeInvoke()
-    let metadata = try runtime.resolveCFunctionAndWait(
-        named: "ABIGenericRecordMetadata",
-        as: ((UnsafeRawPointer?, UnsafeMutablePointer<UnsafeRawPointer?>) -> Int32).self,
+    let metadata = try runtime.resolveAndWait(
+        .c(
+            .function(
+                "ABIGenericRecordMetadata",
+                as: ((UnsafeRawPointer?, UnsafeMutablePointer<UnsafeRawPointer?>) -> Int32).self
+            )
+        ),
         in: scope
     )
     var first: UnsafeRawPointer?, repeated: UnsafeRawPointer?
@@ -349,10 +352,15 @@ func prepare(
         try unsafe metadata.unsafeInvoke(argument, $0)
     }
     precondition(firstStatus == 0 && repeatedStatus == 0 && first != nil && first == repeated)
-    let layout = try runtime.resolveCFunctionAndWait(
-        named: "ABIGenericRecordLayout",
-        as: ((UnsafeRawPointer?, UnsafeMutablePointer<Int>, UnsafeMutablePointer<Int>) -> Int32)
-            .self,
+    let layout = try runtime.resolveAndWait(
+        .c(
+            .function(
+                "ABIGenericRecordLayout",
+                as: ((UnsafeRawPointer?, UnsafeMutablePointer<Int>, UnsafeMutablePointer<Int>)
+                    -> Int32)
+                    .self
+            )
+        ),
         in: scope
     )
     var stride = 0, alignment = 0
@@ -362,29 +370,45 @@ func prepare(
         }
     }
     precondition(layoutStatus == 0)
-    let create = try runtime.resolveCFunctionAndWait(
-        named: "ABIResilientRecordCreate",
-        as: ((Int64, UnsafeMutablePointer<Int32>) -> UnsafeMutableRawPointer).self,
+    let create = try runtime.resolveAndWait(
+        .c(
+            .function(
+                "ABIResilientRecordCreate",
+                as: ((Int64, UnsafeMutablePointer<Int32>) -> UnsafeMutableRawPointer).self
+            )
+        ),
         in: scope
     )
-    let destroyInput = try runtime.resolveCFunctionAndWait(
-        named: "ABIResilientRecordDestroy",
-        as: ((UnsafeMutableRawPointer) -> Void).self,
+    let destroyInput = try runtime.resolveAndWait(
+        .c(.function("ABIResilientRecordDestroy", as: ((UnsafeMutableRawPointer) -> Void).self)),
         in: scope
     )
-    let initialize = try runtime.resolveCFunctionAndWait(
-        named: "ABIGenericRecordInitialize",
-        as: ((UnsafeRawPointer?, UnsafeRawPointer, UnsafeMutableRawPointer) -> Int32).self,
+    let initialize = try runtime.resolveAndWait(
+        .c(
+            .function(
+                "ABIGenericRecordInitialize",
+                as: ((UnsafeRawPointer?, UnsafeRawPointer, UnsafeMutableRawPointer) -> Int32).self
+            )
+        ),
         in: scope
     )
-    let destroy = try runtime.resolveCFunctionAndWait(
-        named: "ABIGenericRecordDestroy",
-        as: ((UnsafeRawPointer?, UnsafeMutableRawPointer) -> Int32).self,
+    let destroy = try runtime.resolveAndWait(
+        .c(
+            .function(
+                "ABIGenericRecordDestroy",
+                as: ((UnsafeRawPointer?, UnsafeMutableRawPointer) -> Int32).self
+            )
+        ),
         in: scope
     )
-    let measure = try runtime.resolveCFunctionAndWait(
-        named: "ABIGenericRecordMeasure",
-        as: ((UnsafeRawPointer?, UnsafeRawPointer, UnsafeMutablePointer<Int64>) -> Int32).self,
+    let measure = try runtime.resolveAndWait(
+        .c(
+            .function(
+                "ABIGenericRecordMeasure",
+                as: ((UnsafeRawPointer?, UnsafeRawPointer, UnsafeMutablePointer<Int64>) -> Int32)
+                    .self
+            )
+        ),
         in: scope
     )
     let input = unsafe NativeValue(

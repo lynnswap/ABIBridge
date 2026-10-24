@@ -12,9 +12,10 @@ struct RuntimePreparationTests {
         let fixture = try FixtureLibrary(load: false)
         defer { fixture.cleanup() }
         let runtime = ABIRuntime()
-        let add = try runtime.resolveCXXFunctionAndWait(
-            named: fixture.namespace + "::add(int, int)",
-            as: ((Int32, Int32) -> Int32).self,
+        let add = try runtime.resolveAndWait(
+            .cxx(
+                .function(fixture.namespace + "::add(int, int)", as: ((Int32, Int32) -> Int32).self)
+            ),
             in: .path(fixture.libraryURL)
         )
 
@@ -148,21 +149,14 @@ struct RuntimePreparationTests {
         let runtime = ABIRuntime()
         let name = fixture.namespace + "::add(int, int)"
         let image = ImageSelector.path(fixture.libraryURL)
+        let request = NativeRequest.cxx(.function(name, as: ((Int32, Int32) -> Int32).self))
         let preparation = Task {
             try await runtime.prepare {
-                try $0.resolveCXXFunctionAndWait(
-                    named: name,
-                    as: ((Int32, Int32) -> Int32).self,
-                    in: image
-                )
+                try $0.resolveAndWait(request, in: image)
             }
         }
 
-        let demanded = try runtime.resolveCXXFunctionAndWait(
-            named: name,
-            as: ((Int32, Int32) -> Int32).self,
-            in: image
-        )
+        let demanded = try runtime.resolveAndWait(request, in: image)
         #expect(try unsafe demanded.unsafeInvoke(19, 23) == 42)
         let prepared = try await preparation.value
         #expect(try unsafe prepared.unsafeInvoke(19, 23) == 42)
@@ -182,9 +176,8 @@ struct RuntimePreparationTests {
         defer { release.signal() }
         let preparation = Task {
             try await runtime.prepare { runtime in
-                let function = try runtime.resolveCXXFunctionAndWait(
-                    named: name,
-                    as: ((Int32, Int32) -> Int32).self,
+                let function = try runtime.resolveAndWait(
+                    .cxx(.function(name, as: ((Int32, Int32) -> Int32).self)),
                     in: image
                 )
                 ready.continuation.yield(())
@@ -198,15 +191,13 @@ struct RuntimePreparationTests {
 
         let function: NativeFunction<Int32, Int32, Int32>
         if asynchronous {
-            function = try await runtime.resolveCXXFunction(
-                named: name,
-                as: ((Int32, Int32) -> Int32).self,
+            function = try await runtime.resolve(
+                .cxx(.function(name, as: ((Int32, Int32) -> Int32).self)),
                 in: image
             )
         } else {
-            function = try runtime.resolveCXXFunctionAndWait(
-                named: name,
-                as: ((Int32, Int32) -> Int32).self,
+            function = try runtime.resolveAndWait(
+                .cxx(.function(name, as: ((Int32, Int32) -> Int32).self)),
                 in: image
             )
         }
@@ -522,9 +513,10 @@ struct RuntimePreparationTests {
             #expect(declaration == missing)
         }
 
-        let demanded = try runtime.resolveCXXFunctionAndWait(
-            named: fixture.namespace + "::add(int, int)",
-            as: ((Int32, Int32) -> Int32).self,
+        let demanded = try runtime.resolveAndWait(
+            .cxx(
+                .function(fixture.namespace + "::add(int, int)", as: ((Int32, Int32) -> Int32).self)
+            ),
             in: image
         )
         #expect(try unsafe demanded.unsafeInvoke(19, 23) == 42)

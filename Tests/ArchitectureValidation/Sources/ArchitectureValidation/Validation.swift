@@ -544,52 +544,62 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         try check(privateObserved == nil, "Private Swift receiver release")
         checks += try await validateSwiftGenericReceivers()
     case "ffi":
-        let add = try runtime.resolveCFunctionAndWait(
-            named: "ABIValidationAdd",
-            as: ((Int32, Int32) -> Int32).self
+        let add = try runtime.resolveAndWait(
+            .c(.function("ABIValidationAdd", as: ((Int32, Int32) -> Int32).self))
         )
         try check(
             unsafe add.unsafeInvoke(20, 22) == ABIValidationAdd(20, 22),
             "libffi signed function call"
         )
-        let promoted = try runtime.resolveCFunctionAndWait(
-            named: "ABIValidationVariadicPromotions",
-            as: ((Int32, Float, Int8, UInt16, Bool) -> Double).self,
-            variadicFrom: 1
+        let promoted = try runtime.resolveAndWait(
+            .c(
+                .function(
+                    "ABIValidationVariadicPromotions",
+                    as: ((Int32, Float, Int8, UInt16, Bool) -> Double).self,
+                    variadicFrom: 1
+                )
+            )
         )
         try check(
             try unsafe promoted.unsafeInvoke(40, 1.5, -8, 65500, true)
                 == ABIValidationVariadicOracle(40, 1.5, -8, 65500, true),
             "Variadic scalar promotions match the compiler calling convention"
         )
-        let empty = try runtime.resolveCFunctionAndWait(
-            named: "ABIValidationVariadicSum",
-            as: ((Int32) -> Double).self,
-            variadicFrom: 1
+        let empty = try runtime.resolveAndWait(
+            .c(.function("ABIValidationVariadicSum", as: ((Int32) -> Double).self, variadicFrom: 1))
         )
         try check(
             try unsafe empty.unsafeInvoke(0) == 0,
             "Variadic declarations accept an empty anonymous tail"
         )
-        let stack = try runtime.resolveCFunctionAndWait(
-            named: "ABIValidationVariadicSum",
-            as: ((
-                Int32, Float, Double, Float, Double, Float, Double, Float, Double, Double, Double,
-                Float, Double
-            ) -> Double).self,
-            variadicFrom: 1
+        let stack = try runtime.resolveAndWait(
+            .c(
+                .function(
+                    "ABIValidationVariadicSum",
+                    as: ((
+                        Int32, Float, Double, Float, Double, Float, Double, Float, Double, Double,
+                        Double,
+                        Float, Double
+                    ) -> Double).self,
+                    variadicFrom: 1
+                )
+            )
         )
         try check(
             try unsafe stack.unsafeInvoke(12, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
                 == ABIValidationVariadicStackOracle(),
             "Variadic register and stack tails match compiler calls"
         )
-        let runtimeCall = try runtime.resolveCFunctionAndWait(
-            named: "ABIValidationVariadicSum",
-            signature: .init(
-                parameters: [.int32],
-                variadicParameters: [.float, .double],
-                returns: .double
+        let runtimeCall = try runtime.resolveAndWait(
+            .c(
+                .function(
+                    "ABIValidationVariadicSum",
+                    signature: .init(
+                        parameters: [.int32],
+                        variadicParameters: [.float, .double],
+                        returns: .double
+                    )
+                )
             )
         )
         let runtimeResult = try unsafe runtimeCall.unsafeInvoke(with: [
@@ -605,9 +615,13 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
             named: "ABIValidationLarge",
             fields: Array(repeating: .int64, count: 8)
         )
-        let shift = try runtime.resolveCFunctionAndWait(
-            named: "ABIValidationShiftLarge",
-            signature: NativeSignature(parameters: [largeType], returns: largeType)
+        let shift = try runtime.resolveAndWait(
+            .c(
+                .function(
+                    "ABIValidationShiftLarge",
+                    signature: NativeSignature(parameters: [largeType], returns: largeType)
+                )
+            )
         )
         let input = NativeValue(type: largeType) { bytes in
             for index in 0..<8 {

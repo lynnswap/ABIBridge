@@ -17,10 +17,15 @@ private func invokeErrorAdapter<Value, Failure: Error, Owner: AnyObject>(
     result: Value.Type,
     failure: Failure.Type
 ) async throws -> Result<Value, Failure> {
-    let call = try ABIRuntime.shared.resolveCFunctionAndWait(
-        named: name,
-        as: ((UnsafeRawPointer, Bool, UnsafeMutableRawPointer, UnsafeMutableRawPointer) -> Bool)
-            .self
+    let call = try ABIRuntime.shared.resolveAndWait(
+        .c(
+            .function(
+                name,
+                as: ((UnsafeRawPointer, Bool, UnsafeMutableRawPointer, UnsafeMutableRawPointer)
+                    -> Bool)
+                    .self
+            )
+        )
     )
     let success = UnsafeMutablePointer<Value>.allocate(capacity: 1)
     let failure = UnsafeMutablePointer<Failure>.allocate(capacity: 1)
@@ -277,10 +282,15 @@ struct SwiftErrorABITests {
     }
 
     @Test func errorDoesNotInitializeTheNormalResultBuffer() async throws {
-        let call = try ABIRuntime.shared.resolveCFunctionAndWait(
-            named: "ABIManagedErrorCall",
-            as: ((UnsafeRawPointer, Bool, UnsafeMutableRawPointer, UnsafeMutableRawPointer) -> Bool)
-                .self
+        let call = try ABIRuntime.shared.resolveAndWait(
+            .c(
+                .function(
+                    "ABIManagedErrorCall",
+                    as: ((UnsafeRawPointer, Bool, UnsafeMutableRawPointer, UnsafeMutableRawPointer)
+                        -> Bool)
+                        .self
+                )
+            )
         )
         let output = UnsafeMutableRawPointer.allocate(
             byteCount: MemoryLayout<String>.stride,

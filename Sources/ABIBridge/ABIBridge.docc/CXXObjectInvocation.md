@@ -26,7 +26,7 @@ The storage address becomes `this`. Bind the object's own storage, even when ano
 
 Supply member declarations relative to the class, including parameter types and qualifiers such as `current() const`. The runtime reuses its image and owner indexes across lookups. Framework, path, and retained-image scopes are available through `cxxObject(_:typeNamed:in:)`.
 
-A direct method handle calls the resolved implementation. For a virtual override, use a table-selected method. The supplied storage must represent a live object of the declared type or its correctly adjusted base subobject. Static members use `resolveCXXFunction` or `resolveCXXFunctionAndWait` without a receiver.
+A direct method handle calls the resolved implementation. For a virtual override, use a table-selected method. The supplied storage must represent a live object of the declared type or its correctly adjusted base subobject. Static members use `.cxx(.function(...))` with `runtime.resolve` or `runtime.resolveAndWait`, without a receiver.
 
 ## Resolve without blocking the caller
 
