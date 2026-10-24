@@ -91,6 +91,41 @@ final class SymbolResolver: Sendable {
             ).map(SwiftCandidate.init)
         }
     }
+    func swiftTypeIdentity(
+        of metadata: Any.Type,
+        in image: NativeImage
+    ) throws -> RuntimeSwiftTypeIdentity {
+        try withRuntimeErrors {
+            try RuntimeSwiftTypeIdentity(
+                metadata: metadata,
+                in: image.runtimeValue,
+                resolver: runtime
+            )
+        }
+    }
+
+    /// The candidates of a member of `owner`, whose records `match` accepts.
+    func swiftMemberCandidates(
+        _ match: SwiftMemberMatch,
+        owner: String,
+        in image: NativeImage?,
+        loading: ImageLoadingPolicy = .loadedOnly,
+        module: String? = nil,
+        extensionsOnly: Bool = false,
+        includingSharedCache: Bool = false
+    ) throws -> [SwiftCandidate] {
+        try withRuntimeErrors {
+            try runtime.swiftMemberCandidates(
+                match,
+                owner: owner,
+                in: image?.runtimeValue,
+                loading: loading.runtimeValue,
+                module: module,
+                extensionsOnly: extensionsOnly,
+                includingSharedCache: includingSharedCache
+            ).map(SwiftCandidate.init)
+        }
+    }
     func swiftWitnesses(
         ofConformanceAt descriptor: UnsafeRawPointer,
         in image: NativeImage

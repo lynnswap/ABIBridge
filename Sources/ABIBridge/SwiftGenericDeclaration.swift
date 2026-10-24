@@ -528,24 +528,6 @@ indirect enum SwiftFormalType: Sendable, Equatable {
     }
 }
 
-/// A lookup key preserves the member and labels while its bound signature is checked separately. This lets ordinary member names select generic entries.
-extension SwiftMemberLookup {
-    static func qualifiedName(
-        _ member: String,
-        owner: String,
-        isStatic: Bool = false
-    ) throws -> String {
-        guard isStatic || !member.hasPrefix("static ") else {
-            throw ABIResolutionError.unsupportedDeclaration(
-                "A static declaration requires a static member lookup."
-            )
-        }
-        let name = isQualified(member) ? member : owner + "." + member
-        return isStatic && !name.hasPrefix("static ") ? "static " + name : name
-    }
-
-}
-
 extension SwiftFormalSyntax {
     static func failure(in effects: String) throws -> SwiftFormalType? {
         if let range = effects.range(of: "throws(") {

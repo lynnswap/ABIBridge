@@ -1,4 +1,11 @@
+#if DEBUG
+@testable import ABIBridge
+#else
 import ABIBridge
+#endif
+import ABIBridgeCore
+import ABIBridgeRuntime
+import ABIBridgeTestSupport
 import Foundation
 import ManagedSwiftFixtures
 import Synchronization
@@ -72,6 +79,36 @@ struct SwiftKeyPathTests {
         #expect(!value.isConsumed)
     }
 
+    @Test func constrainedExistentialPropertiesPreserveIdentityAndWriteback() throws {
+        let runtime = ABIRuntime()
+        let root = try runtime.resolveSwiftTypeAndWait(
+            named: "ManagedSwiftFixtures.RuntimeKeyPathSequenceRoot"
+        )
+        let getter = try root.resolveAndWait(.getter("sequence", as: (() -> NativeSwiftValue).self))
+        let sequence = try unsafe getter.unsafeInvoke(on: RuntimeKeyPathSequenceRoot())
+        let value = try root.resolveWritableKeyPathAndWait(
+            named: "sequence",
+            valueType: sequence.type
+        )
+        let path = try value.copy().take(
+            as: WritableKeyPath<RuntimeKeyPathSequenceRoot, any Sequence<Int>>.self
+        )
+        #expect(path == \RuntimeKeyPathSequenceRoot.sequence)
+        var receiver = RuntimeKeyPathSequenceRoot()
+        receiver[keyPath: path] = [2, 3]
+        #expect(Array(receiver.sequence) == [2, 3])
+        let otherGetter = try root.resolveAndWait(
+            .getter("otherSequence", as: (() -> NativeSwiftValue).self)
+        )
+        let other = try unsafe otherGetter.unsafeInvoke(on: RuntimeKeyPathSequenceRoot())
+        #expect {
+            try root.resolveWritableKeyPathAndWait(named: "sequence", valueType: other.type)
+        } throws: { error in
+            guard case ABIResolutionError.signatureMismatch = error else { return false }
+            return true
+        }
+    }
+
     @Test func extensionPropertyUsesItsOwnIdentityAndImplementation() throws {
         let runtime = ABIRuntime()
         let root = try runtime.resolveSwiftTypeAndWait(named: "Swift.String")
@@ -92,6 +129,236 @@ struct SwiftKeyPathTests {
             #expect(writeRuntimeExtensionPayload(through: path, text: "updated") == "updated!")
         }
     }
+
+    @Test func propertiesOfTypesDeclaredInExtensionsKeepTheirOwnerContext() throws {
+        let runtime = ABIRuntime()
+        let owner = "(extension in ManagedSwiftFixtures):Swift.Int.RuntimeNestedCounter"
+        let root = try runtime.resolveSwiftTypeAndWait(named: owner)
+        let string = try runtime.resolveSwiftTypeAndWait(named: "Swift.String")
+        for (name, expected) in [
+            ("text", \Int.RuntimeNestedCounter.text),
+            (owner + ".text", \Int.RuntimeNestedCounter.text),
+            (owner + ".extraText", \Int.RuntimeNestedCounter.extraText),
+        ] {
+            let value = try root.resolveWritableKeyPathAndWait(named: name, valueType: string)
+            let path = try value.copy().take(
+                as: ReferenceWritableKeyPath<Int.RuntimeNestedCounter, String>.self
+            )
+            #expect(path == expected)
+        }
+    }
+
+    @Test func propertyNamesNeedOnlyBeSwiftIdentifiers() throws {
+        let runtime = ABIRuntime()
+        let root = try runtime.resolveSwiftTypeAndWait(
+            named: "ManagedSwiftFixtures.RuntimeKeyPathReferenceRoot"
+        )
+        let string = try runtime.resolveSwiftTypeAndWait(named: "Swift.String")
+        for (name, expected) in [
+            ("🐱", \RuntimeKeyPathReferenceRoot.🐱),
+            // Spelled like a destructor, which names nothing to a property.
+            ("deinit", \RuntimeKeyPathReferenceRoot.`deinit`),
+        ] {
+            let value = try root.resolveWritableKeyPathAndWait(named: name, valueType: string)
+            let path = try value.copy().take(
+                as: ReferenceWritableKeyPath<RuntimeKeyPathReferenceRoot, String>.self
+            )
+            #expect(path == expected)
+        }
+    }
+
+    #if DEBUG
+    @Test func objectiveCRootsResolveTheirExtensionProperties() throws {
+        let runtime = ABIRuntime()
+        let root = try runtime.swiftType(for: NSObject.self)
+        let string = try runtime.resolveSwiftTypeAndWait(named: "Swift.String")
+        let value = try root.resolveWritableKeyPathAndWait(
+            named: "(extension in ManagedSwiftFixtures):__C.NSObject.runtimeKeyPathTag",
+            valueType: string
+        )
+        let path = try value.copy().take(as: ReferenceWritableKeyPath<NSObject, String>.self)
+        #expect(path == \NSObject.runtimeKeyPathTag)
+    }
+    #endif
+
+    #if os(macOS) && DEBUG
+    @Test func descriptorsBothSourcesDescribeResolveOnce() async throws {
+        let module = "SharedKeyPath_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let fixture = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                public struct Root {
+                    private var storage = "stored"
+                    public init() {}
+                    public var payload: String {
+                        get { storage }
+                        set { storage = newValue }
+                    }
+                }
+                """,
+            stripped: true,
+            linkArguments: [
+                "-parse-as-library", "-enable-library-evolution",
+                "-Xlinker", "-unexported_symbol", "-Xlinker", "_$s*4RootVMn",
+            ]
+        )
+        defer { fixture.cleanup() }
+        let image = try #require(
+            try await RuntimeSymbolResolver().images(matching: .path(fixture.libraryURL)).first
+        )
+        // The image names no type descriptor of `Root`, so only the shared
+        // cache's local symbols name it, and they repeat the exported
+        // property descriptor.
+        let exports = RuntimeSymbolResolver().exportedSymbols(withPrefix: "_$s", in: image)
+        #expect(!exports.contains { $0.name.hasSuffix("4RootVMn") })
+        let metadata = try #require(exports.first { $0.name.hasSuffix("4RootVN") })
+        let exported = try #require(exports.first { $0.name.hasSuffix("7payloadSSvpMV") })
+        let typeDescriptor = try #require(
+            ABISwiftTypeDescriptor(UnsafeRawPointer(bitPattern: UInt(metadata.address)))
+        )
+        let locals = [
+            (
+                name: String(metadata.name.dropLast()) + "Mn",
+                address: UInt64(UInt(bitPattern: typeDescriptor))
+            ),
+            (name: exported.name, address: exported.address),
+        ]
+        let resolver = RuntimeSymbolResolver(capturingSharedCacheSymbols: { _, _, source in
+            guard source == .loaded else { return nil }
+            return SharedCacheSymbols.CapturedSymbols(
+                slide: 0,
+                readers: [
+                    { record in
+                        for local in locals { local.name.withCString { record($0, local.address) } }
+                    }
+                ],
+                imageIdentity: image.identity
+            )
+        })
+        let runtime = ABIRuntime(resolver: SymbolResolver(resolver))
+        let root = try await runtime.resolveSwiftType(
+            named: module + ".Root",
+            in: .path(fixture.libraryURL)
+        )
+        let string = try await runtime.resolveSwiftType(named: "Swift.String")
+        // Key path lookup starts from indexes without the local symbols.
+        runtime.removeCachedResults()
+        let value = try await root.resolveWritableKeyPath(named: "payload", valueType: string)
+        try value.withCopy {
+            let path = try #require($0 as? AnyKeyPath)
+            #expect(type(of: path).valueType == String.self)
+        }
+    }
+
+    @Test func descriptorsThatOnlyLocalSymbolsDescribeResolve() async throws {
+        let module = "LocalKeyPath_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let fixture = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                public final class Root {
+                    private var storage = "stored"
+                    public init() {}
+                    public var payload: String {
+                        get { storage }
+                        set { storage = newValue }
+                    }
+                }
+                """,
+            linkArguments: ["-parse-as-library", "-enable-library-evolution"]
+        )
+        defer { fixture.cleanup() }
+        let image = try #require(
+            try await RuntimeSymbolResolver().images(matching: .path(fixture.libraryURL)).first
+        )
+        // Only a local symbol names the exported descriptor of `payload` as
+        // the descriptor of a property `other`.
+        let exported = try #require(
+            RuntimeSymbolResolver().exportedSymbols(withPrefix: "_$s", in: image).first {
+                $0.name.hasSuffix("7payloadSSvpMV")
+            }
+        )
+        let local = (
+            name: String(exported.name.dropLast("7payloadSSvpMV".count)) + "5otherSSvpMV",
+            address: exported.address
+        )
+        let resolver = RuntimeSymbolResolver(capturingSharedCacheSymbols: { _, _, source in
+            guard source == .loaded else { return nil }
+            return SharedCacheSymbols.CapturedSymbols(
+                slide: 0,
+                readers: [{ record in local.name.withCString { record($0, local.address) } }],
+                imageIdentity: image.identity
+            )
+        })
+        let runtime = ABIRuntime(resolver: SymbolResolver(resolver))
+        let root = try await runtime.resolveSwiftType(
+            named: module + ".Root",
+            in: .path(fixture.libraryURL)
+        )
+        let string = try await runtime.resolveSwiftType(named: "Swift.String")
+        let value = try await root.resolveWritableKeyPath(named: "other", valueType: string)
+        let make = try await root.resolve(.initializer("init()", as: (() -> AnyObject).self))
+        let object = try unsafe make.unsafeInvoke()
+        // An `AnyObject` value cannot apply a key path itself.
+        func read<Root>(_ root: Root, through path: AnyKeyPath) -> Any? { root[keyPath: path] }
+        try value.withCopy {
+            let path = try #require($0 as? AnyKeyPath)
+            #expect(read(object, through: path) as? String == "stored")
+        }
+    }
+
+    @Test func extensionPropertiesOfOtherModulesDoNotHideSharedCacheDescriptors() async throws {
+        let module = "VisibleKeyPath_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let fixture = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                extension String {
+                    public var sharedName: String {
+                        get { self + "!" }
+                        set {}
+                    }
+                }
+                """,
+            linkArguments: ["-parse-as-library", "-enable-library-evolution"]
+        )
+        defer { fixture.cleanup() }
+        let image = try #require(
+            try await RuntimeSymbolResolver().images(matching: .path(fixture.libraryURL)).first
+        )
+        // The image exports this module's `sharedName`; only a local symbol
+        // describes another module's property of that name.
+        let exported = try #require(
+            RuntimeSymbolResolver().exportedSymbols(withPrefix: "_$s", in: image).first {
+                $0.name.hasSuffix("10sharedNameSSvpMV")
+            }
+        )
+        let other = "Other" + module
+        let local = (
+            name: exported.name.replacingOccurrences(
+                of: "\(module.count)\(module)E", with: "\(other.count)\(other)E"
+            ),
+            address: exported.address
+        )
+        #expect(local.name != exported.name)
+        let resolver = RuntimeSymbolResolver(capturingSharedCacheSymbols: { _, _, source in
+            guard source == .loaded else { return nil }
+            return SharedCacheSymbols.CapturedSymbols(
+                slide: 0,
+                readers: [{ record in local.name.withCString { record($0, local.address) } }],
+                imageIdentity: image.identity
+            )
+        })
+        let runtime = ABIRuntime(resolver: SymbolResolver(resolver))
+        let string = try await runtime.resolveSwiftType(named: "Swift.String")
+        let value = try await string.resolveWritableKeyPath(
+            named: "(extension in \(other)):Swift.String.sharedName",
+            valueType: string
+        )
+        try value.withCopy {
+            let path = try #require($0 as? KeyPath<String, String>)
+            #expect("text"[keyPath: path] == "text!")
+        }
+    }
+    #endif
 
     @Test func unavailableAndMismatchedPropertiesReportFailure() throws {
         let runtime = ABIRuntime()

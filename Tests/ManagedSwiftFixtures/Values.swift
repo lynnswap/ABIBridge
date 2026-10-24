@@ -66,3 +66,32 @@ public struct WideLabel {
 @inline(never) public func makeWideLabelPair(_ name: String) -> (WideLabel, Int64) {
     (makeWideLabel(name), 8)
 }
+
+extension Int {
+    /// A class whose demangled name leads with the extension that nests it.
+    public final class RuntimeNestedCounter {
+        private var storage = "nested"
+        public init() {}
+        public func value() -> Int { 7 }
+        public var text: String {
+            get { storage }
+            set { storage = newValue }
+        }
+    }
+}
+
+extension Int.RuntimeNestedCounter {
+    public var extraText: String {
+        get { text + "!" }
+        set { text = newValue }
+    }
+}
+
+/// A class with a method that a class's allocating initializer would spell.
+public final class RuntimeAllocatorNamedMethod {
+    public init() {}
+    public func __allocating_init(_ value: Int64) -> Int64 { value + 1 }
+}
+
+/// A function that a class's allocating initializer would spell.
+@inline(never) public func __allocating_init(_ value: Int64) -> Int64 { value + 2 }

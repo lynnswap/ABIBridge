@@ -31,9 +31,8 @@ struct SwiftVirtualDispatch: Sendable {
         }
         guard let identity = entry.record?.requirement,
             let requirementName = DeclarationKey.demangle(identity, language: .swift),
-            let protocolSymbol = try type.protocolDescriptor(
-                qualifying: NativeDeclaration(name: requirementName, language: .swift)
-            )
+            let protocolName = SwiftMemberLookup.owner(of: requirementName),
+            let protocolSymbol = try type.protocolDescriptor(named: protocolName)
         else { throw unavailable("The protocol requirement's descriptor identity is unavailable.") }
         let selected = try unsafe protocolSymbol.withUnsafeAddress { protocolAddress in
             guard let conformance = try type.conformance(to: protocolAddress),

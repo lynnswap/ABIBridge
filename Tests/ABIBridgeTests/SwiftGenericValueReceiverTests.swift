@@ -321,6 +321,15 @@ struct SwiftGenericValueReceiverTests {
         do {
             _ = try await type.resolve(
                 .method(
+                    "ManagedSwiftFixtures.GenericValueBox<A where A: Swift.Equatable>.selectedValue.getter : Swift.Int64",
+                    as: (() -> Int64).self
+                )
+            )
+            Issue.record("A method request must not resolve the getter its name spells")
+        } catch ABIResolutionError.unsupportedDeclaration {}
+        do {
+            _ = try await type.resolve(
+                .method(
                     "(extension in ManagedSwiftFixtures):ManagedSwiftFixtures.GenericValueBox<A where A: Swift.Comparable>.selected() -> Swift.Int64",
                     as: (() -> Int64).self
                 )
