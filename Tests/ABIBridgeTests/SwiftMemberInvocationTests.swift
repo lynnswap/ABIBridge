@@ -1077,6 +1077,7 @@ struct SwiftMemberInvocationTests {
                 extension NSObjectProtocol {
                     @inline(never) public func extra() -> Int64 { 4 }
                     @inline(never) public func isProxy() -> Bool { false }
+                    @inline(never) public func isEqual(_ value: Int64) -> Int64 { value + 1 }
                 }
                 public final class Impl: NSObject, Foreign, NSCopying {
                     public func storeValue(_ value: Int64) {}
@@ -1125,6 +1126,10 @@ struct SwiftMemberInvocationTests {
             .method("__C.NSObject.extra()", as: (() -> Int64).self)
         )
         #expect(try unsafe extra.unsafeInvoke(on: object) == 4)
+        let equal = try await type.resolve(
+            .method("__C.NSObject.isEqual(_:)", as: ((Int64) -> Int64).self)
+        )
+        #expect(try unsafe equal.unsafeInvoke(on: object, 41) == 42)
         await #expect {
             _ = try await type.resolve(.method("__C.NSObject.isProxy()", as: (() -> Bool).self))
         } throws: { error in

@@ -63,6 +63,19 @@ enum SwiftObjectiveCRequirements {
                 optionalResult: optionalResult
             ) {
                 if SwiftMemberPath(owner: "", member: entry.member)?.member == member {
+                    let method = protocol_getMethodDescription(
+                        proto,
+                        NSSelectorFromString(entry.selector),
+                        !entry.isOptional,
+                        entry.isInstance
+                    )
+                    guard
+                        shape.matchesMethod(
+                            selector: entry.selector,
+                            encoding: method.types.map { String(cString: $0) },
+                            isInstance: entry.isInstance
+                        )
+                    else { continue }
                     try fail(
                         name,
                         selector: entry.selector,
