@@ -61,8 +61,9 @@ package enum SwiftMemberLookup {
 
     static func isDestructor(_ declaration: String) -> Bool {
         let name = SymbolIndex.extensionMemberName(declaration) ?? declaration
-        return !name.contains("(") && (name == "deinit" || name.hasSuffix(".deinit")
-            || name.hasSuffix(".__deallocating_deinit") || name == "__deallocating_deinit")
+        return !name.contains("(")
+            && (name == "deinit" || name.hasSuffix(".deinit")
+                || name.hasSuffix(".__deallocating_deinit") || name == "__deallocating_deinit")
     }
 
     package static func isAccessor(_ declaration: String) -> Bool {
