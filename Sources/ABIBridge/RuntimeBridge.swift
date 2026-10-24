@@ -11,7 +11,7 @@ extension NativeLanguage {
     var runtimeValue: RuntimeLanguage {
         switch self {
         case .swift: .swift;
-        case .objectiveC: .objectiveC;
+        case .objc: .objectiveC;
         case .c: .c;
         case .cxx: .cxx
         }
@@ -20,7 +20,7 @@ extension NativeLanguage {
         self =
             switch value {
             case .swift: .swift;
-            case .objectiveC: .objectiveC;
+            case .objectiveC: .objc;
             case .c: .c;
             case .cxx: .cxx
             }

@@ -468,6 +468,12 @@ struct ObjectiveCImplementationTests {
                 try unsafe numberMethod.unsafeInvoke(on: receiver, 42)
             }
             #expect(throws: ABIResolutionError.self) { try numberMethod.bind(to: receiver) }
+            let captured = try ABIRuntime.shared.resolveAndWait(
+                .objc(.imp("number:", as: ((Int) -> Int).self)),
+                on: base
+            )
+            let capturedBinding = try captured.bind(to: receiver)
+            #expect(try unsafe capturedBinding.unsafeInvoke(42) == 42)
             let sizeMethod = try ABIRuntime.shared.resolveAndWait(
                 .objc(
                     .method(
@@ -505,6 +511,10 @@ struct ObjectiveCImplementationTests {
             )
         )
         let extracted = dynamic.method
+        let capturedBinding = try original.bind(to: second)
+        let capturedOnObject = try runtime.object(first).resolveAndWait(
+            .objc(.imp("add:", as: ((Int) -> Int).self))
+        )
         let unbound = try runtime.resolveAndWait(
             .objc(
                 .method(
@@ -527,6 +537,9 @@ struct ObjectiveCImplementationTests {
         }
         #expect(try unsafe original.unsafeInvoke(on: first, 1) == 11)
         #expect(try unsafe original.unsafeInvoke(on: second, 1) == 21)
+        #expect(try unsafe capturedBinding.unsafeInvoke(1) == 21)
+        #expect(try unsafe capturedBinding.implementation.unsafeInvoke(on: first, 1) == 11)
+        #expect(try unsafe capturedOnObject.unsafeInvoke(1) == 11)
         #expect(try unsafe dynamic.unsafeInvoke(1) == 22)
         #expect(try unsafe extracted.unsafeInvoke(on: second, 1) == 42)
         #expect(try unsafe unbound.unsafeInvoke(on: first, 1) == 22)
@@ -542,6 +555,27 @@ struct ObjectiveCImplementationTests {
         )
         #expect(try unsafe childMessage.unsafeInvoke(1) == 1001)
         #expect(try unsafe unbound.unsafeInvoke(on: child, 1) == 1001)
+    }
+
+    @Test func boundCapturedImplementationRetainsItsReceiverAndCodeOwner() throws {
+        var owner: ImplementationCodeOwner? = ImplementationCodeOwner()
+        weak var observedOwner = owner
+        var receiver: ImplementationReceiver? = ImplementationReceiver(40)
+        weak var observedReceiver = receiver
+        var bound: NativeBoundObjCImplementation<Int, Int>? = try ABIRuntime.shared.resolveAndWait(
+            .objc(.imp("add:", as: ((Int) -> Int).self)),
+            on: ImplementationReceiver.self,
+            retaining: owner
+        ).bind(to: receiver!)
+        receiver = nil
+        owner = nil
+        #expect(try unsafe bound!.unsafeInvoke(2) == 42)
+        var extracted: NativeObjCImplementation<Int, Int>? = bound!.implementation
+        bound = nil
+        #expect(observedReceiver == nil && observedOwner != nil)
+        #expect(try unsafe extracted!.unsafeInvoke(on: ImplementationReceiver(41), 1) == 42)
+        extracted = nil
+        #expect(observedOwner == nil)
     }
 
     @MainActor @Test func inheritedImplementationsAndStructures() throws {

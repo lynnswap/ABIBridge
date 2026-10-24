@@ -114,4 +114,4 @@ When an initialization closure throws, ABIBridge frees its allocation without ca
 
 A wrapper adopting an owned native result should establish its release operation before later validation that can throw. If conversion fails after adoption, ordinary Swift lifetime cleanup releases the adopted resource. If the wrapper throws before taking ownership, it must release any resource already transferred by the native function.
 
-Argument storage and owners survive the call and cleanup after conversion failure. Conversion alone transfers no ownership. For consumed Objective-C parameters, use `NativeMethodOptions.consumedArguments`; for Core Foundation references, use `Unmanaged<T>` with the manual ownership rules in <doc:CFunctionInvocation>.
+Argument storage and owners survive the call and cleanup after conversion failure. Conversion alone transfers no ownership. For consumed Objective-C parameters, use `NativeObjCMethodOptions.consumedArguments`; for Core Foundation references, use `Unmanaged<T>` with the manual ownership rules in <doc:CFunctionInvocation>.

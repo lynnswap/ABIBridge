@@ -97,7 +97,7 @@ func calculateWithPreparation() async throws -> Int32 {
 
 Use the same runtime for preparation and lookup so both share indexes and call layouts. Lookup performs work that has not started and joins only the work it needs, without waiting for the whole closure or batch. Discarding a prepared handle leaves cached preparation intact. No readiness flag is required. Native image loading and Swift metadata initialization retain their reentrancy rules.
 
-For symbol-only preparation, `prepare(request)` returns a ``ResolvedSymbol`` with the same errors as `resolve(request)`. `prepare(requests)` preserves order and partial success with one `Result` per input. Both honor scopes, aliases, fallbacks, and loading policy. To prepare a call signature too, use a callable factory in the closure overload.
+For symbol-only lookup, `resolve(request)` returns a ``ResolvedSymbol``. `resolve(requests)` preserves order and partial success with one `Result` per input. Both honor scopes, aliases, fallbacks, and loading policy. Use `prepare { ... }` to group synchronous lookups or prepare call signatures ahead of time.
 
 ## Describe the declaration
 

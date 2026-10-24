@@ -117,6 +117,6 @@ extension NativeRequest {
     /// symbol lookup. Exact inspection does not prepare message dispatch.
     public static func objc(_ declaration: NativeSymbolLookupRequest) -> Self
     where Declaration == NativeSymbolLookupRequest {
-        Self(declaration: declaration.inLanguage(.objectiveC))
+        Self(declaration: declaration.inLanguage(.objc))
     }
 }

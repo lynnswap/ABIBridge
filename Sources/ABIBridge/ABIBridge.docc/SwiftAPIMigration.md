@@ -62,9 +62,9 @@ Replace `.message(...)` with `.objc(.method(...))` for ordinary message dispatch
 | `NativeObjCMessageRequest<R, A>.message(s, as: t)` | `NativeRequest.objc(.method(s, as: t))` |
 | `NativeObjCImplementationRequest<R, A>.implementation(s, as: t)` | `NativeRequest.objc(.imp(s, as: t))` |
 
-The concrete declaration types remain ``NativeObjCMessageRequest`` and ``NativeObjCImplementationRequest``. Their factories are now `method` and `imp`, respectively, and their wrapped requests resolve with either `resolve` or `resolveAndWait`. `String` and `Selector` overloads, native error conversion through a `throws` signature, ownership options, and typed variadic arguments retain their existing contracts. Keep `as:`, `variadicFrom:`, and `options:` inside the declaration; keep `on:`, `classMethod:`, and `retaining:` on runtime resolution.
+The concrete declaration types are ``NativeObjCMethodRequest`` (renamed from `NativeObjCMessageRequest`) and ``NativeObjCImplementationRequest``. Their factories are now `method` and `imp`, respectively, and their wrapped requests resolve with either `resolve` or `resolveAndWait`. `String` and `Selector` overloads, native error conversion through a `throws` signature, ownership options, and typed variadic arguments retain their existing contracts. Keep `as:`, `variadicFrom:`, and `options:` inside the declaration; keep `on:`, `classMethod:`, and `retaining:` on runtime resolution.
 
-A method request resolves on `ABIRuntime` with a class for an explicit receiver at invocation, or on `NativeObject` for a bound receiver. An IMP request resolves on `ABIRuntime` with a class and captures the implementation at that resolution. See <doc:ObjectiveCInvocation> for saved request examples, forwarding, and receiver isolation. Hook request APIs such as `NativeObjCHookRequest.method(...)` retain their own spelling.
+A method request resolves on `ABIRuntime` with a class for an explicit receiver at invocation, or on `NativeObject` for a bound receiver. An IMP request resolves on `ABIRuntime` with a class for an unbound implementation, or on `NativeObject` for a retained receiver. Both capture the implementation at that resolution. See <doc:ObjectiveCInvocation> for saved request examples, forwarding, and receiver isolation. Hook request APIs such as `NativeObjCHookRequest.method(...)` retain their own spelling.
 
 ## Qualify C and C++ function requests
 
@@ -149,6 +149,14 @@ What changes besides the spelling:
 
 Swift types, images, and value conversions keep their `resolve…` names.
 
+## Distinguish copying from declaration lookup
+
+Enum payload and stored-closure extraction acquire independent ownership from an existing value. Rename `resolveEnumPayload` / `resolveEnumPayloadAndWait` to `copyEnumPayload` / `copyEnumPayloadAndWait`, and `resolveClosure` / `resolveClosureAndWait` to `copyClosure` / `copyClosureAndWait`. Arguments, absence, errors, preparation and caller isolation keep their existing contracts.
+
+Use `NativeObjCMethodOptions` instead of `NativeMethodOptions`, `.objc` instead of `NativeLanguage.objectiveC`, and `value(forObjCIvar:as:)` instead of `value(forIvar:as:)`. The descriptive DTOs `NativeCallPlan` and `NativeOwnership` are removed; actual callable signatures and ownership options remain the invocation contract.
+
+`prepare(request)` and `prepare(requests)` forwarding overloads are removed. Use `resolve(request)` / `resolve(requests)` to perform the same early lookup, or group synchronous lookups with the worker-backed `prepare { runtime in ... }` closure.
+
 ## Choose synchronous or async lookup
 
 Functions named `resolve…` perform search and call preparation on a worker while the caller suspends. Their synchronous `AndWait` counterparts take the same arguments and can block the caller. Both work without `prepare` and join only required preparation already in progress:
@@ -165,8 +173,8 @@ Functions named `resolve…` perform search and call preparation on a worker whi
 | Swift type and writable key-path requests | `resolve` | `resolveAndWait` |
 | C++ direct or virtual member request | `resolve` | `resolveAndWait` |
 | Named C++ virtual-table entry | `resolveEntry` | `resolveEntryAndWait` |
-| Swift enum payload | `resolveEnumPayload` | `resolveEnumPayloadAndWait` |
-| Stored Swift closure | `resolveClosure` | `resolveClosureAndWait` |
+| Swift enum payload | `copyEnumPayload` | `copyEnumPayloadAndWait` |
+| Stored Swift closure | `copyClosure` | `copyClosureAndWait` |
 | Compiled Swift virtual replacement plan | `prepareVirtualReplacement` | `prepareVirtualReplacementAndWait` |
 | Compiled Swift imported replacement plan | `prepareImportedReplacement` | `prepareImportedReplacementAndWait` |
 
@@ -216,7 +224,7 @@ _ = try await prepared
 
 The closure and its result must be Sendable. Use the same runtime so lookup shares indexes and call interfaces with preparation; it joins required work without waiting for the whole closure. See <doc:SymbolLookup>.
 
-`object`, `cxxObject`, `bind`, and explicit `entry(at:authentication:)` create views or bindings without search or ABI preparation and remain synchronous. Memory reads, value copies, and `removeCachedResults()` also remain synchronous. Keep `await` for invoking native async signatures and for hook installation APIs that are asynchronous.
+`object`, `cxxObject`, `bind`, and explicit `entry(at:authentication:)` create views or bindings without search or ABI preparation and remain synchronous. Memory reads and `removeCachedResults()` remain synchronous. Runtime enum-payload and stored-closure copying use the async / `AndWait` pairs above when they require ABI preparation. Keep `await` for invoking native async signatures and for hook installation APIs that are asynchronous.
 
 ## Use a complete callable signature
 

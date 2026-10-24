@@ -85,6 +85,10 @@ struct ObjectiveCInvocationTests {
         #expect(try unsafe bound.unsafeInvoke(41) == 42)
         #expect(try unsafe message.unsafeInvoke(on: receiver, 41) == 42)
         #expect(try unsafe captured.unsafeInvoke(on: receiver, 41) == 42)
+        let capturedOnObject = try await runtime.object(receiver).resolve(
+            .objc(.imp(selector, as: ((Int64) -> Int64).self))
+        )
+        #expect(try unsafe capturedOnObject.unsafeInvoke(41) == 42)
     }
 
     @MainActor @Test func asynchronousForwardingLookupPreservesReceiverIsolation() async throws {
@@ -114,7 +118,7 @@ struct ObjectiveCInvocationTests {
         let selector = failure == "missing" ? "missing" : "increment:"
         let declaration = NativeDeclaration(
             name: "-[\(NSStringFromClass(Renderer.self)) \(selector)]",
-            language: .objectiveC
+            language: .objc
         )
         func prepare<Result, each Argument>(
             _ signature: ((repeat each Argument) -> Result).Type
@@ -192,7 +196,7 @@ struct ObjectiveCInvocationTests {
         }
         let declaration = NativeDeclaration(
             name: "-[\(NSStringFromClass(Renderer.self)) \(selector)]",
-            language: .objectiveC
+            language: .objc
         )
         do {
             try prepare()
@@ -458,7 +462,7 @@ struct ObjectiveCInvocationTests {
     @Test(arguments: ["bound", "message", "captured"])
     func consumedObjectArgumentsKeepCallerOwnership(_ path: String) throws {
         let fixture = ABIOwnershipFixture()
-        let options = NativeMethodOptions(consumedArguments: [0])
+        let options = NativeObjCMethodOptions(consumedArguments: [0])
         let signature = ((NSObject?) -> Int).self
         let bound = try ABIRuntime.shared.object(fixture).resolveAndWait(
             .objc(
@@ -570,7 +574,7 @@ struct ObjectiveCInvocationTests {
         typealias Block = @convention(block) (Int32) -> Int32
         let fixture = ABIOwnershipFixture()
         let blocks = ABIBlockFixture()
-        let options = NativeMethodOptions(consumedArguments: [0])
+        let options = NativeObjCMethodOptions(consumedArguments: [0])
         let bound = try ABIRuntime.shared.object(blocks).resolveAndWait(
             .objc(
                 .method(

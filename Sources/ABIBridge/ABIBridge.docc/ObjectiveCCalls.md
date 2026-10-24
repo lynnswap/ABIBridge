@@ -12,15 +12,16 @@ Use <doc:ObjectiveCInvocation> to bind an existing receiver or prepare a reusabl
 
 - <doc:ObjectiveCInvocation>
 - ``NativeRequest``
-- ``NativeObjCMessageRequest``
+- ``NativeObjCMethodRequest``
 - ``NativeObjCImplementationRequest``
 - ``NativeObject``
 - ``NativeObjCMethod``
 - ``NativeBoundObjCMethod``
 - ``NativeObjCImplementation``
+- ``NativeBoundObjCImplementation``
 - ``NativeObjCException``
 - ``NativeObjCUnreportedFailure``
-- ``NativeMethodOptions``
+- ``NativeObjCMethodOptions``
 
 ## See Also
 

@@ -252,7 +252,7 @@ struct ObjectiveCInitializerHookTests {
     }
 
     @Test func nonstandardInitializerOwnershipCannotMixWithOrdinaryHooks() throws {
-        let options = NativeMethodOptions(returnsRetainedObject: true, consumesReceiver: true)
+        let options = NativeObjCMethodOptions(returnsRetainedObject: true, consumesReceiver: true)
         let hook = try unsafe runtime.hookInitializer(on: ABIManagedInitializerFixture.self, selector: "constructValue:",
             as: ((Int) -> ABIManagedInitializerFixture).self, options: options, onFailure: { Issue.record($0) },
             transformingArguments: { $0 + 1 })
@@ -282,7 +282,9 @@ struct ObjectiveCInitializerHookTests {
     @Test func invalidContractsDoNotReplaceMethods() throws {
         let method = try #require(class_getInstanceMethod(ABIManagedInitializerFixture.self, NSSelectorFromString(selector)))
         let original = method_getImplementation(method)
-        for options in [NativeMethodOptions(returnsRetainedObject: false), .init(consumesReceiver: false)] {
+        for options in [
+            NativeObjCMethodOptions(returnsRetainedObject: false), .init(consumesReceiver: false),
+        ] {
             #expect(throws: NativeObjCMethodHookError.unsupportedMethod) {
                 try unsafe runtime.hookInitializer(on: ABIManagedInitializerFixture.self, selector: selector,
                     as: Signature.self, options: options, onFailure: { Issue.record($0) })

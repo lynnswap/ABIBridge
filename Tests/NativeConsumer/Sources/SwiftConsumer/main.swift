@@ -60,7 +60,7 @@ struct SwiftConsumer {
                 preconditionFailure("Missing selectors must fail lookup")
             } catch let ABIResolutionError.declarationNotFound(request) {
                 precondition(
-                    request.language == .objectiveC && request.name.contains("missingHandler")
+                    request.language == .objc && request.name.contains("missingHandler")
                 )
             }
             do {
@@ -143,11 +143,21 @@ struct SwiftConsumer {
             )
             try unsafe setter.unsafeInvoke(block)
             let capturedBlock = try unsafe capturedGetter.unsafeInvoke(on: receiver)
+            let boundCapturedGetter: NativeBoundObjCImplementation<ConsumerBlock?> =
+                try capturedGetter.bind(to: receiver)
+            let capturedAgain = try object.resolveAndWait(
+                .objc(
+                    .imp(#selector(getter: BlockReceiver.handler), as: (() -> ConsumerBlock?).self)
+                )
+            )
+            let boundCapturedBlock = try unsafe boundCapturedGetter.unsafeInvoke()
+            let capturedAgainBlock = try unsafe capturedAgain.unsafeInvoke()
+            precondition(boundCapturedBlock?(11) == 42 && capturedAgainBlock?(11) == 42)
             precondition(capturedBlock?(11) == 42)
-            let storedBlock = try object.value(forIvar: "handler", as: ConsumerBlock.self)
+            let storedBlock = try object.value(forObjCIvar: "handler", as: ConsumerBlock.self)
             try unsafe setter.unsafeInvoke(nil)
             precondition(storedBlock(11) == 42)
-            let nilIvar = try object.value(forIvar: "handler", as: ConsumerBlock?.self)
+            let nilIvar = try object.value(forObjCIvar: "handler", as: ConsumerBlock?.self)
             precondition(nilIvar == nil)
             let capturedFactory = try ABIRuntime.shared.resolveAndWait(
                 .objc(

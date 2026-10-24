@@ -88,7 +88,7 @@ import UIKit
         "Variadic captured IMP preserves its authenticated pointer"
     )
     let ownership = ABIValidationOwnershipFixture()
-    let options = NativeMethodOptions(consumedArguments: [0])
+    let options = NativeObjCMethodOptions(consumedArguments: [0])
     let consume = try runtime.object(ownership).resolveAndWait(
         .objc(
             .method(

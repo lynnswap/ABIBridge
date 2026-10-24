@@ -70,7 +70,7 @@ struct NativeSwiftClosureTests {
             )
         )
         let value = try unsafe make.unsafeInvoke(7)
-        let closure = try await value.resolveClosure(as: (@MainActor (Int64) -> Int64).self)
+        let closure = try await value.copyClosure(as: (@MainActor (Int64) -> Int64).self)
         let apply = try await runtime.resolve(
             .swift(
                 .function(

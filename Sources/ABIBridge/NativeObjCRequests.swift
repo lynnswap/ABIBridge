@@ -7,15 +7,16 @@ extension NativeRequest {
     /// Resolve on a ``NativeObject`` to bind its receiver, or with an `ABIRuntime`
     /// and class to take a receiver at each call.
     public static func objc<Result, each Argument>(
-        _ declaration: NativeObjCMessageRequest<Result, repeat each Argument>
-    ) -> Self where Declaration == NativeObjCMessageRequest<Result, repeat each Argument> {
+        _ declaration: NativeObjCMethodRequest<Result, repeat each Argument>
+    ) -> Self where Declaration == NativeObjCMethodRequest<Result, repeat each Argument> {
         Self(declaration: declaration)
     }
 
     /// Describes an Objective-C implementation to capture during resolution.
     ///
-    /// Resolve with an `ABIRuntime` and class to get a fixed IMP, independent
-    /// of subsequent method replacement.
+    /// Resolve with an `ABIRuntime` and class for an unbound fixed IMP, or on
+    /// a ``NativeObject`` to retain that receiver. Subsequent replacement
+    /// does not change the captured implementation.
     public static func objc<Result, each Argument>(
         _ declaration: NativeObjCImplementationRequest<Result, repeat each Argument>
     ) -> Self where Declaration == NativeObjCImplementationRequest<Result, repeat each Argument> {
@@ -31,7 +32,7 @@ struct ObjCMessageQuery: Sendable {
     /// Whether the method reports failure through a trailing `NSError **`
     /// parameter that the Swift signature omits.
     let reportsErrors: Bool
-    let options: NativeMethodOptions
+    let options: NativeObjCMethodOptions
 }
 
 /// An Objective-C message to prepare for calls.
@@ -46,7 +47,7 @@ struct ObjCMessageQuery: Sendable {
 /// and the result, excluding the receiver and selector. For structures, the
 /// method's encoding supplies the native layout; the caller guarantees
 /// compatible Swift storage and ownership. See <doc:ObjectiveCInvocation>.
-public struct NativeObjCMessageRequest<Result, each Argument>: Sendable {
+public struct NativeObjCMethodRequest<Result, each Argument>: Sendable {
     let query: ObjCMessageQuery
 
     init(_ query: ObjCMessageQuery) {
@@ -65,7 +66,7 @@ public struct NativeObjCMessageRequest<Result, each Argument>: Sendable {
         _ selector: String,
         as signature: ((repeat each Argument) -> Result).Type,
         variadicFrom: Int? = nil,
-        options: NativeMethodOptions = .init()
+        options: NativeObjCMethodOptions = .init()
     ) -> Self {
         Self(
             .init(
@@ -98,7 +99,7 @@ public struct NativeObjCMessageRequest<Result, each Argument>: Sendable {
     public static func method(
         _ selector: String,
         as signature: ((repeat each Argument) throws -> Result).Type,
-        options: NativeMethodOptions = .init()
+        options: NativeObjCMethodOptions = .init()
     ) -> Self {
         Self(.init(selector: selector, variadicFrom: nil, reportsErrors: true, options: options))
     }
@@ -109,7 +110,7 @@ public struct NativeObjCMessageRequest<Result, each Argument>: Sendable {
         _ selector: Selector,
         as signature: ((repeat each Argument) -> Result).Type,
         variadicFrom: Int? = nil,
-        options: NativeMethodOptions = .init()
+        options: NativeObjCMethodOptions = .init()
     ) -> Self {
         .method(
             NSStringFromSelector(selector),
@@ -124,7 +125,7 @@ public struct NativeObjCMessageRequest<Result, each Argument>: Sendable {
     public static func method(
         _ selector: Selector,
         as signature: ((repeat each Argument) throws -> Result).Type,
-        options: NativeMethodOptions = .init()
+        options: NativeObjCMethodOptions = .init()
     ) -> Self {
         .method(NSStringFromSelector(selector), as: signature, options: options)
     }
@@ -156,10 +157,10 @@ public struct NativeObjCImplementationRequest<Result, each Argument>: Sendable {
         _ selector: String,
         as signature: ((repeat each Argument) -> Result).Type,
         variadicFrom: Int? = nil,
-        options: NativeMethodOptions = .init()
+        options: NativeObjCMethodOptions = .init()
     ) -> Self {
         Self(
-            NativeObjCMessageRequest.method(
+            NativeObjCMethodRequest.method(
                 selector,
                 as: signature,
                 variadicFrom: variadicFrom,
@@ -170,13 +171,13 @@ public struct NativeObjCImplementationRequest<Result, each Argument>: Sendable {
 
     /// Describes an implementation that reports failure through a trailing
     /// `NSError **` parameter, with the convention of a throwing
-    /// ``NativeObjCMessageRequest``.
+    /// ``NativeObjCMethodRequest``.
     public static func imp(
         _ selector: String,
         as signature: ((repeat each Argument) throws -> Result).Type,
-        options: NativeMethodOptions = .init()
+        options: NativeObjCMethodOptions = .init()
     ) -> Self {
-        Self(NativeObjCMessageRequest.method(selector, as: signature, options: options).query)
+        Self(NativeObjCMethodRequest.method(selector, as: signature, options: options).query)
     }
 
     /// Describes an implementation with an ordinary Swift function type, by
@@ -185,7 +186,7 @@ public struct NativeObjCImplementationRequest<Result, each Argument>: Sendable {
         _ selector: Selector,
         as signature: ((repeat each Argument) -> Result).Type,
         variadicFrom: Int? = nil,
-        options: NativeMethodOptions = .init()
+        options: NativeObjCMethodOptions = .init()
     ) -> Self {
         .imp(
             NSStringFromSelector(selector),
@@ -200,7 +201,7 @@ public struct NativeObjCImplementationRequest<Result, each Argument>: Sendable {
     public static func imp(
         _ selector: Selector,
         as signature: ((repeat each Argument) throws -> Result).Type,
-        options: NativeMethodOptions = .init()
+        options: NativeObjCMethodOptions = .init()
     ) -> Self {
         .imp(NSStringFromSelector(selector), as: signature, options: options)
     }

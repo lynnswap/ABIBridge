@@ -28,7 +28,7 @@ struct ObjectiveCMethodHookTests {
     @Test(arguments: ["ordinaryValue", "initNamedValue", "initRetainedValue", "allocNamedValue"])
     func explicitFamilyNoneOwnershipSupportsOrdinaryHooks(_ selector: String) throws {
         let object = ABIAnnotatedHookFixture()
-        let options = NativeMethodOptions(
+        let options = NativeObjCMethodOptions(
             returnsRetainedObject: selector == "initRetainedValue",
             consumesReceiver: false
         )
@@ -494,7 +494,7 @@ struct ObjectiveCMethodHookTests {
 
     @Test func retainedObjectResultsStayBalancedAcrossChains() throws {
         for (selector, options) in [
-            ("object", NativeMethodOptions()), ("copyObject", .init()),
+            ("object", NativeObjCMethodOptions()), ("copyObject", .init()),
             ("retainedObject", .init(returnsRetainedObject: true)),
             ("newBorrowedObject", .init(returnsRetainedObject: false)),
         ] {
@@ -531,7 +531,7 @@ struct ObjectiveCMethodHookTests {
         let fixture = ABIConsumedHookFixture()
         let failures = HookBox(0)
         let saved = HookBox<NSObject?>(nil)
-        let options = NativeMethodOptions(consumedArguments: [0])
+        let options = NativeObjCMethodOptions(consumedArguments: [0])
         let first = try unsafe runtime.hookMethod(
             on: ABIConsumedHookFixture.self,
             selector: "consume:",

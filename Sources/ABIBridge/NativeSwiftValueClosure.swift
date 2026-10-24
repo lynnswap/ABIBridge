@@ -2,13 +2,13 @@ import ABIBridgeCore
 import ABIBridgeRuntime
 
 extension NativeSwiftValue {
-    /// Resolves an owned closure without blocking the caller's executor.
+    /// Copies an owned closure without blocking the caller's executor.
     ///
     /// Owned runtime values use the maximally abstracted function convention. The requested signature preserves
     /// its effects, isolation, and argument ownership, and may use runtime value handles
     /// for types unavailable at compile time. This value remains available; the returned
     /// closure owns its captured context and implementation images independently.
-    public nonisolated(nonsending) func resolveClosure<Signature>(
+    public nonisolated(nonsending) func copyClosure<Signature>(
         as signature: Signature.Type
     ) async throws -> NativeSwiftClosure<Signature> {
         let source = try closureSource()
@@ -27,11 +27,11 @@ extension NativeSwiftValue {
         }
     }
 
-    /// Resolves an owned closure synchronously on the caller's thread.
+    /// Copies an owned closure synchronously on the caller's thread.
     ///
-    /// Resolution joins any required ABI preparation already in progress. The returned
+    /// Copying joins any required ABI preparation already in progress. The returned
     /// closure retains its context and code independently without consuming this value.
-    public func resolveClosureAndWait<Signature>(
+    public func copyClosureAndWait<Signature>(
         as signature: Signature.Type
     ) throws -> NativeSwiftClosure<Signature> {
         let source = try closureSource()
@@ -60,7 +60,7 @@ extension NativeSwiftValue {
         )
         guard plan.isEscaping else {
             throw ABIResolutionError.unsupportedDeclaration(
-                "A nonescaping native closure cannot be resolved as an owned closure."
+                "A nonescaping native closure cannot be copied as an owned closure."
             )
         }
         return try NativeSwiftClosure<Signature>.makeClosureCodec(

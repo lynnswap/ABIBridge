@@ -1,5 +1,6 @@
 import ABIBridgeObjCXX
 import Foundation
+import ObjectiveC
 
 /// A captured Objective-C implementation whose receiver is supplied at call time.
 ///
@@ -22,6 +23,22 @@ public struct NativeObjCImplementation<Result, each Argument> {
         self.signature = signature
         self.interface = interface
         codeOwner = owner
+    }
+
+    /// Retains a compatible receiver for repeated calls to this captured IMP.
+    ///
+    /// Binding shares this implementation and its code owner without selecting
+    /// another IMP or consulting the receiver's current method signature.
+    /// The receiver remains in the caller's isolation domain.
+    /// - Throws: A resolution error when the receiver is incompatible with the captured class or instance method.
+    public func bind(
+        to receiver: AnyObject
+    ) throws -> NativeBoundObjCImplementation<Result, repeat each Argument> {
+        var error: NSError?
+        guard ABIValidateCapturedObjCInvocationReceiver(binding.handle, receiver, &error) else {
+            throw objcResolutionError(error, declaration: binding.declaration)
+        }
+        return NativeBoundObjCImplementation(implementation: self, receiver: receiver)
     }
 
     /// Calls the captured IMP with a compatible receiver.
@@ -56,6 +73,86 @@ public struct NativeObjCImplementation<Result, each Argument> {
                 }
             )
         }
+    }
+}
+
+/// A captured Objective-C implementation bound to a retained receiver.
+///
+/// Calls use the captured IMP even after method replacement. The receiver and
+/// code owner remain in the caller's isolation domain, and the receiver is
+/// released before the implementation's retained images.
+public struct NativeBoundObjCImplementation<Result, each Argument> {
+    private let storage: BoundObjCImplementationStorage<Result, repeat each Argument>
+
+    /// The same captured implementation, independent of this receiver binding.
+    public var implementation: NativeObjCImplementation<Result, repeat each Argument> {
+        storage.implementation
+    }
+
+    init(
+        implementation: NativeObjCImplementation<Result, repeat each Argument>,
+        receiver: AnyObject
+    ) {
+        storage = BoundObjCImplementationStorage(implementation: implementation, receiver: receiver)
+    }
+
+    /// Calls the captured IMP using the retained receiver.
+    ///
+    /// The caller honors the receiver's isolation, native ownership, block
+    /// signatures, and pointer lifetimes, as for the unbound implementation.
+    /// - Throws: A conversion or invocation error, including a native Objective-C exception or reported NSError.
+    @unsafe public func unsafeInvoke(_ values: repeat each Argument) throws -> Result {
+        try unsafe implementation.unsafeInvoke(on: storage.receiver!, repeat each values)
+    }
+}
+
+private final class BoundObjCImplementationStorage<Result, each Argument> {
+    let implementation: NativeObjCImplementation<Result, repeat each Argument>
+    var receiver: AnyObject?
+
+    init(
+        implementation: NativeObjCImplementation<Result, repeat each Argument>,
+        receiver: AnyObject
+    ) {
+        self.implementation = implementation
+        self.receiver = receiver
+    }
+
+    deinit { withExtendedLifetime(implementation) { receiver = nil } }
+}
+
+extension NativeObject {
+    /// Captures a fixed IMP from this receiver's class and retains the receiver.
+    ///
+    /// Search and preparation run on the caller's thread. Later replacements
+    /// do not change the captured implementation; forwarding-only selectors
+    /// cannot be captured.
+    public func resolveAndWait<Result, each Argument>(
+        _ request: NativeRequest<NativeObjCImplementationRequest<Result, repeat each Argument>>
+    ) throws -> NativeBoundObjCImplementation<Result, repeat each Argument> {
+        let receiver = receiver!
+        let receiverType = object_getClass(receiver)!
+        let classMethod = class_isMetaClass(receiverType)
+        let type: AnyClass = classMethod ? receiver as! AnyClass : receiverType
+        return try runtime.resolveAndWait(request, on: type, classMethod: classMethod).bind(
+            to: receiver
+        )
+    }
+
+    /// Captures a fixed IMP without blocking the caller's executor.
+    ///
+    /// Class lookup and ABI preparation run on a worker. This receiver and the
+    /// returned bound handle remain in the caller's isolation domain.
+    public nonisolated(nonsending) func resolve<Result, each Argument>(
+        _ request: NativeRequest<NativeObjCImplementationRequest<Result, repeat each Argument>>
+    ) async throws -> NativeBoundObjCImplementation<Result, repeat each Argument> {
+        let receiver = receiver!
+        let receiverType = object_getClass(receiver)!
+        let classMethod = class_isMetaClass(receiverType)
+        let type: AnyClass = classMethod ? receiver as! AnyClass : receiverType
+        return try await runtime.resolve(request, on: type, classMethod: classMethod).bind(
+            to: receiver
+        )
     }
 }
 

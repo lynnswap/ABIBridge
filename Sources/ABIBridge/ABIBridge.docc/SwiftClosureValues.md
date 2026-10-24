@@ -72,19 +72,19 @@ A closure resolved from an owned runtime value already uses indirect storage for
 
 ## Resolve a closure stored in a runtime value
 
-Use `resolveClosure(as:)` when a ``NativeSwiftValue`` already owns the native function value, including a closure extracted from an enum or tuple with the APIs in <doc:SwiftOpaqueResults>. Owned runtime values use the maximally abstracted function convention; enum payload resolution adapts concrete function fields to that convention before returning. The native function metadata supplies its parameter and result types. `NativeSwiftValue` in the requested signature represents the actual native argument or result, including a runtime-only type.
+Use `copyClosure(as:)` when a ``NativeSwiftValue`` already owns the native function value, including a closure extracted from an enum or tuple with the APIs in <doc:SwiftOpaqueResults>. Owned runtime values use the maximally abstracted function convention; enum payload resolution adapts concrete function fields to that convention before returning. The native function metadata supplies its parameter and result types. `NativeSwiftValue` in the requested signature represents the actual native argument or result, including a runtime-only type.
 
 ```swift
 @MainActor
 func makeBody(from closureValue: NativeSwiftValue) async throws -> NativeSwiftValue {
-    let make = try await closureValue.resolveClosure(
+    let make = try await closureValue.copyClosure(
         as: (@MainActor () -> NativeSwiftValue).self
     )
     return try unsafe make.unsafeInvoke()
 }
 ```
 
-The async resolver prepares on a worker while the caller suspends. `resolveClosureAndWait(as:)` performs the same preparation synchronously and can block its caller. Neither requires an explicit `prepare`; existing preparation for a required stage is shared. Resolving copies the context without consuming the original value, and the returned handle keeps its captures and code alive independently.
+The async copy prepares on a worker while the caller suspends. `copyClosureAndWait(as:)` performs the same preparation synchronously and can block its caller. Neither requires an explicit `prepare`; existing preparation for a required stage is shared. Copying retains the context without consuming the original value, and the returned handle keeps its captures and code alive independently.
 
 Include the native sync or async effect, declared error type, parameter ownership, and MainActor isolation in the signature. A MainActor signature uses a MainActor-isolated `unsafeInvoke`. For an async native body, use `(@MainActor () async -> NativeSwiftValue).self` and call `try unsafe await make.unsafeInvoke()`. Awaiting resolution does not make a synchronous native body asynchronous.
 

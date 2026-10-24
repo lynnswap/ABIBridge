@@ -97,7 +97,7 @@ extension ABIRuntime {
     /// - Returns: A reusable message that takes its receiver at each call.
     /// - Throws: A lookup, signature, or image error.
     public nonisolated func resolveAndWait<Result, each Argument>(
-        _ request: NativeRequest<NativeObjCMessageRequest<Result, repeat each Argument>>,
+        _ request: NativeRequest<NativeObjCMethodRequest<Result, repeat each Argument>>,
         on type: AnyClass,
         classMethod: Bool = false,
         retaining owner: Any? = nil
@@ -128,7 +128,7 @@ extension ABIRuntime {
     /// - Returns: A reusable message that takes its receiver at each call.
     /// - Throws: The same errors as synchronous resolution.
     public nonisolated(nonsending) func resolve<Result, each Argument>(
-        _ request: NativeRequest<NativeObjCMessageRequest<Result, repeat each Argument>>,
+        _ request: NativeRequest<NativeObjCMethodRequest<Result, repeat each Argument>>,
         on type: AnyClass,
         classMethod: Bool = false,
         retaining owner: Any? = nil

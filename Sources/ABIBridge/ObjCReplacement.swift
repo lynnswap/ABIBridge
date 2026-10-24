@@ -107,7 +107,8 @@ package final class ObjCReplacement<Result, each Argument> {
 
     package init(on type: AnyClass, selector: String,
          as: ((repeat each Argument) -> Result).Type,
-         classMethod: Bool = false, options: NativeMethodOptions = .init(),
+        classMethod: Bool = false,
+        options: NativeObjCMethodOptions = .init(),
          requiresMainThread: Bool = false,
          retaining owner: Any? = nil,
          onFailure: @escaping @Sendable (any Error) -> Void,
@@ -272,7 +273,9 @@ package final class ObjCReplacement<Result, each Argument> {
     }
 
     private static func prepare(_ type: AnyClass, _ selector: String, _ classMethod: Bool,
-        _ options: NativeMethodOptions, initializer: Bool, retaining owner: Any?,
+        _ options: NativeObjCMethodOptions,
+        initializer: Bool,
+        retaining owner: Any?,
         callback: (ObjCMethodSignature<Result, repeat each Argument>) -> ObjCReplacementCallback) throws -> OpaquePointer {
         let declaration = objcMethodDeclaration(on: type, selector: selector, classMethod: classMethod)
         var error: NSError?

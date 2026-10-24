@@ -396,7 +396,7 @@ func prepare(_ path: String) async throws -> NativeSwiftFunction<(String) -> Str
         .init(name: "SwiftFunctionFixture.answer() -> Swift.Int64", language: .swift),
         in: [scope]
     )
-    async let preparation = runtime.prepare(request)
+    async let preparation = runtime.resolve(request)
     let answer = try await runtime.resolve(
         .swift(
             .function(
@@ -510,7 +510,7 @@ func validateRuntimeSubscripts(_ path: String) async throws {
     precondition(!source.isConsumed && !key.isConsumed)
     let result = try unsafe getter.unsafeInvoke(on: source, key)
     guard
-        let element = try await result.resolveEnumPayload(
+        let element = try await result.copyEnumPayload(
             forCase: "some",
             valueABIs: [elementType: .opaque(named: elementType.name)]
         )
@@ -558,7 +558,7 @@ func prepareRuntimeProjection(
         in: scope
     )
     guard
-        let payload = try await value.resolveEnumPayload(
+        let payload = try await value.copyEnumPayload(
             forCase: "preview",
             valueABIs: [bodyType: .opaque(named: bodyType.name)]
         )
@@ -598,7 +598,7 @@ func prepareRuntimeProjection(
     let sourceNumber = try unsafe read.unsafeInvoke(on: concreteSource)
     precondition(sourceNumber == 41)
     guard
-        let constructedPayload = try await constructed.resolveEnumPayload(
+        let constructedPayload = try await constructed.copyEnumPayload(
             forCase: "preview",
             valueABIs: [bodyType: .opaque(named: bodyType.name)]
         )
@@ -606,7 +606,7 @@ func prepareRuntimeProjection(
         fatalError("Expected the constructed preview payload")
     }
     let closureValue = try constructedPayload.copyTupleElement(at: 1)
-    let closure = try await closureValue.resolveClosure(
+    let closure = try await closureValue.copyClosure(
         as: (@MainActor () -> NativeSwiftValue).self
     )
     precondition(

@@ -20,16 +20,3 @@ import Testing
     #expect(declaration.language == .cxx)
     #expect(declaration.kind == .function)
 }
-
-@Test func callPlanKeepsOwnershipAndReceiverContract() {
-    let plan = NativeCallPlan(
-        language: .cxx,
-        resultOwnership: .owned,
-        hasReceiver: true,
-        hasIndirectResult: true
-    )
-
-    #expect(plan.resultOwnership == .owned)
-    #expect(plan.hasReceiver)
-    #expect(plan.hasIndirectResult)
-}

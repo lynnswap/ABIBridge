@@ -62,7 +62,7 @@ Callbacks are synchronous on the native caller's thread. For a known MainActor i
 
 ## Supported declarations
 
-The declaration must be an instance method with consumed self and a retained non-block object result. Standard init-family selectors infer this contract. For a nonstandard selector with those explicit semantics, supply `NativeMethodOptions(returnsRetainedObject: true, consumesReceiver: true)`.
+The declaration must be an instance method with consumed self and a retained non-block object result. Standard init-family selectors infer this contract. For a nonstandard selector with those explicit semantics, supply `NativeObjCMethodOptions(returnsRetainedObject: true, consumesReceiver: true)`.
 
 Registrations must agree on receiver, result, and explicit argument ownership. Ordinary method hooks cannot join a consuming initializer chain. Set `consumedArguments` to the zero-based `ns_consumed` indexes. The entry owns incoming references until completion and supplies independent references for native initialization, including transformed arguments.
 

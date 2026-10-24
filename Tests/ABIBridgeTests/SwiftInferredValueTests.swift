@@ -1793,7 +1793,9 @@ struct SwiftInferredValueTests {
             in: scope
         )
         let erased = try unsafe erase.unsafeInvoke()
-        let stored = try await erased.resolveClosure(as: (((String, Int64)) -> NativeSwiftBorrowedValue).self)
+        let stored = try await erased.copyClosure(
+            as: (((String, Int64)) -> NativeSwiftBorrowedValue).self
+        )
         #if DEBUG
         // Compare addresses before reading the borrowed String, so a copying
         // adapter fails without dereferencing its already-destroyed temporary.
@@ -1847,7 +1849,9 @@ struct SwiftInferredValueTests {
             in: scope
         )
         let erasedResultTuple = try unsafe makeResultTuple.unsafeInvoke()
-        let resultTuple = try await erasedResultTuple.resolveClosure(as: (() -> NativeSwiftBorrowedValue).self)
+        let resultTuple = try await erasedResultTuple.copyClosure(
+            as: (() -> NativeSwiftBorrowedValue).self
+        )
         try unsafe resultTuple.unsafeInvoke(withResult: { value in
             #expect(value.type.name.contains(module + ".Number"))
             #expect(throws: ABIResolutionError.self) { try value.copy() }
