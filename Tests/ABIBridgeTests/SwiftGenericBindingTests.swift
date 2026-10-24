@@ -46,6 +46,9 @@ struct SwiftGenericBindingTests {
             resolver: .shared
         )
         #expect(try binding.types(formal)[0] == FixtureExtensionIdentity.self)
+        let constrainedMetadata = GenericTypeOuter<Int64>.InExtension<String>.self
+        let constrained = try SwiftFormalType(SwiftSyntax.metadataType(constrainedMetadata))
+        #expect(try binding.types(constrained).first == constrainedMetadata)
         #expect(
             formal.nominalDeclaration?.name
                 == "(extension in ManagedSwiftFixtures):Swift.Int.RuntimeExtensionIdentity"
