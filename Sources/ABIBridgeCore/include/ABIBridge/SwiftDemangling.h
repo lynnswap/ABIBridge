@@ -41,6 +41,10 @@ char *ABICopySwiftMethodDescriptorSymbolName(const ABISwiftSyntaxNode *entity,
 /// which other images call a class member or a protocol requirement. Release
 /// with ABIFreeString.
 char *ABICopySwiftDispatchThunkSymbolName(const ABISwiftSyntaxNode *entity);
+/// The symbol of the getter of a Variable or Subscript node of a symbol's
+/// tree, such as the storage a property descriptor describes. Release with
+/// ABIFreeString.
+char *ABICopySwiftGetterSymbolName(const ABISwiftSyntaxNode *storage);
 /// The context of the declaration an entity of a symbol's tree declares,
 /// under its static and accessor wrappers, such as a class or an extension.
 const ABISwiftSyntaxNode *ABISwiftSyntaxEntityContext(const ABISwiftSyntaxNode *entity);

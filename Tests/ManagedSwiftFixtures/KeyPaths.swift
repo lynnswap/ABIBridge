@@ -83,6 +83,15 @@ public final class RuntimeKeyPathReferenceRoot {
     }
 }
 
+private let runtimeKeyPathTags = Mutex<[ObjectIdentifier: String]>([:])
+
+extension NSObject {
+    public var runtimeKeyPathTag: String {
+        get { runtimeKeyPathTags.withLock { $0[ObjectIdentifier(self)] } ?? "untagged" }
+        set { runtimeKeyPathTags.withLock { $0[ObjectIdentifier(self)] = newValue } }
+    }
+}
+
 public final class RuntimeKeyPathObservedRoot: NSObject {
     private var storage = "original"
 

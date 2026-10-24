@@ -78,70 +78,52 @@ extension NativeSwiftType {
                 "The writable key path property must belong to " + rootName + "."
             )
         }
-        // The descriptors' records decide which property the name spells.
-        let property = query.member
+        guard !query.isComplete else {
+            throw ABIResolutionError.unsupportedDeclaration(
+                "Name the writable key path's property by its name, such as text."
+            )
+        }
         // The diagnostics' spelling of the property.
         let displayed = NativeDeclaration(
-            name: query.qualifier == nil ? rootName + "." + property : name,
+            name: query.qualifier == nil ? rootName + "." + query.member : name,
             language: .swift,
             kind: .data
         )
-        guard
-            let typeDescriptor = ABISwiftTypeDescriptor(
-                unsafeBitCast(metadata, to: UnsafeRawPointer.self)
-            )
-        else {
-            throw ABIResolutionError.metadataUnavailable(
-                rootName + " has no nominal type descriptor."
-            )
+        // A property's descriptor is one of its member entries, which the
+        // records of the root's members select, as for its accessors. The
+        // root's image declares its own properties; an extension's are found
+        // in the loaded images.
+        guard let path = SwiftMemberPath(owner: rootName, member: query.member) else {
+            throw ABIResolutionError.declarationNotFound(displayed)
         }
-        // The root's image declares its own properties. An extension's
-        // members live in the images whose symbols state that extension.
-        var images = [image]
-        if let module = query.extensionModule,
-            let path = SwiftMemberPath(owner: rootName, member: property)
-        {
-            let getters = try resolver.swiftMemberCandidates(
-                SwiftMemberMatch(
-                    path: path,
-                    accessor: .getter,
-                    isStatic: false,
-                    initializer: .excluded
-                ),
-                owner: rootName,
-                in: nil,
-                extensionsOnly: true
-            )
-            images = []
-            for getter in getters {
-                guard case .extension(module, _) = getter.record.context,
-                    !images.contains(getter.symbol.image)
-                else { continue }
-                images.append(getter.symbol.image)
-            }
-        }
-        let descriptors = resolver.swiftPropertyDescriptors(
-            named: property,
-            ofType: rootName,
-            at: typeDescriptor,
-            in: image,
-            inExtensionOf: query.extensionModule,
-            images: images
-        )
+        let descriptors = try resolver.swiftMemberCandidates(
+            SwiftMemberMatch(
+                path: path,
+                accessor: nil,
+                isStatic: false,
+                initializer: .excluded,
+                entry: .propertyDescriptor
+            ),
+            owner: rootName,
+            in: query.extensionModule == nil ? image : nil,
+            extensionsOnly: query.extensionModule != nil
+        ).filter { $0.record.kind == .variable && query.isDeclared(by: $0.record) }
         guard descriptors.count <= 1 else {
             throw ABIResolutionError.ambiguousDeclaration(
                 displayed,
-                candidates: descriptors.map { $0.symbol.linkageName }
+                candidates: descriptors.map(\.symbol.linkageName)
             )
         }
-        guard let (descriptor, declaration) = descriptors.first else {
+        guard let selected = descriptors.first else {
             throw ABIResolutionError.declarationNotFound(displayed)
         }
+        let descriptor = selected.symbol
         // The descriptor's declared type, which its symbol spells, is the
         // value type.
-        guard let declared = declaration.declaredType,
+        let context = ABISwiftTypeDescriptor(unsafeBitCast(metadata, to: UnsafeRawPointer.self))
+        guard let declared = selected.record.declaredType,
             let declaredType = declared.withCString({
-                ABISwiftTypeForMangledName($0, strlen($0), typeDescriptor, nil)
+                ABISwiftTypeForMangledName($0, strlen($0), context, nil)
             })
         else {
             throw ABIResolutionError.metadataUnavailable(

@@ -16,6 +16,9 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
         /// calling convention. `conformanceDescriptor` is the mangled name of
         /// the descriptor of the conformance it serves.
         case witness(conformanceDescriptor: String)
+        /// A property's or subscript's descriptor, which describes its
+        /// accessors to key paths and is not code.
+        case propertyDescriptor
     }
 
     package enum Accessor: Hashable, Sendable { case getter, setter }
@@ -62,6 +65,8 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
         switch role {
         case .implementation, .witness: true
         case .dispatchThunk: context == .protocolRequirement
+        // A descriptor is its own definition, which no thunk stands in for.
+        case .propertyDescriptor: true
         }
     }
     package let isStatic: Bool
@@ -69,6 +74,13 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
     /// Whether a class declares the declaration, rather than an extension of
     /// the class or another type.
     package let isClassMember: Bool
+    /// For an instance property's or subscript's descriptor, the mangled
+    /// name of the getter of the storage it describes. Lookup files the
+    /// descriptor under the getter's spelling, with the storage's members.
+    package let describedGetter: String?
+    /// For a property's descriptor, the property's declared type, as the
+    /// remangler mangles it.
+    package let declaredType: String?
     /// The mangled name of the declaration itself. A declaration's code and
     /// its dispatch thunk share this identity; a witness is its own.
     package let identity: String
@@ -77,8 +89,8 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
     /// symbol's tree so that every record of one requirement spells it alike.
     package let requirement: String?
 
-    /// Returns nil for names that are not Swift declarations, such as
-    /// metadata and descriptors.
+    /// Returns nil for names that are not Swift declarations or property
+    /// descriptors, such as metadata and type descriptors.
     package init?(linkageName: String) {
         let name = linkageName.hasPrefix("_") ? String(linkageName.dropFirst()) : linkageName
         guard
@@ -107,6 +119,10 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
             role = .witness(conformanceDescriptor: descriptor)
             identity = name
             node = entity
+        } else if node.kind == "PropertyDescriptor", let child = node.child(0) {
+            role = .propertyDescriptor
+            identity = name
+            node = child
         } else {
             role = .implementation
             identity = name
@@ -131,6 +147,16 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
         self.kind = kind
         self.isStatic = isStatic
         isClassMember = owner.kind == "Class"
+        if role == .propertyDescriptor {
+            describedGetter =
+                isStatic ? nil : Self.copy(ABICopySwiftGetterSymbolName(node.pointer))
+            declaredType = node.children.first { $0.kind == "Type" }.flatMap {
+                Self.copy(ABICopySwiftSyntaxNodeMangledName($0.pointer))
+            }
+        } else {
+            describedGetter = nil
+            declaredType = nil
+        }
         requirement =
             owner.kind == "Protocol" ? Self.copy(ABICopySwiftEntitySymbolName(entity.pointer)) : nil
         switch owner.kind {
@@ -236,16 +262,12 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
 /// underlying type.
 package struct RuntimeSwiftPropertySymbol: Hashable, Sendable {
     /// The symbol of the nominal type descriptor of the struct, enum, or
-    /// class that declares the property, or that the extension declaring it
-    /// extends, as the remangler spells it from the property's context.
+    /// class that declares the property, as the remangler spells it from the
+    /// property's context.
     package let typeDescriptor: String
     /// The module that declares the property's type: the module of its
     /// innermost extension context, otherwise its root module.
     package let module: String
-    /// The module of the extension that declares the property, when it
-    /// extends a type from another module. Nil when the type's own module
-    /// declares the property.
-    package let extensionModule: String?
     /// The property's name, without a private discriminator.
     package let name: String
     package let isStatic: Bool
@@ -253,8 +275,6 @@ package struct RuntimeSwiftPropertySymbol: Hashable, Sendable {
     package let isDescriptor: Bool
     /// Whether the declared type the symbol spells contains an opaque type.
     package let declaresOpaqueType: Bool
-    /// The declared type the symbol spells, as the remangler mangles it.
-    package let declaredType: String?
 
     // The kinds of symbols whose tree spells a property's declared type.
     private static let kinds: Set<String> = [
@@ -283,12 +303,8 @@ package struct RuntimeSwiftPropertySymbol: Hashable, Sendable {
         guard variable.kind == "Variable", let context = variable.child(0),
             let identifier = variable.child(1),
             let declared = variable.children.first(where: { $0.kind == "Type" }),
-            let module = Self.declaringModule(of: context)
-        else { return nil }
-        // Another module's extension spells its module and the type it extends.
-        let isExtension = context.kind == "Extension"
-        guard let nominal = isExtension ? context.child(1) : context,
-            let descriptor = Self.copy(ABICopySwiftNominalTypeDescriptorSymbolName(nominal.pointer))
+            let module = Self.declaringModule(of: context),
+            let descriptor = Self.copy(ABICopySwiftNominalTypeDescriptorSymbolName(context.pointer))
         else { return nil }
         switch identifier.kind {
         case "Identifier":
@@ -302,10 +318,8 @@ package struct RuntimeSwiftPropertySymbol: Hashable, Sendable {
         }
         typeDescriptor = descriptor
         self.module = module
-        extensionModule = isExtension ? module : nil
         isDescriptor = symbol.kind == "PropertyDescriptor"
         declaresOpaqueType = Self.containsOpaqueType(declared)
-        declaredType = Self.copy(ABICopySwiftSyntaxNodeMangledName(declared.pointer))
     }
 
     private static func declaringModule(of context: Node) -> String? {

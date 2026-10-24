@@ -113,29 +113,6 @@ final class SymbolResolver: Sendable {
             ).map(SwiftCandidate.init)
         }
     }
-    /// The descriptors in `images` of the instance property `name` of the
-    /// type `owner`, whose nominal type descriptor is `typeDescriptor`, which
-    /// `typeImage` holds.
-    ///
-    /// - Parameter extensionModule: The module of another module's extension
-    ///   that declares the property, or nil for the type's own property.
-    func swiftPropertyDescriptors(
-        named name: String,
-        ofType owner: String,
-        at typeDescriptor: UnsafeRawPointer,
-        in typeImage: NativeImage,
-        inExtensionOf extensionModule: String?,
-        images: [NativeImage]
-    ) -> [(symbol: ResolvedSymbol, property: RuntimeSwiftPropertySymbol)] {
-        runtime.swiftPropertyDescriptors(
-            named: name,
-            ofType: owner,
-            at: UInt64(UInt(bitPattern: typeDescriptor)),
-            in: typeImage.runtimeValue,
-            inExtensionOf: extensionModule,
-            images: images.map(\.runtimeValue)
-        ).map { (ResolvedSymbol($0.symbol), $0.property) }
-    }
     func swiftWitnesses(
         ofConformanceAt descriptor: UnsafeRawPointer,
         in image: NativeImage

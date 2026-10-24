@@ -3,6 +3,7 @@
 #else
 import ABIBridge
 #endif
+import ABIBridgeCore
 import ABIBridgeRuntime
 import ABIBridgeTestSupport
 import Foundation
@@ -112,7 +113,89 @@ struct SwiftKeyPathTests {
         #expect(path == \RuntimeKeyPathReferenceRoot.🐱)
     }
 
+    #if DEBUG
+    @Test func objectiveCRootsResolveTheirExtensionProperties() throws {
+        let runtime = ABIRuntime()
+        let root = try runtime.swiftType(for: NSObject.self)
+        let string = try runtime.resolveSwiftTypeAndWait(named: "Swift.String")
+        let value = try root.resolveWritableKeyPathAndWait(
+            named: "(extension in ManagedSwiftFixtures):__C.NSObject.runtimeKeyPathTag",
+            valueType: string
+        )
+        let path = try value.copy().take(as: ReferenceWritableKeyPath<NSObject, String>.self)
+        #expect(path == \NSObject.runtimeKeyPathTag)
+    }
+    #endif
+
     #if os(macOS) && DEBUG
+    @Test func descriptorsBothSourcesDescribeResolveOnce() async throws {
+        let module = "SharedKeyPath_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let fixture = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                public struct Root {
+                    private var storage = "stored"
+                    public init() {}
+                    public var payload: String {
+                        get { storage }
+                        set { storage = newValue }
+                    }
+                }
+                """,
+            stripped: true,
+            linkArguments: [
+                "-parse-as-library", "-enable-library-evolution",
+                "-Xlinker", "-unexported_symbol", "-Xlinker", "_$s*4RootVMn",
+            ]
+        )
+        defer { fixture.cleanup() }
+        let image = try #require(
+            try await RuntimeSymbolResolver().images(matching: .path(fixture.libraryURL)).first
+        )
+        // The image names no type descriptor of `Root`, so only the shared
+        // cache's local symbols name it, and they repeat the exported
+        // property descriptor.
+        let exports = RuntimeSymbolResolver().exportedSymbols(withPrefix: "_$s", in: image)
+        #expect(!exports.contains { $0.name.hasSuffix("4RootVMn") })
+        let metadata = try #require(exports.first { $0.name.hasSuffix("4RootVN") })
+        let exported = try #require(exports.first { $0.name.hasSuffix("7payloadSSvpMV") })
+        let typeDescriptor = try #require(
+            ABISwiftTypeDescriptor(UnsafeRawPointer(bitPattern: UInt(metadata.address)))
+        )
+        let locals = [
+            (
+                name: String(metadata.name.dropLast()) + "Mn",
+                address: UInt64(UInt(bitPattern: typeDescriptor))
+            ),
+            (name: exported.name, address: exported.address),
+        ]
+        let resolver = RuntimeSymbolResolver(capturingSharedCacheSymbols: { _, _, source in
+            guard source == .loaded else { return nil }
+            return SharedCacheSymbols.CapturedSymbols(
+                slide: 0,
+                readers: [
+                    { record in
+                        for local in locals { local.name.withCString { record($0, local.address) } }
+                    }
+                ],
+                imageIdentity: image.identity
+            )
+        })
+        let runtime = ABIRuntime(resolver: SymbolResolver(resolver))
+        let root = try await runtime.resolveSwiftType(
+            named: module + ".Root",
+            in: .path(fixture.libraryURL)
+        )
+        let string = try await runtime.resolveSwiftType(named: "Swift.String")
+        // Key path lookup starts from indexes without the local symbols.
+        runtime.removeCachedResults()
+        let value = try await root.resolveWritableKeyPath(named: "payload", valueType: string)
+        try value.withCopy {
+            let path = try #require($0 as? AnyKeyPath)
+            #expect(type(of: path).valueType == String.self)
+        }
+    }
+
     @Test func descriptorsThatOnlyLocalSymbolsDescribeResolve() async throws {
         let module = "LocalKeyPath_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
         let fixture = try FixtureLibrary(

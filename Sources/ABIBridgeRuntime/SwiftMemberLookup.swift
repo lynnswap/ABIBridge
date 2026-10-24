@@ -212,21 +212,32 @@ package struct SwiftMemberMatch: Hashable, Sendable {
         case classAllocator(Bool)
     }
 
+    /// What a lookup selects of a member.
+    package enum Entry: Hashable, Sendable {
+        /// Its code: an implementation, a dispatch thunk, or a witness.
+        case code
+        /// A property's or subscript's descriptor, which key paths use.
+        case propertyDescriptor
+    }
+
     package let path: SwiftMemberPath
     package let accessor: RuntimeSwiftDeclaration.Accessor?
     package let isStatic: Bool
     package let initializer: Initializer
+    package let entry: Entry
 
     package init(
         path: SwiftMemberPath,
         accessor: RuntimeSwiftDeclaration.Accessor?,
         isStatic: Bool,
-        initializer: Initializer
+        initializer: Initializer,
+        entry: Entry = .code
     ) {
         self.path = path
         self.accessor = accessor
         self.isStatic = isStatic
         self.initializer = initializer
+        self.entry = entry
     }
 
     /// The member that a complete or qualified declaration spells,
@@ -243,12 +254,15 @@ package struct SwiftMemberMatch: Hashable, Sendable {
         initializer = .classAllocator(
             member.hasPrefix("__allocating_init(") || member.hasPrefix("__allocating_init<")
         )
+        entry = .code
         self.path = path
     }
 
     /// Whether a symbol with `record` declares this member.
     package func accepts(_ record: RuntimeSwiftDeclaration) -> Bool {
-        guard record.accessor == accessor, record.isStatic == isStatic else { return false }
+        guard (record.role == .propertyDescriptor) == (entry == .propertyDescriptor),
+            record.accessor == accessor, record.isStatic == isStatic
+        else { return false }
         switch initializer {
         case .allocating: return record.kind == .allocator
         case .excluded: return record.kind != .allocator
