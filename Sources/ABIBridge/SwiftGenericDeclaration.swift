@@ -441,14 +441,26 @@ indirect enum SwiftFormalType: Sendable, Equatable {
             }
             return
         }
-        if let group = SwiftGenericSyntax.groups(in: text).last,
-            group.range.upperBound == text.endIndex
-        {
-            self = .named(
-                String(text[..<group.range.lowerBound]),
-                try SwiftFormalSyntax.fields(group.contents).map { try Self($0) }
-            )
-            return
+        let groups = SwiftGenericSyntax.groups(in: text)
+        if let group = groups.last {
+            let hasArguments = group.range.upperBound == text.endIndex
+            let nameEnd = hasArguments ? group.range.lowerBound : text.endIndex
+            let parentEnd = hasArguments ? groups.dropLast().last?.range.upperBound : group.range.upperBound
+            if let parentEnd, let separator = text[parentEnd..<nameEnd].lastIndex(of: ".") {
+                self = .nested(
+                    try Self(String(text[..<separator])),
+                    String(text[text.index(after: separator)..<nameEnd]),
+                    hasArguments ? try SwiftFormalSyntax.fields(group.contents).map { try Self($0) } : []
+                )
+                return
+            }
+            if hasArguments {
+                self = .named(
+                    String(text[..<group.range.lowerBound]),
+                    try SwiftFormalSyntax.fields(group.contents).map { try Self($0) }
+                )
+                return
+            }
         }
         guard !text.isEmpty else {
             throw ABIResolutionError.unsupportedDeclaration("Missing Swift type in " + source)
@@ -673,6 +685,12 @@ extension SwiftFormalType {
             )
         case (.tuple(let values, let labels), .tuple(let provided, _)):
             return .tuple(try fields(values, provided), labels: labels)
+        case (.nested(let parent, let name, let values, let module),
+              .nested(let providedParent, _, let providedValues, _)):
+            return .nested(
+                try parent.overlayingLifetimeEvidence(from: providedParent), name,
+                try fields(values, providedValues), extensionModule: module
+            )
         case (.pack(let value, let shape), .pack(let provided, let providedShape)):
             return .pack(
                 try value.overlayingLifetimeEvidence(from: provided),
@@ -691,23 +709,21 @@ extension SwiftFormalType {
                 try result.overlayingLifetimeEvidence(from: output)
             )
         default:
-            let provided: [Self]
-            if case .named(_, let values) = source { provided = values }
-            else if let nominal = source.nominalDeclaration { provided = nominal.arguments }
-            else { throw mismatch() }
+            func arguments(of type: Self) throws -> [Self] {
+                switch type {
+                case .named(_, let values), .nominal(_, let values), .reference(_, let values): values
+                case .nested(let parent, _, let values, _): try arguments(of: parent) + values
+                default: throw mismatch()
+                }
+            }
+            let provided = try arguments(of: source)
             switch self {
             case .named(let name, let values): return .named(name, try fields(values, provided))
             case .nominal(let name, let values): return .nominal(name, try fields(values, provided))
             case .reference(let descriptor, let values):
                 return .reference(descriptor, try fields(values, provided))
-            case .nested(let parent, let name, let values):
-                guard case .nested(let providedParent, _, let providedValues) = source else {
-                    throw mismatch()
-                }
-                return .nested(
-                    try parent.overlayingLifetimeEvidence(from: providedParent), name,
-                    try fields(values, providedValues)
-                )
+            case .nested(let parent, let name, let values, let module):
+                return .nested(parent, name, try fields(values, provided), extensionModule: module)
             default: throw mismatch()
             }
         }

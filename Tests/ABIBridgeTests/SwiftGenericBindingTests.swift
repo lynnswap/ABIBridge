@@ -94,6 +94,29 @@ struct SwiftGenericBindingTests {
         #expect(throws: ABIResolutionError.self) { try plan("") }
     }
 
+    @Test(arguments: [false, true])
+    func declaredClosureLifetimesPreserveNestedTypeIdentities(genericParent: Bool) throws {
+        let function = try SwiftFormalType("(Swift.String) -> Swift.Int64")
+        let parent = SwiftFormalType.nominal("Provider.Outer", genericParent ? [function] : [])
+        let known = SwiftFormalType.nested(parent, "Inner", [function], extensionModule: "Extensions")
+        let source = try SwiftFormalType(
+            "Provider.Outer" + (genericParent ? "<@_lifetime(immortal) (Swift.String) -> Swift.Int64>" : "")
+                + ".Inner<@_lifetime(borrow value) (_ value: Swift.String) -> Swift.Int64>"
+        )
+        let overlaid = try known.overlayingLifetimeEvidence(from: source)
+        guard case .nested(let outer, let name, let values, let module) = overlaid,
+              case .function(_, _, _, let innerAttributes) = try #require(values.first)
+        else { Issue.record("Expected the verified nested type and its closure argument."); return }
+        #expect(name == "Inner" && module == "Extensions")
+        #expect(innerAttributes.borrowedInputs == [.argument(0)])
+        if genericParent {
+            guard case .nominal(let owner, let arguments) = outer,
+                  case .function(_, _, _, let attributes) = try #require(arguments.first)
+            else { Issue.record("Expected the verified generic parent."); return }
+            #expect(owner == "Provider.Outer" && attributes.borrowedInputs == [])
+        } else { #expect(outer == parent) }
+    }
+
     @Test func conditionalResultEscapabilityUsesTheDeclaredArguments() throws {
         func query(_ result: String, signature: Any.Type, suppressesEscapable: Bool) throws -> Bool
         {

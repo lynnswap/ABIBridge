@@ -1794,15 +1794,15 @@ struct SwiftGenericCallPlan: Sendable {
             }
             return _openExistential(wrapped, do: marker)
         }
-        if owned, !SwiftEscapability.accepts(try binding.types(canonical)[0]) {
-            return NativeSwiftBorrowedValue.self
-        }
         if case .function = canonical {
             let signature = try nativeClosureSignature(canonical, binding: binding)
             func marker<Signature>(_ type: Signature.Type) -> Any.Type {
                 NativeSwiftClosure<Signature>.self
             }
             return _openExistential(signature, do: marker)
+        }
+        if owned, !SwiftEscapability.accepts(try binding.types(canonical)[0]) {
+            return NativeSwiftBorrowedValue.self
         }
         if case .tuple(let fields, let labels) = canonical {
             var elements: [Any.Type] = [], names: [String] = []
