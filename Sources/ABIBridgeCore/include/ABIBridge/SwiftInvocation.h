@@ -204,6 +204,9 @@ bool ABISwiftTypeMetadataArgumentIsKey(const ABISwiftTypeMetadata *result, size_
 size_t ABISwiftTypeMetadataRequirementCount(const ABISwiftTypeMetadata *result);
 /// Borrows a compiler-emitted generic requirement descriptor.
 const void *ABISwiftTypeMetadataRequirement(const ABISwiftTypeMetadata *result, size_t index);
+/// Conditional conformance records for an invertible protocol bit (1 Copyable, 2 Escapable).
+size_t ABISwiftTypeMetadataConditionalRequirementCount(const ABISwiftTypeMetadata *result, uint16_t protocol);
+const void *ABISwiftTypeMetadataConditionalRequirement(const ABISwiftTypeMetadata *result, uint16_t protocol, size_t index);
 const void *ABISwiftTypeMetadataValue(const ABISwiftTypeMetadata *result);
 size_t ABISwiftTypeMetadataConformanceCount(const ABISwiftTypeMetadata *result);
 /// index must be less than ABISwiftTypeMetadataConformanceCount(result).

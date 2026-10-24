@@ -7,6 +7,9 @@ package struct RuntimeGenericRequirement {
     package var kind: UInt32 { flags & 0x1f }
     package var isKey: Bool { flags & 0x80 != 0 }
     package var isPack: Bool { flags & 0x20 != 0 }
+    package var invertedGenericParameterIndex: UInt16 {
+        address.loadUnaligned(fromByteOffset: 8, as: UInt16.self)
+    }
     package var invertedProtocols: UInt16 {
         address.loadUnaligned(fromByteOffset: 10, as: UInt16.self)
     }

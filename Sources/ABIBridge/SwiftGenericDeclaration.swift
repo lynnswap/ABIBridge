@@ -27,6 +27,7 @@ struct SwiftGenericDeclaration: Sendable, Equatable {
     var implicitRequirements: [Requirement] = []
     var protocolSelf: SwiftFormalType? = nil
     var dispatchProtocol: String? = nil
+    var borrowedInputs: Set<SwiftBorrowedInputs.Input>? = nil
 
 }
 
@@ -144,6 +145,9 @@ struct SwiftFunctionAttributes: Sendable, Equatable {
     var hasSendingResult = false
     // Ownership remains on each formal parameter; these are its other ABI flags.
     var parameterFlags: [UInt32] = []
+    /// Nil means no declaration states the dependencies; an empty set states no borrows.
+    var borrowedInputs: Set<SwiftBorrowedInputs.Input>?
+    var lifetimeUsesReceiver = false
 
     func loweredParameters(_ parameters: [SwiftFormalType]) -> [SwiftFormalType] {
         guard !parameterFlags.isEmpty else { return parameters }
@@ -260,6 +264,7 @@ indirect enum SwiftFormalType: Sendable, Equatable {
             return
         }
         var attributes = SwiftFunctionAttributes(isEscaping: !isFunctionParameter)
+        var lifetimes: [String] = []
         while true {
             let qualifiers = [
                 "@escaping ", "@noescape ", "@Sendable ", "@concurrent ",
@@ -275,6 +280,19 @@ indirect enum SwiftFormalType: Sendable, Equatable {
                 default: attributes.isolation = .none
                 }
                 text = String(text.dropFirst(prefix.count))
+            } else if text.prefix(while: { $0 != "(" && !$0.isWhitespace }) == "@_lifetime" {
+                guard text.hasPrefix("@_lifetime("),
+                    let closing = SwiftFormalSyntax.matchingClose(
+                        in: text,
+                        opening: text.index(text.startIndex, offsetBy: 10)
+                    )
+                else {
+                    throw ABIResolutionError.unsupportedDeclaration(
+                        "Incomplete @_lifetime in declaredAs: " + source
+                    )
+                }
+                lifetimes.append(String(text[text.index(text.startIndex, offsetBy: 11)..<closing]))
+                text = text[text.index(after: closing)...].trimmingCharacters(in: .whitespaces)
             } else if text.hasPrefix("@differentiable("), let end = text.firstIndex(of: ")") {
                 let kind = String(text[text.index(text.startIndex, offsetBy: 16)..<end])
                 switch kind {
@@ -327,7 +345,16 @@ indirect enum SwiftFormalType: Sendable, Equatable {
             }
             let fields = input[input.index(after: opening)..<closing]
             let effects = input[input.index(after: closing)...].trimmingCharacters(in: .whitespaces)
-            let parameters = try SwiftFormalSyntax.fields(fields).map {
+            let parameterFields = SwiftFormalSyntax.fields(fields)
+            if !lifetimes.isEmpty {
+                let dependencies = try SwiftBorrowedInputs.parse(
+                    lifetimes,
+                    parameters: parameterFields
+                )
+                attributes.borrowedInputs = dependencies.borrowed
+                attributes.lifetimeUsesReceiver = dependencies.requiresReceiver
+            }
+            let parameters = try parameterFields.map {
                 try Self.functionParameter($0)
             }
             attributes.parameterFlags = parameters.map(\.flags)
@@ -344,6 +371,11 @@ indirect enum SwiftFormalType: Sendable, Equatable {
                 attributes: attributes
             )
             return
+        }
+        guard lifetimes.isEmpty else {
+            throw ABIResolutionError.unsupportedDeclaration(
+                "@_lifetime in declaredAs: requires a function type."
+            )
         }
         if text.hasSuffix(".Type") {
             self = .metatype(try Self(String(text.dropLast(5))))
@@ -577,6 +609,32 @@ extension SwiftFormalType {
             return .function(try values.map(qualify), try qualify(result), failure: try failure.map(qualify), attributes: attributes)
         case .foreignFunction(let convention, let values, let result):
             return .foreignFunction(convention, try values.map(qualify), try qualify(result))
+        }
+    }
+}
+
+extension SwiftFormalType {
+    var hasDeclaredLifetime: Bool {
+        switch self {
+        case .function(let arguments, let result, let failure, let attributes):
+            attributes.borrowedInputs != nil || arguments.contains(where: \.hasDeclaredLifetime)
+                || result.hasDeclaredLifetime || failure?.hasDeclaredLifetime == true
+        case .named(_, let values), .nominal(_, let values), .reference(_, let values),
+            .tuple(let values, _), .packValue(let values):
+            values.contains(where: \.hasDeclaredLifetime)
+        case .nested(let parent, _, let values, _):
+            parent.hasDeclaredLifetime || values.contains(where: \.hasDeclaredLifetime)
+        case .associated(let value, _, _), .inoutValue(let value), .borrowing(let value),
+            .consuming(let value), .metatype(let value), .existentialMetatype(let value):
+            value.hasDeclaredLifetime
+        case .pack(let value, let shape):
+            value.hasDeclaredLifetime || shape?.hasDeclaredLifetime == true
+        case .foreignFunction(_, let values, let result):
+            values.contains(where: \.hasDeclaredLifetime) || result.hasDeclaredLifetime
+        case .constrainedExistential(_, let superclass, let constraints, _):
+            superclass?.hasDeclaredLifetime == true
+                || constraints.contains { $0.value.hasDeclaredLifetime }
+        case .objectiveCClass, .opaqueResult: false
         }
     }
 }

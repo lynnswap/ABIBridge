@@ -46,7 +46,7 @@ struct SwiftGenericBinding: Sendable {
     }
 
     let declaration: SwiftGenericDeclaration
-    var opaqueResults: [Int: SwiftRuntimeValuePlan] = [:]
+    var opaqueResults: [Int: SwiftOpaqueResultPlan] = [:]
     let arguments: [String: BoundArgument]
     let conformances: [Conformance]
     let typeOwners: [NativeSwiftType]
@@ -439,7 +439,25 @@ struct SwiftGenericBinding: Sendable {
                 (.conformance(witnessIndex), witnessesByConformance[witnessIndex]![0])
             )
         } else {
-            let fulfilled = try argumentFulfillments(declaration.arguments)
+            // A tuple borrowed as one address has no expanded class field
+            // from which the callee can obtain a generic metadata argument.
+            let directArguments = try declaration.arguments.enumerated().filter { index, argument in
+                guard declaration.borrowedInputs?.contains(.argument(index)) == true else {
+                    return true
+                }
+                let value = try canonicalType(of: argument.argumentConvention?.value ?? argument)
+                guard case .tuple = value else { return true }
+                let native = try? types(value).first
+                if case .sets = try SwiftBorrowedInputs.addressability(
+                    of: value,
+                    native: native,
+                    binding: self
+                ) {
+                    return false
+                }
+                return true
+            }.map(\.element)
+            let fulfilled = try argumentFulfillments(directArguments)
             metadataWords = try metadataWords.filter { try !isFulfilled($0.source, by: fulfilled) }
         }
     }
@@ -767,6 +785,97 @@ struct SwiftGenericBinding: Sendable {
             )
         }
         return try canonicalType(of: matches[0])
+    }
+
+    /// Escapability at the declaration's abstraction, before a suppressed
+    /// generic parameter is replaced by an escapable caller type.
+    func mayBeNonescapable(_ formal: SwiftFormalType) throws -> Bool {
+        try mayLackInvertibleProtocol(formal, mask: 2)
+    }
+
+    private func mayLackInvertibleProtocol(_ formal: SwiftFormalType, mask: UInt16) throws -> Bool {
+        let formal = try canonicalType(of: formal)
+        if case .opaqueResult(let index) = formal {
+            guard let plan = opaqueResults[index] else {
+                throw ABIResolutionError.metadataUnavailable(
+                    "The opaque result's declaration has not been resolved."
+                )
+            }
+            return plan.invertedProtocols & mask != 0
+        }
+        if case .tuple(let fields, _) = formal {
+            for field in fields where try mayLackInvertibleProtocol(field, mask: mask) {
+                return true
+            }
+            return false
+        }
+        if case .pack(let pattern, _) = formal {
+            return try mayLackInvertibleProtocol(pattern, mask: mask)
+        }
+        if isArchetype(formal) {
+            if try isClassBound(formal) { return false }
+            let equivalents = try equivalentTypes(of: formal)
+            for requirement in declaration.requirements {
+                if case .invertedProtocols(let subject, let flags) = requirement,
+                    flags & mask != 0, equivalents.contains(subject)
+                {
+                    return true
+                }
+            }
+            if case .associated(let base, let member, let protocolName) = formal {
+                for conformance in try conformances(for: base, qualifiedBy: protocolName) {
+                    for requirement in try conformance.descriptor!.associatedRequirements(
+                        of: member
+                    ) {
+                        if case .invertedProtocols(_, let flags) = requirement.value,
+                            flags & mask != 0
+                        {
+                            return true
+                        }
+                    }
+                }
+            }
+            return false
+        }
+        guard let native = try types(formal).first else { return false }
+        let accepts = mask == 2 ? SwiftEscapability.accepts : SwiftCopyability.accepts
+        if !accepts(native) { return true }
+        guard dependsOnParameters(formal) else { return false }
+        let parameters: [SwiftFormalType]
+        switch formal {
+        case .reference(_, let arguments), .named(_, let arguments): parameters = arguments
+        default: parameters = formal.nominalDeclaration?.arguments ?? []
+        }
+        // A function or metatype has its own unconditional conformances;
+        // only a nominal container queries conditions on its parameters.
+        guard !parameters.isEmpty else { return false }
+        let context = try SwiftGenericTypeContext(metadata: native)
+        let conditions = context.conditionalInvertibleRequirements[mask] ?? []
+        guard !conditions.isEmpty else { return false }
+        guard parameters.count == context.parameters.count else {
+            throw ABIResolutionError.metadataUnavailable(
+                "Cannot recover the conditional conformance arguments of " + formal.spelling + "."
+            )
+        }
+        let substitutions = Dictionary(
+            uniqueKeysWithValues: zip(context.parameters.map(\.name), parameters)
+        )
+        for condition in conditions {
+            guard case .invertedProtocols(let subject, let disabled) = condition else {
+                throw ABIResolutionError.unsupportedDeclaration(
+                    "A conditional invertible conformance depends on a requirement other than Copyable or Escapable."
+                )
+            }
+            for requirement: UInt16 in [1, 2] where disabled & requirement == 0 {
+                if try mayLackInvertibleProtocol(
+                    subject.substituting(substitutions),
+                    mask: requirement
+                ) {
+                    return true
+                }
+            }
+        }
+        return false
     }
 
     func isClassBound(_ type: SwiftFormalType) throws -> Bool {
@@ -1106,7 +1215,7 @@ struct SwiftGenericBinding: Sendable {
                     "An opaque result requires its resolved runtime value representation."
                 )
             }
-            return [opaqueResult.valueType.metadata]
+            return [opaqueResult.value.valueType.metadata]
         case .metatype(let instance), .existentialMetatype(let instance):
             if case .existentialMetatype = type {
                 var underlying = instance

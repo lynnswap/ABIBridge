@@ -1526,6 +1526,27 @@ bool ABISwiftIncomingReadPointer(ABISwiftIncomingCall *call, const ABISwiftCallI
     fail(error, ABIFailureInvalidRequest, "The selected Swift argument is not a directly passed pointer word.");
     return false;
 }
+bool ABISwiftIncomingReadIndirectAddress(ABISwiftIncomingCall *call, const ABISwiftCallInterface *interface,
+    size_t index, uintptr_t *value, ABIResolutionFailure **error) {
+    if (!checkIncoming(call, error)) return false;
+    if (!interface || !value || index >= interface->parameters.size()) {
+        fail(error, ABIFailureInvalidRequest, "An indirect argument and its physical Swift interface are required."); return false;
+    }
+    for (const auto &move : interface->moves) {
+        if (move.source != ArgumentSource::parameter || move.argument != index) continue;
+        if (!move.indirect) break;
+        std::memcpy(value, slot(call->frame, move), sizeof(void *));
+        return true;
+    }
+    fail(error, ABIFailureInvalidRequest, "The selected Swift argument is not passed indirectly.");
+    return false;
+}
+bool ABISwiftAsyncIncomingReadIndirectAddress(ABISwiftIncomingCall *call, const ABISwiftAsyncCallInterface *interface,
+    size_t index, uintptr_t *value, ABIResolutionFailure **error) {
+    const size_t prefix = interface->completion->resultLayout.indirect + interface->completion->indirectResults.size()
+        + (interface->inheritsCallerIsolation ? 2 : 0);
+    return ABISwiftIncomingReadIndirectAddress(call, interface->entry.get(), prefix + index, value, error);
+}
 bool ABISwiftAsyncIncomingReadPointer(ABISwiftIncomingCall *call, const ABISwiftAsyncCallInterface *interface,
     size_t index, uintptr_t *value, ABIResolutionFailure **error) {
     const size_t prefix = interface->completion->resultLayout.indirect + interface->completion->indirectResults.size()

@@ -131,3 +131,37 @@ public let importedTypes: [Any.Type] = [timespec.self, CFComparisonResult.self, 
 public struct HoldsBorrowing { public var f: @_lifetime(borrow s) (_ s: String) -> View }
 public struct HoldsString { public var f: (String) -> View }
 #endif
+
+extension Label {
+    @_lifetime(borrow self) @inline(never) public func scopedGeneric<T>(_ value: T) -> View {
+        View(n)
+    }
+}
+// Class-bound generic elements leave AFD clear in the declaration's abstraction.
+@_lifetime(borrow v) @inline(never) public func borrowClassBoundTuple<T: AnyObject>(
+    _ v: (T, Int64)
+) -> View { View(v.1) }
+@_lifetime(immortal) @inline(never) public func independentString(_ v: String) -> View { View(1) }
+
+// Binding the result to an escapable type does not change this abstraction.
+@_lifetime(borrow s)
+@inline(never) public func projected<T: ~Escapable>(_ s: String, _ value: consuming T) -> T {
+    unsafe _overrideLifetime(value, borrowing: s)
+}
+
+@_lifetime(borrow text)
+@inline(never) public func projectedOptional<Value: ~Escapable>(
+    _ text: String, _ value: consuming Value?
+) -> Value? { unsafe _overrideLifetime(value, borrowing: text) }
+
+@_lifetime(borrow text)
+@inline(never) public func opaqueProjected<Value: ~Escapable>(
+    _ text: String, _ value: consuming Value
+) -> some ~Escapable { unsafe _overrideLifetime(value, borrowing: text) }
+
+public final class DependencyBox<Tag> {}
+@_lifetime(borrow pair)
+@inline(never) public func projectedBox<Value: ~Escapable, Tag>(
+    _ pair: (String, DependencyBox<Tag>),
+    _ value: consuming Value
+) -> Value { unsafe _overrideLifetime(value, borrowing: pair) }

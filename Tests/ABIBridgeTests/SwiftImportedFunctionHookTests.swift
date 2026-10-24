@@ -1,6 +1,8 @@
 #if os(macOS) && DEBUG
 @testable import ABIBridge
 import ABIBridgeCore
+@testable import ABIBridgeRuntime
+import ABIBridgeTestSupport
 import Darwin
 import Foundation
 import Synchronization
@@ -1369,6 +1371,114 @@ struct SwiftImportedFunctionHookTests {
         #expect(observed != nil)
         saved = nil
         #expect(observed == nil)
+    }
+
+    @Test func declaredLifetimeTuplesKeepHookBindingSelection() async throws {
+        let module = "LifetimeHook_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let provider = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                public final class LifetimeBox<Tag> {
+                    public let tag: Tag
+                    public init(_ tag: Tag) { self.tag = tag }
+                }
+                nonisolated(unsafe) private var observedTagSize = 0
+                public func tagSize() -> Int { observedTagSize }
+                @_lifetime(borrow pair)
+                @inline(never) public func lifetimeResult<Value: ~Escapable, Tag>(
+                    _ pair: (String, LifetimeBox<Tag>), _ value: consuming Value
+                ) -> Value {
+                    observedTagSize = MemoryLayout<Tag>.size
+                    return unsafe _overrideLifetime(value, borrowing: pair)
+                }
+                public func integerBox() -> AnyObject { LifetimeBox(Int64(1)) }
+                public func textBox() -> AnyObject { LifetimeBox("tag") }
+                """,
+            linkArguments: [
+                "-O", "-swift-version", "6", "-enable-experimental-feature", "Lifetimes",
+            ]
+        )
+        defer { provider.cleanup() }
+        let symbol = try #require(
+            provider.exportedSymbols().first {
+                DeclarationKey.demangle(String($0.dropFirst()), language: .swift)?.hasPrefix(
+                    module + ".lifetimeResult<"
+                ) == true
+            }
+        )
+        // The Swift 6.4 optimizer crashes on a cross-module generic lifetime
+        // call. Use the same compiler-emitted symbol and Swift ABI from C++;
+        // the codegen probe checks this exact indirect-result/metadata order.
+        let caller = try FixtureLibrary(
+            cxxSource: """
+                #include <stdint.h>
+                extern "C" __attribute__((swiftcall)) void target(
+                    __attribute__((swift_indirect_result)) void *, const void *, void *, const void *, const void *) asm("\(symbol)");
+                extern "C" int64_t ABIDeclaredLifetimeCall(const void *pair, int64_t value, const void *valueType, const void *tagType) {
+                    int64_t result;
+                    target(&result, pair, &value, valueType, tagType);
+                    return result;
+                }
+                """,
+            linkArguments: [provider.libraryURL.path, "-Xlinker", "-no_data_const"]
+        )
+        defer { caller.cleanup() }
+        let runtime = ABIRuntime()
+        let function = try await runtime.resolve(
+            .function(
+                module + ".lifetimeResult(_:_:)",
+                as: (((String, NativeSwiftValue), NativeSwiftConsuming<Int64>) -> Int64).self,
+                genericArguments: [.type(Int64.self), .type(String.self)],
+                declaredAs:
+                    "<A, B where A: ~Escapable> @_lifetime(borrow pair) (_ pair: (Swift.String, \(module).LifetimeBox<B>), _ value: consuming A) -> A"
+            ),
+            in: .path(provider.libraryURL)
+        )
+        let integer = try await runtime.resolve(
+            .function(module + ".integerBox()", as: (() -> AnyObject).self),
+            in: .path(provider.libraryURL)
+        )
+        let text = try await runtime.resolve(
+            .function(module + ".textBox()", as: (() -> AnyObject).self),
+            in: .path(provider.libraryURL)
+        )
+        let tagSize = try await runtime.resolve(
+            .function(module + ".tagSize()", as: (() -> Int).self),
+            in: .path(provider.libraryURL)
+        )
+        let oracle = try await runtime.resolveCFunction(
+            named: "ABIDeclaredLifetimeCall",
+            as: ((UnsafeRawPointer, Int64, UnsafeRawPointer, UnsafeRawPointer) -> Int64).self,
+            in: .path(caller.libraryURL)
+        )
+        let hook = try unsafe await function.hookImportedCalls(
+            in: .path(caller.libraryURL),
+            using: runtime,
+            onFailure: { Issue.record($0) }
+        ) { call, pair, value in
+            try call.proceed(pair, value) + 100
+        }
+        defer { hook.invalidate() }
+        let integerMetadata = unsafeBitCast(Int64.self, to: UnsafeRawPointer.self)
+        for (box, tag, expected) in [
+            (try unsafe text.unsafeInvoke(), String.self as Any.Type, Int64(107)),
+            (try unsafe integer.unsafeInvoke(), Int64.self as Any.Type, Int64(7)),
+        ] {
+            let pair = ("123", box)
+            let result = try withUnsafePointer(to: pair) { pair in
+                try unsafe oracle.unsafeInvoke(
+                    UnsafeRawPointer(pair),
+                    7,
+                    integerMetadata,
+                    unsafeBitCast(tag, to: UnsafeRawPointer.self)
+                )
+            }
+            #expect(result == expected)
+            #expect(
+                try unsafe tagSize.unsafeInvoke()
+                    == (tag == String.self ? MemoryLayout<String>.size : MemoryLayout<Int64>.size)
+            )
+        }
     }
 
     @Test func genericHooksSelectBindingsBeforeReadingNativeValues() async throws {

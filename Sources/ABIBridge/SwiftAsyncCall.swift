@@ -95,7 +95,7 @@ final class SwiftAsyncCall: Sendable {
     ) throws {
         try generic?.validateMetadataArguments()
         let signature = try SwiftFunctionSignature(signature)
-        parameters =
+        var parameters =
             try generic?.parameters ?? closure?.parameters
             ?? SwiftGenericParameters(
                 actual: signature.parameters,
@@ -111,7 +111,10 @@ final class SwiftAsyncCall: Sendable {
             arguments: parameters.arguments,
             result: generic?.result ?? closure?.result
         )
-        try values.requireBorrowableArguments(parameters: parameters, declaration: generic)
+        parameters = try parameters.passingByAddress(
+            values.borrowedArgumentTypes(parameters: parameters, declaration: generic)
+        )
+        self.parameters = parameters
         #if DEBUG
         generic?.checkClosedSchemas(signature, values: values)
         #endif

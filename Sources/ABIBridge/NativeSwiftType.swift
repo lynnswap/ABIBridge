@@ -413,7 +413,8 @@ public actor NativeSwiftType: Hashable {
             isMutating: isMutating,
             isConsuming: isConsuming,
             protocolSelf: protocolSelf,
-            validateClass: representation != nil && representation != metadata
+            validateClass: representation != nil && representation != metadata,
+            borrowed: generic?.binding.declaration.borrowedInputs.map { $0.contains(.receiver) }
         )
         if receiverABI != nil, metadata is any NativeOptionalValue.Type {
             try checkOptionalReceiverABI(
@@ -461,7 +462,8 @@ public actor NativeSwiftType: Hashable {
             isMutating: isMutating,
             isConsuming: isConsuming,
             protocolSelf: protocolSelf,
-            validateClass: false
+            validateClass: false,
+            borrowed: generic?.binding.declaration.borrowedInputs.map { $0.contains(.receiver) }
         )
         func passing(_ plan: SwiftReceiverPlan) -> String {
             plan.mode == .value ? SwiftDeclaredLowering.lowering(of: plan.type) : "by address"
@@ -650,6 +652,7 @@ public actor NativeSwiftType: Hashable {
                     enclosing: enclosing,
                     implicitSelf: isProtocolMember ? self : nil,
                     declaredSignature: declaredSignature,
+                    allowsReceiverDependencies: !query.isStatic && query.role != .initializer,
                     valueABIs: valueABIs
                 )
                 if isComplete {

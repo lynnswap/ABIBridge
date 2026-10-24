@@ -9,6 +9,7 @@
 #include <vector>
 #include <string>
 #include <memory>
+#include <utility>
 #include <algorithm>
 
 // The runtime entry points and descriptor layouts are part of Swift's ABI.
@@ -915,17 +916,28 @@ namespace {
 // parameters padded to four bytes, requirements, then the pack shapes,
 // conditional invertible protocols, and value parameters its flags announce.
 // https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/ABI/GenericContext.h
-const char *genericContextEnd(const char *header) {
+std::pair<const char *, size_t> conditionalInvertibleRequirements(const char *header, uint16_t protocol) {
+    if (!header) return {nullptr, 0};
     const auto flags = read<uint16_t>(header + 6);
     const char *end = genericRequirements(header) + read<uint16_t>(header + 2) * 12;
     if (flags & 1) end += 4 + read<uint16_t>(end) * 8;
-    if (flags & 2) {
-        const int protocols = __builtin_popcount(read<uint16_t>(end));
-        // Requirement counts are cumulative, so the last one is the total.
-        const size_t requirements = protocols ? read<uint16_t>(end + 2 * protocols) : 0;
-        const auto counted = reinterpret_cast<uintptr_t>(end + 2 + 2 * protocols);
-        end = reinterpret_cast<const char *>((counted + 3) & ~uintptr_t(3)) + requirements * 12;
-    }
+    if (!(flags & 2)) return {end, 0};
+    const auto protocols = read<uint16_t>(end);
+    const auto count = __builtin_popcount(protocols);
+    const auto counted = reinterpret_cast<uintptr_t>(end + 2 + 2 * count);
+    const char *requirements = reinterpret_cast<const char *>((counted + 3) & ~uintptr_t(3));
+    if (protocol && !(protocols & protocol)) return {requirements, 0};
+    // A zero mask asks for all records, to locate the end of the context.
+    const int rank = protocol ? __builtin_popcount(protocols & (protocol - 1)) : 0;
+    const size_t first = rank ? read<uint16_t>(end + 2 * rank) : 0;
+    const size_t last = protocol ? read<uint16_t>(end + 2 * (rank + 1))
+        : count ? read<uint16_t>(end + 2 * count) : 0;
+    return {requirements + first * 12, last - first};
+}
+const char *genericContextEnd(const char *header) {
+    const auto flags = read<uint16_t>(header + 6);
+    const auto requirements = conditionalInvertibleRequirements(header, 0);
+    const char *end = requirements.first + requirements.second * 12;
     if (flags & 4) end += 4 + read<uint32_t>(end) * 4;
     return end;
 }
@@ -1022,6 +1034,15 @@ bool ABISwiftTypeMetadataArgumentIsKey(const ABISwiftTypeMetadata *result, size_
 size_t ABISwiftTypeMetadataRequirementCount(const ABISwiftTypeMetadata *result) { return result->requirements.size(); }
 const void *ABISwiftTypeMetadataRequirement(const ABISwiftTypeMetadata *result, size_t index) {
     return result->requirements[index];
+}
+size_t ABISwiftTypeMetadataConditionalRequirementCount(const ABISwiftTypeMetadata *result, uint16_t protocol) {
+    const char *descriptor = typeContextDescriptor(result->value);
+    return conditionalInvertibleRequirements(descriptor ? nominalGenericHeader(descriptor) : nullptr, protocol).second;
+}
+const void *ABISwiftTypeMetadataConditionalRequirement(const ABISwiftTypeMetadata *result, uint16_t protocol, size_t index) {
+    const char *descriptor = typeContextDescriptor(result->value);
+    const auto requirements = conditionalInvertibleRequirements(descriptor ? nominalGenericHeader(descriptor) : nullptr, protocol);
+    return requirements.first + index * 12;
 }
 const void *ABISwiftTypeMetadataValue(const ABISwiftTypeMetadata *result) { return result->value; }
 size_t ABISwiftTypeMetadataConformanceCount(const ABISwiftTypeMetadata *result) { return result->conformances.size(); }

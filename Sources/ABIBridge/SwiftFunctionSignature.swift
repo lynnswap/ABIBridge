@@ -329,18 +329,22 @@ struct SwiftCallValues: Sendable {
         result = Result(conversion: conversion, scoped: scoped)
     }
 
-    /// Checks that each argument passes as Swift passes it where the call's
-    /// result borrows from it; see ``SwiftBorrowedInputs``.
+    /// Whole-address layouts required by stated result dependencies. Without
+    /// that information, checks that no dependency changes an argument's ABI.
     ///
     /// - Parameters:
     ///   - parameters: How the call groups its arguments into parameters.
     ///   - declaration: The selected declaration's plan, whose formal
     ///     parameter types name the native types behind adapters.
-    func requireBorrowableArguments(
+    func borrowedArgumentTypes(
         parameters: SwiftGenericParameters,
         declaration: SwiftGenericCallPlan?
-    ) throws {
-        guard result.scoped != nil else { return }
+    ) throws -> [Int: CValueType] {
+        let stated = declaration?.binding.declaration.borrowedInputs
+        guard try resultCanBorrowInputs(declaration: declaration) || stated != nil else {
+            return [:]
+        }
+        var addressed: [Int: CValueType] = [:]
         // The arguments of each parameter, with its formal type where a
         // declaration names one. A pack passes its elements through one
         // buffer of their addresses either way, so only whole values count.
@@ -348,25 +352,61 @@ struct SwiftCallValues: Sendable {
         let declared: [SwiftFormalType?] =
             declaration.map { $0.binding.declaration.arguments.map { $0 } }
             ?? Array(repeating: nil, count: parameters.groups.count)
-        for (formal, group) in zip(declared, parameters.groups) {
-            if case .value(let index) = group { formals[index] = formal }
+        var dependencies: [Int: Bool] = [:]
+        for (position, pair) in zip(declared, parameters.groups).enumerated() {
+            let (formal, group) = pair
+            if case .value(let index) = group {
+                formals[index] = formal
+                if let stated { dependencies[index] = stated.contains(.argument(position)) }
+            } else if case .pack(let range, _) = group, let stated {
+                for index in range { dependencies[index] = stated.contains(.argument(position)) }
+            }
         }
         // Swift rejects a borrow dependency on a consuming argument and
         // passes an inout argument by address.
-        for (index, argument) in arguments.enumerated() where argument.convention == .borrowing {
+        for (index, argument) in arguments.enumerated() {
+            let borrowed = dependencies[index]
+            if borrowed == true && argument.convention == .consuming {
+                throw ABIResolutionError.unsupportedDeclaration(
+                    "The declared result cannot borrow consuming argument \(index)."
+                )
+            }
+            guard argument.convention == .borrowing else { continue }
             guard let formal = formals[index] else { continue }
             let indirect = withExtendedLifetime(argument.type) {
                 ABISwiftValueIsIndirect(argument.type.handle)
             }
             // A tuple passes its elements separately.
             if indirect, argument.conversion.tuple == nil { continue }
-            try SwiftBorrowedInputs.requireArgument(
+            let byAddress = try SwiftBorrowedInputs.argumentPassesByAddress(
                 index,
                 conversion: argument.conversion,
                 formal: formal,
-                binding: declaration?.binding
+                binding: declaration?.binding,
+                borrowed: borrowed
             )
+            if byAddress {
+                if let tuple = argument.conversion.tuple {
+                    addressed[index] = try SwiftValueSchema.storage(of: tuple.nativeMetadata)
+                } else {
+                    addressed[index] = try CValueType(
+                        indirectSwiftSize: argument.type.size,
+                        alignment: argument.type.alignment
+                    )
+                }
+            }
         }
+        return addressed
+    }
+
+    func resultCanBorrowInputs(declaration: SwiftGenericCallPlan?) throws -> Bool {
+        if result.scoped != nil { return true }
+        guard let binding = declaration?.binding else { return false }
+        let formal = binding.declaration.result
+        guard binding.dependsOnParameters(formal) || !formal.opaqueIndices.isEmpty else {
+            return false
+        }
+        return try binding.mayBeNonescapable(formal)
     }
 
     func requireIndependentResult() throws {

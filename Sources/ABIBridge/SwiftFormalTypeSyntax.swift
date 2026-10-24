@@ -154,6 +154,9 @@ extension SwiftGenericDeclaration {
             self.isAsync = attributes.isAsync
         }
         self.implicitRequirements = implicitRequirements
+        if case .function(_, _, _, let attributes) = declaredSignature?.function {
+            borrowedInputs = attributes.borrowedInputs
+        }
         abiRequirements = try declaredSignature?.requirements(for: self)
         if let abiRequirements {
             self.requirements += abiRequirements.filter { !self.requirements.contains($0) }
