@@ -211,11 +211,10 @@ extension NativeSwiftType {
     /// Checks that no requirement of the protocol that qualifies `request`
     /// can be the requested member, before an extension member stands in.
     ///
-    /// The qualified name refers to the protocol's own members; a requirement
-    /// that the protocol inherits has the inherited protocol's name. A Swift
-    /// protocol's descriptor records each requirement's kind and effects but
-    /// not its name, so only a requirement of the member's own kind, static
-    /// or not and async or not, can be the member. Each such requirement is
+    /// The check includes requirements of inherited protocols, transitively.
+    /// A Swift protocol's descriptor records each requirement's kind and
+    /// effects but not its name, so only a requirement of the member's own
+    /// kind, static or not and async or not, can be the member. Each such requirement is
     /// named by its method descriptor, which library evolution exports, or by
     /// the witness that a conformance's witness table holds in its slot. A
     /// named requirement with the requested name that selection has not
@@ -264,123 +263,181 @@ extension NativeSwiftType {
                 "neither a Swift protocol descriptor nor an Objective-C protocol named \(protocolName) is in the loaded images, so whether it declares this member as a requirement is not established."
             )
         }
-        let protocolAddress = unsafe protocolSymbol.withUnsafeAddress { $0 }
-        // The requirements of the member's kind, with their witness-table
-        // slots, which follow the conformance descriptor's.
-        let isStatic = query.isStatic
-        let kind: UInt32 =
-            switch query.role {
-            case .method: 1
-            case .initializer: 2
-            case .getter: 3
-            case .setter: 4
-            }
-        var unnamed = RuntimeProtocolLayout(protocolAddress).witnessRequirements.enumerated()
-            .filter { _, requirement in
-                requirement.kind == kind
-                    && (kind == 2 || requirement.isInstance != isStatic)
-                    && (kind == 4 || requirement.isAsync == isAsync)
-            }.map { (slot: $0.offset + 1, requirement: $0.element) }
-        guard !unnamed.isEmpty else { return }
-        // Checks a named requirement that the request can name and selection
-        // has not considered. The requirement's records state its kind.
-        func check(_ requirement: String, witness: SwiftCandidate?) throws {
-            if let name = DeclarationKey.demangle(requirement, language: .swift),
-                let record = RuntimeSwiftDeclaration(linkageName: requirement),
-                SwiftMemberPath(declaration: name, allocates: record.kind == .allocator)
-                    != match.path || !match.accepts(record)
-            {
-                return
-            }
-            guard !considered.contains(requirement) else { return }
-            guard let witness else {
-                throw undecided(
-                    "\(protocolName) declares a requirement with this name whose dispatch thunk is not in the loaded images."
-                )
-            }
-            guard try !accepts(witness) else {
-                throw ABIResolutionError.metadataUnavailable(
-                    displayed.name
-                        + ": \(protocolName) declares a requirement that this member names, which selection could not call for \(self.name), so no extension member stands in for it."
-                )
-            }
-        }
-        // A method descriptor symbol names the requirement at its address.
-        unnamed = try unnamed.filter { entry in
-            let requirements = resolver.swiftMethodDescriptorRequirements(
-                at: entry.requirement.address,
-                in: protocolSymbol.image
-            )
-            for requirement in requirements { try check(requirement, witness: nil) }
-            return requirements.isEmpty
-        }
-        guard !unnamed.isEmpty else { return }
-        // A conformance's witness table names a requirement by the witness in
-        // its slot. Besides this type's conformance and those whose witnesses
-        // selection saw, the conformance records of the protocol's image and
-        // of this type's conformance's image list conformances to try.
-        let own = try conformance(to: protocolAddress)
-        var sources: [UnsafeRawPointer] = own.map { [$0.descriptor] } ?? []
-        sources += conformances.keys
-        for address in [protocolAddress, own?.descriptor].compactMap({ $0 }) {
-            let count = ABISwiftImageConformanceDescriptors(address, protocolAddress, nil, 0)
-            var recorded = [UnsafeRawPointer?](repeating: nil, count: count)
-            let copied = recorded.withUnsafeMutableBufferPointer {
-                ABISwiftImageConformanceDescriptors(
-                    address,
-                    protocolAddress,
-                    $0.baseAddress,
-                    $0.count
-                )
-            }
-            sources += recorded.prefix(min(count, copied)).compactMap { $0 }
-        }
-        var tried: Set<UnsafeRawPointer> = []
-        // Stripping removes the witnesses of every conformance in an image.
-        var stripped: Set<NativeImage> = []
-        for descriptor in sources where tried.insert(descriptor).inserted && !unnamed.isEmpty {
-            guard
-                let image = try conformances[descriptor]
-                    ?? swiftImplementationImage(containing: descriptor),
-                !stripped.contains(image)
-            else { continue }
-            let witnesses = resolver.swiftWitnesses(ofConformanceAt: descriptor, in: image)
-            guard !witnesses.isEmpty else {
-                stripped.insert(image)
-                continue
-            }
-            guard
-                let table = descriptor == own?.descriptor
-                    ? own?.table : ABISwiftConformanceWitnessTablePattern(descriptor)
-            else { continue }
-            // A linker can fold several witnesses into one address. A slot
-            // holding it is named by each of them.
-            var byAddress: [UnsafeRawPointer: [SwiftCandidate]] = [:]
-            for witness in witnesses {
-                unsafe witness.symbol.withUnsafeAddress {
-                    byAddress[$0, default: []].append(witness)
+        let root = unsafe protocolSymbol.withUnsafeAddress { $0 }
+        var visited: Set<UnsafeRawPointer> = []
+        func visit(_ descriptor: SwiftProtocolDescriptor) throws {
+            try unsafe descriptor.withUnsafeAddress { protocolAddress in
+                guard visited.insert(protocolAddress).inserted else { return }
+                let protocolName = try descriptor.name()
+                guard let protocolImage = descriptor.image else {
+                    throw undecided("The image of protocol \(protocolName) is unavailable.")
+                }
+                for requirement in RuntimeProtocolLayout(protocolAddress).requirements {
+                    guard requirement.isInheritedProtocol, let base = requirement.protocolDescriptor
+                    else { continue }
+                    try visit(SwiftProtocolDescriptor(address: base))
+                }
+                let isInherited = protocolAddress != root
+                // The requirements of the member's kind, with their witness-table
+                // slots, which follow the conformance descriptor's.
+                let isStatic = query.isStatic
+                let kind: UInt32 =
+                    switch query.role {
+                    case .method: 1
+                    case .initializer: 2
+                    case .getter: 3
+                    case .setter: 4
+                    }
+                var unnamed = RuntimeProtocolLayout(protocolAddress).witnessRequirements
+                    .enumerated()
+                    .filter { _, requirement in
+                        requirement.kind == kind
+                            && (kind == 2 || requirement.isInstance != isStatic)
+                            && (kind == 4 || requirement.isAsync == isAsync)
+                    }.map { (slot: $0.offset + 1, requirement: $0.element) }
+                guard !unnamed.isEmpty else { return }
+                var checked = considered
+                // Checks a named requirement that the request can name and selection
+                // has not considered. The requirement's records state its kind.
+                func check(_ requirement: String, witness: SwiftCandidate?) throws {
+                    let name = DeclarationKey.demangle(requirement, language: .swift)
+                    if let name,
+                        let record = RuntimeSwiftDeclaration(linkageName: requirement),
+                        SwiftMemberPath(declaration: name, allocates: record.kind == .allocator)?
+                            .member
+                            != match.path.member || !match.accepts(record)
+                            || (isInherited && query.isComplete && !query.spellsMember(name))
+                    {
+                        return
+                    }
+                    guard !checked.contains(requirement) else { return }
+                    guard let witness else {
+                        throw undecided(
+                            "\(name ?? requirement) is a requirement of \(protocolName) whose dispatch thunk is not in the loaded images."
+                        )
+                    }
+                    checked.insert(requirement)
+                    guard try !accepts(witness) else {
+                        throw ABIResolutionError.metadataUnavailable(
+                            displayed.name
+                                + ": \(name ?? requirement) is a requirement of \(protocolName) that this member names, which selection could not call for \(self.name), so no extension member stands in for it."
+                        )
+                    }
+                }
+                // Selection has not seen an inherited protocol's candidates. Check
+                // their native signatures before unnamed slots can block an extension
+                // member whose signature does not name the requirement.
+                if isInherited {
+                    let inheritedMatch = SwiftMemberMatch(
+                        path: SwiftMemberPath(owner: protocolName, member: query.member)!,
+                        accessor: match.accessor,
+                        isStatic: match.isStatic,
+                        initializer: match.initializer
+                    )
+                    let candidates = try servingWitnesses(
+                        resolver.swiftMemberCandidates(
+                            inheritedMatch,
+                            owner: protocolName,
+                            in: nil,
+                            extensionsOnly: false,
+                            includingSharedCache: true
+                        )
+                    )
+                    for candidate in candidates.candidates
+                    where candidate.record.context == .protocolRequirement
+                        && candidate.record.role != .implementation
+                    {
+                        if let requirement = candidate.record.requirement {
+                            try check(requirement, witness: candidate)
+                        }
+                    }
+                }
+                // A method descriptor symbol names the requirement at its address.
+                unnamed = try unnamed.filter { entry in
+                    let requirements = resolver.swiftMethodDescriptorRequirements(
+                        at: entry.requirement.address,
+                        in: protocolImage
+                    )
+                    for requirement in requirements { try check(requirement, witness: nil) }
+                    return requirements.isEmpty
+                }
+                guard !unnamed.isEmpty else { return }
+                // A conformance's witness table names a requirement by the witness in
+                // its slot. Besides this type's conformance and those whose witnesses
+                // selection saw, the conformance records of the protocol's image and
+                // of this type's conformance's image list conformances to try.
+                let own = try conformance(to: protocolAddress)
+                var sources: [UnsafeRawPointer] = own.map { [$0.descriptor] } ?? []
+                sources += conformances.keys
+                for address in [protocolAddress, own?.descriptor].compactMap({ $0 }) {
+                    let count = ABISwiftImageConformanceDescriptors(
+                        address,
+                        protocolAddress,
+                        nil,
+                        0
+                    )
+                    var recorded = [UnsafeRawPointer?](repeating: nil, count: count)
+                    let copied = recorded.withUnsafeMutableBufferPointer {
+                        ABISwiftImageConformanceDescriptors(
+                            address,
+                            protocolAddress,
+                            $0.baseAddress,
+                            $0.count
+                        )
+                    }
+                    sources += recorded.prefix(min(count, copied)).compactMap { $0 }
+                }
+                var tried: Set<UnsafeRawPointer> = []
+                // Stripping removes the witnesses of every conformance in an image.
+                var stripped: Set<NativeImage> = []
+                for descriptor in sources
+                where tried.insert(descriptor).inserted && !unnamed.isEmpty {
+                    guard
+                        let image = try conformances[descriptor]
+                            ?? swiftImplementationImage(containing: descriptor),
+                        !stripped.contains(image)
+                    else { continue }
+                    let witnesses = resolver.swiftWitnesses(ofConformanceAt: descriptor, in: image)
+                    guard !witnesses.isEmpty else {
+                        stripped.insert(image)
+                        continue
+                    }
+                    guard
+                        let table = descriptor == own?.descriptor
+                            ? own?.table : ABISwiftConformanceWitnessTablePattern(descriptor)
+                    else { continue }
+                    // A linker can fold several witnesses into one address. A slot
+                    // holding it is named by each of them.
+                    var byAddress: [UnsafeRawPointer: [SwiftCandidate]] = [:]
+                    for witness in witnesses {
+                        unsafe witness.symbol.withUnsafeAddress {
+                            byAddress[$0, default: []].append(witness)
+                        }
+                    }
+                    unnamed = try unnamed.filter { entry in
+                        let isAsync = entry.requirement.isAsync
+                        // An async slot holds the witness's async function pointer.
+                        guard
+                            let held = ABISwiftWitnessTableEntry(table, entry.slot, isAsync)
+                                .flatMap({
+                                    isAsync ? ABISwiftAsyncFunctionPointerCode($0) : $0
+                                })
+                        else { return true }
+                        let named = byAddress[held] ?? []
+                        for witness in named {
+                            guard let requirement = witness.record.requirement else { continue }
+                            try check(requirement, witness: witness)
+                        }
+                        return named.isEmpty
+                    }
+                }
+                guard unnamed.isEmpty else {
+                    throw undecided(
+                        "\(unnamed.count) requirements of \(protocolName) that this member could be have no method descriptor or conformance's witness in the loaded images, so whether it is one of them is not established. A conformance's witnesses are local symbols, which stripping removes."
+                    )
                 }
             }
-            unnamed = try unnamed.filter { entry in
-                let isAsync = entry.requirement.isAsync
-                // An async slot holds the witness's async function pointer.
-                guard
-                    let held = ABISwiftWitnessTableEntry(table, entry.slot, isAsync).flatMap({
-                        isAsync ? ABISwiftAsyncFunctionPointerCode($0) : $0
-                    })
-                else { return true }
-                let named = byAddress[held] ?? []
-                for witness in named {
-                    guard let requirement = witness.record.requirement else { continue }
-                    try check(requirement, witness: witness)
-                }
-                return named.isEmpty
-            }
         }
-        guard unnamed.isEmpty else {
-            throw undecided(
-                "\(unnamed.count) requirements of \(protocolName) that this member could be have no method descriptor or conformance's witness in the loaded images, so whether it is one of them is not established. A conformance's witnesses are local symbols, which stripping removes."
-            )
-        }
+        try visit(SwiftProtocolDescriptor(protocolSymbol))
     }
 }
