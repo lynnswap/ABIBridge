@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-/// An owned immutable catalog snapshot. Free it with ABIFreeImageList. Snapshot entries describe loads but do not keep those images loaded.
+/// An owned immutable catalog snapshot. Release it with ABIReleaseImageList. Snapshot entries describe loads but do not keep those images loaded.
 typedef struct ABIImageList ABIImageList;
 /// An owned lifetime lease for one image generation.
 typedef struct ABIImageLease ABIImageLease;
@@ -20,24 +20,27 @@ typedef struct ABISymbolRuntime ABISymbolRuntime;
 typedef struct ABIResolvedSymbol ABIResolvedSymbol;
 /// An owned failure with an immutable category and UTF-8 message.
 typedef struct ABIResolutionFailure ABIResolutionFailure;
+/// A failure category, including unknown future codes.
+typedef int32_t ABIFailureCode;
 /// Creates an owned failure, copying a nonnull UTF-8 message. Native callback errors may use ABIFailureOther or a more specific category below.
-ABIResolutionFailure *ABICreateResolutionFailure(int32_t code, const char *message);
+ABIResolutionFailure *ABICreateResolutionFailure(ABIFailureCode code, const char *message);
 /// An owned, immutable lazy-library diagnostic snapshot. Strings are copied.
 typedef struct ABILazyLibraryList ABILazyLibraryList;
 
 /// Optional diagnostic Boolean values. Unknown is distinct from false.
+typedef int32_t ABIDiagnosticBoolean;
 enum { ABIDiagnosticUnknown = -1, ABIDiagnosticFalse = 0, ABIDiagnosticTrue = 1 };
 /// Copied scalar fields and strings borrowed from the owning lazy-library list.
 typedef struct {
     uint64_t commandOffset;
     /// Null if the recorded path is unreadable.
     const char *path;
-    int32_t isOptional;
-    int32_t areSymbolsPrebound;
+    ABIDiagnosticBoolean isOptional;
+    ABIDiagnosticBoolean areSymbolsPrebound;
     /// Unknown for file snapshots; a live observation does not synchronize with dyld.
-    int32_t isInitialized;
+    ABIDiagnosticBoolean isInitialized;
     /// True for a readable symbol array, including an empty array.
-    int32_t symbolsAvailable;
+    ABIDiagnosticBoolean symbolsAvailable;
     size_t symbolCount;
 } ABILazyLibraryInfo;
 /// Names borrowed from the owning list. Both are null for an unreadable string. A decoded name is not a resolved symbol or callable-signature guarantee.
@@ -48,13 +51,13 @@ ABILazyLibraryList *ABICopyLazyLibrariesForImage(uint64_t generation, ABIResolut
 /// Copies metadata from a thin Mach-O file; fat files are not accepted. Path is non-null, null-terminated UTF-8. File state never establishes live initialization. Error ownership follows ABICopyLazyLibrariesForImage.
 ABILazyLibraryList *ABICopyLazyLibrariesInFile(const char *path, ABIResolutionFailure **error);
 /// Requires a non-null live list. Read operations on the same list may run concurrently.
-size_t ABILazyLibraryListCount(const ABILazyLibraryList *list);
-/// Requires index < count. Returned strings live until the list is freed.
-ABILazyLibraryInfo ABILazyLibraryListGet(const ABILazyLibraryList *list, size_t index);
+size_t ABILazyLibraryListGetCount(const ABILazyLibraryList *list);
+/// Requires index < count. Returned strings live until the list is released.
+ABILazyLibraryInfo ABILazyLibraryListGetLibrary(const ABILazyLibraryList *list, size_t index);
 /// Requires valid library/symbol indexes and an available symbol array.
-ABILazySymbolInfo ABILazyLibraryListSymbol(const ABILazyLibraryList *list, size_t libraryIndex, size_t symbolIndex);
-/// Frees a snapshot and its strings. Null is accepted; do not race with reads.
-void ABIFreeLazyLibraryList(ABILazyLibraryList *list);
+ABILazySymbolInfo ABILazyLibraryListGetSymbol(const ABILazyLibraryList *list, size_t libraryIndex, size_t symbolIndex);
+/// Releases a snapshot and its strings. Null is accepted; do not race with reads.
+void ABIReleaseLazyLibraryList(ABILazyLibraryList *list);
 
 /// A description of one image load. Copying this value does not retain an image. Strings and addresses are borrowed; their owners are documented by each getter.
 typedef struct {
@@ -71,6 +74,7 @@ typedef struct {
 } ABIImageInfo;
 
 /// Source-language values for ABIResolveSymbol.
+typedef int32_t ABILanguage;
 enum {
     ABILanguageSwift = 0,
     /// Objective-C source declarations report ABIFailureUnsupportedDeclaration.
@@ -81,10 +85,13 @@ enum {
     ABILanguageCXX = 3
 };
 /// Required storage kind. A symbol in an incompatible section is not returned.
+typedef int32_t ABISymbolKind;
 enum { ABISymbolFunction = 0, ABISymbolData = 1, ABISymbolVTable = 2 };
 /// Image search scope. Framework names omit ".framework"; paths identify executables; install names use dyld spelling, including @rpath. Automatic scope searches loaded images only. The operation controls acquisition.
+typedef int32_t ABIImageScope;
 enum { ABIImageAutomatic = 0, ABIImageFramework = 1, ABIImagePath = 2, ABIImageInstallName = 3 };
 /// Explicit scopes may load by default. Automatic scope only searches loaded images.
+typedef int32_t ABIImageLoadingPolicy;
 enum { ABIImageLoadIfNeeded = 0, ABIImageLoadedOnly = 1 };
 /// Failure categories. Preserve the message for declaration-specific detail. Callers should handle unknown future categories as unspecified failures.
 enum {
@@ -98,21 +105,22 @@ enum {
 };
 
 /// Name representation, independent of declaration language. Linker spelling adds one Mach-O underscore; literal Mach-O spelling is used unchanged.
+typedef int32_t ABINameForm;
 enum { ABINameSource = 0, ABINameLinker = 1, ABINameMachO = 2 };
 
 /// One declaration. The name is null-terminated UTF-8. Initialize all fields, or zero-initialize for source-level spelling before assigning other fields.
 typedef struct {
     const char *name;
-    int32_t language;
-    int32_t kind;
-    int32_t nameForm;
+    ABILanguage language;
+    ABISymbolKind kind;
+    ABINameForm nameForm;
 } ABIDeclaration;
 /// One image scope, using the ABIImage constants and selector spelling.
 typedef struct {
-    int32_t scope;
+    ABIImageScope scope;
     const char *selector;
 } ABIImageSelector;
-/// A requirement with aliases, lazy fallbacks, and ordered scopes. Empty scopes match no images. Initialize every field or zero-initialize. Arrays and their strings remain borrowed throughout ABIResolveSymbols. Null array pointers are accepted only when the corresponding count is zero.
+/// A requirement with aliases, lazy fallbacks, and ordered scopes. Empty scopes match no images. Initialize every field or zero-initialize. Arrays and their strings remain borrowed throughout ABIResolveSymbol or ABIResolveSymbols. Null array pointers are accepted only when the corresponding count is zero.
 typedef struct {
     ABIDeclaration declaration;
     const ABIDeclaration *alternatives;
@@ -122,7 +130,7 @@ typedef struct {
     const ABIDeclaration *fallbacks;
     size_t fallbackCount;
     /// ABIImageLoadIfNeeded (zero) or ABIImageLoadedOnly.
-    int32_t loading;
+    ABIImageLoadingPolicy loading;
 } ABISymbolRequest;
 /// Exactly one owned symbol or failure for one input request. Release each non-null field with its matching release function.
 typedef struct {
@@ -137,21 +145,21 @@ void ABIResolveSymbols(
     ABISymbolRuntime *runtime, const ABISymbolRequest *requests, size_t count,
     ABISymbolResult *results);
 
-/// Copies the current catalog. The caller frees a non-null result with ABIFreeImageList. Returns null if the catalog/callback image cannot be initialized and retained; this operation has no detailed failure output.
+/// Copies the current catalog. The caller releases a non-null result with ABIReleaseImageList. Returns null if the catalog/callback image cannot be initialized and retained; this operation has no detailed failure output.
 ABIImageList *ABICopyLoadedImages(void);
 /// Returns the entry count. The list must be non-null and remain alive.
-size_t ABIImageListCount(const ABIImageList *list);
+size_t ABIImageListGetCount(const ABIImageList *list);
 /// Process-local catalog revision, changed by both image additions and removals. Equal revisions describe the same captured loads, not unchanged file contents. Requires a non-null live list.
-uint64_t ABIImageListRevision(const ABIImageList *list);
-/// Copies an entry. The non-null list must remain alive, and index must be less than its count. The returned path remains valid until the list is freed. The image itself may unload; acquire a lease before using its addresses.
-ABIImageInfo ABIImageListGet(const ABIImageList *list, size_t index);
+uint64_t ABIImageListGetRevision(const ABIImageList *list);
+/// Copies an entry. The non-null list must remain alive, and index must be less than its count. The returned path remains valid until the list is released. The image itself may unload; acquire a lease before using its addresses.
+ABIImageInfo ABIImageListGetImage(const ABIImageList *list, size_t index);
 /// Releases a snapshot and its path strings. Null is accepted.
-void ABIFreeImageList(ABIImageList *list);
+void ABIReleaseImageList(ABIImageList *list);
 
-/// Acquires an independent lifetime lease for the given generation without loading a missing image. Executables and dyld shared-cache images already have process lifetime; other images acquire a loader reference. Returns null if the generation disappeared or its required loader reference could not be acquired, including while another thread runs its initializers. Catalog registration alone does not establish availability of a lease. Release success with ABIReleaseImage.
-ABIImageLease *ABIRetainLoadedImage(uint64_t generation);
+/// Acquires an independent lifetime lease for the given generation without loading a missing image. Executables and dyld shared-cache images already have process lifetime; other images acquire a loader reference. Returns null if the generation disappeared or its required loader reference could not be acquired, including while another thread runs its initializers. Catalog registration alone does not establish availability of a lease. Release success with ABIReleaseImageLease.
+ABIImageLease *ABIAcquireImageLease(uint64_t generation);
 /// Releases one lease. Null is accepted. The loader/runtime decides whether the image can physically unload when the last reference is released.
-void ABIReleaseImage(ABIImageLease *lease);
+void ABIReleaseImageLease(ABIImageLease *lease);
 
 /// Creates an owned independent resolver. Release it with ABIReleaseSymbolRuntime.
 ABISymbolRuntime *ABICreateSymbolRuntime(void);
@@ -160,48 +168,41 @@ ABISymbolRuntime *ABICopySharedSymbolRuntime(void);
 /// Releases an acquired non-null runtime reference. Existing symbol handles remain valid. Do not race release of a reference with operations using it.
 void ABIReleaseSymbolRuntime(ABISymbolRuntime *runtime);
 /// Clears cached results on a live non-null runtime. Existing symbols remain valid. Resolution and cache clearing may be performed concurrently.
-void ABIRuntimeRemoveCachedResults(ABISymbolRuntime *runtime);
+void ABISymbolRuntimeRemoveCachedResults(ABISymbolRuntime *runtime);
 
-/// Resolves a source-level declaration using a live, non-null runtime. Name and selector strings are null-terminated UTF-8 and remain valid for the call. C++/Swift names are demangled declarations; C names omit the Mach-O "_".
+/// Resolves one request using the same declaration, alias, fallback, scope and loading rules as ABIResolveSymbols. Empty imageScopes matches no images; use an explicit ABIImageAutomatic selector to search loaded images. Request strings and arrays are borrowed only for the call.
 ///
-/// Explicit scopes acquire and initialize their target with ABIImageLoadIfNeeded; ABIImageLoadedOnly searches existing loads. Install names resolve relative to ABIBridge's native loader image. Loading errors preserve the dyld message and stop fallback. A successful load may have side effects even if lookup fails.
+/// Source-form C names omit the Mach-O underscore; C++ and Swift use source-level declarations. ABINameLinker adds one Mach-O underscore and ABINameMachO uses the literal spelling. No representation is guessed from underscore prefixes. Each declaration retains its own language, storage kind and name form.
 ///
-/// Automatic scope ignores selector, which may be null. Framework, path, and install-name scopes require it. Invalid enum values or a missing required selector report ABIFailureInvalidRequest; ambiguous loads report ambiguity.
+/// Explicit framework/path/install-name scopes may acquire and initialize images with ABIImageLoadIfNeeded. Automatic scope searches only loaded images and ignores its selector. Other scopes require a selector; install names resolve relative to ABIBridge's native loader image. Invalid categories or missing selectors report ABIFailureInvalidRequest. Loading failures preserve the dyld message and stop fallback; loading may have side effects even if lookup fails.
 ///
-/// Success returns one owned symbol and clears error if supplied. Failure returns null and an owned failure if error is supplied. Release each with its matching function. An existing *error is overwritten without release; pass null to omit failure details.
-///
-/// Concurrent calls share the Swift frontend's backend. Resolution does not establish a signature, object layout, authentication schema, or pointee lifetime.
+/// Success returns one +1 owned symbol and clears error if supplied. Failure returns null and an owned failure if supplied. An existing *error is overwritten without release. The runtime and request must be non-null and live; null error omits failure details. Resolution does not establish a callable signature or pointee lifetime.
 ABIResolvedSymbol *ABIResolveSymbol(
-    ABISymbolRuntime *runtime, const char *name, int32_t language, int32_t kind,
-    int32_t scope, const char *selector, int32_t loading, ABIResolutionFailure **error);
-/// Resolves a name with an explicit representation using ABIName constants. Source form follows ABIResolveSymbol. Linker/Mach-O forms match exact bytes, preserving ABI variants, without demangling or punctuation normalization. Language is retained as metadata for exact forms. Storage, scope, ownership, and error contracts are the same as ABIResolveSymbol; unknown forms report ABIFailureInvalidRequest. No representation is guessed from underscore prefixes.
-ABIResolvedSymbol *ABIResolveSymbolWithNameForm(
-    ABISymbolRuntime *runtime, const char *name, int32_t nameForm,
-    int32_t language, int32_t kind, int32_t scope,
-    const char *selector, int32_t loading, ABIResolutionFailure **error);
+    ABISymbolRuntime *runtime, const ABISymbolRequest *request,
+    ABIResolutionFailure **error);
 
 /// Resolves a C++ vtable by qualified type name, such as "Example::Renderer". Scope, errors, ownership, and lifetime follow ABIResolveSymbol. The typeName string must remain valid for the call and omits the demangler's descriptive prefix. The result is the symbol base; no address-point offset is inferred.
 ABIResolvedSymbol *ABIResolveCXXVTable(
     ABISymbolRuntime *runtime, const char *typeName,
-    int32_t scope, const char *selector, int32_t loading, ABIResolutionFailure **error);
+    ABIImageSelector scope, ABIImageLoadingPolicy loading, ABIResolutionFailure **error);
 
 /// Acquires another owned reference to a live non-null symbol. The input reference remains owned by its caller. Release each acquired reference with ABIReleaseResolvedSymbol, even when the returned pointer equals the input. Keep the input reference alive for this call; concurrent retains are allowed.
 ABIResolvedSymbol *ABIRetainResolvedSymbol(ABIResolvedSymbol *symbol);
 /// Releases a non-null owned symbol and its image reference. A copied handle pointer is borrowed, not another owned reference. Do not race final release with operations using the same symbol.
 void ABIReleaseResolvedSymbol(ABIResolvedSymbol *symbol);
 /// Returns the non-null unsigned address borrowed from a live non-null symbol. Keep the symbol or an independent image lease alive while using the address. Calling code at this address additionally requires the actual native ABI and any function-pointer authentication required by the calling convention.
-const void *ABIResolvedSymbolAddress(const ABIResolvedSymbol *symbol);
+const void *ABIResolvedSymbolGetAddress(const ABIResolvedSymbol *symbol);
 /// Returns an ABISymbol kind for a live non-null symbol. This describes the validated storage; it does not establish a native function signature.
-int32_t ABIResolvedSymbolKind(const ABIResolvedSymbol *symbol);
+ABISymbolKind ABIResolvedSymbolGetKind(const ABIResolvedSymbol *symbol);
 /// Returns the ABILanguage value supplied by the symbol's declaration. This is caller-selected metadata, not an inferred calling convention.
-int32_t ABIResolvedSymbolLanguage(const ABIResolvedSymbol *symbol);
+ABILanguage ABIResolvedSymbolGetLanguage(const ABIResolvedSymbol *symbol);
 /// Copies image identity into non-null output storage. The symbol must be live and non-null. The path is borrowed from the symbol until it is released, even when an independent image lease keeps the underlying image loaded.
-void ABIResolvedSymbolImage(const ABIResolvedSymbol *symbol, ABIImageInfo *image);
+void ABIResolvedSymbolGetImage(const ABIResolvedSymbol *symbol, ABIImageInfo *image);
 
 /// Returns the category of a live non-null failure.
-int32_t ABIResolutionFailureCode(const ABIResolutionFailure *error);
+ABIFailureCode ABIResolutionFailureGetCode(const ABIResolutionFailure *error);
 /// Returns a UTF-8 message borrowed until the live non-null failure is released. Copy the message if it needs to outlive the failure handle.
-const char *ABIResolutionFailureMessage(const ABIResolutionFailure *error);
+const char *ABIResolutionFailureGetMessage(const ABIResolutionFailure *error);
 /// Releases an owned failure. Null is accepted.
 void ABIReleaseResolutionFailure(ABIResolutionFailure *error);
 

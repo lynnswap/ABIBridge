@@ -16,7 +16,7 @@ struct imported_image_update {
         : image{{value.image.header, value.image.slide, value.image.generation}, {}, value.image.path}, state(value.state) {
         std::copy_n(value.image.uuid, 16, image.uuid.begin());
         if (value.hook) hook = imported_hook_handle::adopt(ABIRetainImportedHook(value.hook));
-        if (value.failure) failure.emplace(ABIResolutionFailureCode(value.failure), ABIResolutionFailureMessage(value.failure));
+        if (value.failure) failure.emplace(ABIResolutionFailureGetCode(value.failure), ABIResolutionFailureGetMessage(value.failure));
     }
 };
 
@@ -27,9 +27,9 @@ public:
     void invalidate() const { ABIInvalidateImportedHookMonitor(value_.get()); }
     std::vector<imported_image_update> images() const {
         std::unique_ptr<ABIImportedImageList, decltype(&ABIReleaseImportedImageList)> snapshot(
-            ABICopyImportedHookMonitorImages(value_.get()), ABIReleaseImportedImageList);
+            ABIImportedHookMonitorCopyImages(value_.get()), ABIReleaseImportedImageList);
         std::vector<imported_image_update> result;
-        for (size_t i=0; i<ABIImportedImageListCount(snapshot.get()); ++i) result.emplace_back(ABIImportedImageListGet(snapshot.get(), i));
+        for (size_t i=0; i<ABIImportedImageListGetCount(snapshot.get()); ++i) result.emplace_back(ABIImportedImageListGetImage(snapshot.get(), i));
         return result;
     }
     ABIImportedHookMonitor *native_handle() const noexcept { return value_.get(); }
@@ -62,7 +62,7 @@ template<class R,class... A> struct imported_monitor_factory<R(A...)> {
             [](void *context, ABIImportedInvocation *call, ABIResolutionFailure **error) {
                 return Callback::invoke(static_cast<Callback*>(static_cast<State*>(context)),call,error);
             }, [](void *context, const ABIResolutionFailure *error) {
-                static_cast<State*>(context)->failure(resolution_error(ABIResolutionFailureCode(error),ABIResolutionFailureMessage(error)));
+                static_cast<State*>(context)->failure(resolution_error(ABIResolutionFailureGetCode(error),ABIResolutionFailureGetMessage(error)));
             }, [](void *context, ABIImportedImageUpdate update) {
                 static_cast<State*>(context)->update(imported_image_update(update));
             }, [](void *context) { delete static_cast<State*>(context); }, &error);

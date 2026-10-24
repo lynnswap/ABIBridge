@@ -9,6 +9,6 @@ struct ABIResolutionFailure {
 ABIResolutionFailure *ABICreateResolutionFailure(int32_t code, const char *message) {
     return new ABIResolutionFailure{code, message};
 }
-int32_t ABIResolutionFailureCode(const ABIResolutionFailure *error) { return error->code; }
-const char *ABIResolutionFailureMessage(const ABIResolutionFailure *error) { return error->message.c_str(); }
+int32_t ABIResolutionFailureGetCode(const ABIResolutionFailure *error) { return error->code; }
+const char *ABIResolutionFailureGetMessage(const ABIResolutionFailure *error) { return error->message.c_str(); }
 void ABIReleaseResolutionFailure(ABIResolutionFailure *error) { delete error; }

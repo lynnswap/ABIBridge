@@ -142,7 +142,7 @@ struct LazyLibraryTests {
         var error: OpaquePointer?
         #expect(ABICopyLazyLibrariesForImage(UInt64.max, &error) == nil)
         let failure = try #require(error)
-        #expect(ABIResolutionFailureCode(failure) == ABIFailureImageChanged)
+        #expect(ABIResolutionFailureGetCode(failure) == ABIFailureImageChanged)
         ABIReleaseResolutionFailure(failure)
         let bytes = try #require(ABICreateLazyLibraryFixture(1, 0))
         defer { free(bytes) }
@@ -150,16 +150,16 @@ struct LazyLibraryTests {
         defer { try? FileManager.default.removeItem(at: url) }
         try Data(bytes: bytes, count: ABILazyLibraryFixtureSize()).write(to: url)
         let list = try #require(ABICopyLazyLibrariesInFile(url.path, &error))
-        defer { ABIFreeLazyLibraryList(list) }
+        defer { ABIReleaseLazyLibraryList(list) }
         try FileManager.default.removeItem(at: url)
         #expect(error == nil)
-        #expect(ABILazyLibraryListCount(list) == 3)
-        let first = ABILazyLibraryListGet(list, 0)
+        #expect(ABILazyLibraryListGetCount(list) == 3)
+        let first = ABILazyLibraryListGetLibrary(list, 0)
         #expect(first.isInitialized == ABIDiagnosticUnknown)
         #expect(first.symbolsAvailable == ABIDiagnosticTrue)
         #expect(first.symbolCount == 3)
         #expect(
-            String(cString: ABILazyLibraryListSymbol(list, 0, 0).name)
+            String(cString: ABILazyLibraryListGetSymbol(list, 0, 0).name)
                 == "Example::Renderer::refresh()"
         )
     }

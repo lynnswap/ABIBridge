@@ -8,6 +8,7 @@ extern "C" {
 
 typedef struct ABIPointerSearchResult ABIPointerSearchResult;
 
+typedef int32_t ABIPointerNormalization;
 enum {
     ABIPointerNormalizationNone = 0,
     /// Strip data-address signatures for inspection only; never authenticate.
@@ -15,17 +16,20 @@ enum {
     /// Strip data signatures on a PAC-capable 64-bit ARM CPU; otherwise leave bits unchanged, including when capability detection is unavailable. Does not authenticate pointers or remove arbitrary tags.
     ABIPointerNormalizationAutomatic = 2
 };
+typedef int32_t ABIPointerSearchPolicy;
 enum {
     ABIPointerSearchAll = 0,
     /// May stop at a matching hint. Makes no uniqueness claim.
     ABIPointerSearchFirst = 1
 };
+typedef int32_t ABIPointerSearchStatus;
 enum {
     ABIPointerSearchSuccess = 0,
     ABIPointerSearchInvalidOptions = 1,
     ABIPointerSearchNormalizationUnavailable = 2,
     ABIPointerSearchAllocationFailed = 3
 };
+typedef int32_t ABIPointerSearchStage;
 enum {
     ABIPointerSearchSlotRead = 0,
     ABIPointerSearchVPtrRead = 1
@@ -46,8 +50,8 @@ typedef struct ABIPointerSearchOptions {
     /// Nonnegative byte offset of the absolute vptr within each pointee.
     size_t vptrOffset;
     /// Applied to slot values and vptr values, including the expected address point.
-    int32_t normalization;
-    int32_t policy;
+    ABIPointerNormalization normalization;
+    ABIPointerSearchPolicy policy;
     /// SIZE_MAX means no hint. Out-of-range/off-grid hints are ignored. Callers scope hints to the region lifetime, layout, and target identity.
     size_t hintOffset;
 } ABIPointerSearchOptions;
@@ -69,11 +73,12 @@ typedef struct ABIPointerCandidate {
 typedef struct ABIPointerSearchFailure {
     size_t offset;
     /// ABIPointerSearchSlotRead or ABIPointerSearchVPtrRead.
-    int32_t stage;
+    ABIPointerSearchStage stage;
     uintptr_t address;
     ABIMemoryReadResult read;
 } ABIPointerSearchFailure;
 
+typedef int32_t ABIPointerInspectionStatus;
 enum {
     ABIPointerInspectionNoMatch = 0,
     ABIPointerInspectionMatch = 1,
@@ -83,7 +88,7 @@ enum {
 };
 /// Single-slot outcome. Only the field selected by status contains evidence; candidate is set for Match and failure for ReadFailed. No allocation or owner retention is performed. A match does not establish uniqueness in the region.
 typedef struct {
-    int32_t status;
+    ABIPointerInspectionStatus status;
     ABIPointerCandidate candidate;
     ABIPointerSearchFailure failure;
 } ABIPointerInspectionResult;
@@ -93,27 +98,27 @@ typedef struct {
 /// Normalization and vptr interpretation match ABICopyPointerSearch. The caller supplies the actual address point and keeps region/pointee owners alive. Reads are non-atomic and do not authenticate pointers or establish lifetime.
 ABIPointerInspectionResult ABIInspectPointer(
     uintptr_t address, size_t byteCount, size_t offset,
-    uintptr_t vtableAddressPoint, size_t vptrOffset, int32_t normalization);
+    uintptr_t vtableAddressPoint, size_t vptrOffset, ABIPointerNormalization normalization);
 
 /// Searches current-process storage, returning owned copied evidence.
 ///
 /// The options pointer must be valid. No source owner is retained by this C result; callers keep region and pointee owners alive for the operation and any later use of candidates. Reads are non-atomic; callers synchronize.
 ///
 /// Returns NULL for invalid options, unavailable requested normalization, or allocation failure, optionally setting error. Clears error on success. Recoverable read failures are stored in a non-NULL result, not in error. A null slot is not a candidate and is not a read failure. Only full-width slots within the region are visited. Trailing bytes are not pointer slots.
-ABIPointerSearchResult *ABICopyPointerSearch(const ABIPointerSearchOptions *options, int32_t *error);
+ABIPointerSearchResult *ABICopyPointerSearch(const ABIPointerSearchOptions *options, ABIPointerSearchStatus *error);
 /// Accepts NULL.
-void ABIFreePointerSearch(ABIPointerSearchResult *result);
+void ABIReleasePointerSearchResult(ABIPointerSearchResult *result);
 /// The remaining accessors require a live non-NULL result; indexed access additionally requires an index below the corresponding count.
-size_t ABIPointerSearchCandidateCount(const ABIPointerSearchResult *result);
-ABIPointerCandidate ABIPointerSearchCandidateAt(const ABIPointerSearchResult *result, size_t index);
-size_t ABIPointerSearchFailureCount(const ABIPointerSearchResult *result);
-ABIPointerSearchFailure ABIPointerSearchFailureAt(const ABIPointerSearchResult *result, size_t index);
+size_t ABIPointerSearchResultGetCandidateCount(const ABIPointerSearchResult *result);
+ABIPointerCandidate ABIPointerSearchResultGetCandidate(const ABIPointerSearchResult *result, size_t index);
+size_t ABIPointerSearchResultGetFailureCount(const ABIPointerSearchResult *result);
+ABIPointerSearchFailure ABIPointerSearchResultGetFailure(const ABIPointerSearchResult *result, size_t index);
 /// Number of different addressForInspection values among observed matches.
-size_t ABIPointerSearchDistinctCount(const ABIPointerSearchResult *result);
+size_t ABIPointerSearchResultGetDistinctCount(const ABIPointerSearchResult *result);
 /// Number of visited slots, including failures and a visited hint.
-size_t ABIPointerSearchVisitedCount(const ABIPointerSearchResult *result);
+size_t ABIPointerSearchResultGetVisitedCount(const ABIPointerSearchResult *result);
 /// Nonzero only after an exhaustive scan with no read failures. A first-match search that stopped at a match is never complete, even on its final slot. Only a complete scan with distinct count 1 establishes observed uniqueness.
-int ABIPointerSearchIsComplete(const ABIPointerSearchResult *result);
+int ABIPointerSearchResultIsComplete(const ABIPointerSearchResult *result);
 
 #ifdef __cplusplus
 }

@@ -247,15 +247,15 @@ ABIPointerInspectionResult ABIInspectPointer(
     return inspectSlot(address, offset, vptrOffset, expected, normalization);
 }
 
-void ABIFreePointerSearch(ABIPointerSearchResult* result) { delete result; }
-size_t ABIPointerSearchCandidateCount(const ABIPointerSearchResult* result) { return result->candidates.size(); }
-ABIPointerCandidate ABIPointerSearchCandidateAt(const ABIPointerSearchResult* result, size_t index) {
+void ABIReleasePointerSearchResult(ABIPointerSearchResult* result) { delete result; }
+size_t ABIPointerSearchResultGetCandidateCount(const ABIPointerSearchResult* result) { return result->candidates.size(); }
+ABIPointerCandidate ABIPointerSearchResultGetCandidate(const ABIPointerSearchResult* result, size_t index) {
     return result->candidates[index];
 }
-size_t ABIPointerSearchFailureCount(const ABIPointerSearchResult* result) { return result->failures.size(); }
-ABIPointerSearchFailure ABIPointerSearchFailureAt(const ABIPointerSearchResult* result, size_t index) {
+size_t ABIPointerSearchResultGetFailureCount(const ABIPointerSearchResult* result) { return result->failures.size(); }
+ABIPointerSearchFailure ABIPointerSearchResultGetFailure(const ABIPointerSearchResult* result, size_t index) {
     return result->failures[index];
 }
-size_t ABIPointerSearchDistinctCount(const ABIPointerSearchResult* result) { return result->distinctCount; }
-size_t ABIPointerSearchVisitedCount(const ABIPointerSearchResult* result) { return result->visitedCount; }
-int ABIPointerSearchIsComplete(const ABIPointerSearchResult* result) { return result->complete; }
+size_t ABIPointerSearchResultGetDistinctCount(const ABIPointerSearchResult* result) { return result->distinctCount; }
+size_t ABIPointerSearchResultGetVisitedCount(const ABIPointerSearchResult* result) { return result->visitedCount; }
+int ABIPointerSearchResultIsComplete(const ABIPointerSearchResult* result) { return result->complete; }

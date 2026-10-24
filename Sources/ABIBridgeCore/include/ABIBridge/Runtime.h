@@ -16,7 +16,7 @@ typedef void (*ABIUnmanagedFunction)(void);
 // lease owns the dlopen reference; its info strings remain borrowed from it.
 ABIImageLease *ABIOpenImage(const char *path, bool loadIfNeeded, ABIResolutionFailure **error);
 ABIImageLease *ABIOpenLoadedImage(uint64_t generation, ABIResolutionFailure **error);
-ABIImageInfo ABIImageLeaseGet(const ABIImageLease *lease);
+ABIImageInfo ABIImageLeaseGetInfo(const ABIImageLease *lease);
 bool ABIImageIsInSharedCache(const char *path);
 
 #ifdef __cplusplus

@@ -16,9 +16,9 @@ template <typename Signature>
 class function_target {
 public:
     explicit function_target(resolved_symbol symbol) : symbol_(std::move(symbol)) {
-        if (!symbol_ || ABIResolvedSymbolKind(symbol_.native_handle()) != ABISymbolFunction ||
-            (ABIResolvedSymbolLanguage(symbol_.native_handle()) != ABILanguageC &&
-             ABIResolvedSymbolLanguage(symbol_.native_handle()) != ABILanguageCXX)) {
+        if (!symbol_ || ABIResolvedSymbolGetKind(symbol_.native_handle()) != ABISymbolFunction ||
+            (ABIResolvedSymbolGetLanguage(symbol_.native_handle()) != ABILanguageC &&
+             ABIResolvedSymbolGetLanguage(symbol_.native_handle()) != ABILanguageCXX)) {
             throw resolution_error(ABIFailureInvalidRequest, "Expected a retained C/C++ function symbol.");
         }
     }
@@ -98,7 +98,7 @@ class method final {
 public:
     /// Uses a retained C++ member-entry symbol without repeating lookup.
     explicit method(resolved_symbol symbol) : function_(std::move(symbol)) {
-        if (ABIResolvedSymbolLanguage(function_.symbol().native_handle()) != ABILanguageCXX)
+        if (ABIResolvedSymbolGetLanguage(function_.symbol().native_handle()) != ABILanguageCXX)
             throw resolution_error(ABIFailureInvalidRequest, "Expected a C++ member-entry symbol.");
     }
 

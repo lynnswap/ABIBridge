@@ -131,7 +131,7 @@ int main() {
     for (auto& worker : variadicWorkers) worker.join();
     ABIResolutionFailure* boundaryFailure = nullptr;
     assert(!ABICreateVariadicCCallInterface(f64.get(), variadicTypes, 6, 0, &boundaryFailure));
-    assert(ABIResolutionFailureCode(boundaryFailure) == ABIFailureInvalidRequest);
+    assert(ABIResolutionFailureGetCode(boundaryFailure) == ABIFailureInvalidRequest);
     ABIReleaseResolutionFailure(boundaryFailure);
 
     auto tiny = call(u8.get(), {u8.get()});
@@ -179,7 +179,7 @@ int main() {
     invoke(pointerCall.get(), reinterpret_cast<ABIUnmanagedFunction>(dynamicPointer), &pointerResult, pointerArguments);
     assert(pointerResult == address);
     auto store = call(unit.get(), {pointer.get()});
-    assert(ABIValueTypeSize(unit.get()) == 0);
+    assert(ABIValueTypeGetSize(unit.get()) == 0);
     int32_t stored = 0;
     int32_t* destination = &stored;
     void* storeArguments[] = {&destination};
@@ -188,11 +188,11 @@ int main() {
 
     auto pair = structure({f64.get(), f64.get()});
     auto nested = structure({i16.get(), pair.get(), pointer.get()});
-    assert(ABIValueTypeSize(nested.get()) == sizeof(Nested));
-    assert(ABIValueTypeAlignment(nested.get()) == alignof(Nested));
-    assert(ABIValueTypeFieldCount(nested.get()) == 3);
-    assert(ABIValueTypeFieldOffset(nested.get(), 1) == offsetof(Nested, pair));
-    assert(ABIValueTypeFieldOffset(nested.get(), 2) == offsetof(Nested, context));
+    assert(ABIValueTypeGetSize(nested.get()) == sizeof(Nested));
+    assert(ABIValueTypeGetAlignment(nested.get()) == alignof(Nested));
+    assert(ABIValueTypeGetFieldCount(nested.get()) == 3);
+    assert(ABIValueTypeGetFieldOffset(nested.get(), 1) == offsetof(Nested, pair));
+    assert(ABIValueTypeGetFieldOffset(nested.get(), 2) == offsetof(Nested, context));
     auto pairCall = call(pair.get(), {pair.get()});
     auto nestedCall = call(nested.get(), {nested.get()});
     threads.clear();
@@ -224,11 +224,11 @@ int main() {
     ABIResolutionFailure* failure = nullptr;
     const ABIValueType* invalidParameters[] = {unit.get()};
     assert(!ABICreateCCallInterface(i32.get(), invalidParameters, 1, &failure));
-    assert(ABIResolutionFailureCode(failure) == ABIFailureInvalidRequest);
+    assert(ABIResolutionFailureGetCode(failure) == ABIFailureInvalidRequest);
     ABIReleaseResolutionFailure(failure);
     failure = nullptr;
     assert(!ABIUnsafeInvokeCCallInterface(zero.get(), nullptr, &zeroResult, nullptr, &failure));
-    assert(ABIResolutionFailureCode(failure) == ABIFailureInvalidRequest);
+    assert(ABIResolutionFailureGetCode(failure) == ABIFailureInvalidRequest);
     ABIReleaseResolutionFailure(failure);
     std::cout << "Dynamic C ABI consumer passed: scalars, pointers, aggregates, storage, and concurrent reuse.\n";
 }

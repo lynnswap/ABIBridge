@@ -63,10 +63,10 @@ package struct RuntimeImage: Hashable, Sendable {
 
     package static func retaining(generation: UInt64) throws -> Self? {
         guard generation != 0 else { return nil }
-        guard let handle = ABIRetainLoadedImage(generation) else {
+        guard let handle = ABIAcquireImageLease(generation) else {
             throw RuntimeResolutionError.imageUnavailable
         }
-        let snapshot = RuntimeImageSnapshot(ABIImageLeaseGet(handle))
+        let snapshot = RuntimeImageSnapshot(ABIImageLeaseGetInfo(handle))
         return Self(
             identity: snapshot.identity,
             path: snapshot.path,
@@ -82,8 +82,8 @@ package struct RuntimeImage: Hashable, Sendable {
         guard let handle else {
             guard let failure else { throw RuntimeResolutionError.imageUnavailable }
             defer { ABIReleaseResolutionFailure(failure) }
-            let message = String(cString: ABIResolutionFailureMessage(failure))
-            switch ABIResolutionFailureCode(failure) {
+            let message = String(cString: ABIResolutionFailureGetMessage(failure))
+            switch ABIResolutionFailureGetCode(failure) {
             case Int32(ABIFailureImageNotLoaded): throw RuntimeResolutionError.imageNotLoaded
             case Int32(ABIFailureImageLoadFailed):
                 throw RuntimeResolutionError.imageLoadFailed(target: target, message: message)
@@ -92,7 +92,7 @@ package struct RuntimeImage: Hashable, Sendable {
             default: throw RuntimeResolutionError.metadataUnavailable(message)
             }
         }
-        let snapshot = RuntimeImageSnapshot(ABIImageLeaseGet(handle))
+        let snapshot = RuntimeImageSnapshot(ABIImageLeaseGetInfo(handle))
         return Self(
             identity: snapshot.identity,
             path: snapshot.path,
@@ -106,7 +106,7 @@ package struct RuntimeImage: Hashable, Sendable {
 package final class RuntimeImageLease: @unchecked Sendable {
     package let handle: OpaquePointer
     package init(_ handle: OpaquePointer) { self.handle = handle }
-    deinit { ABIReleaseImage(handle) }
+    deinit { ABIReleaseImageLease(handle) }
 }
 
 package struct RuntimeImageCatalogSnapshot: Sendable {
@@ -159,7 +159,7 @@ package struct RuntimeImageSnapshot: Sendable {
     }
 
     package func retain() throws -> RuntimeImage {
-        guard let handle = ABIRetainLoadedImage(identity.loadGeneration) else {
+        guard let handle = ABIAcquireImageLease(identity.loadGeneration) else {
             // Add-image notification precedes initializers. RTLD_NOLOAD on a
             // different thread may refuse that still-registered generation.
             if try Self.current().contains(where: { $0.identity == identity }) {
@@ -176,14 +176,14 @@ package struct RuntimeImageSnapshot: Sendable {
         guard let list = ABICopyLoadedImages() else {
             throw RuntimeResolutionError.imageUnavailable
         }
-        defer { ABIFreeImageList(list) }
-        let revision = ABIImageListRevision(list)
+        defer { ABIReleaseImageList(list) }
+        let revision = ABIImageListGetRevision(list)
         return cachedCatalog.withLock { cached in
             if let cached, cached.revision == revision { return cached }
             let snapshot = RuntimeImageCatalogSnapshot(
                 revision: revision,
-                images: (0..<ABIImageListCount(list)).map {
-                    Self(ABIImageListGet(list, $0))
+                images: (0..<ABIImageListGetCount(list)).map {
+                    Self(ABIImageListGetImage(list, $0))
                 }
             )
             // Another caller can have captured a newer native list before this

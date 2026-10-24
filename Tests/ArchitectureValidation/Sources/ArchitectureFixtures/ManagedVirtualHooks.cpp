@@ -18,7 +18,7 @@ using Type = std::unique_ptr<ABIValueType,decltype(&ABIReleaseValueType)>;
 void require(bool value, const char *message) { if (!value) throw std::runtime_error(message); }
 void checked(bool ok, ABIResolutionFailure *error) {
     std::unique_ptr<ABIResolutionFailure,decltype(&ABIReleaseResolutionFailure)> owned(error,ABIReleaseResolutionFailure);
-    if (!ok) throw std::runtime_error(error ? ABIResolutionFailureMessage(error) : "Virtual callback failed");
+    if (!ok) throw std::runtime_error(error ? ABIResolutionFailureGetMessage(error) : "Virtual callback failed");
 }
 struct Statistics {
     std::atomic<unsigned> released{0}, failures{0}, storageReleased{0};
@@ -31,7 +31,7 @@ struct Callback {
     ~Callback() {
         if (checkStorage && statistics->storageReleased.load()) statistics->cleanupOrder=false;
         ++statistics->released;
-        auto *snapshot=ABICopyLoadedImages(); ABIFreeImageList(snapshot);
+        auto *snapshot=ABICopyLoadedImages(); ABIReleaseImageList(snapshot);
     }
 };
 struct Storage {
@@ -81,7 +81,7 @@ ABIManagedVirtualEntry entry(void *receiver, bool secondary, bool covariant=fals
 }
 void successful(const Hook& hook, const char *stage) {
     if (auto *error=ABIImportedHookFailure(hook.get())) {
-        std::string detail=std::string(stage)+": "+ABIResolutionFailureMessage(error);
+        std::string detail=std::string(stage)+": "+ABIResolutionFailureGetMessage(error);
         if (ABIImportedHookCount(hook.get())) {
             const auto mutation=ABIImportedHookMutation(hook.get(),0);
             detail+=" status="+std::to_string(mutation.status)+" kernel="+std::to_string(mutation.systemErrorCode)

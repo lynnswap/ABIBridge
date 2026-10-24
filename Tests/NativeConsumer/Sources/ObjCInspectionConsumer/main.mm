@@ -28,28 +28,27 @@ int main(int argc, char **argv) {
         assert(library);
         auto *runtime = ABICreateSymbolRuntime();
         ABIResolutionFailure *failure = nullptr;
-        auto *table = ABIResolveCXXVTable(
-            runtime, "ABIBridgeFixture::VirtualCounter", ABIImagePath, argv[1], ABIImageLoadIfNeeded, &failure);
+        auto *table = ABIResolveCXXVTable(runtime, "ABIBridgeFixture::VirtualCounter", ABIImageSelector{ABIImagePath, argv[1]}, ABIImageLoadIfNeeded, &failure);
         assert(table && !failure);
         ABIImageInfo image{};
-        ABIResolvedSymbolImage(table, &image);
+        ABIResolvedSymbolGetImage(table, &image);
         const auto generation = image.generation;
         __weak InspectionOwner *observed;
         {
             __attribute__((objc_precise_lifetime)) InspectionOwner *owner = [[InspectionOwner alloc] initWithSymbol:table];
             observed = owner;
             assert(dlclose(library) == 0);
-            ABIRuntimeRemoveCachedResults(runtime);
+            ABISymbolRuntimeRemoveCachedResults(runtime);
             ABIReleaseSymbolRuntime(runtime);
-            ABIResolvedSymbolImage(owner.symbol, &image);
+            ABIResolvedSymbolGetImage(owner.symbol, &image);
             assert(image.generation == generation && std::strlen(image.path));
             Dl_info loaded{};
-            assert(dladdr(ABIResolvedSymbolAddress(owner.symbol), &loaded));
+            assert(dladdr(ABIResolvedSymbolGetAddress(owner.symbol), &loaded));
             assert(reinterpret_cast<uintptr_t>(loaded.dli_fbase) == image.header);
             owner = nil;
         }
         assert(!observed);
-        assert(!ABIRetainLoadedImage(generation));
+        assert(!ABIAcquireImageLease(generation));
     }
     puts("Objective-C++ inspection consumer passed: public C API and ARC-held symbol lifetime.");
 }

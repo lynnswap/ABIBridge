@@ -56,7 +56,7 @@ std::optional<ValueInfo> prepareType(const ABIObjCHookValueType& requested, cons
     }
     Type expected(ABICopyObjCHookValueType(requested.encoding, error), ABIReleaseValueType);
     if (!expected) return {};
-    if (requested.size != ABIValueTypeSize(expected.get()) || requested.alignment != ABIValueTypeAlignment(expected.get())) {
+    if (requested.size != ABIValueTypeGetSize(expected.get()) || requested.alignment != ABIValueTypeGetAlignment(expected.get())) {
         fail(error, ABIFailureSignatureMismatch, "The requested encoding and storage layout disagree."); return {};
     }
     if (!compatible(requested.encoding, actual)) {
@@ -64,7 +64,7 @@ std::optional<ValueInfo> prepareType(const ABIObjCHookValueType& requested, cons
     }
     type.reset(ABICopyObjCHookValueType(actual, error));
     if (!type) return {};
-    if (requested.size != ABIValueTypeSize(type.get()) || requested.alignment != ABIValueTypeAlignment(type.get())) {
+    if (requested.size != ABIValueTypeGetSize(type.get()) || requested.alignment != ABIValueTypeGetAlignment(type.get())) {
         fail(error, ABIFailureSignatureMismatch, "The declared storage layout does not match the method ABI."); return {};
     }
     actual = unqualified(actual);

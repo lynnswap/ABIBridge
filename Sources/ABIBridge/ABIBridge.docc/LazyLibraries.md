@@ -61,7 +61,7 @@ for (std::size_t i = 0; i < snapshot.size(); ++i) {
 auto recorded = abi_bridge::lazy_library_snapshot::read_file(binary_path);
 ```
 
-The C interface in `Inspection.h` supplies `ABICopyLazyLibrariesForImage` and `ABICopyLazyLibrariesInFile`. Free each successful result with `ABIFreeLazyLibraryList`. Getter strings remain borrowed from that snapshot. Optional Boolean fields use `ABIDiagnosticUnknown`, `ABIDiagnosticFalse`, and `ABIDiagnosticTrue`. C++ descriptions copy the strings and use `std::optional` for unavailable fields.
+The C interface in `Inspection.h` supplies `ABICopyLazyLibrariesForImage` and `ABICopyLazyLibrariesInFile`. Free each successful result with `ABIReleaseLazyLibraryList`. Getter strings remain borrowed from that snapshot. Optional Boolean fields use `ABIDiagnosticUnknown`, `ABIDiagnosticFalse`, and `ABIDiagnosticTrue`. C++ descriptions copy the strings and use `std::optional` for unavailable fields.
 
 ## Binding chains and validation scope
 

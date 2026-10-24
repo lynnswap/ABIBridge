@@ -77,15 +77,15 @@ package func nativeCopyLazyLibrariesInFile(
     }
 }
 
-@c(ABILazyLibraryListCount)
+@c(ABILazyLibraryListGetCount)
 package func nativeLazyLibraryListCount(_ list: OpaquePointer) -> Int { box(list).infos.count }
 
-@c(ABILazyLibraryListGet)
+@c(ABILazyLibraryListGetLibrary)
 package func nativeLazyLibraryListGet(_ list: OpaquePointer, _ index: Int) -> ABILazyLibraryInfo {
     box(list).infos[index]
 }
 
-@c(ABILazyLibraryListSymbol)
+@c(ABILazyLibraryListGetSymbol)
 package func nativeLazyLibraryListSymbol(
     _ list: OpaquePointer,
     _ library: Int,
@@ -94,7 +94,7 @@ package func nativeLazyLibraryListSymbol(
     box(list).symbols[library][symbol]
 }
 
-@c(ABIFreeLazyLibraryList)
+@c(ABIReleaseLazyLibraryList)
 package func nativeFreeLazyLibraryList(_ list: OpaquePointer?) {
     if let list { Unmanaged<LazyLibraryBox>.fromOpaque(UnsafeRawPointer(list)).release() }
 }

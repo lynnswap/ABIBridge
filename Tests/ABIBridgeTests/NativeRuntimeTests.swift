@@ -9,38 +9,42 @@ struct NativeRuntimeTests {
         let runtime = try #require(ABICopySharedSymbolRuntime())
         defer { ABIReleaseSymbolRuntime(runtime) }
         var failure: OpaquePointer?
-        let handle = "getpid".withCString {
-            ABIResolveSymbol(
-                runtime,
-                $0,
-                Int32(ABILanguageC),
-                Int32(ABISymbolFunction),
-                Int32(ABIImageAutomatic),
-                nil,
-                Int32(ABIImageLoadIfNeeded),
-                &failure
-            )
+        let handle = "getpid".withCString { name in
+            var scope = ABIImageSelector(scope: Int32(ABIImageAutomatic), selector: nil)
+            return withUnsafePointer(to: &scope) { scope in
+                var request = ABISymbolRequest()
+                request.declaration = ABIDeclaration(
+                    name: name,
+                    language: Int32(ABILanguageC),
+                    kind: Int32(ABISymbolFunction),
+                    nameForm: Int32(ABINameSource)
+                )
+                request.imageScopes = scope
+                request.imageScopeCount = 1
+                request.loading = Int32(ABIImageLoadIfNeeded)
+                return ABIResolveSymbol(runtime, &request, &failure)
+            }
         }
         let symbol = try #require(handle)
         defer { ABIReleaseResolvedSymbol(symbol) }
         #expect(failure == nil)
         var info = ABIImageInfo()
-        ABIResolvedSymbolImage(symbol, &info)
+        ABIResolvedSymbolGetImage(symbol, &info)
 
         let swift = try ABIRuntime.shared.resolveAndWait(.init(name: "getpid", language: .c))
         #expect(info.generation == swift.image.identity.loadGeneration)
         #expect(info.header == UInt(swift.image.identity.headerAddress))
         let swiftAddress = unsafe swift.withUnsafeAddress { UInt(bitPattern: $0) }
-        #expect(UInt(bitPattern: ABIResolvedSymbolAddress(symbol)) == swiftAddress)
+        #expect(UInt(bitPattern: ABIResolvedSymbolGetAddress(symbol)) == swiftAddress)
         ABIRuntime.shared.removeCachedResults()
-        #expect(ABIResolvedSymbolAddress(symbol) != nil)
+        #expect(ABIResolvedSymbolGetAddress(symbol) != nil)
     }
 
     @Test func swiftAndNativeHandoffsPreserveSymbolMetadata() async throws {
         let original = try ABIRuntime().resolveAndWait(.init(name: "getpid", language: .c))
         let exported = unsafe original.copyNativeHandle()
-        #expect(ABIResolvedSymbolKind(exported) == Int32(ABISymbolFunction))
-        #expect(ABIResolvedSymbolLanguage(exported) == Int32(ABILanguageC))
+        #expect(ABIResolvedSymbolGetKind(exported) == Int32(ABISymbolFunction))
+        #expect(ABIResolvedSymbolGetLanguage(exported) == Int32(ABILanguageC))
         let retained = try #require(ABIRetainResolvedSymbol(exported))
         ABIReleaseResolvedSymbol(exported)
         let restored = unsafe ResolvedSymbol(retainingNativeHandle: retained)

@@ -65,7 +65,7 @@ package func nativeReleaseSymbolRuntime(_ runtime: OpaquePointer) {
     Unmanaged<RuntimeSymbolResolver>.fromOpaque(UnsafeRawPointer(runtime)).release()
 }
 
-@c(ABIRuntimeRemoveCachedResults)
+@c(ABISymbolRuntimeRemoveCachedResults)
 package func nativeRemoveCachedResults(_ runtime: OpaquePointer) {
     borrowed(runtime, as: RuntimeSymbolResolver.self).removeCachedResults()
 }
@@ -73,50 +73,13 @@ package func nativeRemoveCachedResults(_ runtime: OpaquePointer) {
 @c(ABIResolveSymbol)
 package func nativeResolveSymbol(
     _ runtime: OpaquePointer,
-    _ name: UnsafePointer<CChar>,
-    _ language: Int32,
-    _ kind: Int32,
-    _ scope: Int32,
-    _ selector: UnsafePointer<CChar>?,
-    _ loading: Int32,
-    _ error: UnsafeMutablePointer<OpaquePointer?>?
-) -> OpaquePointer? {
-    nativeResolveSymbolWithNameForm(
-        runtime,
-        name,
-        Int32(ABINameSource),
-        language,
-        kind,
-        scope,
-        selector,
-        loading,
-        error
-    )
-}
-
-@c(ABIResolveSymbolWithNameForm)
-package func nativeResolveSymbolWithNameForm(
-    _ runtime: OpaquePointer,
-    _ name: UnsafePointer<CChar>,
-    _ nameForm: Int32,
-    _ language: Int32,
-    _ kind: Int32,
-    _ scope: Int32,
-    _ selector: UnsafePointer<CChar>?,
-    _ loading: Int32,
+    _ request: UnsafePointer<ABISymbolRequest>,
     _ error: UnsafeMutablePointer<OpaquePointer?>?
 ) -> OpaquePointer? {
     error?.pointee = nil
     do {
-        let declaration = try nativeDeclaration(
-            name,
-            language: language,
-            kind: kind,
-            nameForm: nameForm
-        )
-        let imageSelector = try nativeImageSelector(scope: scope, selector: selector)
-        let symbol = try borrowed(runtime, as: RuntimeSymbolResolver.self)
-            .resolve(declaration, in: imageSelector, loading: try nativeLoadingPolicy(loading))
+        let request = try nativeRequest(request.pointee)
+        let symbol = try borrowed(runtime, as: RuntimeSymbolResolver.self).resolve(request)
         return retained(NativeSymbolBox(symbol))
     } catch let failure {
         error?.pointee = nativeFailure(failure)
@@ -128,15 +91,14 @@ package func nativeResolveSymbolWithNameForm(
 package func nativeResolveCXXVTable(
     _ runtime: OpaquePointer,
     _ typeName: UnsafePointer<CChar>,
-    _ scope: Int32,
-    _ selector: UnsafePointer<CChar>?,
+    _ scope: ABIImageSelector,
     _ loading: Int32,
     _ error: UnsafeMutablePointer<OpaquePointer?>?
 ) -> OpaquePointer? {
     error?.pointee = nil
     do {
         let declaration = RuntimeDeclaration(vtableFor: String(cString: typeName))
-        let imageSelector = try nativeImageSelector(scope: scope, selector: selector)
+        let imageSelector = try nativeImageSelector(scope: scope.scope, selector: scope.selector)
         let symbol = try borrowed(runtime, as: RuntimeSymbolResolver.self).resolve(
             declaration,
             in: imageSelector,
@@ -169,13 +131,13 @@ package func nativeReleaseResolvedSymbol(_ symbol: OpaquePointer) {
     Unmanaged<NativeSymbolBox>.fromOpaque(UnsafeRawPointer(symbol)).release()
 }
 
-@c(ABIResolvedSymbolAddress)
+@c(ABIResolvedSymbolGetAddress)
 package func nativeResolvedSymbolAddress(_ symbol: OpaquePointer) -> UnsafeRawPointer {
     let box = borrowed(symbol, as: NativeSymbolBox.self)
     return UnsafeRawPointer(bitPattern: UInt(box.symbol.address))!
 }
 
-@c(ABIResolvedSymbolImage)
+@c(ABIResolvedSymbolGetImage)
 package func nativeResolvedSymbolImage(
     _ symbol: OpaquePointer,
     _ info: UnsafeMutablePointer<ABIImageInfo>
@@ -191,7 +153,7 @@ package func nativeResolvedSymbolImage(
     )
 }
 
-@c(ABIResolvedSymbolKind)
+@c(ABIResolvedSymbolGetKind)
 package func nativeResolvedSymbolKind(_ symbol: OpaquePointer) -> Int32 {
     switch borrowed(symbol, as: NativeSymbolBox.self).symbol.declaration.kind {
     case .function: Int32(ABISymbolFunction)
@@ -200,7 +162,7 @@ package func nativeResolvedSymbolKind(_ symbol: OpaquePointer) -> Int32 {
     }
 }
 
-@c(ABIResolvedSymbolLanguage)
+@c(ABIResolvedSymbolGetLanguage)
 package func nativeResolvedSymbolLanguage(_ symbol: OpaquePointer) -> Int32 {
     switch borrowed(symbol, as: NativeSymbolBox.self).symbol.declaration.language {
     case .swift: Int32(ABILanguageSwift)

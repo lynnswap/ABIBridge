@@ -56,10 +56,10 @@ public final class NativeImportedFunctionMonitor: @unchecked Sendable {
 
     /// Copies the latest observed selected-image outcomes. Active monitors prune removed generations; invalidated monitors keep their final snapshot. Short-lived images can disappear before observation, so this is not an exhaustive event history.
     public var images: [NativeImportedImageUpdate] {
-        let snapshot = ABICopyImportedHookMonitorImages(handle)!
+        let snapshot = ABIImportedHookMonitorCopyImages(handle)!
         defer { ABIReleaseImportedImageList(snapshot) }
-        return (0..<ABIImportedImageListCount(snapshot)).map {
-            NativeImportedImageUpdate(ABIImportedImageListGet(snapshot, $0))
+        return (0..<ABIImportedImageListGetCount(snapshot)).map {
+            NativeImportedImageUpdate(ABIImportedImageListGetImage(snapshot, $0))
         }
     }
 

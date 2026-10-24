@@ -143,16 +143,16 @@ public:
 
     /// Borrowed address; keep this handle alive while using it. This establishes neither a native signature nor the ownership/layout of a data value.
     const void* unsafe_address() const noexcept {
-        return ABIResolvedSymbolAddress(handle_.get());
+        return ABIResolvedSymbolGetAddress(handle_.get());
     }
     image_identity image() const noexcept {
         ABIImageInfo info{};
-        ABIResolvedSymbolImage(handle_.get(), &info);
+        ABIResolvedSymbolGetImage(handle_.get(), &info);
         return {info.header, info.slide, info.generation};
     }
     std::string image_path() const {
         ABIImageInfo info{};
-        ABIResolvedSymbolImage(handle_.get(), &info);
+        ABIResolvedSymbolGetImage(handle_.get(), &info);
         return info.path;
     }
 
@@ -188,16 +188,16 @@ public:
 
     explicit operator bool() const noexcept { return bool(handle_); }
     /// Requires a live snapshot.
-    std::size_t size() const noexcept { return ABIImageListCount(handle_.get()); }
+    std::size_t size() const noexcept { return ABIImageListGetCount(handle_.get()); }
     /// Copies an entry, including its path. The returned description may outlive the snapshot. Throws out_of_range for an invalid index.
     image_description at(std::size_t index) const {
         if (index >= size()) throw std::out_of_range("Image snapshot index is out of range.");
-        const auto info = ABIImageListGet(handle_.get(), index);
+        const auto info = ABIImageListGetImage(handle_.get(), index);
         return {{info.header, info.slide, info.generation}, std::to_array(info.uuid), info.path};
     }
 
 private:
-    explicit image_snapshot(ABIImageList* list) : handle_(list, ABIFreeImageList) {}
+    explicit image_snapshot(ABIImageList* list) : handle_(list, ABIReleaseImageList) {}
     std::shared_ptr<ABIImageList> handle_;
 };
 
@@ -206,14 +206,14 @@ class image_lease final {
 public:
     /// Returns no value if the generation disappeared or cannot be retained. The loader may independently keep an image loaded after lease release.
     static std::optional<image_lease> acquire(std::uint64_t generation) {
-        if (auto* lease = ABIRetainLoadedImage(generation)) return image_lease(lease);
+        if (auto* lease = ABIAcquireImageLease(generation)) return image_lease(lease);
         return std::nullopt;
     }
     /// False after moving the contained lease; a moved-from optional can still be engaged, as with other optional values.
     explicit operator bool() const noexcept { return bool(handle_); }
 
 private:
-    explicit image_lease(ABIImageLease* lease) : handle_(lease, ABIReleaseImage) {}
+    explicit image_lease(ABIImageLease* lease) : handle_(lease, ABIReleaseImageLease) {}
     std::shared_ptr<ABIImageLease> handle_;
 };
 
@@ -255,17 +255,17 @@ public:
     }
     explicit operator bool() const noexcept { return bool(handle_); }
     /// Requires a live snapshot; moving leaves an empty handle.
-    std::size_t size() const noexcept { return ABILazyLibraryListCount(handle_.get()); }
+    std::size_t size() const noexcept { return ABILazyLibraryListGetCount(handle_.get()); }
     lazy_library_description at(std::size_t index) const {
         if (index >= size()) throw std::out_of_range("Lazy-library index is out of range.");
-        const auto info = ABILazyLibraryListGet(handle_.get(), index);
+        const auto info = ABILazyLibraryListGetLibrary(handle_.get(), index);
         lazy_library_description result{info.commandOffset, string(info.path), boolean(info.isOptional),
             boolean(info.areSymbolsPrebound), boolean(info.isInitialized), std::nullopt};
         if (info.symbolsAvailable == ABIDiagnosticTrue) {
             result.symbols.emplace();
             result.symbols->reserve(info.symbolCount);
             for (std::size_t i = 0; i < info.symbolCount; ++i) {
-                const auto symbol = ABILazyLibraryListSymbol(handle_.get(), index, i);
+                const auto symbol = ABILazyLibraryListGetSymbol(handle_.get(), index, i);
                 result.symbols->push_back({string(symbol.name), string(symbol.rawName)});
             }
         }
@@ -273,11 +273,11 @@ public:
     }
 
 private:
-    explicit lazy_library_snapshot(ABILazyLibraryList* list) : handle_(list, ABIFreeLazyLibraryList) {}
+    explicit lazy_library_snapshot(ABILazyLibraryList* list) : handle_(list, ABIReleaseLazyLibraryList) {}
     static lazy_library_snapshot checked(ABILazyLibraryList* list, ABIResolutionFailure* failure) {
         std::unique_ptr<ABIResolutionFailure, decltype(&ABIReleaseResolutionFailure)>
             owned_failure(failure, ABIReleaseResolutionFailure);
-        if (!list) throw resolution_error(ABIResolutionFailureCode(failure), ABIResolutionFailureMessage(failure));
+        if (!list) throw resolution_error(ABIResolutionFailureGetCode(failure), ABIResolutionFailureGetMessage(failure));
         return lazy_library_snapshot(list);
     }
     static std::optional<std::string> string(const char* value) {
@@ -308,16 +308,20 @@ public:
             throw resolution_error(ABIFailureInvalidRequest, "Names and image selectors must not contain embedded NULs.");
         }
         ABIResolutionFailure* failure = nullptr;
-        auto* symbol = ABIResolveSymbolWithNameForm(
-            handle_.get(), query.name.c_str(), static_cast<std::int32_t>(query.form),
-            static_cast<std::int32_t>(query.source_language),
-            static_cast<std::int32_t>(query.kind),
-            scope.kind_, scope.value_.c_str(), static_cast<std::int32_t>(loading), &failure);
+        const auto image_scope = scope.native_selector();
+        const ABISymbolRequest request{
+            .declaration = {query.name.c_str(), static_cast<ABILanguage>(query.source_language),
+                            static_cast<ABISymbolKind>(query.kind), static_cast<ABINameForm>(query.form)},
+            .imageScopes = &image_scope,
+            .imageScopeCount = 1,
+            .loading = static_cast<ABIImageLoadingPolicy>(loading),
+        };
+        auto* symbol = ABIResolveSymbol(handle_.get(), &request, &failure);
         if (!symbol) {
             std::unique_ptr<ABIResolutionFailure, decltype(&ABIReleaseResolutionFailure)>
                 owned_failure(failure, ABIReleaseResolutionFailure);
-            throw resolution_error(ABIResolutionFailureCode(failure),
-                                   ABIResolutionFailureMessage(failure));
+            throw resolution_error(ABIResolutionFailureGetCode(failure),
+                                   ABIResolutionFailureGetMessage(failure));
         }
         return resolved_symbol(symbol);
     }
@@ -381,7 +385,7 @@ public:
                 outcomes[indices[i]].emplace(resolved_symbol::adopt(std::exchange(result.symbol, nullptr)));
             } else {
                 outcomes[indices[i]].emplace(resolution_error(
-                    ABIResolutionFailureCode(result.failure), ABIResolutionFailureMessage(result.failure)));
+                    ABIResolutionFailureGetCode(result.failure), ABIResolutionFailureGetMessage(result.failure)));
             }
         }
         std::vector<resolution_result> results;
@@ -391,7 +395,7 @@ public:
     }
 
     /// Clears indexes without invalidating previously returned symbol handles.
-    void remove_cached_results() const { ABIRuntimeRemoveCachedResults(handle_.get()); }
+    void remove_cached_results() const { ABISymbolRuntimeRemoveCachedResults(handle_.get()); }
 
 private:
     explicit Runtime(ABISymbolRuntime* handle) : handle_(handle, ABIReleaseSymbolRuntime) {}

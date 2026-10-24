@@ -24,7 +24,7 @@ private:
 class imported_hook_installation_error : public std::runtime_error {
 public:
     explicit imported_hook_installation_error(imported_hook_handle handle):std::runtime_error(
-        ABIResolutionFailureMessage(ABIImportedHookFailure(handle.native_handle()))),handle_(std::move(handle)) {}
+        ABIResolutionFailureGetMessage(ABIImportedHookFailure(handle.native_handle()))),handle_(std::move(handle)) {}
     size_t failed_index() const { return ABIImportedHookFailedIndex(handle_.native_handle()); }
     const imported_hook_handle& registration() const noexcept { return handle_; }
 private:
@@ -96,7 +96,7 @@ template<class R,class... A> struct imported_installer<R(A...)> {
         auto *handle=ABIInstallImportedFunctionHook(runtime.native_handle(),&native,importing,provider ? &defining : nullptr,
             result.get(),pointers.data(),pointers.size(),state.release(),State::invoke,
             [](void *context,const ABIResolutionFailure *error) {
-                static_cast<State*>(context)->failure(resolution_error(ABIResolutionFailureCode(error),ABIResolutionFailureMessage(error)));
+                static_cast<State*>(context)->failure(resolution_error(ABIResolutionFailureGetCode(error),ABIResolutionFailureGetMessage(error)));
             },[](void *context){ delete static_cast<State*>(context); });
         auto owned=imported_hook_handle::adopt(handle);
         if(ABIImportedHookFailure(handle)) throw imported_hook_installation_error(owned);

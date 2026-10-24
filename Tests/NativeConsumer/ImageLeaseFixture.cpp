@@ -31,8 +31,8 @@ int main(int argc, char **argv)
     unsigned cachedImages = 0;
     unsigned executables = 0;
     rejectRetains = true;
-    for (size_t index = 0; index < ABIImageListCount(list); ++index) {
-        ABIImageInfo info = ABIImageListGet(list, index);
+    for (size_t index = 0; index < ABIImageListGetCount(list); ++index) {
+        ABIImageInfo info = ABIImageListGetImage(list, index);
         const auto *header = reinterpret_cast<const mach_header *>(info.header);
         if (info.header == reinterpret_cast<uintptr_t>(fixtureInfo.dli_fbase))
             fixtureGeneration = info.generation;
@@ -40,25 +40,25 @@ int main(int argc, char **argv)
             continue;
         cachedImages += (header->flags & MH_DYLIB_IN_CACHE) != 0;
         executables += header->filetype == MH_EXECUTE;
-        ABIImageLease *first = ABIRetainLoadedImage(info.generation);
-        ABIImageLease *second = ABIRetainLoadedImage(info.generation);
+        ABIImageLease *first = ABIAcquireImageLease(info.generation);
+        ABIImageLease *second = ABIAcquireImageLease(info.generation);
         assert(first && second);
-        ABIReleaseImage(first);
-        ABIReleaseImage(second);
+        ABIReleaseImageLease(first);
+        ABIReleaseImageLease(second);
     }
-    ABIFreeImageList(list);
+    ABIReleaseImageList(list);
     assert(cachedImages > 0 && executables == 1);
     assert(retainAttempts == 0);
     assert(fixtureGeneration != 0);
-    assert(ABIRetainLoadedImage(fixtureGeneration) == nullptr);
+    assert(ABIAcquireImageLease(fixtureGeneration) == nullptr);
     assert(retainAttempts == 1);
 
     rejectRetains = false;
-    ABIImageLease *lease = ABIRetainLoadedImage(fixtureGeneration);
+    ABIImageLease *lease = ABIAcquireImageLease(fixtureGeneration);
     assert(lease && retainAttempts == 2);
     dlclose(library);
     assert(*reinterpret_cast<const int *>(address(1)) == 42);
-    ABIReleaseImage(lease);
-    assert(ABIRetainLoadedImage(fixtureGeneration) == nullptr);
+    ABIReleaseImageLease(lease);
+    assert(ABIAcquireImageLease(fixtureGeneration) == nullptr);
     assert(retainAttempts == 2);
 }

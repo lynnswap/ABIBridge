@@ -29,9 +29,9 @@ ABIImportedHookMonitor *ABIMonitorImportedFunction(const ABIDeclaration *, ABIIm
 void ABIInvalidateImportedHookMonitor(ABIImportedHookMonitor *);
 void ABIReleaseImportedHookMonitor(ABIImportedHookMonitor *);
 /// Owned immutable snapshot of the latest observed selected-image outcomes. Invalidated monitors keep their final snapshot. Installed hooks can still be invalidated or displaced after this copy. Free with its release.
-ABIImportedImageList *ABICopyImportedHookMonitorImages(const ABIImportedHookMonitor *);
-size_t ABIImportedImageListCount(const ABIImportedImageList *);
-ABIImportedImageUpdate ABIImportedImageListGet(const ABIImportedImageList *, size_t index);
+ABIImportedImageList *ABIImportedHookMonitorCopyImages(const ABIImportedHookMonitor *);
+size_t ABIImportedImageListGetCount(const ABIImportedImageList *);
+ABIImportedImageUpdate ABIImportedImageListGetImage(const ABIImportedImageList *, size_t index);
 void ABIReleaseImportedImageList(ABIImportedImageList *);
 
 // Internal request bridge. Query ownership transfers into create, including failure.

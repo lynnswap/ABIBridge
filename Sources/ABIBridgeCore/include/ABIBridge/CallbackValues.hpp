@@ -7,8 +7,8 @@ namespace abi_bridge {
 namespace detail {
 inline void callback_require(bool ok, ABIResolutionFailure *owned) {
     std::unique_ptr<ABIResolutionFailure,decltype(&ABIReleaseResolutionFailure)> error(owned,ABIReleaseResolutionFailure);
-    if (!ok) throw resolution_error(owned ? ABIResolutionFailureCode(owned) : ABIFailureOther,
-        owned ? ABIResolutionFailureMessage(owned) : "Native callback operation failed.");
+    if (!ok) throw resolution_error(owned ? ABIResolutionFailureGetCode(owned) : ABIFailureOther,
+        owned ? ABIResolutionFailureGetMessage(owned) : "Native callback operation failed.");
 }
 }
 
@@ -37,7 +37,7 @@ namespace detail {
 template<class T> std::shared_ptr<ABIValueType> callback_type() {
     static_assert(std::is_void_v<T> || std::is_trivially_copyable_v<T>,"Use a native adapter for nontrivial values.");
     auto type=std::shared_ptr<ABIValueType>(callback_value_type<T>::make(),ABIReleaseValueType);
-    if constexpr(!std::is_void_v<T>) if(!type || ABIValueTypeSize(type.get())!=sizeof(T) || ABIValueTypeAlignment(type.get())!=alignof(T))
+    if constexpr(!std::is_void_v<T>) if(!type || ABIValueTypeGetSize(type.get())!=sizeof(T) || ABIValueTypeGetAlignment(type.get())!=alignof(T))
         throw resolution_error(ABIFailureSignatureMismatch,"C++ type and callback layout disagree.");
     return type;
 }

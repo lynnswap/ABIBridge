@@ -566,7 +566,7 @@ struct SymbolResolutionTests {
 
         let retained = try #require(ABIRetainResolvedSymbol(exported))
         ABIReleaseResolvedSymbol(exported)
-        #expect(ABIResolvedSymbolAddress(retained).load(as: Int32.self) == 42)
+        #expect(ABIResolvedSymbolGetAddress(retained).load(as: Int32.self) == 42)
         var restored: ResolvedSymbol? = unsafe ResolvedSymbol(retainingNativeHandle: retained)
         ABIReleaseResolvedSymbol(retained)
         #expect(restored!.declaration == declaration)
@@ -729,8 +729,7 @@ struct SymbolResolutionTests {
                 ABIResolveCXXVTable(
                     nativeRuntime,
                     typeName,
-                    Int32(ABIImagePath),
-                    path,
+                    ABIImageSelector(scope: Int32(ABIImagePath), selector: path),
                     Int32(ABIImageLoadIfNeeded),
                     &failure
                 )
@@ -740,7 +739,9 @@ struct SymbolResolutionTests {
         defer { ABIReleaseResolvedSymbol(nativeVTable) }
         #expect(failure == nil)
         #expect(
-            unsafe legacyVTable.withUnsafeAddress { $0 == ABIResolvedSymbolAddress(nativeVTable) }
+            unsafe legacyVTable.withUnsafeAddress {
+                $0 == ABIResolvedSymbolGetAddress(nativeVTable)
+            }
         )
         let expectedVTable = try fixture.address(kind: 2)
         #expect(unsafe vtable.withUnsafeAddress { UInt(bitPattern: $0) } == expectedVTable)
@@ -873,12 +874,12 @@ struct SymbolResolutionTests {
         let swift = try await runtime.resolveLazyLibraries(in: image!)
         var error: OpaquePointer?
         let native = try #require(ABICopyLazyLibrariesForImage(generation, &error))
-        defer { ABIFreeLazyLibraryList(native) }
+        defer { ABIReleaseLazyLibraryList(native) }
         #expect(error == nil)
-        #expect(ABILazyLibraryListCount(native) == swift.count)
+        #expect(ABILazyLibraryListGetCount(native) == swift.count)
         image = nil
         fixture.close()
-        #expect(ABILazyLibraryListCount(native) == swift.count)
+        #expect(ABILazyLibraryListGetCount(native) == swift.count)
     }
 
     @Test func quickStartAndFrameworkScopeUseLoadedSystemImages() async throws {

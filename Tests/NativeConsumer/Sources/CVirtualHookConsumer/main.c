@@ -17,7 +17,7 @@ static bool callback(void *context,ABIVirtualInvocation *call,ABIResolutionFailu
     ++value; void *arguments[]={&value};
     ABIResolutionFailure *oversized=NULL;
     assert(!ABIVirtualProceed(call,arguments,UINT_MAX,&oversized));
-    assert(oversized && ABIResolutionFailureCode(oversized)==ABIFailureInvalidRequest);
+    assert(oversized && ABIResolutionFailureGetCode(oversized)==ABIFailureInvalidRequest);
     ABIReleaseResolutionFailure(oversized);
     if(!ABIVirtualProceed(call,arguments,1,error)) return false;
     int result=0;
@@ -41,7 +41,7 @@ int main(int argc,char **argv) {
     const ABIValueType *parameters[]={integer};
     Context *context=malloc(sizeof(Context)); assert(context);
     context->first=object(0); context->second=object(1);
-    ABIVirtualEntryInfo info=ABIVirtualEntryGet(selected);
+    ABIVirtualEntryInfo info=ABIVirtualEntryGetInfo(selected);
     ABIVirtualHook *hook=ABIInstallSharedVirtualHook(info,NULL,NULL,
         integer,parameters,1,context,callback,failure,release);
     assert(hook && !ABIVirtualHookFailure(hook));

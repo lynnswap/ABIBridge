@@ -96,7 +96,7 @@ public struct NativeType: Sendable, Hashable {
         let types = try fields.map { try $0.requireCType() }
         let cType = try CValueType(fields: types)
         let layouts = fields.enumerated().map {
-            Field(type: $0.element, offset: ABIValueTypeFieldOffset(cType.handle, $0.offset))
+            Field(type: $0.element, offset: ABIValueTypeGetFieldOffset(cType.handle, $0.offset))
         }
         return .init(name: name, representation: .structure, cType: cType, fields: layouts)
     }

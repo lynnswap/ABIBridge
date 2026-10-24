@@ -107,7 +107,7 @@ struct SwiftObjectConsumer {
         var error: OpaquePointer?
         guard let native = ABICopyLazyLibrariesForImage(image.identity.loadGeneration, &error)
         else { throw Failure.loadFailed }
-        precondition(error == nil && ABILazyLibraryListCount(native) == values.count)
+        precondition(error == nil && ABILazyLibraryListGetCount(native) == values.count)
         return (image.identity.loadGeneration, values, native)
     }
 
@@ -131,20 +131,20 @@ struct SwiftObjectConsumer {
 
     @MainActor static func checkSnapshotAndHandoffLifetime(_ url: URL) async throws {
         let (generation, values, native) = try await snapshots(url)
-        defer { ABIFreeLazyLibraryList(native) }
-        let snapshotLease = ABIRetainLoadedImage(generation)
-        if let snapshotLease { ABIReleaseImage(snapshotLease) }
+        defer { ABIReleaseLazyLibraryList(native) }
+        let snapshotLease = ABIAcquireImageLease(generation)
+        if let snapshotLease { ABIReleaseImageLease(snapshotLease) }
         precondition(
             snapshotLease == nil,
             "Copied Swift/native diagnostics must not retain their source image"
         )
-        precondition(ABILazyLibraryListCount(native) == values.count)
+        precondition(ABILazyLibraryListGetCount(native) == values.count)
         var symbol: ResolvedSymbol? = try handedOffSymbol(url)
         let symbolGeneration = symbol!.image.identity.loadGeneration
         precondition(unsafe symbol!.withUnsafeAddress { $0.load(as: Int32.self) } == 42)
         symbol = nil
-        let remaining = ABIRetainLoadedImage(symbolGeneration)
-        if let remaining { ABIReleaseImage(remaining) }
+        let remaining = ABIAcquireImageLease(symbolGeneration)
+        if let remaining { ABIReleaseImageLease(remaining) }
         precondition(remaining == nil, "Released handoff handles must not retain the image")
     }
 

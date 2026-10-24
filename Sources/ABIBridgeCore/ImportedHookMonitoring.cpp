@@ -56,7 +56,7 @@ bool process(const std::shared_ptr<Monitor>& monitor, const ABIImageList *snapsh
     if (!behavior || !behavior->enabled.load()) return false;
     bool waiting = false;
     std::set<uint64_t> current;
-    for (size_t i = 0; i < ABIImageListCount(snapshot); ++i) current.insert(ABIImageListGet(snapshot, i).generation);
+    for (size_t i = 0; i < ABIImageListGetCount(snapshot); ++i) current.insert(ABIImageListGetImage(snapshot, i).generation);
     std::erase_if(monitor->processed, [&](uint64_t generation) { return !current.contains(generation); });
     std::vector<std::shared_ptr<ImageResult>> removed;
     {
@@ -70,13 +70,13 @@ bool process(const std::shared_ptr<Monitor>& monitor, const ABIImageList *snapsh
         auto update = *previous; update.state = ABIImportedImageRemoved;
         deliver(behavior, update);
     }
-    for (size_t i = 0; i < ABIImageListCount(snapshot) && behavior->enabled.load(); ++i) {
-        const auto image = ABIImageListGet(snapshot, i);
+    for (size_t i = 0; i < ABIImageListGetCount(snapshot) && behavior->enabled.load(); ++i) {
+        const auto image = ABIImageListGetImage(snapshot, i);
         if (!monitor->processed.insert(image.generation).second) continue;
         ABIResolutionFailure *error = nullptr;
         std::unique_ptr<ABIImportSelection, decltype(&ABIReleaseImportSelection)> selection(
             ABICopyImportedSelectionForImage(monitor->query.get(), image, &error), ABIReleaseImportSelection);
-        if (!selection && error && ABIResolutionFailureCode(error) == ABIFailureImageUnavailable) {
+        if (!selection && error && ABIResolutionFailureGetCode(error) == ABIFailureImageUnavailable) {
             ABIReleaseResolutionFailure(error);
             monitor->processed.erase(image.generation);
             waiting = true;
@@ -87,7 +87,7 @@ bool process(const std::shared_ptr<Monitor>& monitor, const ABIImageList *snapsh
         result->failure = Failure(error, ABIReleaseResolutionFailure);
         if (!selection) {
             if (!error) continue; // The importing-image scope did not match.
-            if (ABIResolutionFailureCode(error) == ABIFailureDeclarationNotFound) {
+            if (ABIResolutionFailureGetCode(error) == ABIFailureDeclarationNotFound) {
                 result->state = ABIImportedImageNoMatch; result->failure.reset();
             } else result->state = ABIImportedImageFailed;
         } else {
@@ -108,7 +108,7 @@ bool process(const std::shared_ptr<Monitor>& monitor, const ABIImageList *snapsh
             result->hook = Hook(installed, ABIReleaseImportedHook);
             if (auto failure = ABIImportedHookFailure(installed)) {
                 result->state = ABIImportedImageFailed;
-                result->failure = Failure(ABICreateResolutionFailure(ABIResolutionFailureCode(failure), ABIResolutionFailureMessage(failure)), ABIReleaseResolutionFailure);
+                result->failure = Failure(ABICreateResolutionFailure(ABIResolutionFailureGetCode(failure), ABIResolutionFailureGetMessage(failure)), ABIReleaseResolutionFailure);
             } else result->state = ABIImportedImageInstalled;
         }
         bool accepted;
@@ -134,7 +134,7 @@ void retry(void *context) {
     }
 }
 void refresh(const std::shared_ptr<Monitor>& monitor) {
-    std::unique_ptr<ABIImageList, decltype(&ABIFreeImageList)> snapshot(ABICopyLoadedImages(), ABIFreeImageList);
+    std::unique_ptr<ABIImageList, decltype(&ABIReleaseImageList)> snapshot(ABICopyLoadedImages(), ABIReleaseImageList);
     if (!snapshot || !process(monitor, snapshot.get()) || monitor->retryScheduled) return;
     // Initializer completion has no catalog notification. Retry only loads that
     // could not yet be acquired, without retaining images or the monitor itself.
@@ -208,12 +208,12 @@ void ABIReleaseImportedHookMonitor(ABIImportedHookMonitor *owner) {
     ABIReleaseImageObservation(owner->observation);
     delete owner;
 }
-ABIImportedImageList *ABICopyImportedHookMonitorImages(const ABIImportedHookMonitor *owner) {
+ABIImportedImageList *ABIImportedHookMonitorCopyImages(const ABIImportedHookMonitor *owner) {
     auto result = std::make_unique<ABIImportedImageList>();
     std::lock_guard lock(owner->state->mutex);
     for (const auto& item : owner->state->images) result->images.push_back(item.second);
     return result.release();
 }
-size_t ABIImportedImageListCount(const ABIImportedImageList *list) { return list->images.size(); }
-ABIImportedImageUpdate ABIImportedImageListGet(const ABIImportedImageList *list, size_t i) { return list->images.at(i)->view(); }
+size_t ABIImportedImageListGetCount(const ABIImportedImageList *list) { return list->images.size(); }
+ABIImportedImageUpdate ABIImportedImageListGetImage(const ABIImportedImageList *list, size_t i) { return list->images.at(i)->view(); }
 void ABIReleaseImportedImageList(ABIImportedImageList *list) { delete list; }

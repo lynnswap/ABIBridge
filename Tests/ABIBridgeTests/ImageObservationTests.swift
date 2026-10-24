@@ -36,8 +36,8 @@ private final class CatalogObservation: @unchecked Sendable {
             Unmanaged.passRetained(callback).toOpaque(),
             { context, list in
                 guard let list else { Issue.record("Missing catalog snapshot"); return }
-                let images = (0..<ABIImageListCount(list)).map { index in
-                    let value = ABIImageListGet(list, index)
+                let images = (0..<ABIImageListGetCount(list)).map { index in
+                    let value = ABIImageListGetImage(list, index)
                     return ObservedImage(
                         generation: value.generation,
                         path: String(cString: value.path)
@@ -56,7 +56,7 @@ private final class CatalogObservation: @unchecked Sendable {
         self.handle = try #require(
             handle,
             Comment(
-                rawValue: error.map { String(cString: ABIResolutionFailureMessage($0)) }
+                rawValue: error.map { String(cString: ABIResolutionFailureGetMessage($0)) }
                     ?? "No observer"
             )
         )
@@ -119,7 +119,7 @@ struct ImageObservationTests {
         let observation = try CatalogObservation(released: {
             let snapshot = ABICopyLoadedImages()
             #expect(snapshot != nil)
-            ABIFreeImageList(snapshot)
+            ABIReleaseImageList(snapshot)
             released.withLock { $0 = true }
         }) { _ in
             guard
@@ -129,7 +129,7 @@ struct ImageObservationTests {
             else { return }
             let snapshot = ABICopyLoadedImages()
             #expect(snapshot != nil)
-            ABIFreeImageList(snapshot)
+            ABIReleaseImageList(snapshot)
             let handle = dlopen(path, RTLD_NOW | RTLD_LOCAL)
             #expect(handle != nil)
             if let handle { dlclose(handle) }
@@ -210,7 +210,7 @@ struct ImageObservationTests {
             #expect(observation == nil)
             #expect(error != nil)
             if let error {
-                #expect(ABIResolutionFailureCode(error) == ABIFailureInvalidRequest)
+                #expect(ABIResolutionFailureGetCode(error) == ABIFailureInvalidRequest)
                 ABIReleaseResolutionFailure(error)
             }
             withExtendedLifetime(callback) {}

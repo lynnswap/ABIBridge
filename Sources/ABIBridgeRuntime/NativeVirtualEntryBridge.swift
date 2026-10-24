@@ -51,12 +51,12 @@ package func copyVirtualEntry(
     }
 }
 
-@c(ABIVirtualEntryGet)
+@c(ABIVirtualEntryGetInfo)
 package func virtualEntryGet(_ entry: OpaquePointer) -> ABIVirtualEntryInfo {
     Unmanaged<NativeVirtualEntryBox>.fromOpaque(UnsafeRawPointer(entry)).takeUnretainedValue().info
 }
 
-@c(ABIVirtualEntrySymbolName)
+@c(ABIVirtualEntryGetSymbolName)
 package func virtualEntrySymbolName(_ entry: OpaquePointer) -> UnsafePointer<CChar> {
     UnsafePointer(
         Unmanaged<NativeVirtualEntryBox>.fromOpaque(UnsafeRawPointer(entry)).takeUnretainedValue()

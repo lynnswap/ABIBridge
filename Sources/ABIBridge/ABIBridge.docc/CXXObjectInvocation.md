@@ -139,7 +139,7 @@ let entry = try unsafe table.entry(
 )
 ```
 
-C callers include `<ABIBridge/VirtualEntries.h>` and use `ABICopyVirtualEntry(runtime, addressPoint, entryCount, name, &failure)`. The returned owner retains the table image; `ABIVirtualEntryGet` copies its slot and authentication metadata, and `ABIReleaseVirtualEntry` releases it. Table acquisition and bounds remain caller responsibilities in every frontend.
+C callers include `<ABIBridge/VirtualEntries.h>` and use `ABICopyVirtualEntry(runtime, addressPoint, entryCount, name, &failure)`. The returned owner retains the table image; `ABIVirtualEntryGetInfo` copies its slot and authentication metadata, and `ABIReleaseVirtualEntry` releases it. Table acquisition and bounds remain caller responsibilities in every frontend.
 
 To intercept calls through a selected shared entry, see <doc:CXXVirtualHooks>.
 

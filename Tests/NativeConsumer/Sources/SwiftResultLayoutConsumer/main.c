@@ -20,7 +20,7 @@ static ABIValueType *element(char kind) {
     default: fprintf(stderr, "Unknown element kind: %c\n", kind); exit(2);
     }
     if (!type) {
-        fprintf(stderr, "Element %c: %s\n", kind, ABIResolutionFailureMessage(error));
+        fprintf(stderr, "Element %c: %s\n", kind, ABIResolutionFailureGetMessage(error));
         exit(1);
     }
     return type;
@@ -35,17 +35,17 @@ int main(int argc, char **argv) {
         size_t size = 0, alignment = 1;
         for (size_t index = 0; index < count; ++index) {
             fields[index] = element(elements[index]);
-            const size_t fieldAlignment = ABIValueTypeAlignment(fields[index]);
+            const size_t fieldAlignment = ABIValueTypeGetAlignment(fields[index]);
             size = (size + fieldAlignment - 1) / fieldAlignment * fieldAlignment;
             offsets[index] = size;
-            size += ABIValueTypeSize(fields[index]);
+            size += ABIValueTypeGetSize(fields[index]);
             if (fieldAlignment > alignment) alignment = fieldAlignment;
         }
         ABIResolutionFailure *error = NULL;
         ABIValueType *tuple = ABICreateSwiftTupleStorageType(
             (const ABIValueType *const *)fields, offsets, count, size, alignment, &error);
         if (!tuple) {
-            fprintf(stderr, "Tuple %s: %s\n", elements, ABIResolutionFailureMessage(error));
+            fprintf(stderr, "Tuple %s: %s\n", elements, ABIResolutionFailureGetMessage(error));
             return 1;
         }
         char *description = ABICopySwiftValueLoweringDescription(tuple, true);

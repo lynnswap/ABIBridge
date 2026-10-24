@@ -404,21 +404,21 @@ struct VirtualEntryTests {
         )
         defer { ABIReleaseVirtualEntry(entry) }
         #expect(error == nil)
-        let info = ABIVirtualEntryGet(entry)
+        let info = ABIVirtualEntryGetInfo(entry)
         #expect(
             info.addressPoint == UnsafeRawPointer(address) && info.entryCount == 2
                 && info.index == 1
         )
         #expect(info.key == ABIAuthenticationUnsigned)
-        #expect(String(cString: ABIVirtualEntrySymbolName(entry)).contains("_ZT"))
+        #expect(String(cString: ABIVirtualEntryGetSymbolName(entry)).contains("_ZT"))
         #expect(
             ABICopyVirtualEntry(runtime, address, 1, "NamedVirtual::Derived::identity()", &error)
                 == nil
         )
-        #expect(ABIResolutionFailureCode(try #require(error)) == ABIFailureDeclarationNotFound)
+        #expect(ABIResolutionFailureGetCode(try #require(error)) == ABIFailureDeclarationNotFound)
         ABIReleaseResolutionFailure(error); error = nil
         #expect(ABICopyVirtualEntry(runtime, address, Int.max, "unused()", &error) == nil)
-        #expect(ABIResolutionFailureCode(try #require(error)) == ABIFailureInvalidAddress)
+        #expect(ABIResolutionFailureGetCode(try #require(error)) == ABIFailureInvalidAddress)
         ABIReleaseResolutionFailure(error)
     }
 }

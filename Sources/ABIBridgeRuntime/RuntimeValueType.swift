@@ -7,8 +7,8 @@ package final class RuntimeValueType: @unchecked Sendable {
 
     package init(adopting handle: OpaquePointer) {
         self.handle = handle
-        size = ABIValueTypeSize(handle)
-        alignment = ABIValueTypeAlignment(handle)
+        size = ABIValueTypeGetSize(handle)
+        alignment = ABIValueTypeGetAlignment(handle)
     }
 
     package init(scalar: Int) throws {
@@ -17,8 +17,8 @@ package final class RuntimeValueType: @unchecked Sendable {
             throw consumeRuntimeCallFailure(failure)
         }
         self.handle = handle
-        size = ABIValueTypeSize(handle)
-        alignment = ABIValueTypeAlignment(handle)
+        size = ABIValueTypeGetSize(handle)
+        alignment = ABIValueTypeGetAlignment(handle)
     }
 
     package init(fields: [RuntimeValueType]) throws {
@@ -32,8 +32,8 @@ package final class RuntimeValueType: @unchecked Sendable {
         }
         guard let handle else { throw consumeRuntimeCallFailure(failure) }
         self.handle = handle
-        size = ABIValueTypeSize(handle)
-        alignment = ABIValueTypeAlignment(handle)
+        size = ABIValueTypeGetSize(handle)
+        alignment = ABIValueTypeGetAlignment(handle)
     }
 
     package init(indirectSwiftSize size: Int, alignment: Int) throws {

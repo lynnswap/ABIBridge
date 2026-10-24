@@ -567,7 +567,7 @@ struct SwiftImportedReplacementTests {
         other.cleanup()
         runtime.removeCachedResults()
         #expect(try unsafe oracle.unsafeInvoke(40) == 340)
-        let lease = try #require(ABIRetainLoadedImage(generation)); ABIReleaseImage(lease)
+        let lease = try #require(ABIAcquireImageLease(generation)); ABIReleaseImageLease(lease)
         let current = UnsafeRawPointer(bitPattern: slot)!.load(as: UInt.self)
         #expect(
             ABICompareExchangePointerSlot(

@@ -71,8 +71,8 @@ private:
 namespace detail {
 inline void hook_require(bool success, ABIResolutionFailure *owned) {
     std::unique_ptr<ABIResolutionFailure, decltype(&ABIReleaseResolutionFailure)> error(owned, ABIReleaseResolutionFailure);
-    if (!success) throw resolution_error(error ? ABIResolutionFailureCode(error.get()) : ABIFailureOther,
-        error ? ABIResolutionFailureMessage(error.get()) : "The native hook operation failed.");
+    if (!success) throw resolution_error(error ? ABIResolutionFailureGetCode(error.get()) : ABIFailureOther,
+        error ? ABIResolutionFailureGetMessage(error.get()) : "The native hook operation failed.");
 }
 inline void *hook_object_pointer(
 #ifdef __OBJC__
@@ -189,7 +189,7 @@ template <typename R, typename... A> struct hook_installer<R(A...)> {
         OnFailure failure;
         static void release(void *context) noexcept { delete static_cast<method_state *>(context); }
         static void failed(void *context, const ABIResolutionFailure *error) noexcept {
-            static_cast<method_state *>(context)->failure(resolution_error(ABIResolutionFailureCode(error), ABIResolutionFailureMessage(error)));
+            static_cast<method_state *>(context)->failure(resolution_error(ABIResolutionFailureGetCode(error), ABIResolutionFailureGetMessage(error)));
         }
         template <size_t... I> R invoke(ABIObjCHookInvocation *raw, std::index_sequence<I...>) {
             objc_hook_invocation<R(A...)> call(raw);
@@ -235,7 +235,7 @@ template <typename R, typename... A> struct hook_installer<R(A...)> {
         OnFailure failure;
         static void release(void *context) noexcept { delete static_cast<initializer_state *>(context); }
         static void failed(void *context, const ABIResolutionFailure *error) noexcept {
-            static_cast<initializer_state *>(context)->failure(resolution_error(ABIResolutionFailureCode(error), ABIResolutionFailureMessage(error)));
+            static_cast<initializer_state *>(context)->failure(resolution_error(ABIResolutionFailureGetCode(error), ABIResolutionFailureGetMessage(error)));
         }
         template <size_t... I> void prepare(ABIObjCInitializerArguments *arguments, std::index_sequence<I...>) {
             if constexpr (!std::is_same_v<Before, std::nullptr_t>) {
@@ -393,7 +393,7 @@ inline std::vector<objc_hook_handle> install_objc_hooks(const std::vector<objc_h
     if (const auto *error = ABIObjCHookInstallationFailure(installation.get())) {
         throw objc_hook_installation_error(ABIObjCHookInstallationFailedIndex(installation.get()),
             ABIObjCHookInstallationPhase(installation.get()),
-            resolution_error(ABIResolutionFailureCode(error), ABIResolutionFailureMessage(error)), std::move(handles));
+            resolution_error(ABIResolutionFailureGetCode(error), ABIResolutionFailureGetMessage(error)), std::move(handles));
     }
     return handles;
 }

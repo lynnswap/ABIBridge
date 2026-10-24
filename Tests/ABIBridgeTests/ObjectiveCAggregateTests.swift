@@ -186,7 +186,7 @@ struct ObjectiveCAggregateTests {
         )
         defer { ABIReleaseValueType(type); if let failure { ABIReleaseResolutionFailure(failure) } }
         #expect(failure == nil)
-        #expect(ABIValueTypeSize(type) == Int.max)
+        #expect(ABIValueTypeGetSize(type) == Int.max)
     }
 
     @Test func unrepresentableArrayByteExtentsReturnAnError() {

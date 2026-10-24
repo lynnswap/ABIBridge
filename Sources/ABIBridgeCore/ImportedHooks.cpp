@@ -194,8 +194,8 @@ ABIImportedHook *abibridge::createManagedFunctionHook(std::vector<ManagedFunctio
         const auto slot = selected[i].description;
         hook->slots.push_back({slot});
         auto entry = std::make_unique<Entry>(); entry->slot = slot; entry->lifetime = behavior->lifetimes[i];
-        entry->contract = contract; entry->resultSize = ABIValueTypeSize(resultType);
-        for (size_t p=0;p<count;++p) entry->parameterSizes.push_back(ABIValueTypeSize(parameters[p]));
+        entry->contract = contract; entry->resultSize = ABIValueTypeGetSize(resultType);
+        for (size_t p=0;p<count;++p) entry->parameterSizes.push_back(ABIValueTypeGetSize(parameters[p]));
         ABIRetainCallInterface(interface.get()); entry->interface.reset(interface.get());
         if (!readBits(*entry, entry->original) || !entry->original) {
             hook->failedIndex=i; hook->failure.reset(ABICreateResolutionFailure(ABIFailureInvalidAddress,"A function slot is unreadable or null.")); return hook.release();

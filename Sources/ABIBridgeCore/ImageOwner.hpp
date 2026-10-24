@@ -11,12 +11,12 @@ inline ABIImageLease *copyContainingImage(const void *address, ABIResolutionFail
     if (generation) *generation = 0;
     Dl_info info{};
     if (!dladdr(address,&info) || !info.dli_fbase) return nullptr;
-    std::unique_ptr<ABIImageList,decltype(&ABIFreeImageList)> images(ABICopyLoadedImages(),ABIFreeImageList);
+    std::unique_ptr<ABIImageList,decltype(&ABIReleaseImageList)> images(ABICopyLoadedImages(),ABIReleaseImageList);
     if (!images) { *error=ABICreateResolutionFailure(ABIFailureImageUnavailable,"The loaded image catalog is unavailable."); return nullptr; }
-    for (size_t index=0; index<ABIImageListCount(images.get()); ++index) {
-        const auto image=ABIImageListGet(images.get(),index);
+    for (size_t index=0; index<ABIImageListGetCount(images.get()); ++index) {
+        const auto image=ABIImageListGetImage(images.get(),index);
         if (image.header!=reinterpret_cast<uintptr_t>(info.dli_fbase)) continue;
-        if (auto *lease=ABIRetainLoadedImage(image.generation)) {
+        if (auto *lease=ABIAcquireImageLease(image.generation)) {
             if (generation) *generation = image.generation;
             return lease;
         }
