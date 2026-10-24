@@ -1580,6 +1580,11 @@ struct SwiftInferredValueTests {
                     unsafe _overrideLifetime(value, borrowing: self)
                 }
             }
+            extension Optional where Wrapped == String {
+                @_lifetime(borrow self) @inline(never) public func declaredSize<T>(_ value: T) -> Number {
+                    Number(Int64(MemoryLayout<T>.size))
+                }
+            }
             @available(macOS 26.0, *)
             @inline(never) public func read(_ view: borrowing View) -> Int64 {
                 var number: Int64 = 0
@@ -1791,6 +1796,33 @@ struct SwiftInferredValueTests {
                 withResult: { try unsafe read.unsafeInvoke($0) }
             ) == 789
         )
+        let optionalString = try await runtime.resolveSwiftType(
+            named: "Swift.Optional",
+            genericArguments: [.type(String.self)]
+        )
+        let optionalABI = try NativeType.structure(
+            named: "OptionalString",
+            fields: [.uint64, .uint64]
+        )
+        for receiverABI in [nil, optionalABI] as [NativeType?] {
+            let size = try await optionalString.resolve(
+                .method(
+                    "declaredSize(_:)",
+                    as: ((Int64) -> NativeSwiftBorrowedValue).self,
+                    genericArguments: [.type(Int64.self)],
+                    declaredAs:
+                        "<A, A1 where A == Swift.String> @_lifetime(borrow self) (_ value: A1) -> \(module).Number",
+                    receiverABI: receiverABI
+                )
+            )
+            #expect(
+                try unsafe size.unsafeInvoke(
+                    on: Optional("789"),
+                    Int64(7),
+                    withResult: { try unsafe readNumber.unsafeInvoke($0) }
+                ) == Int64(MemoryLayout<Int64>.size)
+            )
+        }
         await #expect {
             _ = try await string.resolve(
                 .method(

@@ -462,7 +462,8 @@ public actor NativeSwiftType: Hashable {
             isMutating: isMutating,
             isConsuming: isConsuming,
             protocolSelf: protocolSelf,
-            validateClass: false
+            validateClass: false,
+            borrowed: generic?.binding.declaration.borrowedInputs.map { $0.contains(.receiver) }
         )
         func passing(_ plan: SwiftReceiverPlan) -> String {
             plan.mode == .value ? SwiftDeclaredLowering.lowering(of: plan.type) : "by address"

@@ -857,7 +857,9 @@ struct SwiftGenericCallPlan: Sendable {
                     context.keyParameters.contains($0.name)
                 }.map { .named($0.name, []) }
             )
-            if receiver == .address, let enclosingMetadata {
+            // A lifetime dependency can address self even when same-type
+            // requirements fix its arguments and it supplies no metadata.
+            if receiver == .address, !fulfilled.isEmpty, let enclosingMetadata {
                 return ([unsafeBitCast(enclosingMetadata, to: UInt.self)], fulfilled)
             }
             return ([], fulfilled)
