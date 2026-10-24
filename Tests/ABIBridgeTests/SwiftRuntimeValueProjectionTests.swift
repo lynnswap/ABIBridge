@@ -1,5 +1,10 @@
+#if DEBUG
 @testable import ABIBridge
 @testable import ABIBridgeRuntime
+#else
+import ABIBridge
+import ABIBridgeRuntime
+#endif
 import ABIBridgeTestSupport
 import Foundation
 import ManagedSwiftFixtures
@@ -65,6 +70,7 @@ private func invokeProjectionPreparation(
     )
 }
 
+#if DEBUG
 private enum ProjectionPreparationFailure: Error { case timedOut }
 private final class ProjectionPreparationGate: Sendable {
     let release = DispatchSemaphore(value: 0)
@@ -78,6 +84,7 @@ private final class ProjectionPreparationGate: Sendable {
         }
     }
 }
+#endif
 
 @Suite(.serialized)
 struct SwiftRuntimeValueProjectionTests {
@@ -598,9 +605,8 @@ struct SwiftRuntimeValueProjectionTests {
             #expect(!container.isConsumed)
         }
         let value = try #require(copied)
-        let copiedMetadata = await value.type.metadata
-        #expect(ObjectIdentifier(copiedMetadata) == ObjectIdentifier(type(of: original)))
         try value.withCopy {
+            #expect(ObjectIdentifier(type(of: $0)) == ObjectIdentifier(type(of: original)))
             let error = try #require($0 as? NSError)
             #expect(error === original)
             #expect(error.domain == "RuntimeProjectionError" && error.code == 42)
@@ -982,6 +988,7 @@ struct SwiftRuntimeValueProjectionTests {
             )
         )
         let container = try unsafe make.unsafeInvoke(7)
+        #if DEBUG
         let gate = ProjectionPreparationGate()
         let integer = try RuntimeValueType(
             indirectSwiftSize: MemoryLayout<Int64>.size,
@@ -1021,7 +1028,11 @@ struct SwiftRuntimeValueProjectionTests {
         await progress.value
         let prepared = try await preparation.value
         let value = try result.get()
+        #else
+        let value = try #require(try await container.resolveEnumPayload(forCase: "body"))
+        #endif
         let closure = try await value.resolveClosure(as: Signature.self)
+        #if DEBUG
         guard case .synchronous(_, let call) = closure.call else {
             Issue.record("Expected the stored synchronous closure's prepared call interface")
             return
@@ -1029,8 +1040,9 @@ struct SwiftRuntimeValueProjectionTests {
         #expect(call.interface.runtime === prepared)
         let observations = gate.observations.withLock { $0 }
         #expect(!observations.isEmpty && observations.allSatisfy { !$0 })
+        #endif
         #expect(try invokeProjectionPreparation(closure) == 42)
-        let concreteMetadata = await value.type.metadata
+        let concreteType = value.type
         try value.withCopy { copied in
             let native = try #require(copied as? Signature)
             #expect(invokeProjectionPreparation(native) == 42)
@@ -1063,8 +1075,7 @@ struct SwiftRuntimeValueProjectionTests {
         )
         let generic = try unsafe makeGeneric.unsafeInvoke(7)
         let genericValue = try #require(try generic.resolveEnumPayloadAndWait(forCase: "value"))
-        let genericMetadata = await genericValue.type.metadata
-        #expect(ObjectIdentifier(concreteMetadata) == ObjectIdentifier(genericMetadata))
+        #expect(concreteType == genericValue.type)
         let genericClosure = try genericValue.resolveClosureAndWait(as: Signature.self)
         #expect(try invokeProjectionPreparation(genericClosure) == 42)
         try genericValue.withCopy { copied in
