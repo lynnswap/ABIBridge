@@ -96,6 +96,7 @@ extension NativeSwiftType {
         guard let path = SwiftMemberPath(owner: rootName, member: query.member) else {
             throw ABIResolutionError.declarationNotFound(displayed)
         }
+        let ownerIdentity = try resolver.swiftTypeIdentity(of: metadata, in: image)
         func candidates(includingSharedCache: Bool) throws -> [SwiftCandidate] {
             let tiers =
                 query.includesOwnerExtension ? [false, true] : [query.extensionModule != nil]
@@ -106,7 +107,8 @@ extension NativeSwiftType {
                         accessor: nil,
                         isStatic: false,
                         initializer: .excluded,
-                        entry: .propertyDescriptor
+                        entry: .propertyDescriptor,
+                        ownerIdentity: ownerIdentity
                     ),
                     owner: rootName,
                     in: extensionsOnly ? nil : image,

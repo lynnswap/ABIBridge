@@ -623,7 +623,11 @@ public actor NativeSwiftType: Hashable {
                     "Name this type's own initializer relative to the type, such as init(text:)."
                 )
             }
-            let match = try query.match(in: ownerName)
+            let match = try query.match(
+                in: ownerName,
+                ownerIdentity: isProtocolMember
+                    ? nil : resolver.swiftTypeIdentity(of: owner, in: ownerImage)
+            )
             let memberOwner = query.owner(in: ownerName)
             // Prepares a candidate whose context applies to the request.
             func prepare(
