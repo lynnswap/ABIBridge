@@ -133,9 +133,9 @@ const char *ABIValidateNativeObjCHooks(void) {
     @autoreleasepool {
         int failures = 0;
         auto failed = [&](const abi_bridge::resolution_error&) noexcept { ++failures; };
-        auto first = abi_bridge::objc_method_hook<int32_t(int32_t, int32_t)>(ABIReplacementArchitectureReceiver.class, "add:to:",
+        auto first = abi_bridge::hook_objc_method<int32_t(int32_t, int32_t)>(ABIReplacementArchitectureReceiver.class, "add:to:",
             [](auto& call, int32_t a, int32_t b) { return call.proceed(a,b) + 1; }, failed);
-        auto second = abi_bridge::objc_method_hook<int32_t(int32_t, int32_t)>(ABIReplacementArchitectureReceiver.class, "add:to:",
+        auto second = abi_bridge::hook_objc_method<int32_t(int32_t, int32_t)>(ABIReplacementArchitectureReceiver.class, "add:to:",
             [](auto& call, int32_t a, int32_t b) { return call.proceed(a,b) * 2; }, failed);
         ABIReplacementArchitectureReceiver *receiver = [ABIReplacementArchitectureReceiver new];
         if ([receiver add:20 to:21] != 84) return "Native typed hook ordering failed";
@@ -143,7 +143,7 @@ const char *ABIValidateNativeObjCHooks(void) {
         first.invalidate(); second.invalidate();
         if (((int32_t (*)(id, SEL, int32_t, int32_t))saved)(receiver, @selector(add:to:), 20, 22) != 42)
             return "Saved native hook entry failed after invalidation";
-        auto initializer = abi_bridge::objc_initializer_hook<ABIReplacementArchitectureReceiver *(int32_t)>(
+        auto initializer = abi_bridge::hook_objc_initializer<ABIReplacementArchitectureReceiver *(int32_t)>(
             ABIReplacementArchitectureReceiver.class, "initWithSeed:", [](int32_t seed) { return seed < 0 ? seed : seed + 1; },
             [](ABIReplacementArchitectureReceiver *result) { if (result) result.calls += 40; }, failed);
         if ([[ABIReplacementArchitectureReceiver alloc] initWithSeed:1].calls != 42)

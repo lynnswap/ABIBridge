@@ -15,7 +15,7 @@ namespace abi_bridge {
 class InvocationRuntime final {
 public:
     InvocationRuntime() = default;
-    static InvocationRuntime current() { return InvocationRuntime(Runtime::current()); }
+    static InvocationRuntime current() { return InvocationRuntime(runtime::current()); }
     resolved_symbol resolve(const declaration& query, const image_selector& scope = {},
                             image_loading loading = image_loading::if_needed) const {
         return runtime_.resolve(query, scope, loading);
@@ -54,8 +54,8 @@ private:
         }
     }
 
-    explicit InvocationRuntime(Runtime runtime) : runtime_(std::move(runtime)) {}
-    Runtime runtime_;
+    explicit InvocationRuntime(runtime runtime) : runtime_(std::move(runtime)) {}
+    runtime runtime_;
 };
 
 } // namespace abi_bridge

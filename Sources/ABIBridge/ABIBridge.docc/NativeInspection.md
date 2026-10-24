@@ -31,7 +31,7 @@ Include `<ABIBridge/Inspection.hpp>` and set `cxxLanguageStandard: .cxx20` in th
 
 using namespace abi_bridge;
 
-auto runtime = Runtime::current();
+auto runtime = runtime::current();
 auto table = runtime.resolve(
     declaration::vtable_for("Example::Renderer"),
     image_selector::framework("Example")
@@ -42,7 +42,7 @@ auto path = table.image_path(); // An owned std::string.
 
 The example acquires the framework when needed. To search only loaded images, pass `image_loading::loaded_only` as the third argument; see <doc:ImageLoading>. Resolution throws `resolution_error` with the C failure category in `code()` and an owned message in `what()`. Names and selectors use UTF-8 and reject embedded NULs. Errors can outlive the runtime and native failure handle.
 
-Copies of `Runtime` share a resolver cache; default construction creates an independent resolver. Copies of `resolved_symbol` share the acquired symbol, keeping its implementation image alive after cache clearing or runtime destruction. The unsigned address remains borrowed; the C++ wrapper does not establish an invocation signature.
+Copies of `runtime` share a resolver cache; default construction creates an independent resolver. Copies of `resolved_symbol` share the acquired symbol, keeping its implementation image alive after cache clearing or runtime destruction. The unsigned address remains borrowed; the C++ wrapper does not establish an invocation signature.
 
 Snapshots and independent loader leases are also values with automatic lifetime management:
 

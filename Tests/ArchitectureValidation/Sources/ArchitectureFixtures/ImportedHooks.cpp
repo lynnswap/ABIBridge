@@ -9,7 +9,7 @@ uint32_t ABIImportedUIDCall() { return uidSlot(); }
 const char *ABIValidateImportedHookFrontend(const char *importer,uint32_t expected) {
     static thread_local std::string failure;
     try {
-        abi_bridge::Runtime runtime;
+        abi_bridge::runtime runtime;
         auto hook=abi_bridge::hook_imported_function<uint32_t()>(runtime,{"getuid",abi_bridge::language::c},
             abi_bridge::image_selector::path(importer),[](auto& call) { return call.proceed()+2; },
             [](const abi_bridge::resolution_error&) noexcept {});

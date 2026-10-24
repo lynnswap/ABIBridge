@@ -87,7 +87,7 @@ For an available C++ base declaration, Clang can acquire and authenticate its vp
 #include <cstdio>
 
 using namespace abi_bridge;
-auto runtime = Runtime::current();
+auto runtime = runtime::current();
 auto table = virtual_table::from(baseSubobject, layout.entryCount, storageOwner);
 auto entry = table.entry(runtime, "Example::Derived::value(int) const");
 auto hook = entry.hook_shared_calls<int(int)>(
@@ -98,7 +98,7 @@ auto hook = entry.hook_shared_calls<int(int)>(
 
 `baseSubobject` is a live polymorphic reference of the exact static base type. The helper uses `__builtin_get_vtable_pointer`; it does not decode member-function-pointer bits or guess a slot from a live implementation address. The caller still supplies the accessible absolute entry count. For a secondary base, perform the compiler's base conversion before creating the view.
 
-For an explicit adapter, construct `virtual_entry` with an `ABIVirtualEntryInfo` and an optional `std::shared_ptr<const void>` storage/code owner. A named entry retains its metadata image. Copies share those owners; copies of `virtual_hook_handle` share registration. `virtual_hook_installation_error` preserves the invalidated registration and its copied effects.
+For an explicit adapter, construct `virtual_entry` with an `ABIVirtualEntryInfo` and an optional `std::shared_ptr<const void>` storage/code owner. A named entry retains its metadata image. Copies share those owners; copies of `virtual_hook_handle` share registration. `virtual_hook_installation_error` exposes the owned failure through `cause()` and preserves the invalidated `registration()` with its copied effects. `registration().slot()` is empty before a slot was selected; a selected slot reports `virtual_hook_status` and the original mutation/rollback records.
 
 The same C++ interface works in Objective-C++. ARC captures in a callback live until that callback's final active snapshot ends. They do not make a UI object safe to access from an arbitrary incoming thread. Failure handlers must be `noexcept`.
 

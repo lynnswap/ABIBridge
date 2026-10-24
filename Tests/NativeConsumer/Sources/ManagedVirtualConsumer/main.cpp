@@ -19,7 +19,7 @@ static void release(void *context) { delete static_cast<int*>(context); }
 static void overlappingImports(const char *path) {
     auto *library=dlopen(path,RTLD_NOW|RTLD_LOCAL); assert(library);
     auto call=reinterpret_cast<void(*)(int32_t*,int32_t)>(dlsym(library,"ABIImportedWrite")); assert(call);
-    abi_bridge::Runtime runtime;
+    abi_bridge::runtime runtime;
     ABIImageSelector scope{ABIImagePath,path};
     ABIDeclaration declaration{"ABIImportedSet",ABILanguageC,ABISymbolFunction,ABINameSource};
     ABIResolutionFailure *error=nullptr;

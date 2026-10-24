@@ -104,7 +104,7 @@ const char *ABIValidateNativeCalls() {
     static thread_local std::string failure;
     try {
         if (ABIUsesPointerAuthentication() != ABIValidationPACCompiled()) return "Mixed authentication compilation settings";
-        Runtime runtime;
+        abi_bridge::runtime runtime;
         function<int32_t(int32_t,int32_t)> add(runtime.resolve({"ABIValidationAdd", language::c}));
         if (add.unsafe_invoke(20,22) != ABIValidationAdd(20,22)) return "C function mismatch";
         function<ABIArchitecture::Large(long)> large(runtime.resolve({"ABIArchitecture::large(long)"}));

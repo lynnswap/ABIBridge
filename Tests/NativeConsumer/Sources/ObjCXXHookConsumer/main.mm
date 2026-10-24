@@ -37,13 +37,13 @@ int main() {
             };
             assert(invoke() == object);
             int calls = 0;
-            auto hook = abi_bridge::objc_method_hook<NSObject *()>(ABINativeHookFixture.class, name,
+            auto hook = abi_bridge::hook_objc_method<NSObject *()>(ABINativeHookFixture.class, name,
                 [&](auto& call) { ++calls; return call.proceed(); }, failed, ordinary);
             assert(invoke() == object && calls == 1);
             hook.invalidate();
         }
         ordinary.returns_retained = true;
-        auto retained = abi_bridge::objc_method_hook<NSObject *()>(ABINativeHookFixture.class, "initRetainedValue",
+        auto retained = abi_bridge::hook_objc_method<NSObject *()>(ABINativeHookFixture.class, "initRetainedValue",
             [](auto& call) { return call.proceed(); }, failed, ordinary);
         {
             NSObject *value = [object initRetainedValue];
@@ -53,7 +53,7 @@ int main() {
 #endif
         }
         retained.invalidate();
-        auto copies = abi_bridge::objc_method_hook<ABINativeHookResult *()>(ABINativeHookFixture.class, "copyObject",
+        auto copies = abi_bridge::hook_objc_method<ABINativeHookResult *()>(ABINativeHookFixture.class, "copyObject",
             [](auto& call) {
                 ABINativeHookResult *first = call.proceed();
                 ABINativeHookResult *second = call.proceed();
@@ -69,7 +69,7 @@ int main() {
         }
         copies.invalidate();
         using Block = int32_t (^)(int32_t);
-        auto blocks = abi_bridge::objc_method_hook<Block()>(ABINativeHookFixture.class, "block",
+        auto blocks = abi_bridge::hook_objc_method<Block()>(ABINativeHookFixture.class, "block",
             [](auto& call) -> Block {
                 Block original = call.proceed();
                 Block changed = ^(int32_t value) { return original(value) + 2; };
@@ -82,12 +82,12 @@ int main() {
         Block block = [object block];
         assert(block(39) == 42);
         blocks.invalidate();
-        auto scoped = abi_bridge::objc_object_hook<int32_t(int32_t, int32_t)>(object, "add:to:",
+        auto scoped = abi_bridge::hook_objc_object<int32_t(int32_t, int32_t)>(object, "add:to:",
             [](auto& call, int32_t a, int32_t b) { assert(call.receiver()); return call.proceed(a,b) + 1; }, failed);
         ABINativeHookFixture *other = [[ABINativeHookFixture alloc] initWithSeed:0];
         assert([object add:20 to:21] == 42 && [other add:20 to:21] == 41);
         scoped.invalidate();
-        auto initializer = abi_bridge::objc_initializer_hook<ABINativeHookFixture *(int32_t)>(
+        auto initializer = abi_bridge::hook_objc_initializer<ABINativeHookFixture *(int32_t)>(
             ABINativeHookFixture.class, "initWithSeed:", [](int32_t seed) { return seed < 0 ? seed : seed + 1; },
             [](ABINativeHookFixture *result) { if (result) result.seed += 40; }, failed);
         ABINativeHookFixture *initialized = [[ABINativeHookFixture alloc] initWithSeed:1];

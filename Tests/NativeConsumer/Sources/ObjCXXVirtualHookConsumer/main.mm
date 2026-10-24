@@ -10,7 +10,7 @@ int main(int argc,char **argv) { @autoreleasepool {
     auto *library=dlopen(argv[1],RTLD_NOW|RTLD_LOCAL); assert(library);
     auto object=reinterpret_cast<void*(*)(int)>(dlsym(library,"ABIVirtualObject"));
     auto invoke=reinterpret_cast<int(*)(int,int)>(dlsym(library,"ABIVirtualCall"));
-    auto runtime=abi_bridge::Runtime::current();
+    auto runtime=abi_bridge::runtime::current();
     auto table=abi_bridge::virtual_table::from(*static_cast<VirtualFixture::Renderer*>(object(0)),1);
     auto entry=table.entry(runtime,"VirtualFixture::Renderer::value(int) const");
     __weak NSObject *weak;

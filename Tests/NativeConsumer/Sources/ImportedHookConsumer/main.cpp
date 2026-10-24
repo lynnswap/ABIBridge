@@ -20,7 +20,7 @@ static bool callback(void *,ABIImportedInvocation *call,ABIResolutionFailure **e
 // No other automatic resolver runs in this process, so final-release checks
 // establish ownership instead of racing another suite's valid image leases.
 static void checkSelectionLifetime(const char *path) {
-    abi_bridge::Runtime runtime;
+    abi_bridge::runtime runtime;
     auto scope=abi_bridge::image_selector::path(path);
     const ABIDeclaration query{"ABIImportedAdd",ABILanguageC,ABISymbolFunction,ABINameSource};
     uint64_t previous=0;
@@ -45,7 +45,7 @@ static void checkSelectionLifetime(const char *path) {
 }
 int main(int argc,char **argv) {
     assert(argc==2); checkSelectionLifetime(argv[1]); void *image=dlopen(argv[1],RTLD_NOW|RTLD_LOCAL); assert(image);
-    abi_bridge::Runtime runtime;
+    abi_bridge::runtime runtime;
     auto scope=abi_bridge::image_selector::path(argv[1]);
     auto query=abi_bridge::declaration{"ABIImportedAdd",abi_bridge::language::c};
     abi_bridge::function<int32_t(int32_t,int32_t)> call(runtime.resolve({"ABIImportedCall",abi_bridge::language::c},scope));
@@ -60,7 +60,9 @@ int main(int argc,char **argv) {
     auto cpp=abi_bridge::hook_imported_function<int32_t(int32_t,int32_t)>(runtime,query,scope,
         [](auto& next,int32_t a,int32_t b) { return next.proceed(a*2,b); },report);
     assert(call.unsafe_invoke(20,1)==42);
-    auto copy=cpp; cpp.invalidate(); assert(copy.status(0)==ABIImportedInactive);
+    assert(cpp.slot(0).status == abi_bridge::imported_hook_status::active && !cpp.slot(0).mutation.didWrite);
+    try { (void)cpp.slot(cpp.size()); assert(false); } catch (const std::out_of_range&) {}
+    auto copy=cpp; cpp.invalidate(); assert(copy.slot(0).status==abi_bridge::imported_hook_status::inactive);
     assert(call.unsafe_invoke(20,21)==42);
     ABIInvalidateImportedHook(c); assert(released==1);
     ABIReleaseImportedHook(c); assert(released==1 && call.unsafe_invoke(20,22)==42);
@@ -69,13 +71,16 @@ int main(int argc,char **argv) {
         [](auto& next,int32_t *output,int32_t value){ next.proceed(output,value+1); },report);
     int32_t value=0; write.unsafe_invoke(&value,41); assert(value==42); setter.invalidate();
     write.unsafe_invoke(&value,7); assert(value==7);
+    std::optional<abi_bridge::resolution_error> savedFailure;
     try {
         auto bad=abi_bridge::hook_imported_function<int32_t()>(runtime,{"ABIImportedAbsent",abi_bridge::language::c},scope,
             [](auto&){ return 0; },report);
         assert(false);
     } catch(const abi_bridge::imported_hook_installation_error& e) {
-        assert(e.registration().size()==0 && e.failed_index()==SIZE_MAX);
+        assert(e.registration().size()==0 && !e.failed_index());
+        savedFailure = e.cause();
     }
+    assert(savedFailure && savedFailure->code() == ABIFailureDeclarationNotFound);
     dlclose(image);
     std::puts("Imported C/C++ hook consumer passed");
 }

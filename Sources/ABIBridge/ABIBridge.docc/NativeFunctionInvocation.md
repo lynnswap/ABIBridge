@@ -9,8 +9,8 @@ Link the `ABIBridge` product, use C++20, and include `<ABIBridge/NativeInvocatio
 ```cpp
 #include <ABIBridge/NativeInvocation.hpp>
 
-abi_bridge::Runtime runtime;
-auto symbol = runtime.resolve({"Example::Math::add(int, int)"});
+abi_bridge::runtime runtime;
+auto symbol = runtime.resolve(abi_bridge::declaration{"Example::Math::add(int, int)"});
 abi_bridge::function<int(int, int)> add(std::move(symbol));
 int result = add.unsafe_invoke(20, 22);
 ```

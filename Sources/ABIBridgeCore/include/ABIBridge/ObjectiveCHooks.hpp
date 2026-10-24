@@ -51,7 +51,7 @@ struct objc_hook_options {
     /// Zero-based explicit ns_consumed parameters.
     std::vector<std::size_t> consumed_parameters;
 };
-enum class objc_hook_status { invalidated = ABIObjCHookInvalidated, active = ABIObjCHookActive, displaced = ABIObjCHookDisplaced };
+enum class objc_hook_status : std::int32_t { invalidated = ABIObjCHookInvalidated, active = ABIObjCHookActive, displaced = ABIObjCHookDisplaced };
 
 /// Copies share one owned C reference. Explicit invalidation affects all copies; destroying the last owner invalidates without waiting for current snapshots.
 class objc_hook_handle final {
@@ -217,7 +217,7 @@ template <typename R, typename... A> struct hook_installer<R(A...)> {
     };
     template <typename Body, typename OnFailure>
     static objc_hook_handle method(Class type, std::string_view selector, Body&& body, OnFailure&& failure, objc_hook_options options) {
-        static_assert(std::is_nothrow_invocable_v<OnFailure&, const resolution_error&>, "The failure callback must be noexcept.");
+        static_assert(std::is_nothrow_invocable_v<std::decay_t<OnFailure>&, const resolution_error&>, "The failure callback must be noexcept.");
         const auto name = hook_selector(selector);
         hook_signature<R, A...> signature;
         using State = method_state<std::decay_t<Body>, std::decay_t<OnFailure>>;
@@ -273,7 +273,7 @@ template <typename R, typename... A> struct hook_installer<R(A...)> {
     };
     template <typename Before, typename After, typename OnFailure>
     static objc_hook_handle initializer(Class type, std::string_view selector, Before&& before, After&& after, OnFailure&& failure, objc_hook_options options) {
-        static_assert(std::is_nothrow_invocable_v<OnFailure&, const resolution_error&>, "The failure callback must be noexcept.");
+        static_assert(std::is_nothrow_invocable_v<std::decay_t<OnFailure>&, const resolution_error&>, "The failure callback must be noexcept.");
         const auto name = hook_selector(selector);
         hook_signature<R, A...> signature;
         using State = initializer_state<std::decay_t<Before>, std::decay_t<After>, std::decay_t<OnFailure>>;
@@ -289,34 +289,34 @@ template <typename R, typename... A> struct hook_installer<R(A...)> {
 
 /// Installs a synchronous ordinary-method callback. The callback receives a scoped invocation followed by its typed explicit arguments. Callback C++ exceptions become reported hook failures; foreign native unwinding is unsupported.
 template <typename Signature, typename Body, typename OnFailure>
-objc_hook_handle objc_method_hook(Class type, std::string_view selector, Body&& body, OnFailure&& failure, objc_hook_options options = {}) {
+objc_hook_handle hook_objc_method(Class type, std::string_view selector, Body&& body, OnFailure&& failure, objc_hook_options options = {}) {
     return detail::hook_installer<Signature>::method(type, selector, std::forward<Body>(body), std::forward<OnFailure>(failure), options);
 }
 /// Before may observe (void), return an argument tuple, or return one value for one argument. After receives only the initialized object. nullptr omits a phase. Native initialization is automatic and cannot be repeated or replaced here.
 template <typename Signature, typename Before, typename After, typename OnFailure>
-objc_hook_handle objc_initializer_hook(Class type, std::string_view selector, Before&& before, After&& after, OnFailure&& failure, objc_hook_options options = {}) {
+objc_hook_handle hook_objc_initializer(Class type, std::string_view selector, Before&& before, After&& after, OnFailure&& failure, objc_hook_options options = {}) {
     return detail::hook_installer<Signature>::initializer(type, selector, std::forward<Before>(before), std::forward<After>(after), std::forward<OnFailure>(failure), options);
 }
 /// Identity-filtered instance hook; the registration retains only a weak object reference. The caller must keep the receiver alive through installation.
 template <typename Signature, typename Body, typename OnFailure>
-objc_hook_handle objc_object_hook(id object, std::string_view selector, Body&& body, OnFailure&& failure, objc_hook_options options = {}) {
+objc_hook_handle hook_objc_object(id object, std::string_view selector, Body&& body, OnFailure&& failure, objc_hook_options options = {}) {
     options.object_filter = object;
     options.class_method = false;
-    return objc_method_hook<Signature>(object_getClass(object), selector, std::forward<Body>(body), std::forward<OnFailure>(failure), options);
+    return hook_objc_method<Signature>(object_getClass(object), selector, std::forward<Body>(body), std::forward<OnFailure>(failure), options);
 }
 /// A reusable declaration for coordinated installation. Copies share callback storage; retaining a request retains its captures independently of handles.
 class objc_hook_request final {
 public:
     template <typename Signature, typename Body, typename OnFailure>
     static objc_hook_request method(Class type, std::string_view selector, Body&& body, OnFailure&& failure, objc_hook_options options = {}) {
-        static_assert(std::is_nothrow_invocable_v<OnFailure&, const resolution_error&>, "The failure callback must be noexcept.");
+        static_assert(std::is_nothrow_invocable_v<std::decay_t<OnFailure>&, const resolution_error&>, "The failure callback must be noexcept.");
         using State = typename detail::hook_installer<Signature>::template method_state<std::decay_t<Body>, std::decay_t<OnFailure>>;
         return make<Signature>(type, selector, options, false,
             std::make_shared<State>(std::forward<Body>(body), std::forward<OnFailure>(failure)));
     }
     template <typename Signature, typename Before, typename After, typename OnFailure>
     static objc_hook_request initializer(Class type, std::string_view selector, Before&& before, After&& after, OnFailure&& failure, objc_hook_options options = {}) {
-        static_assert(std::is_nothrow_invocable_v<OnFailure&, const resolution_error&>, "The failure callback must be noexcept.");
+        static_assert(std::is_nothrow_invocable_v<std::decay_t<OnFailure>&, const resolution_error&>, "The failure callback must be noexcept.");
         using State = typename detail::hook_installer<Signature>::template initializer_state<std::decay_t<Before>, std::decay_t<After>, std::decay_t<OnFailure>>;
         return make<Signature>(type, selector, options, true,
             std::make_shared<State>(std::forward<Before>(before), std::forward<After>(after), std::forward<OnFailure>(failure)));
@@ -361,18 +361,23 @@ private:
     std::function<ABIObjCHookRequest()> make_;
 };
 
+enum class objc_hook_installation_phase : std::int32_t {
+    preparation = ABIObjCHookPreparation,
+    activation = ABIObjCHookActivation
+};
+
 /// A coordinated-installation failure retaining the original cause and partial handles, already invalidated. Reading status does not require healthy ownership.
 class objc_hook_installation_error final : public std::runtime_error {
 public:
-    objc_hook_installation_error(size_t index, int32_t phase, resolution_error cause, std::vector<objc_hook_handle> hooks)
+    objc_hook_installation_error(size_t index, objc_hook_installation_phase phase, resolution_error cause, std::vector<objc_hook_handle> hooks)
         : std::runtime_error(cause.what()), index_(index), phase_(phase), cause_(std::move(cause)), hooks_(std::move(hooks)) {}
     size_t failed_index() const noexcept { return index_; }
-    int32_t phase() const noexcept { return phase_; }
+    objc_hook_installation_phase phase() const noexcept { return phase_; }
     const resolution_error& cause() const noexcept { return cause_; }
     const std::vector<objc_hook_handle>& invalidated_hooks() const noexcept { return hooks_; }
 private:
     size_t index_;
-    int32_t phase_;
+    objc_hook_installation_phase phase_;
     resolution_error cause_;
     std::vector<objc_hook_handle> hooks_;
 };
@@ -392,7 +397,7 @@ inline std::vector<objc_hook_handle> install_objc_hooks(const std::vector<objc_h
     } catch (...) { ABIInvalidateObjCHookInstallation(installation.get()); throw; }
     if (const auto *error = ABIObjCHookInstallationGetFailure(installation.get())) {
         throw objc_hook_installation_error(ABIObjCHookInstallationGetFailedIndex(installation.get()),
-            ABIObjCHookInstallationGetPhase(installation.get()),
+            static_cast<objc_hook_installation_phase>(ABIObjCHookInstallationGetPhase(installation.get())),
             resolution_error(ABIResolutionFailureGetCode(error), ABIResolutionFailureGetMessage(error)), std::move(handles));
     }
     return handles;

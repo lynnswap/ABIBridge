@@ -22,7 +22,7 @@ const char *ABIValidatePublicVirtualHooks(bool requireWritable,bool *published) 
     *published=false;
     using namespace abi_bridge;
     ABIVTable::Derived first(40), second(100);
-    auto runtime=Runtime::current();
+    auto runtime=abi_bridge::runtime::current();
     int errors=0;
     auto failure=[&](const resolution_error&) noexcept { ++errors; };
     try {
