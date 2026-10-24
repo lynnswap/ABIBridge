@@ -2301,7 +2301,7 @@ extension SwiftGenericBinding {
                 || parameters.contains(where: dependsOnParameters)
         case .nominal(_, let parameters), .reference(_, let parameters):
             parameters.contains(where: dependsOnParameters)
-        case .nested(let parent, _, let parameters):
+        case .nested(let parent, _, let parameters, _):
             dependsOnParameters(parent) || parameters.contains(where: dependsOnParameters)
         case .associated(let base, _, _): dependsOnParameters(base)
         case .tuple(let fields, _), .packValue(let fields):
