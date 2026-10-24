@@ -577,22 +577,21 @@ public actor NativeSwiftType: Hashable {
     /// through the witness of this type's conformance. An extension member
     /// never stands in for a requirement.
     ///
-    /// - Parameters:
-    ///   - name: The requested name, relative to the owner or qualified.
-    ///   - request: The member's name, qualified by an owner's declaration name.
+    /// The request's role and static-ness, and the records of each
+    /// candidate, decide whether a symbol declares the member. The name
+    /// supplies only its owner, base name, and argument labels, and, when
+    /// complete, the spelling that selects among overloads.
     private nonisolated func resolveMember(
-        named name: String,
+        _ query: SwiftMemberQuery,
         signature: Any.Type,
         genericArguments: [NativeSwiftGenericArgument],
-        inherited: Bool,
         declaredSignature: String?,
-        valueABIs: [NativeSwiftType: NativeType],
-        _ request: (_ owner: String) throws -> NativeDeclaration
+        valueABIs: [NativeSwiftType: NativeType]
     ) throws -> ResolvedMember {
         let description = try SwiftFunctionSignature(signature)
-        let isComplete = SwiftMemberLookup.hasSignature(name)
-        // A qualified declaration can spell the requirements of its context.
-        let isQualified = SwiftMemberLookup.isQualified(name)
+        let isComplete = query.isComplete
+        // Initializers are found in the lookup type only.
+        let inherited = query.role != .initializer
         // The representation this type was resolved with stands for it.
         let representations =
             representation.flatMap { $0 == metadata ? nil : [ObjectIdentifier($0): metadata] } ?? [:]
@@ -600,6 +599,7 @@ public actor NativeSwiftType: Hashable {
         var ownerClass: AnyClass? = metadata as? AnyClass
         var ownerImage = image
         var ownerName = try declarationName()
+        let query = query.inContext(of: ownerName)
         var hasUnavailableImages = false
         var preparationFailure: (any Error)?
         // Why a requirement that the request names has no witness for this
@@ -615,18 +615,32 @@ public actor NativeSwiftType: Hashable {
             let owner: Any.Type = ownerClass ?? metadata
             let enclosing =
                 try owner == metadata ? genericMetadata : SwiftGenericTypeMetadata(metadata: owner)
-            let declaration = try request(ownerName)
+            // The member's spelling in diagnostics.
+            let declaration = query.display(in: ownerName)
             if originalRequest == nil { originalRequest = declaration }
-            let isProtocolMember = !SwiftMemberLookup.belongs(declaration.name, to: ownerName)
-            let extensionModule = Self.extensionModule(of: declaration.name)
+            // A name qualified by another owner than this type names a
+            // protocol's member.
+            let isProtocolMember =
+                query.qualifier != nil
+                && !SwiftMemberLookup.belongs(query.request.name, to: ownerName)
+            if query.role == .initializer, query.qualifier != nil, !isProtocolMember {
+                throw ABIResolutionError.unsupportedDeclaration(
+                    "Name this type's own initializer relative to the type, such as init(text:)."
+                )
+            }
+            let match = try query.match(
+                in: ownerName,
+                ownerIdentity: isProtocolMember
+                    ? nil : resolver.swiftTypeIdentity(of: owner, in: ownerImage)
+            )
+            let memberOwner = query.owner(in: ownerName)
             // Prepares a candidate whose context applies to the request.
             func prepare(
                 _ candidate: SwiftCandidate,
                 _ entry: SwiftEntry
             ) throws -> SwiftGenericCallPlan? {
                 if isComplete {
-                    guard Self.spells(candidate, declaration.name, exactly: isQualified)
-                    else { return nil }
+                    guard query.spells(candidate) else { return nil }
                 }
                 let plan = try SwiftGenericCallPlan(
                     entry: entry,
@@ -653,8 +667,9 @@ public actor NativeSwiftType: Hashable {
                 unserved: [NativeDeclaration]
             ) {
                 var tier = SwiftRequirementCandidates(
-                    candidates: try resolver.swiftDeclarationCandidates(
-                        declaration,
+                    candidates: try resolver.swiftMemberCandidates(
+                        match,
+                        owner: memberOwner,
                         in: isProtocolMember || extensionsOnly ? nil : ownerImage,
                         extensionsOnly: extensionsOnly,
                         includingSharedCache: includingSharedCache
@@ -669,14 +684,15 @@ public actor NativeSwiftType: Hashable {
                     }
                     if !dispatches {
                         if protocolConformance == nil {
-                            protocolConformance = try protocolDescriptor(qualifying: declaration)
+                            protocolConformance = try protocolDescriptor(named: memberOwner)
                                 .flatMap { symbol in
                                     try conformance(to: unsafe symbol.withUnsafeAddress { $0 })
                                 }
                         }
                         if let own = protocolConformance ?? nil {
                             tier.candidates += try witnesses(
-                                of: declaration,
+                                of: match,
+                                in: memberOwner,
                                 through: own,
                                 excluding: tier.candidates,
                                 includingSharedCache: includingSharedCache
@@ -704,11 +720,7 @@ public actor NativeSwiftType: Hashable {
                         default: return nil
                         }
                     }
-                    if let extensionModule,
-                        Self.extensionModule(of: candidate.declaration.name) != extensionModule
-                    {
-                        return nil
-                    }
+                    guard query.isDeclared(by: candidate.record) else { return nil }
                     guard let plan = try prepare(candidate, entry) else { return nil }
                     // Another conformance's witness only shows that the
                     // request names a requirement without this type's witness.
@@ -722,7 +734,10 @@ public actor NativeSwiftType: Hashable {
             }
             // The members a type declares hide those its extensions declare.
             for extensionsOnly in [false, true]
-            where extensionsOnly ? missingWitness == nil : extensionModule == nil {
+            where extensionsOnly
+                ? missingWitness == nil
+                : query.extensionModule == nil || query.includesOwnerExtension
+            {
                 var selection: SwiftCandidateSelection<SwiftGenericCallPlan>
                 var unserved: [NativeDeclaration]
                 do {
@@ -745,9 +760,11 @@ public actor NativeSwiftType: Hashable {
                 if let (entry, plan) = try selection.selected(for: declaration) {
                     // A name that does not spell the extension's module can
                     // also name a requirement.
-                    if isProtocolMember && extensionsOnly && extensionModule == nil {
+                    if isProtocolMember && extensionsOnly && query.extensionModule == nil {
                         try checkRequirements(
-                            excluding: declaration,
+                            excluding: query,
+                            match: match,
+                            displayed: declaration,
                             isAsync: description.isAsync,
                             considered: considered,
                             conformances: conformances
@@ -796,33 +813,6 @@ public actor NativeSwiftType: Hashable {
                 resolver: resolver
             )
         }
-    }
-
-    /// Whether a candidate is the declaration a complete request spells.
-    ///
-    /// - Parameter exactly: Whether the request also spells the requirements
-    ///   of the candidate's context. Otherwise binding checks them.
-    private static func spells(
-        _ candidate: SwiftCandidate,
-        _ request: String,
-        exactly: Bool
-    ) -> Bool {
-        let names = [candidate.declaration.name, candidate.memberName]
-        let spellings = names + names.compactMap(SymbolIndex.operatorAlias)
-        guard !exactly, let key = SwiftMemberLookup.signatureKey(request) else {
-            let key = DeclarationKey.make(request, language: .swift)
-            return spellings.contains { DeclarationKey.make($0, language: .swift) == key }
-        }
-        return spellings.contains { SwiftMemberLookup.signatureKey($0) == key }
-    }
-
-    /// The `(extension in Module):` prefix naming the module that declares an
-    /// extension member.
-    private static func extensionModule(of name: String) -> Substring? {
-        let declaration = name.hasPrefix("static ") ? name.dropFirst(7) : Substring(name)
-        guard declaration.hasPrefix("(extension in "), let end = declaration.range(of: "):")
-        else { return nil }
-        return declaration[..<end.upperBound]
     }
 
     /// Resolves an instance member: a method, or a property's or subscript's
@@ -939,79 +929,21 @@ public actor NativeSwiftType: Hashable {
     }
 
     /// Selects the member that `request` names and prepares its call plan.
-    ///
-    /// The request's role and static-ness decide the declaration that
-    /// candidate lookup searches for.
     private nonisolated func resolveMember(
         _ request: SwiftMemberRequest,
         signature: Any.Type
     ) throws -> ResolvedMember {
-        let name = request.name
-        let isStatic = request.isStatic
-        let isQualified = SwiftMemberLookup.isQualified(name)
-        switch request.role {
-        case .getter where !Self.namesSubscript(name):
+        let query = try SwiftMemberQuery(request)
+        if request.role == .getter && !query.namesSubscript {
             try validateGetterSignature(signature)
-        case .initializer:
-            let member = SwiftMemberLookup.member(of: name) ?? name
-            guard member.hasPrefix("init(") || member.hasPrefix("init<") else {
-                throw ABIResolutionError.unsupportedDeclaration(
-                    "An initializer name must start with init( or init<, after a protocol that qualifies it."
-                )
-            }
-        case .method, .getter, .setter:
-            break
         }
         return try resolveMember(
-            named: name,
+            query,
             signature: signature,
             genericArguments: request.options.genericArguments,
-            inherited: request.role != .initializer,
             declaredSignature: request.options.declaredSignature,
             valueABIs: request.options.valueABIs
-        ) { owner in
-            switch request.role {
-            case .method:
-                return NativeDeclaration(
-                    name: try SwiftMemberLookup.qualifiedName(
-                        name,
-                        owner: owner,
-                        isStatic: isStatic
-                    ),
-                    language: .swift
-                )
-            case .getter, .setter:
-                return try accessorDeclaration(
-                    named: name,
-                    ownerName: owner,
-                    setter: request.role == .setter,
-                    isStatic: isStatic
-                )
-            case .initializer:
-                // A protocol's initializer keeps its name; this type's own is
-                // named relative to it, and a class's allocates.
-                guard isQualified else {
-                    let allocating = metadata is AnyClass ? "__allocating_" + name : name
-                    return NativeDeclaration(name: owner + "." + allocating, language: .swift)
-                }
-                guard !SwiftMemberLookup.belongs(name, to: owner) else {
-                    throw ABIResolutionError.unsupportedDeclaration(
-                        "Name this type's own initializer relative to the type, such as init(text:)."
-                    )
-                }
-                return NativeDeclaration(name: name, language: .swift)
-            }
-        }
-    }
-
-    /// Whether a getter's name names a subscript, whose getter takes the
-    /// subscript's indices.
-    private static func namesSubscript(_ name: String) -> Bool {
-        var member = Substring(SwiftMemberLookup.member(of: name) ?? name)
-        if member.hasPrefix("static ") { member = member.dropFirst(7) }
-        guard member.hasPrefix("subscript") else { return false }
-        let rest = member.dropFirst("subscript".count)
-        return rest.isEmpty || rest.first == "." || rest.first == "(" || rest.first == "<"
+        )
     }
 
     private nonisolated func prepareMethod<Signature>(
@@ -1044,22 +976,6 @@ public actor NativeSwiftType: Hashable {
                 ? try member.generic.includingReceiver(.object) : member.generic
         )
     }
-
-    private nonisolated func accessorDeclaration(
-        named name: String,
-        ownerName: String,
-        setter: Bool,
-        isStatic: Bool
-    ) throws -> NativeDeclaration {
-        let accessor = setter ? ".setter : " : ".getter : "
-        // A property name leaves the value type to the selected declaration.
-        let member = name.contains(accessor) ? name : name + accessor + "_"
-        return .init(
-            name: try SwiftMemberLookup.qualifiedName(member, owner: ownerName, isStatic: isStatic),
-            language: .swift
-        )
-    }
-
 }
 
 func swiftClassImage(

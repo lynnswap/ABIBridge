@@ -7,24 +7,43 @@ import MachOKit
 import Testing
 
 struct SwiftSymbolIndexTests {
-    @Test func memberKeysKeepParameterLabelsAndUnicodeAccessorNames() {
+    @Test func memberPathsKeepParameterLabelsAndUnicodeAccessorNames() throws {
         let declarations = [
             (
                 "First.choose(Swift.Int, transform: (Swift.Int) -> Swift.String) -> (Swift.Int, (Swift.Int) -> Swift.String)",
-                "First.choose(_:transform:)"
+                "First", "choose(_:transform:)", nil as RuntimeSwiftDeclaration.Accessor?
             ),
             (
                 "First.(unknown context at $1).Box<A where A == (Swift.Int) -> Swift.String>.apply(A) -> (Swift.Int) -> Swift.String",
-                "First.(unknown context at $1).Box.apply(_:)"
+                "First.(unknown context at $1).Box", "apply(_:)", nil
             ),
             (
                 "(extension in Second):First.値.cafe\u{301}.getter : (Swift.Int) -> Swift.String",
-                "First.値.cafe\u{301}.getter"
+                "First.値", "cafe\u{301}", .getter
             ),
         ]
-        for (declaration, expected) in declarations {
-            #expect(SwiftMemberLookup.key(declaration) == DeclarationKey.make(expected))
+        for (declaration, owner, member, accessor) in declarations {
+            let match = try #require(SwiftMemberMatch(declaration: declaration))
+            #expect(match.path == SwiftMemberPath(owner: owner, member: member))
+            #expect(match.accessor == accessor)
         }
+        // The demangler spells a class's allocating initializer apart from
+        // its initializing entry. The index files an allocator under both
+        // spellings, and a method can be named `__allocating_init` too.
+        let allocator = try #require(
+            SwiftMemberMatch(
+                declaration: "First.Box.__allocating_init(value: Swift.Int) -> First.Box"
+            )
+        )
+        #expect(
+            allocator.path
+                == SwiftMemberPath(owner: "First.Box", member: "__allocating_init(value:)")
+        )
+        #expect(allocator.initializer == .spelled(allocatingInit: true))
+        #expect(
+            SwiftMemberPath(owner: "First.Box", member: "__allocating_init(value:)", allocates: true)
+                == SwiftMemberPath(owner: "First.Box", member: "init(value:)")
+        )
     }
 
     @Test func abbreviatedModuleRootsPreserveQueryOrder() async throws {

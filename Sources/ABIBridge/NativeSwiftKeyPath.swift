@@ -1,3 +1,4 @@
+import ABIBridgeCore
 import ABIBridgeRuntime
 import Foundation
 
@@ -69,23 +70,111 @@ extension NativeSwiftType {
             )
         }
         let rootName = try swiftNativeTypeName(metadata)
-        let member = try SwiftMemberLookup.qualifiedName(name, owner: rootName)
-        guard SwiftMemberLookup.belongs(member, to: rootName) else {
+        let query = try SwiftMemberQuery(
+            .init(role: .getter, isStatic: false, name: name, options: .init())
+        ).inContext(of: rootName)
+        if query.qualifier != nil, !SwiftMemberLookup.belongs(name, to: rootName) {
             throw ABIResolutionError.unsupportedDeclaration(
                 "The writable key path property must belong to " + rootName + "."
             )
         }
-        let declaration = NativeDeclaration(
-            name: "property descriptor for " + member + " : "
-                + (try swiftNativeTypeName(valueType.metadata)),
+        guard !query.isComplete else {
+            throw ABIResolutionError.unsupportedDeclaration(
+                "Name the writable key path's property by its name, such as text."
+            )
+        }
+        // The diagnostics' spelling of the property.
+        let displayed = NativeDeclaration(
+            name: query.qualifier == nil ? rootName + "." + query.member : name,
             language: .swift,
             kind: .data
         )
-        let descriptor: ResolvedSymbol
-        if SymbolIndex.extensionMemberName(member) != nil {
-            descriptor = try resolver.resolve(declaration, in: .automatic, loading: .loadedOnly)
-        } else {
-            descriptor = try resolver.resolve(declaration, in: image, loading: .loadedOnly)
+        // A property's descriptor is one of its member entries, which the
+        // records of the root's members select, as for its accessors. The
+        // root's image declares its own properties; an extension's are found
+        // in the loaded images.
+        guard let path = SwiftMemberPath(owner: rootName, member: query.member) else {
+            throw ABIResolutionError.declarationNotFound(displayed)
+        }
+        let ownerIdentity = try resolver.swiftTypeIdentity(of: metadata, in: image)
+        func candidates(includingSharedCache: Bool) throws -> [SwiftCandidate] {
+            let tiers =
+                query.includesOwnerExtension ? [false, true] : [query.extensionModule != nil]
+            for extensionsOnly in tiers {
+                let found = try resolver.swiftMemberCandidates(
+                    SwiftMemberMatch(
+                        path: path,
+                        accessor: nil,
+                        isStatic: false,
+                        initializer: .excluded,
+                        entry: .propertyDescriptor,
+                        ownerIdentity: ownerIdentity
+                    ),
+                    owner: rootName,
+                    in: extensionsOnly ? nil : image,
+                    extensionsOnly: extensionsOnly,
+                    includingSharedCache: includingSharedCache
+                ).filter { $0.record.kind == .variable && query.isDeclared(by: $0.record) }
+                if !found.isEmpty { return found }
+            }
+            return []
+        }
+        // As for members, the images can hold another extension's property
+        // of that name while only the shared cache's local symbols describe
+        // the requested one.
+        var descriptors = try candidates(includingSharedCache: false)
+        if descriptors.isEmpty { descriptors = try candidates(includingSharedCache: true) }
+        guard descriptors.count <= 1 else {
+            throw ABIResolutionError.ambiguousDeclaration(
+                displayed,
+                candidates: descriptors.map(\.symbol.linkageName)
+            )
+        }
+        guard let selected = descriptors.first else {
+            throw ABIResolutionError.declarationNotFound(displayed)
+        }
+        let descriptor = selected.symbol
+        guard let declared = selected.record.declaredType else {
+            throw ABIResolutionError.metadataUnavailable(
+                descriptor.declaration.name + ": its declared type cannot be resolved."
+            )
+        }
+        let formal = try declared.utf8CString.withUnsafeBufferPointer {
+            try SwiftFormalType(
+                unsafe SwiftSyntax(typeReference: $0.baseAddress!, length: $0.count - 1).root
+            )
+        }
+        let declaration = SwiftGenericDeclaration(
+            parameters: [],
+            requirements: [],
+            arguments: [],
+            result: formal,
+            failure: nil,
+            isAsync: false,
+            consumesArguments: false
+        )
+        func signature<Value>(_ type: Value.Type) throws -> SwiftFunctionSignature {
+            try SwiftFunctionSignature((() -> Value).self)
+        }
+        // The supplied metadata contributes compiler-emitted existential shapes;
+        // the declaration's constraints still determine their arguments.
+        let binding = try SwiftGenericBinding(
+            declaration: declaration,
+            arguments: [],
+            signature: _openExistential(valueType.metadata, do: signature),
+            resolver: resolver,
+            image: descriptor.image
+        )
+        let declaredTypes = try binding.types(formal)
+        guard declaredTypes.count == 1, declaredTypes[0] == valueType.metadata else {
+            throw ABIResolutionError.signatureMismatch(
+                .init(
+                    declaration: displayed,
+                    position: .result,
+                    expected: valueType.name,
+                    found: [descriptor.declaration.name]
+                )
+            )
         }
         let plan = try withRuntimeErrors {
             try RuntimeWritableKeyPathPlan(

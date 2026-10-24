@@ -28,14 +28,13 @@ struct SwiftRequirementCandidates {
 }
 
 extension NativeSwiftType {
-    /// The descriptor of the protocol that qualifies `request`, nil when no
+    /// The descriptor of the protocol named `protocolName`, nil when no
     /// loaded image declares a protocol with that name.
     nonisolated func protocolDescriptor(
-        qualifying request: NativeDeclaration
+        named protocolName: String
     ) throws
         -> ResolvedSymbol?
     {
-        guard let protocolName = SwiftMemberLookup.owner(of: request.name) else { return nil }
         do {
             return try resolver.resolve(
                 NativeDeclaration(
@@ -103,19 +102,23 @@ extension NativeSwiftType {
     ///   out. A mangling that does not start with a plain module name, such as
     ///   one that substitutes words of the module's name, is read by every
     ///   module's search.
+    ///
+    /// - Parameter protocolName: The protocol that declares the requirement.
     nonisolated func witnesses(
-        of requirement: NativeDeclaration,
+        of requirement: SwiftMemberMatch,
+        in protocolName: String,
         through conformance: SwiftConformance,
         excluding found: [SwiftCandidate],
         includingSharedCache: Bool
     ) throws -> [SwiftCandidate] {
         guard let image = conformance.image,
             let module = SwiftModuleFilter(conformance.conformingType)?.module,
-            module != SwiftModuleFilter(requirement.name)?.module
+            module != SwiftModuleFilter(protocolName)?.module
         else { return [] }
         let names = Set(found.lazy.filter { $0.symbol.image == image }.map(\.symbol.linkageName))
-        return try resolver.swiftDeclarationCandidates(
+        return try resolver.swiftMemberCandidates(
             requirement,
+            owner: protocolName,
             in: image,
             module: module,
             includingSharedCache: includingSharedCache
@@ -225,22 +228,27 @@ extension NativeSwiftType {
     /// establish their Swift names. Marker protocols cannot be extended.
     ///
     /// - Parameters:
+    ///   - query: The member, whose name a protocol qualifies.
+    ///   - match: What the requirement's records must state.
+    ///   - displayed: The member's spelling in diagnostics.
     ///   - considered: The requirements that selection already considered.
     ///   - conformances: Conformance descriptors, with their images, whose
     ///     witnesses can name the requirements.
     ///   - accepts: Whether the request names the requirement that a
     ///     witness serves.
     nonisolated func checkRequirements(
-        excluding request: NativeDeclaration,
+        excluding query: SwiftMemberQuery,
+        match: SwiftMemberMatch,
+        displayed: NativeDeclaration,
         isAsync: Bool,
         considered: Set<String>,
         conformances: [UnsafeRawPointer: NativeImage],
         accepts: (SwiftCandidate) throws -> Bool
     ) throws {
-        let protocolName = SwiftMemberLookup.owner(of: request.name) ?? request.name
+        let protocolName = query.qualifier ?? displayed.name
         func undecided(_ reason: String) -> ABIResolutionError {
             .metadataUnavailable(
-                request.name + ": " + reason
+                displayed.name + ": " + reason
                     + " Name an extension member with its complete (extension in Module): declaration to select it."
             )
         }
@@ -251,7 +259,7 @@ extension NativeSwiftType {
         ) != nil {
             return
         }
-        guard let protocolSymbol = try protocolDescriptor(qualifying: request) else {
+        guard let protocolSymbol = try protocolDescriptor(named: protocolName) else {
             throw undecided(
                 "neither a Swift protocol descriptor nor an Objective-C protocol named \(protocolName) is in the loaded images, so whether it declares this member as a requirement is not established."
             )
@@ -259,13 +267,14 @@ extension NativeSwiftType {
         let protocolAddress = unsafe protocolSymbol.withUnsafeAddress { $0 }
         // The requirements of the member's kind, with their witness-table
         // slots, which follow the conformance descriptor's.
-        let isStatic = request.name.hasPrefix("static ")
-        let member = SwiftMemberLookup.member(of: request.name)
+        let isStatic = query.isStatic
         let kind: UInt32 =
-            request.name.contains(".getter : ")
-            ? 3
-            : request.name.contains(".setter : ")
-                ? 4 : member.map { $0.hasPrefix("init(") || $0.hasPrefix("init<") } == true ? 2 : 1
+            switch query.role {
+            case .method: 1
+            case .initializer: 2
+            case .getter: 3
+            case .setter: 4
+            }
         var unnamed = RuntimeProtocolLayout(protocolAddress).witnessRequirements.enumerated()
             .filter { _, requirement in
                 requirement.kind == kind
@@ -273,12 +282,13 @@ extension NativeSwiftType {
                     && (kind == 4 || requirement.isAsync == isAsync)
             }.map { (slot: $0.offset + 1, requirement: $0.element) }
         guard !unnamed.isEmpty else { return }
-        let key = SwiftMemberLookup.key(request.name)
         // Checks a named requirement that the request can name and selection
-        // has not considered.
+        // has not considered. The requirement's records state its kind.
         func check(_ requirement: String, witness: SwiftCandidate?) throws {
             if let name = DeclarationKey.demangle(requirement, language: .swift),
-                SwiftMemberLookup.key(name) != key
+                let record = RuntimeSwiftDeclaration(linkageName: requirement),
+                SwiftMemberPath(declaration: name, allocates: record.kind == .allocator)
+                    != match.path || !match.accepts(record)
             {
                 return
             }
@@ -290,7 +300,7 @@ extension NativeSwiftType {
             }
             guard try !accepts(witness) else {
                 throw ABIResolutionError.metadataUnavailable(
-                    request.name
+                    displayed.name
                         + ": \(protocolName) declares a requirement that this member names, which selection could not call for \(self.name), so no extension member stands in for it."
                 )
             }
