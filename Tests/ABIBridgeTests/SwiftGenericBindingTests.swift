@@ -29,6 +29,57 @@ private final class RuntimeBorrowCopy: @unchecked Sendable {
 }
 
 struct SwiftGenericBindingTests {
+    @Test func extensionNestedMetadataKeepsItsDeclarationIdentity() throws {
+        let formal = try SwiftFormalType(SwiftSyntax.metadataType(FixtureExtensionIdentity.self))
+        let binding = try SwiftGenericBinding(
+            declaration: SwiftGenericDeclaration(
+                parameters: [],
+                requirements: [],
+                arguments: [],
+                result: formal,
+                failure: nil,
+                isAsync: false,
+                consumesArguments: false
+            ),
+            arguments: [],
+            signature: SwiftFunctionSignature(((SupportExtensionIdentity) -> Void).self),
+            resolver: .shared
+        )
+        #expect(try binding.types(formal)[0] == FixtureExtensionIdentity.self)
+        let constrainedMetadata = GenericTypeOuter<Int64>.InExtension<String>.self
+        let constrained = try SwiftFormalType(SwiftSyntax.metadataType(constrainedMetadata))
+        #expect(try binding.types(constrained).first == constrainedMetadata)
+        #expect(
+            formal.nominalDeclaration?.name
+                == "(extension in ManagedSwiftFixtures):Swift.Int.RuntimeExtensionIdentity"
+        )
+        let generic = SwiftFormalType.nested(
+            .nominal("Swift.Int", []),
+            "RuntimeExtensionIdentity",
+            [.named("A", [])],
+            extensionModule: "ManagedSwiftFixtures"
+        )
+        let substituted = generic.substituting(["A": .nominal("Swift.Int64", [])])
+        #expect(try binding.types(substituted)[0] == FixtureExtensionIdentity.self)
+        #expect(try substituted.qualifyingAssociatedTypes(using: []) == formal)
+        for metadata: Any.Type in [
+            [FixtureExtensionIdentity].self,
+            ((FixtureExtensionIdentity, Int64)).self,
+            ((FixtureExtensionIdentity) -> FixtureExtensionIdentity).self,
+        ] {
+            let source = try SwiftFormalType(swiftNativeTypeName(metadata))
+            #expect(try binding.types(source)[0] == metadata)
+        }
+        let name = try swiftNativeTypeName(FixtureExtensionIdentity.self)
+        #expect(
+            try SwiftFormalType("[" + name + ": Swift.Int64]")
+                == .named(
+                    "Swift.Dictionary",
+                    [try SwiftFormalType(name), .named("Swift.Int64", [])]
+                )
+        )
+    }
+
     @Test func functionMetadataPreservesCompilerTypeIdentity() throws {
         typealias Borrowing = (borrowing Int64) -> Int64
         typealias Shared = (__shared Int64) -> Int64

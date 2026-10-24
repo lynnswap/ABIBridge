@@ -264,13 +264,19 @@ extension SwiftFormalType {
             }
             let name = try nameNode.kind == "Identifier" ? nameNode.requiredText() : nameNode.name()
             var context = children[0]
-            if context.kind == "Extension" { context = context.children()[1] }
+            let extensionModule: String?
+            if context.kind == "Extension" {
+                extensionModule = try context.children()[0].requiredText()
+                context = context.children()[1]
+            } else {
+                extensionModule = nil
+            }
             if context.kind == "Module" {
                 let module = try context.requiredText()
                 self = node.kind == "Class" && module == "__C"
                     ? .objectiveCClass(module + "." + name) : .nominal(module + "." + name, [])
             } else {
-                self = .nested(try Self(context), name, [])
+                self = .nested(try Self(context), name, [], extensionModule: extensionModule)
             }
         case "BoundGenericStructure", "BoundGenericEnum", "BoundGenericClass", "BoundGenericTypeAlias", "BoundGenericOtherNominalType":
             let base = try Self(children[0])
@@ -278,7 +284,8 @@ extension SwiftFormalType {
             switch base {
             case .reference(let descriptor, _): self = .reference(descriptor, arguments)
             case .nominal(let name, _): self = .nominal(name, arguments)
-            case .nested(let parent, let name, _): self = .nested(parent, name, arguments)
+            case .nested(let parent, let name, _, let module):
+                self = .nested(parent, name, arguments, extensionModule: module)
             // Objective-C lightweight generics share their unspecialized runtime class.
             case .objectiveCClass: self = base
             default: throw ABIResolutionError.unsupportedDeclaration("The bound Swift nominal type has no declaration.")
@@ -395,9 +402,12 @@ extension SwiftFormalType {
         case .nominal(let name, let arguments): return (name, arguments)
         case .reference(let descriptor, let arguments): return (descriptor.name, arguments)
         case .objectiveCClass(let name): return (name, [])
-        case .nested(let parent, let name, let arguments):
+        case .nested(let parent, let name, let arguments, let module):
             guard let context = parent.nominalDeclaration else { return nil }
-            return (context.name + "." + name, context.arguments + arguments)
+            return (
+                (module.map { "(extension in " + $0 + "):" } ?? "") + context.name + "." + name,
+                context.arguments + arguments
+            )
         default: return nil
         }
     }

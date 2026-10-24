@@ -250,3 +250,85 @@ open class HookTicketRenderer {
     return value()
 }
 @inline(never) public func hookBorrowedTupleAndAdapter<Value>(_ value: (Value, Int64), _ pointer: UnsafeMutableRawPointer?) -> Int64 { value.1 }
+
+/// Requirements whose clients retain actual conformance dispatch, including
+/// associated-type and conditional tables that Swift may instantiate/share.
+public protocol Witnessed: Sendable {
+    associatedtype Element
+    init(seed: Int64)
+    func read(_ value: Int64) -> Int64
+    func replacement(_ value: Int64) -> Int64
+    var value: Int64 { get set }
+    static func kind(_ value: Int64) -> Int64
+    static func patchedKind(_ value: Int64) -> Int64
+    nonisolated(nonsending) func asyncRead(_ value: Int64) async -> Int64
+    func echo(_ value: Element) -> Element
+}
+public struct WitnessValue: Witnessed {
+    public typealias Element = Int64
+    public var value: Int64
+    public init(seed: Int64) { value = seed }
+    @inline(never) public func read(_ input: Int64) -> Int64 { value + input }
+    @inline(never) public func replacement(_ input: Int64) -> Int64 { value + input + 100 }
+    @inline(never) public static func kind(_ input: Int64) -> Int64 { input + 10 }
+    @inline(never) public static func patchedKind(_ input: Int64) -> Int64 { input + 110 }
+    @inline(never) public nonisolated(nonsending) func asyncRead(_ input: Int64) async -> Int64 { value + input + 20 }
+    @inline(never) public func echo(_ input: Int64) -> Int64 { input }
+}
+public struct WitnessOther: Witnessed {
+    public typealias Element = Int64
+    public var value: Int64
+    public init(seed: Int64) { value = seed }
+    @inline(never) public func read(_ input: Int64) -> Int64 { value + input + 1 }
+    @inline(never) public func replacement(_ input: Int64) -> Int64 { value + input + 101 }
+    @inline(never) public static func kind(_ input: Int64) -> Int64 { input + 11 }
+    @inline(never) public static func patchedKind(_ input: Int64) -> Int64 { input + 111 }
+    @inline(never) public nonisolated(nonsending) func asyncRead(_ input: Int64) async -> Int64 { value + input + 21 }
+    @inline(never) public func echo(_ input: Int64) -> Int64 { input }
+}
+public struct WitnessBox<Element>: Witnessed {
+    public var value: Int64
+    public init(seed: Int64) { value = seed }
+    @inline(never) public func read(_ input: Int64) -> Int64 { value + input + 2 }
+    @inline(never) public func replacement(_ input: Int64) -> Int64 { value + input + 102 }
+    @inline(never) public static func kind(_ input: Int64) -> Int64 { input + 12 }
+    @inline(never) public static func patchedKind(_ input: Int64) -> Int64 { input + 112 }
+    @inline(never) public nonisolated(nonsending) func asyncRead(_ input: Int64) async -> Int64 { value + input + 22 }
+    @inline(never) public func echo(_ input: Element) -> Element { input }
+}
+public struct WitnessConditional<Element>: Sendable {
+    public var value: Int64
+    public init(seed: Int64) { value = seed }
+}
+extension WitnessConditional: Witnessed where Element: Equatable {
+    @inline(never) public func read(_ input: Int64) -> Int64 { value + input + 3 }
+    @inline(never) public func replacement(_ input: Int64) -> Int64 { value + input + 103 }
+    @inline(never) public static func kind(_ input: Int64) -> Int64 { input + 13 }
+    @inline(never) public static func patchedKind(_ input: Int64) -> Int64 { input + 113 }
+    @inline(never) public nonisolated(nonsending) func asyncRead(_ input: Int64) async -> Int64 { value + input + 23 }
+    @inline(never) public func echo(_ input: Element) -> Element { input }
+}
+@inline(never) public func makeWitness(_ which: Int64, _ seed: Int64) -> any Witnessed {
+    switch which {
+    case 0: WitnessValue(seed: seed)
+    case 1: WitnessOther(seed: seed)
+    case 2: WitnessBox<Int64>(seed: seed)
+    case 3: WitnessBox<String>(seed: seed)
+    case 4: WitnessConditional<Int64>(seed: seed)
+    default: WitnessConditional<String>(seed: seed)
+    }
+}
+
+public protocol SharedWitnessed: Sendable {
+    func read(_ value: Int64) -> Int64
+}
+// With no associated types or conditional storage, Swift can return one
+// canonical witness table for all bound Element types.
+public struct WitnessShared<Element>: SharedWitnessed {
+    public let seed: Int64
+    public init(_ seed: Int64) { self.seed = seed }
+    @inline(never) public func read(_ value: Int64) -> Int64 { seed + value }
+}
+@inline(never) public func makeSharedWitness(_ text: Bool, _ seed: Int64) -> any SharedWitnessed {
+    text ? WitnessShared<String>(seed) : WitnessShared<Int64>(seed)
+}
