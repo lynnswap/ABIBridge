@@ -223,6 +223,15 @@ struct ResolutionRequestTests {
             .method("__allocating_init(_:)", as: ((Int64) -> Int64).self)
         )
         #expect(try unsafe method.unsafeInvoke(on: RuntimeAllocatorNamedMethod(), 41) == 42)
+        for name in [
+            "ManagedSwiftFixtures.__allocating_init(_:)",
+            "ManagedSwiftFixtures.__allocating_init(Swift.Int64) -> Swift.Int64",
+        ] {
+            let function = try await runtime.resolve(
+                .function(name, as: ((Int64) -> Int64).self)
+            )
+            #expect(try unsafe function.unsafeInvoke(40) == 42)
+        }
     }
 
     @MainActor @Test func receiverConventionsSelectHowSelfPasses() async throws {

@@ -28,14 +28,22 @@ struct SwiftSymbolIndexTests {
             #expect(match.accessor == accessor)
         }
         // The demangler spells a class's allocating initializer apart from
-        // its initializing entry; records tell them apart.
+        // its initializing entry. The index files an allocator under both
+        // spellings, and a method can be named `__allocating_init` too.
         let allocator = try #require(
             SwiftMemberMatch(
                 declaration: "First.Box.__allocating_init(value: Swift.Int) -> First.Box"
             )
         )
-        #expect(allocator.path == SwiftMemberPath(owner: "First.Box", member: "init(value:)"))
-        #expect(allocator.initializer == .classAllocator(true))
+        #expect(
+            allocator.path
+                == SwiftMemberPath(owner: "First.Box", member: "__allocating_init(value:)")
+        )
+        #expect(allocator.initializer == .spelled(allocatingInit: true))
+        #expect(
+            SwiftMemberPath(owner: "First.Box", member: "__allocating_init(value:)", allocates: true)
+                == SwiftMemberPath(owner: "First.Box", member: "init(value:)")
+        )
     }
 
     @Test func abbreviatedModuleRootsPreserveQueryOrder() async throws {

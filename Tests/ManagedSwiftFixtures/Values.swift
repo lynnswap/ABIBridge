@@ -80,3 +80,6 @@ public final class RuntimeAllocatorNamedMethod {
     public init() {}
     public func __allocating_init(_ value: Int64) -> Int64 { value + 1 }
 }
+
+/// A function that a class's allocating initializer would spell.
+@inline(never) public func __allocating_init(_ value: Int64) -> Int64 { value + 2 }
