@@ -211,6 +211,20 @@ struct ResolutionRequestTests {
         #expect(try unsafe value.unsafeInvoke(on: make.unsafeInvoke()) == 7)
     }
 
+    @MainActor @Test func methodsNamedLikeAllocatorsKeepTheirNames() async throws {
+        let runtime = ABIRuntime()
+        let type = try await runtime.resolveSwiftType(
+            named: "ManagedSwiftFixtures.RuntimeAllocatorNamedMethod"
+        )
+        await #expect(throws: ABIResolutionError.self) {
+            try await type.resolve(.method("init(_:)", as: ((Int64) -> Int64).self))
+        }
+        let method = try await type.resolve(
+            .method("__allocating_init(_:)", as: ((Int64) -> Int64).self)
+        )
+        #expect(try unsafe method.unsafeInvoke(on: RuntimeAllocatorNamedMethod(), 41) == 42)
+    }
+
     @MainActor @Test func receiverConventionsSelectHowSelfPasses() async throws {
         let runtime = ABIRuntime()
         let type = try await runtime.resolveSwiftType(named: "ABIBridgeTests.SwiftRequestToggle")

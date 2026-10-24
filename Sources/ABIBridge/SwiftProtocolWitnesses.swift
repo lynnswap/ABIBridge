@@ -287,7 +287,8 @@ extension NativeSwiftType {
         func check(_ requirement: String, witness: SwiftCandidate?) throws {
             if let name = DeclarationKey.demangle(requirement, language: .swift),
                 let record = RuntimeSwiftDeclaration(linkageName: requirement),
-                SwiftMemberPath(declaration: name) != match.path || !match.accepts(record)
+                SwiftMemberPath(declaration: name, allocates: record.kind == .allocator)
+                    != match.path || !match.accepts(record)
             {
                 return
             }

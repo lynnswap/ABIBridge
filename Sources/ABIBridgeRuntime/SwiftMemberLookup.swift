@@ -118,7 +118,11 @@ package enum SwiftMemberLookup {
     ///   `text.getter : Swift.String` or `scale(for: CoreGraphics.CGSize) ->
     ///   CoreGraphics.CGFloat`. An accessor's key is its property's or
     ///   subscript's; the accessor itself is the record's to state.
-    static func memberKey(_ member: String) -> [UInt8]? {
+    /// - Parameter allocates: Whether the member is a class's allocating
+    ///   initializer, which the demangler spells `__allocating_init`. Its key
+    ///   is its initializer's. Only records establish this: a method can have
+    ///   that name too.
+    static func memberKey(_ member: String, allocates: Bool = false) -> [UInt8]? {
         let text = member.hasPrefix("static ") ? String(member.dropFirst(7)) : member
         for accessor in [".getter : ", ".setter : "] {
             if let offset = SymbolIndex.byteOffset(of: accessor, in: text) {
@@ -152,9 +156,7 @@ package enum SwiftMemberLookup {
             }
         }
         var base = removingGenerics(String(text[..<opening]))
-        // The demangler spells a class's allocating initializer this way;
-        // records state which initializer entry a symbol is.
-        if base == "__allocating_init" { base = "init" }
+        if allocates, base == "__allocating_init" { base = "init" }
         return DeclarationKey.make(base + "(" + labels.map { $0 + ":" }.joined() + ")")
     }
 }
@@ -174,8 +176,12 @@ package struct SwiftMemberPath: Hashable, Sendable {
     ///     protocol, or a module.
     ///   - member: The member relative to its owner, as
     ///     `SwiftMemberLookup.memberKey(_:)` reads it.
-    package init?(owner: String, member: String) {
-        guard let key = SwiftMemberLookup.memberKey(member) else { return nil }
+    ///   - allocates: Whether the member is a class's allocating initializer,
+    ///     as its records state.
+    package init?(owner: String, member: String, allocates: Bool = false) {
+        guard let key = SwiftMemberLookup.memberKey(member, allocates: allocates) else {
+            return nil
+        }
         self.init(ownerKey: SwiftMemberLookup.ownerKey(owner), memberKey: key)
     }
 
@@ -190,17 +196,22 @@ package struct SwiftMemberPath: Hashable, Sendable {
     /// A declaration that no owner qualifies, such as a local function,
     /// whose name ends with its context after ` in `, has a path without an
     /// owner.
-    package init?(declaration: String) {
+    ///
+    /// - Parameter allocates: Whether the declaration is a class's allocating
+    ///   initializer, as its records state.
+    package init?(declaration: String, allocates: Bool = false) {
         var text = SymbolIndex.extensionMemberName(declaration) ?? declaration
         if text.hasPrefix("static ") { text = String(text.dropFirst(7)) }
         guard let owner = SwiftMemberLookup.owner(of: text),
             let member = SwiftMemberLookup.member(of: text)
         else {
-            guard let key = SwiftMemberLookup.memberKey(text) else { return nil }
+            guard let key = SwiftMemberLookup.memberKey(text, allocates: allocates) else {
+                return nil
+            }
             self.init(ownerKey: [], memberKey: key)
             return
         }
-        self.init(owner: owner, member: member)
+        self.init(owner: owner, member: member, allocates: allocates)
     }
 }
 
@@ -252,15 +263,19 @@ package struct SwiftMemberMatch: Hashable, Sendable {
     /// allocating initializer, as a demangled name spells them.
     package init?(declaration: String) {
         let text = SymbolIndex.extensionMemberName(declaration) ?? declaration
-        guard let path = SwiftMemberPath(declaration: text) else { return nil }
         let member = SwiftMemberLookup.member(of: text) ?? text
+        // A caller's spelling cannot tell an allocating initializer from a
+        // method of that name; it selects the allocator, which records confirm.
+        let allocates =
+            member.hasPrefix("__allocating_init(") || member.hasPrefix("__allocating_init<")
+        guard let path = SwiftMemberPath(declaration: text, allocates: allocates) else {
+            return nil
+        }
         accessor =
             SymbolIndex.byteOffset(of: ".getter : ", in: text) != nil
             ? .getter : SymbolIndex.byteOffset(of: ".setter : ", in: text) != nil ? .setter : nil
         isStatic = text.hasPrefix("static ")
-        initializer = .classAllocator(
-            member.hasPrefix("__allocating_init(") || member.hasPrefix("__allocating_init<")
-        )
+        initializer = .classAllocator(allocates)
         entry = .code
         self.path = path
     }

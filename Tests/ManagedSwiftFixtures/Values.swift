@@ -74,3 +74,9 @@ extension Int {
         public func value() -> Int { 7 }
     }
 }
+
+/// A class with a method that a class's allocating initializer would spell.
+public final class RuntimeAllocatorNamedMethod {
+    public init() {}
+    public func __allocating_init(_ value: Int64) -> Int64 { value + 1 }
+}
