@@ -887,12 +887,13 @@ public actor NativeSwiftType: Hashable {
     ///
     /// Search and preparation run synchronously on the caller's thread.
     ///
-    /// This type's metadata is supplied as the member's `self`. A class
-    /// member exported only through its dispatch thunk runs this type's
-    /// virtual-table entry, so a subclass's override runs when the subclass
-    /// is this type. A protocol-qualified static requirement receives this
-    /// type's metatype as `Self`, and a protocol-qualified initializer
-    /// constructs this type through its conformance.
+    /// This type's metadata is supplied as `self` where the declaration
+    /// receives a thick metatype; concrete struct and enum type members have
+    /// no metatype `self` argument. A class member exported only through its
+    /// dispatch thunk runs this type's virtual-table entry, so a subclass's
+    /// override runs when the subclass is this type. A protocol-qualified
+    /// static requirement receives this type's metatype as `Self`, and a
+    /// protocol-qualified initializer constructs this type through its conformance.
     ///
     /// - Parameter request: The member and its lookup options.
     /// - Returns: A reusable function retaining this type and the member's

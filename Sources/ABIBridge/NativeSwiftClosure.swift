@@ -102,7 +102,7 @@ public struct NativeSwiftClosure<Signature> {
         try self.init(scopedBody: body)
     }
 
-    /// Borrows a caller-isolated body for a synchronous native nonescaping parameter. Neither native code nor use may retain or return the callback. Calls stay on this executor.
+    /// Borrows a caller-isolated body for a synchronous native nonescaping parameter. Neither native code nor `use` may retain or return the callback. The caller must keep native invocations on the body's executor; this operation performs no executor hop.
     @unsafe public static func withUnsafeNonescaping<Output, Result, each Argument>(
         _ body: (repeat each Argument) -> Result,
         _ use: (Self) throws -> Output
@@ -110,7 +110,7 @@ public struct NativeSwiftClosure<Signature> {
         try withoutActuallyEscaping(body) { escaped in try use(Self(scopedBody: escaped)) }
     }
 
-    /// Borrows a Sendable body while preserving that attribute in the native signature. The callback remains nonescaping and synchronous on the caller's executor.
+    /// Borrows a Sendable body while preserving that attribute in the native signature. The callback remains nonescaping and synchronous; all native calls must finish before `use` returns. This operation performs no executor hop.
     @_disfavoredOverload
     @unsafe public static func withUnsafeNonescaping<Output, Result, each Argument>(
         _ body: @Sendable (repeat each Argument) -> Result,

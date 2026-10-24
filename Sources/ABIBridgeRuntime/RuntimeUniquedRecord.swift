@@ -51,8 +51,9 @@ package enum RuntimeUniquedRecord: Hashable {
     /// them all as one record.
     ///
     /// - Returns: Nil when the definitions are not all records of one kind
-    ///   that the runtime identifies by their contents, or one of them is too
-    ///   short to hold its record. Their symbol alone leaves them ambiguous.
+    ///   that the runtime identifies by their contents. Competing definitions
+    ///   also return nil when their storage is too short for comparison; their
+    ///   symbol alone leaves them ambiguous.
     /// - Throws: `RuntimeResolutionError.ambiguousDeclaration`, naming each
     ///   definition, when the runtime tells the records apart.
     package static func representative(of definitions: [RuntimeSymbol]) throws -> RuntimeSymbol? {

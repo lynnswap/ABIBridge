@@ -50,12 +50,15 @@ public final class NativeVirtualHook: @unchecked Sendable {
         public let observed: UInt
         /// Original Mach failure code, or zero.
         public let systemErrorCode: Int32
-        /// Failures restoring current and maximum page protection, respectively.
+        /// Failure restoring the region's current page protection, or zero.
         public let restoreProtectionError: Int32
+        /// Failure restoring the region's maximum page protection, or zero.
         public let restoreMaximumError: Int32
-        /// Current/maximum protection and VM flags from the original region query.
+        /// Current page protection from the original region query.
         public let protectionBefore: Int32
+        /// Maximum page protection from the original region query.
         public let maximumBefore: Int32
+        /// VM region flags from the original region query.
         public let regionFlags: UInt32
         init(_ value: ABIPointerSlotResult) {
             status = value.status; didWrite = value.didWrite; observed = value.observed

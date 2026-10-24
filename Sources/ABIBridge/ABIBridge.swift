@@ -259,7 +259,7 @@ public enum ABIResolutionError: Error, Sendable, Hashable {
     case metadataUnavailable(String)
     /// An image was unloaded or replaced before a loader reference could be acquired.
     case imageChanged
-    /// Matching symbol addresses do not satisfy the requested storage kind.
+    /// A native address is null, unreadable, or outside the storage required by the operation.
     case invalidAddress
 }
 

@@ -89,7 +89,7 @@ public struct NativeSwiftMethodImplementation<Signature>: Sendable {
     init(_ prototype: NativeSwiftMethod<Signature>, _ entry: SwiftImplementation) {
         method = prototype.capturing(entry)
     }
-    /// Invokes a captured class or nonmutating value method on the supplied receiver.
+    /// Invokes the captured instance member on the supplied receiver.
     @unsafe public func unsafeInvoke<Receiver, Result, Failure: Error, each Argument>(
         on receiver: Receiver,
         _ values: repeat each Argument

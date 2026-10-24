@@ -103,7 +103,7 @@ private:
     std::string value_;
 };
 
-/// One declaration with aliases, lazy fallbacks, and ordered loaded-image scopes. Empty scopes match no images. Found aliases must agree on address and load. Each candidate searches all scopes before the next candidate is attempted.
+/// One declaration with aliases, lazy fallbacks, and ordered image scopes. Empty scopes match no images. Found aliases must agree on address and load. Each candidate searches all scopes before the next candidate is attempted.
 struct symbol_request final {
     declaration primary;
     std::vector<declaration> alternatives;

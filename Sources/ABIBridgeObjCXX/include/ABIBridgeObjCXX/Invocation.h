@@ -14,7 +14,10 @@ FOUNDATION_EXPORT ABIObjCInvocation * _Nullable ABICopyObjCInvocation(
     id receiver, SEL selector, int32_t returnsRetained, int32_t consumesReceiver,
     const size_t * _Nullable consumedParameters, size_t consumedParameterCount,
     NSError * _Nullable * _Nullable error);
-/// Captures a receiver's signature and ownership on its caller's executor, without acquiring image leases. Use ABICopyObjCInvocationPlan to prepare only its receiver-independent parent before invocation.
+/// Captures a receiver's signature and ownership on its caller's executor,
+/// without acquiring image leases. Copy its receiver-independent parent with
+/// ABICopyObjCInvocationPlan, then acquire that parent's leases with
+/// ABIObjCPrepareInvocationPlan before invocation.
 FOUNDATION_EXPORT ABIObjCInvocation * _Nullable ABICopyObjCInvocationMetadata(
     id receiver, SEL selector, int32_t returnsRetained, int32_t consumesReceiver,
     const size_t * _Nullable consumedParameters, size_t consumedParameterCount,

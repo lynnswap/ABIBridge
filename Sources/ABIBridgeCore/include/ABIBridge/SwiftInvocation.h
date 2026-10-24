@@ -236,9 +236,11 @@ void ABIReleaseSwiftAsyncDescriptor(ABISwiftAsyncDescriptor *descriptor);
 void ABIRetainSwiftClosureContext(void *context);
 void ABIReleaseSwiftClosureContext(void *context);
 
-/// Combines ABI scalar components and offsets with compiler-known Swift storage. Scalar field extents must fit size; component aggregate tail padding is excluded. Alignment must be a power of two. This layout is for Swift interfaces, not a libffi C calling convention.
+/// Creates owned pointer-sized storage for an optional singleton metatype,
+/// lowered as a one-byte Swift discriminator.
 ABIValueType *ABICreateSwiftOptionalSingletonType(void);
 
+/// Combines ABI scalar components and offsets with compiler-known Swift storage. Scalar field extents must fit size; component aggregate tail padding is excluded. Alignment must be a power of two. This layout is for Swift interfaces, not a libffi C calling convention.
 ABIValueType *ABICreateSwiftStorageType(
     const ABIValueType *components, size_t size, size_t alignment, ABIResolutionFailure **error);
 

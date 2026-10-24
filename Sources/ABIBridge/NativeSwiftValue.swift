@@ -43,14 +43,14 @@ public final class NativeSwiftValue {
         valueOwner.isConsumed
     }
 
-    /// Creates an independent native copy, retaining its implementation images.
+    /// Creates an independent native copy, retaining its implementation images. The native type must be Copyable.
     public func copy() throws -> NativeSwiftValue {
         let source = try access(.borrowing)
         guard isCopyable else { throw NativeSwiftValueError.noncopyableType }
         return try withExtendedLifetime(source) { try Self.copy(from: source.address, type: type) }
     }
 
-    /// Passes an Any copy to body while retaining its implementation images.
+    /// Passes an Any copy to body while retaining its implementation images. The native type must be Copyable.
     ///
     /// Standard Swift casts can inspect the copy's existing conformances. If a value escapes body, keep this handle alive while that value may execute dynamically loaded code, including during destruction.
     public func withCopy<Result>(_ body: (Any) throws -> Result) throws -> Result {

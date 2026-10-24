@@ -57,10 +57,10 @@ package struct RuntimeSwiftDeclaration: Hashable, Sendable {
     package let role: Role
     package let kind: Kind
     package let accessor: Accessor?
-    /// Whether a call can run the symbol's own code: a declaration's code, a
-    /// protocol requirement's thunk, which selects the conformance's witness,
-    /// or a conformance's witness, which applies to that conformance only. A
-    /// class member's thunk instead redispatches on the receiver.
+    /// Whether the symbol supplies a definition for its declaration: its own
+    /// code, a protocol requirement's dispatch thunk, a conformance's witness,
+    /// or a property descriptor. A class member's dispatch thunk instead
+    /// redispatches on the receiver and does not supply its implementation.
     package var runsOwnCode: Bool {
         switch role {
         case .implementation, .witness: true
@@ -328,8 +328,8 @@ package struct RuntimeSwiftPropertySymbol: Hashable, Sendable {
     /// class that declares the property, as the remangler spells it from the
     /// property's context.
     package let typeDescriptor: String
-    /// The module that declares the property's type: the module of its
-    /// innermost extension context, otherwise its root module.
+    /// The module that declares the property's owning nominal type: the
+    /// module of its innermost extension context, otherwise its root module.
     package let module: String
     /// The property's name, without a private discriminator.
     package let name: String

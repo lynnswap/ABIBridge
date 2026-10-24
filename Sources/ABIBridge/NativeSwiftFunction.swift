@@ -86,7 +86,7 @@ extension SwiftCallInterface {
 ///
 /// Calls use the platform Swift convention. Async signatures preserve the native task across suspension; throwing signatures surface native errors as `NativeSwiftError`. Use `NativeSwiftClosure` for callbacks and `NativeSwiftInout`, `NativeSwiftBorrowing`, or `NativeSwiftConsuming` for explicit argument conventions.
 ///
-/// See <doc:SwiftFunctionInvocation> for supported value representations, including struct and enum conventions inferred from metadata, and <doc:GenericSwiftValues> for generic calls. Values whose conventions cannot be inferred and ordinary unwrapped closures need separate representations.
+/// See <doc:SwiftFunctionInvocation> for supported value representations, including struct and enum conventions inferred from metadata, and <doc:GenericSwiftValues> for generic calls. Supply explicit ABI information when metadata cannot establish a value's convention. Ordinary unwrapped Swift closures require `NativeSwiftClosure`.
 public struct NativeSwiftFunction<Signature>: Sendable {
     /// The exported symbol that names this function's declaration.
     public var symbol: ResolvedSymbol { entry.symbol }

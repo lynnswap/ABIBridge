@@ -73,7 +73,9 @@ typedef struct {
 /// Source-language values for ABIResolveSymbol.
 enum {
     ABILanguageSwift = 0,
-    /// Objective-C source declarations report ABIFailureUnsupportedDeclaration. Exact symbol spellings are accepted; selector dispatch uses the Swift API.
+    /// Objective-C source declarations report ABIFailureUnsupportedDeclaration.
+    /// Exact symbol spellings are accepted. Use ObjectiveCInvocation.h or the
+    /// Swift request API to resolve methods by selector.
     ABILanguageObjectiveC = 1,
     ABILanguageC = 2,
     ABILanguageCXX = 3
