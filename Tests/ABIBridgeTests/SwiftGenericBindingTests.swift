@@ -8,6 +8,7 @@ import ManagedSwiftFixtures
 import Testing
 
 private protocol GenericSwiftClassOnly: AnyObject {}
+private final class GenericObjectiveCSubclass: NSObject {}
 
 protocol GenericOrderingA {}
 private protocol GenericOrderingZ {}
@@ -728,7 +729,10 @@ struct SwiftGenericBindingTests {
         #expect(object.isSubclass(of: NSObject.self))
         #expect(!object.isSubclass(of: NSString.self))
         #expect(object.conforms(to: try #require(NSProtocolFromString("NSCopying"))))
-        #expect(object.conforms(to: try #require(NSProtocolFromString("NSObject"))))
+        let nsObject = try #require(NSProtocolFromString("NSObject"))
+        #expect(object.conforms(to: nsObject))
+        let subclass = try #require(SwiftObjectType(GenericObjectiveCSubclass.self))
+        #expect(subclass.conforms(to: nsObject))
         for type: Any.Type in [
             String.self, AnyObject.Type.self, AnyObject.Protocol.self,
             (any GenericSwiftClassOnly).self, (@convention(block) () -> Void).self,
