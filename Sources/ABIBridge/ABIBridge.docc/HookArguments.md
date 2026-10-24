@@ -7,10 +7,9 @@ Edit typed arguments, continue with original or adjusted values, and inspect the
 For an existing Objective-C `Renderer` method `render:` that receives a mutable `RenderRequest` instance:
 
 ```swift
-let hook = try unsafe runtime.hookMethod(
+let hook = try unsafe runtime.hookCalls(
+    .objc(.method("render:", as: ((RenderRequest) -> Void).self)),
     on: Renderer.self,
-    selector: "render:",
-    as: ((RenderRequest) -> Void).self,
     onFailure: { print($0) }
 ) { call, request in
     request.scale = 2
@@ -20,7 +19,7 @@ let hook = try unsafe runtime.hookMethod(
 }
 ```
 
-`RenderRequest` is the target API's class with the shown writable properties and methods. The callback receives the same instance, so other owners observe its mutations. `try call.receiver` supplies the receiving object for casting and property access. Use `hookMainActorMethod` when native callers must enter on MainActor, including UI objects.
+`RenderRequest` is the target API's class with the shown writable properties and methods. The callback receives the same instance, so other owners observe its mutations. `try call.receiver` supplies the receiving object for casting and property access. Use `hookMainActorCalls` when native callers must enter on MainActor, including UI objects.
 
 Passing a different object to `proceed` changes the reference received by downstream hooks and the implementation. It does not assign a new value to the caller's reference variable. Bridged Swift values, such as a Swift dictionary converted from an Objective-C object, may have value semantics; use the actual reference type when shared mutation is intended.
 
@@ -31,15 +30,19 @@ Object changes are not rolled back if the callback later fails. Fallback before 
 For an Objective-C argument whose class cannot be imported, accept `AnyObject` and invoke a known setter using its runtime signature:
 
 ```swift
-let hook = try unsafe runtime.hookMethod(
+let hook = try unsafe runtime.hookCalls(
+    .objc(.method("render:", as: ((AnyObject) -> Void).self)),
     on: Renderer.self,
-    selector: "render:",
-    as: ((AnyObject) -> Void).self,
     onFailure: { print($0) }
 ) { call, argument in
-    let setScale = try runtime.object(argument).resolveAndWait(.objc(.method(
-        "setScale:", as: ((Double) -> Void).self
-    )))
+    let setScale = try runtime.object(argument).resolveAndWait(
+        .objc(
+            .method(
+                "setScale:",
+                as: ((Double) -> Void).self
+            )
+        )
+    )
     try unsafe setScale.unsafeInvoke(2)
     try call.proceed(argument)
 }

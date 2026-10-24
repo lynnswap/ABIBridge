@@ -129,10 +129,11 @@ struct ObjectiveCAggregateTests {
     }
 
     @Test func managedHooksMarshalNestedArgumentsAndResults() throws {
-        let hook = try unsafe ABIRuntime.shared.hookMethod(
+        let hook = try unsafe ABIRuntime.shared.hookCalls(
+            .objc(
+                .method("transformNested:", as: ((ABINestedAggregate) -> ABINestedAggregate).self)
+            ),
             on: ABIAggregateFixture.self,
-            selector: "transformNested:",
-            as: ((ABINestedAggregate) -> ABINestedAggregate).self,
             onFailure: { Issue.record($0) }
         ) { call, value in
             var result = try call.proceed(value)
@@ -253,10 +254,14 @@ struct ObjectiveCAggregateTests {
         )
         let actual = try unsafe captured.unsafeInvoke(on: receiver, input)
         #expect(actual.value == 3.5 && actual.tag == 5)
-        let hook = try unsafe runtime.hookMethod(
+        let hook = try unsafe runtime.hookCalls(
+            .objc(
+                .method(
+                    "transformLongDouble:",
+                    as: ((ABILongDoubleAggregate) -> ABILongDoubleAggregate).self
+                )
+            ),
             on: ABIAggregateFixture.self,
-            selector: "transformLongDouble:",
-            as: ((ABILongDoubleAggregate) -> ABILongDoubleAggregate).self,
             onFailure: { Issue.record($0) }
         ) { call, value in
             var output = try call.proceed(value)

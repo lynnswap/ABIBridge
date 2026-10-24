@@ -284,9 +284,8 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         }
         let baseline = ABIImportedUIDCall()
         let failures = ArchitectureHookErrors()
-        let hook = try await unsafe runtime.hookImportedFunction(
-            .init(name: "getuid", language: .c),
-            as: (() -> UInt32).self,
+        let hook = try await unsafe runtime.hookImportedCalls(
+            .c(.function("getuid", as: (() -> UInt32).self)),
             in: .path(URL(fileURLWithPath: String(cString: path))),
             onFailure: { failures.append($0) }
         ) { call in try call.proceed() + 1 }
@@ -306,9 +305,8 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         )
         try check(failures.isEmpty, "Imported callbacks completed without conversion errors")
         let applied = Mutex(false)
-        let monitor = try await unsafe runtime.monitorImportedFunction(
-            .init(name: "getuid", language: .c),
-            as: (() -> UInt32).self,
+        let monitor = try await unsafe runtime.monitorImportedCalls(
+            .c(.function("getuid", as: (() -> UInt32).self)),
             in: .path(URL(fileURLWithPath: String(cString: path))),
             onFailure: { failures.append($0) },
             onImageUpdate: { update in
@@ -340,9 +338,8 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         let receiver = ArchitectureHookReceiver()
         func request(_ delta: Int32) -> NativeObjCHookRequest {
             unsafe .method(
+                .objc(.method("adding:", as: ((Int32) -> Int32).self)),
                 on: ArchitectureHookReceiver.self,
-                selector: "adding:",
-                as: ((Int32) -> Int32).self,
                 onFailure: { failures.append($0) }
             ) { call, value in try call.proceed(value) + delta }
         }
@@ -366,9 +363,8 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
     case "initializers":
         let failures = ArchitectureHookErrors()
         let hook = try unsafe runtime.hookInitializer(
+            .objc(.method("initWithSeed:", as: ((Int32) -> NSObject?).self)),
             on: ABIValidationInitializerClass(),
-            selector: "initWithSeed:",
-            as: ((Int32) -> NSObject?).self,
             onFailure: { failures.append($0) },
             transformingArguments: { $0 < 0 ? $0 : $0 + 1 },
             after: { initialized in
@@ -401,16 +397,14 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
     case "hooks":
         let failures = ArchitectureHookErrors()
         let receiver = ArchitectureHookReceiver()
-        let first = try unsafe runtime.hookMethod(
+        let first = try unsafe runtime.hookCalls(
+            .objc(.method("adding:", as: ((Int32) -> Int32).self)),
             on: ArchitectureHookReceiver.self,
-            selector: "adding:",
-            as: ((Int32) -> Int32).self,
             onFailure: { failures.append($0) }
         ) { call, value in try call.proceed(value) + 1 }
-        let second = try unsafe runtime.hookMethod(
+        let second = try unsafe runtime.hookCalls(
+            .objc(.method("adding:", as: ((Int32) -> Int32).self)),
             on: ArchitectureHookReceiver.self,
-            selector: "adding:",
-            as: ((Int32) -> Int32).self,
             onFailure: { failures.append($0) }
         ) { call, value in try call.proceed(value * 2) }
         defer { first.invalidate(); second.invalidate() }

@@ -33,6 +33,14 @@ struct ObjCMessageQuery: Sendable {
     /// parameter that the Swift signature omits.
     let reportsErrors: Bool
     let options: NativeObjCMethodOptions
+
+    func validateHook() throws {
+        guard variadicFrom == nil, !reportsErrors else {
+            throw ABIResolutionError.unsupportedDeclaration(
+                "Objective-C hooks require a fixed signature including every explicit native argument."
+            )
+        }
+    }
 }
 
 /// An Objective-C message to prepare for calls.

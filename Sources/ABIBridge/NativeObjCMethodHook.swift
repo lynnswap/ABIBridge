@@ -131,48 +131,84 @@ extension ABIRuntime {
     ///
     /// - Parameters:
     ///   - type: The class whose instance or class method is intercepted.
-    ///   - selector: The Objective-C selector, including argument colons.
-    ///   - signature: A supported ordinary function type with explicit arguments only.
+    ///   - request: The selector, explicit arguments, result, and ownership. Hooks require a fixed nonthrowing signature.
     ///   - classMethod: Whether to intercept the metaclass method.
-    ///   - options: Ownership annotations missing from runtime encodings.
     ///   - owner: Keeps generated original code or a dynamic class alive when this method's dispatcher is first created. Later registrations reuse it.
     ///   - onFailure: Handles Swift callback and value-conversion failures.
     ///   - body: Produces a result, optionally invoking the scoped next implementation.
     /// - Returns: A token keeping this registration active until invalidated or released.
     /// - Throws: A lookup, signature, ownership, preparation, or displaced-entry error.
-    @unsafe public nonisolated func hookMethod<Result, each Argument>(
-        on type: AnyClass, selector: String, as signature: ((repeat each Argument) -> Result).Type,
+    @unsafe public nonisolated func hookCalls<Result, each Argument>(
+        _ request: NativeRequest<NativeObjCMethodRequest<Result, repeat each Argument>>,
+        on type: AnyClass,
         classMethod: Bool = false,
-        options: NativeObjCMethodOptions = .init(),
         retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
-        body: @escaping @Sendable (NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+        body:
+            @escaping @Sendable (
+                NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument
+            ) throws -> Result
     ) throws -> NativeObjCMethodHook {
-        try NativeObjCMethodHook.install(on: type, selector: selector, as: signature,
-            classMethod: classMethod, options: options, object: nil, owner: owner,
-            requiresMainThread: false, onFailure: onFailure, body: body)
+        let query = request.declaration.query
+        let selector = query.selector
+        let options = query.options
+        let signature = ((repeat each Argument) -> Result).self
+        try query.validateHook()
+        return try NativeObjCMethodHook.install(
+            on: type,
+            selector: selector,
+            as: signature,
+            classMethod: classMethod,
+            options: options,
+            object: nil,
+            owner: owner,
+            requiresMainThread: false,
+            onFailure: onFailure,
+            body: body
+        )
     }
 
     /// Installs a hook for a method whose callers are required to run on MainActor.
     ///
-    /// This declaration is a caller-supplied contract. The callback is synchronous; it does not hop executors. Background entry reports `wrongThread` and passes through to the next hook before decoding Swift arguments. `onFailure` must therefore be safe on background threads. Other parameters and unsafe requirements match ``hookMethod(on:selector:as:classMethod:options:retaining:onFailure:body:)-(_,String,_,_,_,_,_,_)``.
-    @unsafe @MainActor public func hookMainActorMethod<Result, each Argument>(
-        on type: AnyClass, selector: String, as signature: ((repeat each Argument) -> Result).Type,
+    /// This declaration is a caller-supplied contract. The callback is synchronous; it does not hop executors. Background entry reports `wrongThread` and passes through to the next hook before decoding Swift arguments. `onFailure` must therefore be safe on background threads. Other parameters and unsafe requirements match `hookCalls`.
+    @unsafe @MainActor public func hookMainActorCalls<Result, each Argument>(
+        _ request: NativeRequest<NativeObjCMethodRequest<Result, repeat each Argument>>,
+        on type: AnyClass,
         classMethod: Bool = false,
-        options: NativeObjCMethodOptions = .init(),
         retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
-        body: @escaping @MainActor @Sendable (NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+        body:
+            @escaping @MainActor @Sendable (
+                NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument
+            ) throws -> Result
     ) throws -> NativeObjCMethodHook {
-        try NativeObjCMethodHook.install(on: type, selector: selector, as: signature,
-            classMethod: classMethod, options: options, object: nil, owner: owner,
-            requiresMainThread: true, onFailure: onFailure) {
-                (call: NativeObjCMethodInvocation<Result, repeat each Argument>, values: repeat each Argument) in
-                let input = ObjCReplacementIsolatedValue(value: (call, (repeat each values)))
-                return try MainActor.assumeIsolated {
-                    ObjCReplacementIsolatedValue(value: try body(input.value.0, repeat each input.value.1))
-                }.value
-            }
+        let query = request.declaration.query
+        let selector = query.selector
+        let options = query.options
+        let signature = ((repeat each Argument) -> Result).self
+        try query.validateHook()
+        return try NativeObjCMethodHook.install(
+            on: type,
+            selector: selector,
+            as: signature,
+            classMethod: classMethod,
+            options: options,
+            object: nil,
+            owner: owner,
+            requiresMainThread: true,
+            onFailure: onFailure
+        ) {
+            (
+                call: NativeObjCMethodInvocation<Result, repeat each Argument>,
+                values: repeat each Argument
+            ) in
+            let input = ObjCReplacementIsolatedValue(value: (call, (repeat each values)))
+            return try MainActor.assumeIsolated {
+                ObjCReplacementIsolatedValue(
+                    value: try body(input.value.0, repeat each input.value.1)
+                )
+            }.value
+        }
     }
 }
 
@@ -181,39 +217,75 @@ extension NativeObject {
     ///
     /// The returned token does not retain this wrapper or its receiver. The wrapper itself still retains the receiver until released. Other instances use the same class dispatcher but skip this callback. Later isa changes or overrides that bypass the installed class entry are not followed.
     ///
-    /// Parameters, failure behavior, and unsafe requirements match ``ABIRuntime/hookMethod(on:selector:as:classMethod:options:retaining:onFailure:body:)-(_,String,_,_,_,_,_,_)``. The target is an instance method of the receiver's current runtime class.
-    @unsafe public func hookMethod<Result, each Argument>(
-        selector: String, as signature: ((repeat each Argument) -> Result).Type,
-        options: NativeObjCMethodOptions = .init(),
+    /// Parameters, failure behavior, and unsafe requirements match `ABIRuntime.hookCalls`. The target is an instance method of the receiver's current runtime class.
+    @unsafe public func hookCalls<Result, each Argument>(
+        _ request: NativeRequest<NativeObjCMethodRequest<Result, repeat each Argument>>,
         retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
-        body: @escaping @Sendable (NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+        body:
+            @escaping @Sendable (
+                NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument
+            ) throws -> Result
     ) throws -> NativeObjCMethodHook {
+        let query = request.declaration.query
+        let selector = query.selector
+        let options = query.options
+        let signature = ((repeat each Argument) -> Result).self
+        try query.validateHook()
         let object = receiver!
-        return try NativeObjCMethodHook.install(on: object_getClass(object)!, selector: selector, as: signature,
-            classMethod: false, options: options, object: object, owner: owner,
-            requiresMainThread: false, onFailure: onFailure, body: body)
+        return try NativeObjCMethodHook.install(
+            on: object_getClass(object)!,
+            selector: selector,
+            as: signature,
+            classMethod: false,
+            options: options,
+            object: object,
+            owner: owner,
+            requiresMainThread: false,
+            onFailure: onFailure,
+            body: body
+        )
     }
 
     /// Installs a weak identity-filtered callback for a known MainActor method.
     ///
-    /// Combines ``hookMethod(selector:as:options:retaining:onFailure:body:)-(String,_,_,_,_,_)`` scope with ``ABIRuntime/hookMainActorMethod(on:selector:as:classMethod:options:retaining:onFailure:body:)-(_,String,_,_,_,_,_,_)`` isolation.
-    @unsafe @MainActor public func hookMainActorMethod<Result, each Argument>(
-        selector: String, as signature: ((repeat each Argument) -> Result).Type,
-        options: NativeObjCMethodOptions = .init(),
+    /// Combines `hookCalls` scope with `ABIRuntime.hookMainActorCalls` isolation.
+    @unsafe @MainActor public func hookMainActorCalls<Result, each Argument>(
+        _ request: NativeRequest<NativeObjCMethodRequest<Result, repeat each Argument>>,
         retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
-        body: @escaping @MainActor @Sendable (NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+        body:
+            @escaping @MainActor @Sendable (
+                NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument
+            ) throws -> Result
     ) throws -> NativeObjCMethodHook {
+        let query = request.declaration.query
+        let selector = query.selector
+        let options = query.options
+        let signature = ((repeat each Argument) -> Result).self
+        try query.validateHook()
         let object = receiver!
-        return try NativeObjCMethodHook.install(on: object_getClass(object)!, selector: selector, as: signature,
-            classMethod: false, options: options, object: object, owner: owner,
-            requiresMainThread: true, onFailure: onFailure) {
-                (call: NativeObjCMethodInvocation<Result, repeat each Argument>, values: repeat each Argument) in
-                let input = ObjCReplacementIsolatedValue(value: (call, (repeat each values)))
-                return try MainActor.assumeIsolated {
-                    ObjCReplacementIsolatedValue(value: try body(input.value.0, repeat each input.value.1))
-                }.value
-            }
+        return try NativeObjCMethodHook.install(
+            on: object_getClass(object)!,
+            selector: selector,
+            as: signature,
+            classMethod: false,
+            options: options,
+            object: object,
+            owner: owner,
+            requiresMainThread: true,
+            onFailure: onFailure
+        ) {
+            (
+                call: NativeObjCMethodInvocation<Result, repeat each Argument>,
+                values: repeat each Argument
+            ) in
+            let input = ObjCReplacementIsolatedValue(value: (call, (repeat each values)))
+            return try MainActor.assumeIsolated {
+                ObjCReplacementIsolatedValue(
+                    value: try body(input.value.0, repeat each input.value.1)
+                )
+            }.value
+        }
     }
 }

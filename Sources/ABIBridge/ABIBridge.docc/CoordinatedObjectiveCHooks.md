@@ -4,21 +4,23 @@ Validate related declarations before installation and retain the resulting ordin
 
 ## Declare and install
 
-Pass ``NativeObjCHookRequest`` values to ``ABIRuntime/installHooks(_:)`` to prepare related declarations together. Creating requests leaves method tables unchanged. For one hook, call `hookMethod` or `hookInitializer` directly.
+Pass ``NativeObjCHookRequest`` values to ``ABIRuntime/installHooks(_:)`` to prepare related declarations together. Creating requests leaves method tables unchanged. For one hook, call `hookCalls` or `hookInitializer` directly.
 
 ```swift
 let hooks = try unsafe runtime.installHooks([
     unsafe .method(
-        on: Renderer.self, selector: "sizeThatFits:",
-        as: ((CGSize) -> CGSize).self, onFailure: reportFailure
+        .objc(.method("sizeThatFits:", as: ((CGSize) -> CGSize).self)),
+        on: Renderer.self,
+        onFailure: reportFailure
     ) { call, size in
         try call.proceed(CGSize(width: max(size.width, 100), height: size.height))
     },
     unsafe .initializer(
-        on: Renderer.self, selector: "initWithConfiguration:",
-        as: ((NSMutableDictionary) -> Renderer?).self, onFailure: reportFailure,
+        .objc(.method("initWithConfiguration:", as: ((NSMutableDictionary) -> Renderer?).self)),
+        on: Renderer.self,
+        onFailure: reportFailure,
         before: { $0["compact"] = true }
-    )
+    ),
 ])
 
 for hook in hooks { hook.invalidate() }

@@ -43,10 +43,9 @@ struct HookInvocationDiagnosticsTests {
         let saved = DiagnosticBox<NativeObjCMethodInvocation<Int32, DiagnosticRequest>?>(nil)
         let description = DiagnosticBox("")
         let runtime = ABIRuntime()
-        let hook = try unsafe runtime.hookMethod(
+        let hook = try unsafe runtime.hookCalls(
+            .objc(.method("edit:", as: ((DiagnosticRequest) -> Int32).self)),
             on: DiagnosticRenderer.self,
-            selector: "edit:",
-            as: ((DiagnosticRequest) -> Int32).self,
             onFailure: { Issue.record($0) }
         ) { call, request in
             saved.set(call)
@@ -82,10 +81,9 @@ struct HookInvocationDiagnosticsTests {
     @Test func replacesOnlyDownstreamReferenceAndUsesDynamicSetter() throws {
         let runtime = ABIRuntime()
         let renderer = DiagnosticRenderer(), request = DiagnosticRequest()
-        let redirect = try unsafe runtime.hookMethod(
+        let redirect = try unsafe runtime.hookCalls(
+            .objc(.method("edit:", as: ((DiagnosticRequest) -> Int32).self)),
             on: DiagnosticRenderer.self,
-            selector: "edit:",
-            as: ((DiagnosticRequest) -> Int32).self,
             onFailure: { Issue.record($0) }
         ) { call, _ in
             let replacement = DiagnosticRequest()
@@ -96,10 +94,9 @@ struct HookInvocationDiagnosticsTests {
         #expect(renderer.lastRequest !== request && request.value == 2 && request.observed == 0)
         redirect.invalidate()
         // The callback deliberately does not require the concrete argument type.
-        let dynamic = try unsafe runtime.hookMethod(
+        let dynamic = try unsafe runtime.hookCalls(
+            .objc(.method("edit:", as: ((AnyObject) -> Int32).self)),
             on: DiagnosticRenderer.self,
-            selector: "edit:",
-            as: ((AnyObject) -> Int32).self,
             onFailure: { Issue.record($0) }
         ) { call, object in
             let setter = try runtime.object(object).resolveAndWait(
@@ -122,10 +119,9 @@ struct HookInvocationDiagnosticsTests {
         enum Expected: Error { case failed }
         let failures = DiagnosticBox(0)
         for after in [false, true] {
-            let hook = try unsafe ABIRuntime.shared.hookMethod(
+            let hook = try unsafe ABIRuntime.shared.hookCalls(
+                .objc(.method("edit:", as: ((DiagnosticRequest) -> Int32).self)),
                 on: DiagnosticRenderer.self,
-                selector: "edit:",
-                as: ((DiagnosticRequest) -> Int32).self,
                 onFailure: { _ in failures.set(failures.get() + 1) }
             ) { call, request in
                 request.value = 8
@@ -142,9 +138,8 @@ struct HookInvocationDiagnosticsTests {
 
     @Test @MainActor func coordinatedMainActorHooksCarryTheirDeclaration() throws {
         let request = unsafe NativeObjCHookRequest.mainActorMethod(
+            .objc(.method("edit:", as: ((DiagnosticRequest) -> Int32).self)),
             on: DiagnosticRenderer.self,
-            selector: "edit:",
-            as: ((DiagnosticRequest) -> Int32).self,
             onFailure: { Issue.record($0) }
         ) { call, argument in
             #expect(call.declaration.name == "-[ABIDiagnosticRenderer edit:]")
@@ -176,19 +171,17 @@ struct HookInvocationDiagnosticsTests {
         switch route {
         case 0:
             hooks = [
-                try unsafe runtime.hookMainActorMethod(
+                try unsafe runtime.hookMainActorCalls(
+                    .objc(.method("edit:offset:other:", as: signature)),
                     on: DiagnosticRenderer.self,
-                    selector: "edit:offset:other:",
-                    as: signature,
                     onFailure: { Issue.record($0) },
                     body: body
                 )
             ]
         case 1:
             hooks = [
-                try unsafe runtime.object(renderer).hookMainActorMethod(
-                    selector: "edit:offset:other:",
-                    as: signature,
+                try unsafe runtime.object(renderer).hookMainActorCalls(
+                    .objc(.method("edit:offset:other:", as: signature)),
                     onFailure: { Issue.record($0) },
                     body: body
                 )
@@ -196,9 +189,8 @@ struct HookInvocationDiagnosticsTests {
         default:
             hooks = try unsafe runtime.installHooks([
                 .mainActorMethod(
+                    .objc(.method("edit:offset:other:", as: signature)),
                     on: DiagnosticRenderer.self,
-                    selector: "edit:offset:other:",
-                    as: signature,
                     onFailure: { Issue.record($0) },
                     body: body
                 )
