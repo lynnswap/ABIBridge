@@ -179,22 +179,18 @@ public struct NativeSwiftFunction<Signature>: Sendable {
     /// member: the entry whose code lookup selected, or else the entry that
     /// the declaration's method descriptors name.
     ///
-    /// Only a class's members that receive its metatype as `self`, as the
-    /// call plan says, have such an entry.
-    func virtualDispatch() throws -> (type: NativeSwiftType, dispatch: SwiftClassDispatch) {
-        guard let type = typeOwner, type.metadata is AnyClass,
+    /// Class members and protocol static/initializer requirements receive
+    /// a metatype as `self`, as the prepared call plan establishes.
+    func virtualDispatch() throws -> SwiftVirtualDispatch {
+        guard let type = typeOwner,
+            (type.metadata is AnyClass || entry.record?.context == .protocolRequirement),
             call.generic?.receivesMetatype == true
         else {
             throw ABIResolutionError.unsupportedDeclaration(
-                "Virtual hooks and replacements of a function require a class member that receives its class's metatype as self, such as a class func or a class var's accessor; free functions and the static members of structs and enums have no class slot."
+                "Virtual hooks and replacements of a function require a class member or protocol requirement receiving its metatype as self; free functions and concrete static members of structs and enums have no virtual slot."
             )
         }
-        let dispatch = try entry.classDispatch(
-            in: type.metadata,
-            resolver: type.resolver,
-            asynchronous: call.isAsync
-        )
-        return (type, dispatch)
+        return try SwiftVirtualDispatch(type: type, entry: entry, asynchronous: call.isAsync)
     }
 
     /// Calls the Swift entry point using its prepared declaration-level signature.
