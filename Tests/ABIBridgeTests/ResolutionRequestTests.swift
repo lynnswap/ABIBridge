@@ -207,8 +207,13 @@ struct ResolutionRequestTests {
         let make = try await type.resolve(
             .initializer("init()", as: (() -> Int.RuntimeNestedCounter).self)
         )
-        let value = try await type.resolve(.method("value()", as: (() -> Int).self))
-        #expect(try unsafe value.unsafeInvoke(on: make.unsafeInvoke()) == 7)
+        for name in [
+            "value()",
+            "(extension in ManagedSwiftFixtures):Swift.Int.RuntimeNestedCounter.value() -> Swift.Int",
+        ] {
+            let value = try await type.resolve(.method(name, as: (() -> Int).self))
+            #expect(try unsafe value.unsafeInvoke(on: make.unsafeInvoke()) == 7)
+        }
     }
 
     @MainActor @Test func methodsNamedLikeAllocatorsKeepTheirNames() async throws {

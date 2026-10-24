@@ -79,6 +79,36 @@ struct SwiftKeyPathTests {
         #expect(!value.isConsumed)
     }
 
+    @Test func constrainedExistentialPropertiesPreserveIdentityAndWriteback() throws {
+        let runtime = ABIRuntime()
+        let root = try runtime.resolveSwiftTypeAndWait(
+            named: "ManagedSwiftFixtures.RuntimeKeyPathSequenceRoot"
+        )
+        let getter = try root.resolveAndWait(.getter("sequence", as: (() -> NativeSwiftValue).self))
+        let sequence = try unsafe getter.unsafeInvoke(on: RuntimeKeyPathSequenceRoot())
+        let value = try root.resolveWritableKeyPathAndWait(
+            named: "sequence",
+            valueType: sequence.type
+        )
+        let path = try value.copy().take(
+            as: WritableKeyPath<RuntimeKeyPathSequenceRoot, any Sequence<Int>>.self
+        )
+        #expect(path == \RuntimeKeyPathSequenceRoot.sequence)
+        var receiver = RuntimeKeyPathSequenceRoot()
+        receiver[keyPath: path] = [2, 3]
+        #expect(Array(receiver.sequence) == [2, 3])
+        let otherGetter = try root.resolveAndWait(
+            .getter("otherSequence", as: (() -> NativeSwiftValue).self)
+        )
+        let other = try unsafe otherGetter.unsafeInvoke(on: RuntimeKeyPathSequenceRoot())
+        #expect {
+            try root.resolveWritableKeyPathAndWait(named: "sequence", valueType: other.type)
+        } throws: { error in
+            guard case ABIResolutionError.signatureMismatch = error else { return false }
+            return true
+        }
+    }
+
     @Test func extensionPropertyUsesItsOwnIdentityAndImplementation() throws {
         let runtime = ABIRuntime()
         let root = try runtime.resolveSwiftTypeAndWait(named: "Swift.String")
@@ -97,6 +127,24 @@ struct SwiftKeyPathTests {
             #expect([canonical: "extension"][path] == "extension")
             #expect(path != runtimePayloadKeyPath())
             #expect(writeRuntimeExtensionPayload(through: path, text: "updated") == "updated!")
+        }
+    }
+
+    @Test func propertiesOfTypesDeclaredInExtensionsKeepTheirOwnerContext() throws {
+        let runtime = ABIRuntime()
+        let owner = "(extension in ManagedSwiftFixtures):Swift.Int.RuntimeNestedCounter"
+        let root = try runtime.resolveSwiftTypeAndWait(named: owner)
+        let string = try runtime.resolveSwiftTypeAndWait(named: "Swift.String")
+        for (name, expected) in [
+            ("text", \Int.RuntimeNestedCounter.text),
+            (owner + ".text", \Int.RuntimeNestedCounter.text),
+            (owner + ".extraText", \Int.RuntimeNestedCounter.extraText),
+        ] {
+            let value = try root.resolveWritableKeyPathAndWait(named: name, valueType: string)
+            let path = try value.copy().take(
+                as: ReferenceWritableKeyPath<Int.RuntimeNestedCounter, String>.self
+            )
+            #expect(path == expected)
         }
     }
 

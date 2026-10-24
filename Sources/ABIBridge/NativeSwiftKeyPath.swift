@@ -72,7 +72,7 @@ extension NativeSwiftType {
         let rootName = try swiftNativeTypeName(metadata)
         let query = try SwiftMemberQuery(
             .init(role: .getter, isStatic: false, name: name, options: .init())
-        )
+        ).inContext(of: rootName)
         if query.qualifier != nil, !SwiftMemberLookup.belongs(name, to: rootName) {
             throw ABIResolutionError.unsupportedDeclaration(
                 "The writable key path property must belong to " + rootName + "."
@@ -97,19 +97,25 @@ extension NativeSwiftType {
             throw ABIResolutionError.declarationNotFound(displayed)
         }
         func candidates(includingSharedCache: Bool) throws -> [SwiftCandidate] {
-            try resolver.swiftMemberCandidates(
-                SwiftMemberMatch(
-                    path: path,
-                    accessor: nil,
-                    isStatic: false,
-                    initializer: .excluded,
-                    entry: .propertyDescriptor
-                ),
-                owner: rootName,
-                in: query.extensionModule == nil ? image : nil,
-                extensionsOnly: query.extensionModule != nil,
-                includingSharedCache: includingSharedCache
-            ).filter { $0.record.kind == .variable && query.isDeclared(by: $0.record) }
+            let tiers =
+                query.includesOwnerExtension ? [false, true] : [query.extensionModule != nil]
+            for extensionsOnly in tiers {
+                let found = try resolver.swiftMemberCandidates(
+                    SwiftMemberMatch(
+                        path: path,
+                        accessor: nil,
+                        isStatic: false,
+                        initializer: .excluded,
+                        entry: .propertyDescriptor
+                    ),
+                    owner: rootName,
+                    in: extensionsOnly ? nil : image,
+                    extensionsOnly: extensionsOnly,
+                    includingSharedCache: includingSharedCache
+                ).filter { $0.record.kind == .variable && query.isDeclared(by: $0.record) }
+                if !found.isEmpty { return found }
+            }
+            return []
         }
         // As for members, the images can hold another extension's property
         // of that name while only the shared cache's local symbols describe
@@ -126,19 +132,39 @@ extension NativeSwiftType {
             throw ABIResolutionError.declarationNotFound(displayed)
         }
         let descriptor = selected.symbol
-        // The descriptor's declared type, which its symbol spells, is the
-        // value type.
-        let context = ABISwiftTypeDescriptor(unsafeBitCast(metadata, to: UnsafeRawPointer.self))
-        guard let declared = selected.record.declaredType,
-            let declaredType = declared.withCString({
-                ABISwiftTypeForMangledName($0, strlen($0), context, nil)
-            })
-        else {
+        guard let declared = selected.record.declaredType else {
             throw ABIResolutionError.metadataUnavailable(
                 descriptor.declaration.name + ": its declared type cannot be resolved."
             )
         }
-        guard declaredType == unsafeBitCast(valueType.metadata, to: UnsafeRawPointer.self) else {
+        let formal = try declared.utf8CString.withUnsafeBufferPointer {
+            try SwiftFormalType(
+                unsafe SwiftSyntax(typeReference: $0.baseAddress!, length: $0.count - 1).root
+            )
+        }
+        let declaration = SwiftGenericDeclaration(
+            parameters: [],
+            requirements: [],
+            arguments: [],
+            result: formal,
+            failure: nil,
+            isAsync: false,
+            consumesArguments: false
+        )
+        func signature<Value>(_ type: Value.Type) throws -> SwiftFunctionSignature {
+            try SwiftFunctionSignature((() -> Value).self)
+        }
+        // The supplied metadata contributes compiler-emitted existential shapes;
+        // the declaration's constraints still determine their arguments.
+        let binding = try SwiftGenericBinding(
+            declaration: declaration,
+            arguments: [],
+            signature: _openExistential(valueType.metadata, do: signature),
+            resolver: resolver,
+            image: descriptor.image
+        )
+        let declaredTypes = try binding.types(formal)
+        guard declaredTypes.count == 1, declaredTypes[0] == valueType.metadata else {
             throw ABIResolutionError.signatureMismatch(
                 .init(
                     declaration: displayed,
