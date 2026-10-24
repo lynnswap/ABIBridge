@@ -26,12 +26,17 @@ struct FunctionCallbackSignature<Result, each Argument>: Sendable {
     func proceed(_ pointer: OpaquePointer, prefix: [NativeValueStorage] = [], _ values: repeat each Argument) throws -> Result {
         var storage = prefix
         for (codec, value) in repeat (each arguments, each values) { storage.append(try codec.encode(value)) }
-        let addresses: [UnsafeMutableRawPointer?] = storage.map(\.address)
+        let addresses: [UnsafeRawPointer?] = storage.map { UnsafeRawPointer($0.address) }
         var error: OpaquePointer?
-        let ok = withExtendedLifetime(storage) { addresses.withUnsafeBufferPointer { ABIImportedProceed(pointer,$0.baseAddress,$0.count,&error) } }
+        let ok = withExtendedLifetime(storage) {
+            addresses.withUnsafeBufferPointer {
+                ABIImportedInvocationProceed(pointer, $0.baseAddress, $0.count, &error)
+            }
+        }
         guard ok else { throw consumeNativeCallFailure(error) }
         let output = NativeValueStorage(size: result.type.size, alignment: result.type.alignment)
-        guard ABIImportedCopyResult(pointer,output.address,result.type.size,&error) else { throw consumeNativeCallFailure(error) }
+        guard ABIImportedInvocationReadResult(pointer, output.address, result.type.size, &error)
+        else { throw consumeNativeCallFailure(error) }
         return try result.decode(output)
     }
     func decodeArguments(_ pointer: OpaquePointer, startingAt offset: Int = 0) throws -> (repeat each Argument) {
@@ -40,7 +45,15 @@ struct FunctionCallbackSignature<Result, each Argument>: Sendable {
             defer { index += 1 }
             let storage = NativeValueStorage(size: codec.type.size, alignment: codec.type.alignment)
             var error: OpaquePointer?
-            guard ABIImportedReadArgument(pointer,index,storage.address,codec.type.size,&error) else { throw consumeNativeCallFailure(error) }
+            guard
+                ABIImportedInvocationReadArgument(
+                    pointer,
+                    index,
+                    storage.address,
+                    codec.type.size,
+                    &error
+                )
+            else { throw consumeNativeCallFailure(error) }
             return try codec.decode(storage)
         }
         return (repeat try decode(each arguments))

@@ -10,6 +10,7 @@ typedef struct ABIImportedInvocation ABIImportedInvocation;
 typedef bool (*ABIImportedCallback)(void *, ABIImportedInvocation *, ABIResolutionFailure **);
 typedef void (*ABIImportedFailureHandler)(void *, const ABIResolutionFailure *);
 typedef void (*ABIImportedContextRelease)(void *);
+typedef int32_t ABIImportedHookSlotState;
 enum { ABIImportedInactive = 0, ABIImportedActive = 1, ABIImportedDisplaced = 2, ABIImportedUnreadable = 3 };
 
 /// Installs on matching references in currently loaded importing images. The provider, if nonnull, filters the dependency name recorded in each binding; it is not a search for the current target address. Neither scope loads images. Only C/C++ function declarations and fixed C ABI value types are supported. Function-pointer pointees/results are borrowed. Native exceptions must not cross the callback boundary. Callback and failure handler are required.
@@ -27,20 +28,24 @@ ABIImportedHook *ABIRetainImportedHook(ABIImportedHook *hook);
 void ABIInvalidateImportedHook(ABIImportedHook *hook);
 void ABIReleaseImportedHook(ABIImportedHook *hook);
 /// Borrowed failure; null means installation completed, SIZE_MAX is no failed slot.
-const ABIResolutionFailure *ABIImportedHookFailure(const ABIImportedHook *hook);
-size_t ABIImportedHookFailedIndex(const ABIImportedHook *hook);
-size_t ABIImportedHookCount(const ABIImportedHook *hook);
-uintptr_t ABIImportedHookSlot(const ABIImportedHook *hook, size_t index);
-int32_t ABIImportedHookStatus(const ABIImportedHook *hook, size_t index);
+const ABIResolutionFailure *ABIImportedHookGetFailure(const ABIImportedHook *hook);
+size_t ABIImportedHookGetFailedIndex(const ABIImportedHook *hook);
+size_t ABIImportedHookGetSlotCount(const ABIImportedHook *hook);
+uintptr_t ABIImportedHookGetSlot(const ABIImportedHook *hook, size_t index);
+ABIImportedHookSlotState ABIImportedHookGetSlotStatus(const ABIImportedHook *hook, size_t index);
 /// Immutable installation and rollback outcomes, including incomplete cleanup.
-ABIPointerSlotResult ABIImportedHookMutation(const ABIImportedHook *hook, size_t index);
-ABIPointerSlotResult ABIImportedHookRollback(const ABIImportedHook *hook, size_t index);
+ABIPointerSlotResult ABIImportedHookGetMutation(const ABIImportedHook *hook, size_t index);
+ABIPointerSlotResult ABIImportedHookGetRollback(const ABIImportedHook *hook, size_t index);
 
 /// Invocation pointers are borrowed on the callback's thread only. C callers must not access an expired pointer. Failed callbacks pass through with the original arguments, or preserve the latest completed proceed result.
-bool ABIImportedReadArgument(ABIImportedInvocation *, size_t index, void *bytes, size_t size, ABIResolutionFailure **);
-bool ABIImportedProceed(ABIImportedInvocation *, void *const *arguments, size_t count, ABIResolutionFailure **);
-bool ABIImportedCopyResult(ABIImportedInvocation *, void *bytes, size_t size, ABIResolutionFailure **);
-bool ABIImportedSetResult(ABIImportedInvocation *, const void *bytes, size_t size, ABIResolutionFailure **);
+bool ABIImportedInvocationReadArgument(ABIImportedInvocation *, size_t index, void *bytes, size_t size, ABIResolutionFailure **);
+/// Calls the next implementation with every explicit argument. NULL/zero is valid only for a zero-argument signature.
+bool ABIImportedInvocationProceed(ABIImportedInvocation *, const void *const *arguments, size_t count, ABIResolutionFailure **);
+/// Calls the next implementation with the unchanged incoming arguments.
+bool ABIImportedInvocationProceedWithOriginalArguments(ABIImportedInvocation *, ABIResolutionFailure **);
+/// Reads the most recent downstream result. Pointer values remain borrowed for the callback.
+bool ABIImportedInvocationReadResult(ABIImportedInvocation *, void *bytes, size_t size, ABIResolutionFailure **);
+bool ABIImportedInvocationSetResult(ABIImportedInvocation *, const void *bytes, size_t size, ABIResolutionFailure **);
 
 // Internal lookup/installation bridge shared by all caller frontends.
 typedef struct ABIImportSelection ABIImportSelection;

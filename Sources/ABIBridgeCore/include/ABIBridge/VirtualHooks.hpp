@@ -21,8 +21,8 @@ public:
     void invalidate() const { ABIInvalidateVirtualHook(value_.get()); }
     std::optional<virtual_hook_slot> slot() const {
         if (!ABIVirtualHookHasEntry(value_.get())) return std::nullopt;
-        return virtual_hook_slot{ABIVirtualHookSlot(value_.get()), ABIVirtualHookStatus(value_.get()),
-            ABIVirtualHookMutation(value_.get()), ABIVirtualHookRollback(value_.get())};
+        return virtual_hook_slot{ABIVirtualHookGetSlot(value_.get()), ABIVirtualHookGetStatus(value_.get()),
+            ABIVirtualHookGetMutation(value_.get()), ABIVirtualHookGetRollback(value_.get())};
     }
 private:
     explicit virtual_hook_handle(ABIVirtualHook *value): value_(value,ABIReleaseVirtualHook) {}
@@ -33,8 +33,8 @@ private:
 class virtual_hook_installation_error : public std::runtime_error {
 public:
     explicit virtual_hook_installation_error(virtual_hook_handle handle):std::runtime_error(
-        ABIResolutionFailureGetMessage(ABIVirtualHookFailure(handle.native_handle()))), handle_(std::move(handle)) {}
-    int32_t code() const { return ABIResolutionFailureGetCode(ABIVirtualHookFailure(handle_.native_handle())); }
+        ABIResolutionFailureGetMessage(ABIVirtualHookGetFailure(handle.native_handle()))), handle_(std::move(handle)) {}
+    int32_t code() const { return ABIResolutionFailureGetCode(ABIVirtualHookGetFailure(handle_.native_handle())); }
     const virtual_hook_handle& registration() const noexcept { return handle_; }
 private:
     virtual_hook_handle handle_;
@@ -49,18 +49,18 @@ public:
     virtual_hook_invocation& operator=(const virtual_hook_invocation&)=delete;
     void *receiver() const {
         ABIResolutionFailure *error=nullptr;
-        auto *pointer=ABIVirtualInvocationReceiver(call_,&error);
+        auto *pointer=ABIVirtualInvocationGetReceiver(call_,&error);
         detail::callback_require(error==nullptr,error);
         return pointer;
     }
     R proceed(A... values) {
-        std::array<void*,sizeof...(A)> pointers{static_cast<void*>(&values)...};
+        std::array<const void*,sizeof...(A)> pointers{static_cast<const void*>(&values)...};
         ABIResolutionFailure *error=nullptr;
-        const bool ok=ABIVirtualProceed(call_,pointers.data(),pointers.size(),&error);
+        const bool ok=ABIVirtualInvocationProceed(call_,pointers.data(),pointers.size(),&error);
         detail::callback_require(ok,error);
         if constexpr(!std::is_void_v<R>) {
             R result{}; error=nullptr;
-            const bool copied=ABIVirtualCopyResult(call_,&result,sizeof(R),&error);
+            const bool copied=ABIVirtualInvocationReadResult(call_,&result,sizeof(R),&error);
             detail::callback_require(copied,error);
             return result;
         }
@@ -72,7 +72,7 @@ private:
 namespace detail {
 template<class T> T virtual_read(ABIVirtualInvocation *call,size_t index) {
     T value{}; ABIResolutionFailure *error=nullptr;
-    const bool ok=ABIVirtualReadArgument(call,index,&value,sizeof(T),&error);
+    const bool ok=ABIVirtualInvocationReadArgument(call,index,&value,sizeof(T),&error);
     callback_require(ok,error); return value;
 }
 template<class Signature> struct virtual_installer;
@@ -94,10 +94,10 @@ template<class R,class... A> struct virtual_installer<R(A...)> {
                     auto values=[&]<size_t... I>(std::index_sequence<I...>) { return std::tuple<A...>{virtual_read<A>(call,I)...}; }(std::index_sequence_for<A...>{});
                     if constexpr(std::is_void_v<R>) {
                         std::apply([&](auto... args){ self.body(invocation,args...); },values);
-                        return ABIVirtualSetResult(call,nullptr,0,error);
+                        return ABIVirtualInvocationSetResult(call,nullptr,0,error);
                     } else {
                         R output=std::apply([&](auto... args){ return self.body(invocation,args...); },values);
-                        return ABIVirtualSetResult(call,&output,sizeof(output),error);
+                        return ABIVirtualInvocationSetResult(call,&output,sizeof(output),error);
                     }
                 } catch(const resolution_error& e) { *error=ABICreateResolutionFailure(e.code(),e.what()); }
                 catch(const std::exception& e) { *error=ABICreateResolutionFailure(ABIFailureOther,e.what()); }
@@ -114,7 +114,7 @@ template<class R,class... A> struct virtual_installer<R(A...)> {
                 static_cast<State*>(context)->failure(resolution_error(ABIResolutionFailureGetCode(error),ABIResolutionFailureGetMessage(error)));
             },[](void *context) { delete static_cast<State*>(context); });
         auto owned=virtual_hook_handle::adopt(handle);
-        if(ABIVirtualHookFailure(handle)) throw virtual_hook_installation_error(owned);
+        if(ABIVirtualHookGetFailure(handle)) throw virtual_hook_installation_error(owned);
         return owned;
     }
 };

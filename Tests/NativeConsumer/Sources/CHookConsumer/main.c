@@ -9,36 +9,39 @@ static void dispose(void *context) { ++disposed; free(context); }
 static void failure(void *context, const ABIResolutionFailure *error) { (void)context; assert(error); ++failures; }
 static bool add(void *context, ABIObjCHookInvocation *call, ABIResolutionFailure **error) {
     int32_t a = 0, b = 0, result = 0;
-    if (!ABIObjCHookReadArgument(call, 0, &a, sizeof(a), error) || !ABIObjCHookReadArgument(call, 1, &b, sizeof(b), error)) return false;
+    if (!ABIObjCHookInvocationReadArgument(call, 0, &a, sizeof(a), error) || !ABIObjCHookInvocationReadArgument(call, 1, &b, sizeof(b), error)) return false;
     if (*(int *)context == 1) {
         result = 99;
-        assert(ABIObjCHookSetResult(call, &result, sizeof(result), error));
+        assert(ABIObjCHookInvocationSetResult(call, &result, sizeof(result), error));
         *error = ABICreateResolutionFailure(ABIFailureOther, "Before downstream");
         return false;
     }
-    const void *arguments[] = {&a, &b};
-    if (!ABIObjCHookProceed(call, arguments, 2, error) || !ABIObjCHookReadResult(call, &result, sizeof(result), error)) return false;
+    ABIResolutionFailure *missing = NULL;
+    assert(!ABIObjCHookInvocationProceed(call, NULL, 0, &missing));
+    assert(missing && ABIResolutionFailureGetCode(missing) == ABIFailureInvalidRequest);
+    ABIReleaseResolutionFailure(missing);
+    if (!ABIObjCHookInvocationProceedWithOriginalArguments(call, error) || !ABIObjCHookInvocationReadResult(call, &result, sizeof(result), error)) return false;
     if (*(int *)context == 2) { *error = ABICreateResolutionFailure(ABIFailureOther, "After downstream"); return false; }
     result += 1;
-    return ABIObjCHookSetResult(call, &result, sizeof(result), error);
+    return ABIObjCHookInvocationSetResult(call, &result, sizeof(result), error);
 }
 static bool consumed(void *context, ABIObjCHookInvocation *call, ABIResolutionFailure **error) {
     (void)context;
     void *value = NULL;
     int32_t first = 0, second = 0;
-    if (!ABIObjCHookReadArgument(call, 0, &value, sizeof(value), error)) return false;
+    if (!ABIObjCHookInvocationReadArgument(call, 0, &value, sizeof(value), error)) return false;
     const void *arguments[] = {&value};
-    if (!ABIObjCHookProceed(call, arguments, 1, error) || !ABIObjCHookReadResult(call, &first, sizeof(first), error)) return false;
-    if (!ABIObjCHookProceed(call, arguments, 1, error) || !ABIObjCHookReadResult(call, &second, sizeof(second), error)) return false;
+    if (!ABIObjCHookInvocationProceed(call, arguments, 1, error) || !ABIObjCHookInvocationReadResult(call, &first, sizeof(first), error)) return false;
+    if (!ABIObjCHookInvocationProceed(call, arguments, 1, error) || !ABIObjCHookInvocationReadResult(call, &second, sizeof(second), error)) return false;
     int32_t result = first + second;
-    return ABIObjCHookSetResult(call, &result, sizeof(result), error);
+    return ABIObjCHookInvocationSetResult(call, &result, sizeof(result), error);
 }
 static bool before(void *context, ABIObjCInitializerArguments *arguments, ABIResolutionFailure **error) {
     (void)context;
     int32_t seed = 0;
-    if (!ABIObjCInitializerReadArgument(arguments, 0, &seed, sizeof(seed), error)) return false;
+    if (!ABIObjCInitializerArgumentsReadArgument(arguments, 0, &seed, sizeof(seed), error)) return false;
     if (seed >= 0) ++seed;
-    return ABIObjCInitializerSetArgument(arguments, 0, &seed, sizeof(seed), error);
+    return ABIObjCInitializerArgumentsSetArgument(arguments, 0, &seed, sizeof(seed), error);
 }
 static bool after(void *context, void *initialized, ABIResolutionFailure **error) {
     (void)context; (void)error;
@@ -56,15 +59,15 @@ int main(void) {
         int *context = malloc(sizeof(int)); *context = mode;
         ABIObjCMethodHook *hook = ABIInstallObjCMethodHook(ABIHookFixtureClass(), "add:to:", &signature,
             options, context, add, failure, dispose, &error);
-        assert(hook && !error && ABIObjCMethodHookStatus(hook) == ABIObjCHookActive);
+        assert(hook && !error && ABIObjCMethodHookGetStatus(hook) == ABIObjCHookActive);
         int32_t calls = ABIHookFixtureCalls(object);
         assert(ABIHookFixtureAdd(object, 20, 21) == (mode ? 41 : 42));
         assert(ABIHookFixtureCalls(object) == calls + 1);
         ABIObjCMethodHook *copy = ABIRetainObjCMethodHook(hook);
         ABIReleaseObjCMethodHook(hook);
-        assert(ABIObjCMethodHookStatus(copy) == ABIObjCHookActive);
+        assert(ABIObjCMethodHookGetStatus(copy) == ABIObjCHookActive);
         ABIInvalidateObjCMethodHook(copy); ABIInvalidateObjCMethodHook(copy);
-        assert(ABIObjCMethodHookStatus(copy) == ABIObjCHookInvalidated);
+        assert(ABIObjCMethodHookGetStatus(copy) == ABIObjCHookInvalidated);
         ABIReleaseObjCMethodHook(copy);
     }
     assert(disposed == 3 && failures == 2);

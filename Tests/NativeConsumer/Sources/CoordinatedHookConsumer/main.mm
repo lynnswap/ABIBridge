@@ -14,7 +14,7 @@ static std::atomic<int> released{0};
 static void releaseContext(void *) { ++released; }
 static void noFailure(void *, const ABIResolutionFailure *) { assert(false); }
 static bool pass(void *, ABIObjCHookInvocation *call, ABIResolutionFailure **error) {
-    return ABIObjCHookProceed(call, nullptr, 0, error);
+    return ABIObjCHookInvocationProceedWithOriginalArguments(call, error);
 }
 int main() {
     auto failed = [](const abi_bridge::resolution_error&) noexcept { assert(false); };
@@ -85,20 +85,20 @@ int main() {
         }
         native[1].selector = "absentSelector";
         auto result = ABIInstallObjCHooks(native,3);
-        assert(ABIObjCHookInstallationFailure(result) && ABIObjCHookInstallationFailedIndex(result) == 1);
-        assert(ABIObjCHookInstallationCount(result) == 0 && released == 3);
+        assert(ABIObjCHookInstallationGetFailure(result) && ABIObjCHookInstallationGetFailedIndex(result) == 1);
+        assert(ABIObjCHookInstallationGetCount(result) == 0 && released == 3);
         ABIReleaseObjCHookInstallation(result);
         native[1].selector = "add:to:";
         result = ABIInstallObjCHooks(native,3);
-        assert(!ABIObjCHookInstallationFailure(result) && ABIObjCHookInstallationFailedIndex(result) == SIZE_MAX);
-        assert(ABIObjCHookInstallationCount(result) == 3);
-        auto alias = ABIRetainObjCMethodHook(ABIObjCHookInstallationGet(result,0));
+        assert(!ABIObjCHookInstallationGetFailure(result) && ABIObjCHookInstallationGetFailedIndex(result) == SIZE_MAX);
+        assert(ABIObjCHookInstallationGetCount(result) == 3);
+        auto alias = ABIRetainObjCMethodHook(ABIObjCHookInstallationGetHook(result,0));
         ABIInvalidateObjCHookInstallation(result); ABIInvalidateObjCHookInstallation(result);
-        assert(released == 6 && ABIObjCMethodHookStatus(alias) == ABIObjCHookInvalidated);
+        assert(released == 6 && ABIObjCMethodHookGetStatus(alias) == ABIObjCHookInvalidated);
         ABIReleaseObjCHookInstallation(result); ABIReleaseObjCMethodHook(alias);
         native[1].releaseContext = nullptr;
         result = ABIInstallObjCHooks(native,3);
-        assert(ABIObjCHookInstallationFailure(result) && released == 6);
+        assert(ABIObjCHookInstallationGetFailure(result) && released == 6);
         ABIReleaseObjCHookInstallation(result);
     }
     std::puts("Coordinated C/C++ hook consumer passed");

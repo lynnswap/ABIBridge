@@ -75,7 +75,7 @@ for (auto& hook : hooks) hook.invalidate();
 
 `onFailure` must be `noexcept`; scope, weak filtering, and main-thread options follow <doc:NativeObjectiveCHooks>. Retained requests keep their captures even after installed handles release them. Inspect `objc_hook_installation_error` through `failed_index()`, `phase()`, `cause()`, and `invalidated_hooks()`. Container allocation errors remain C++ exceptions; failure to construct the result vector invalidates activated handles before throwing.
 
-C callers pass an `ABIObjCHookRequest` array to `ABIInstallObjCHooks`. Keep the array, signature storage, strings, classes, and supplied objects valid throughout the call. The returned `ABIObjCHookInstallation` owns successful or invalidated partial handles and any failure. Inspect it with `ABIObjCHookInstallationFailure`, `FailedIndex`, `Phase`, `Count`, and `Get`; retain a borrowed handle with `ABIRetainObjCMethodHook` to own it independently.
+C callers pass an `ABIObjCHookRequest` array to `ABIInstallObjCHooks`. Keep the array, signature storage, strings, classes, and supplied objects valid throughout the call. The returned `ABIObjCHookInstallation` owns successful or invalidated partial handles and any failure. Inspect it with `ABIObjCHookInstallationGetFailure`, `GetFailedIndex`, `GetPhase`, `GetCount`, and `GetHook`; retain a borrowed handle with `ABIRetainObjCMethodHook` to own it independently.
 
 A null array with nonzero count or a missing context-release callback is rejected without taking contexts. Otherwise all context references transfer on entry, even for requests after a declaration failure. Supply an independent owned reference per request when reusing a context pointer. Release callbacks run outside registry locks and may reenter the API.
 

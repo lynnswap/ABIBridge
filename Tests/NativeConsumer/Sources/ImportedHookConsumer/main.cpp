@@ -7,11 +7,15 @@ static int released=0;
 static void release(void *) { ++released; }
 static void failed(void *,const ABIResolutionFailure *) { assert(false); }
 static bool callback(void *,ABIImportedInvocation *call,ABIResolutionFailure **error) {
-    if(!ABIImportedProceed(call,nullptr,0,error)) return false;
+    ABIResolutionFailure *missing=nullptr;
+    assert(!ABIImportedInvocationProceed(call,nullptr,0,&missing));
+    assert(missing && ABIResolutionFailureGetCode(missing)==ABIFailureInvalidRequest);
+    ABIReleaseResolutionFailure(missing);
+    if(!ABIImportedInvocationProceedWithOriginalArguments(call, error)) return false;
     int32_t result=0;
-    if(!ABIImportedCopyResult(call,&result,sizeof(result),error)) return false;
+    if(!ABIImportedInvocationReadResult(call,&result,sizeof(result),error)) return false;
     ++result;
-    return ABIImportedSetResult(call,&result,sizeof(result),error);
+    return ABIImportedInvocationSetResult(call,&result,sizeof(result),error);
 }
 // No other automatic resolver runs in this process, so final-release checks
 // establish ownership instead of racing another suite's valid image leases.
@@ -51,7 +55,7 @@ int main(int argc,char **argv) {
     const ABIDeclaration cquery{"ABIImportedAdd",ABILanguageC,ABISymbolFunction,ABINameSource};
     auto *c=ABIInstallImportedFunctionHook(runtime.native_handle(),&cquery,scope.native_selector(),nullptr,
         integer,parameters,2,nullptr,callback,failed,release);
-    assert(c && !ABIImportedHookFailure(c)); ABIReleaseValueType(integer);
+    assert(c && !ABIImportedHookGetFailure(c)); ABIReleaseValueType(integer);
     auto report=[](const abi_bridge::resolution_error&) noexcept { assert(false); };
     auto cpp=abi_bridge::hook_imported_function<int32_t(int32_t,int32_t)>(runtime,query,scope,
         [](auto& next,int32_t a,int32_t b) { return next.proceed(a*2,b); },report);

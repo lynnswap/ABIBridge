@@ -34,7 +34,7 @@ public struct NativeImportedImageUpdate: Sendable {
             let error = importedHookFailure(value.failure!)
             if let handle = value.hook {
                 let hook = NativeImportedFunctionHook(ABIRetainImportedHook(handle)!)
-                let index = ABIImportedHookFailedIndex(handle)
+                let index = ABIImportedHookGetFailedIndex(handle)
                 state = .failed(
                     NativeImportedHookInstallationError(
                         underlyingError: error,

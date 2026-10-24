@@ -41,17 +41,18 @@ struct Storage {
 };
 template<class T> T read(ABIImportedInvocation *call, size_t index) {
     T value{}; ABIResolutionFailure *error=nullptr;
-    const bool ok=ABIImportedReadArgument(call,index,&value,sizeof(value),&error); checked(ok,error); return value;
+    const bool ok=ABIImportedInvocationReadArgument(call,index,&value,sizeof(value),&error); checked(ok,error); return value;
 }
 template<class T> T proceed(ABIImportedInvocation *call, void *const *arguments=nullptr, size_t count=0) {
     ABIResolutionFailure *error=nullptr;
-    const bool ok=ABIImportedProceed(call,arguments,count,&error); checked(ok,error);
+    const bool ok=arguments ? ABIImportedInvocationProceed(call,arguments,count,&error)
+        : ABIImportedInvocationProceedWithOriginalArguments(call,&error); checked(ok,error);
     T value{}; error=nullptr;
-    const bool copied=ABIImportedCopyResult(call,&value,sizeof(value),&error); checked(copied,error); return value;
+    const bool copied=ABIImportedInvocationReadResult(call,&value,sizeof(value),&error); checked(copied,error); return value;
 }
 template<class T> void result(ABIImportedInvocation *call, T value) {
     ABIResolutionFailure *error=nullptr;
-    const bool ok=ABIImportedSetResult(call,&value,sizeof(value),&error); checked(ok,error);
+    const bool ok=ABIImportedInvocationSetResult(call,&value,sizeof(value),&error); checked(ok,error);
 }
 Type scalar(int32_t kind) {
     ABIResolutionFailure *error=nullptr;
@@ -80,10 +81,10 @@ ABIManagedVirtualEntry entry(void *receiver, bool secondary, bool covariant=fals
         discriminator,ABIUsesPointerAuthentication()};
 }
 void successful(const Hook& hook, const char *stage) {
-    if (auto *error=ABIImportedHookFailure(hook.get())) {
+    if (auto *error=ABIImportedHookGetFailure(hook.get())) {
         std::string detail=std::string(stage)+": "+ABIResolutionFailureGetMessage(error);
-        if (ABIImportedHookCount(hook.get())) {
-            const auto mutation=ABIImportedHookMutation(hook.get(),0);
+        if (ABIImportedHookGetSlotCount(hook.get())) {
+            const auto mutation=ABIImportedHookGetMutation(hook.get(),0);
             detail+=" status="+std::to_string(mutation.status)+" kernel="+std::to_string(mutation.systemErrorCode)
                 +" flags="+std::to_string(mutation.regionFlags);
         }
@@ -109,9 +110,9 @@ const char *ABIValidateManagedVirtualHooks(bool requireWritable, bool *published
             auto *receiver=read<void*>(call,0); auto input=read<int>(call,1)+1;
             void *arguments[]={&receiver,&input}; result(call,proceed<int>(call,arguments,2)+10);
         });
-        if (ABIImportedHookFailure(firstHook.get())) {
-            require(ABIImportedHookCount(firstHook.get())==1,"Virtual installation failed before slot selection");
-            const auto write=ABIImportedHookMutation(firstHook.get(),0);
+        if (ABIImportedHookGetFailure(firstHook.get())) {
+            require(ABIImportedHookGetSlotCount(firstHook.get())==1,"Virtual installation failed before slot selection");
+            const auto write=ABIImportedHookGetMutation(firstHook.get(),0);
             require(!requireWritable && !write.didWrite && write.status==ABIPointerSlotProtectFailed
                 && write.systemErrorCode==KERN_PROTECTION_FAILURE && (write.regionFlags & VM_REGION_FLAG_TPRO_ENABLED),"Unexpected managed virtual publication failure");
             require(primaryOracle(primary,2)==42 && stats->released==1,"Failed virtual install changed dispatch or retained callback");
@@ -178,14 +179,14 @@ const char *ABIValidateManagedVirtualHooks(bool requireWritable, bool *published
         auto displaced=install(owned,integer.get(),arguments,2,displacementStats,[](auto *call){result(call,proceed<int>(call)+1);}); successful(displaced,"displacement");
         const auto installed=*storage;
         const auto external=ABICompareExchangePointerSlot(storage.get(),installed,raw);
-        require(external.didWrite && ABIImportedHookStatus(displaced.get(),0)==ABIImportedDisplaced,"Virtual displacement was not reported");
+        require(external.didWrite && ABIImportedHookGetSlotStatus(displaced.get(),0)==ABIImportedDisplaced,"Virtual displacement was not reported");
         ABIInvalidateImportedHook(displaced.get());
         require(*storage==raw && displacementStats->released==1,"Virtual invalidation overwrote an external value");
 
         for (bool badBounds : {true,false}) {
             auto cleanup=std::make_shared<Statistics>(); auto request=primaryEntry; if (badBounds) request.index=999;
             auto rejected=install(request,badBounds ? integer.get() : nullptr,arguments,2,cleanup,[](auto*){},new Storage{cleanup,{}});
-            require(ABIImportedHookFailure(rejected.get()) && cleanup->released==1 && cleanup->storageReleased==1 && cleanup->cleanupOrder,
+            require(ABIImportedHookGetFailure(rejected.get()) && cleanup->released==1 && cleanup->storageReleased==1 && cleanup->cleanupOrder,
                 "Failed virtual preparation released storage before callback cleanup");
         }
         return nullptr;

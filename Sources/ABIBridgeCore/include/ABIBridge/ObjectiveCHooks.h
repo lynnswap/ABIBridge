@@ -41,6 +41,7 @@ typedef struct {
     size_t consumedParameterCount;
 } ABIObjCHookOptions;
 
+typedef int32_t ABIObjCMethodHookState;
 enum { ABIObjCHookInvalidated = 0, ABIObjCHookActive = 1, ABIObjCHookDisplaced = 2 };
 /// Must not unwind foreign exceptions. False transfers *error (if supplied) to the bridge. Construct callback errors with ABICreateResolutionFailure.
 typedef bool (*ABIObjCHookCallback)(void *context, ABIObjCHookInvocation *invocation, ABIResolutionFailure **error);
@@ -73,27 +74,30 @@ void ABIInvalidateObjCMethodHook(ABIObjCMethodHook *hook);
 /// The last reference invalidates the registration. Null is accepted.
 void ABIReleaseObjCMethodHook(ABIObjCMethodHook *hook);
 /// Readable after displacement/invalidation. Null has no active registration.
-int32_t ABIObjCMethodHookStatus(const ABIObjCMethodHook *hook);
+ABIObjCMethodHookState ABIObjCMethodHookGetStatus(const ABIObjCMethodHook *hook);
 
 /// Receiver is borrowed. This operation exists only for ordinary callbacks.
-void *ABIObjCHookReceiver(ABIObjCHookInvocation *invocation, ABIResolutionFailure **error);
+void *ABIObjCHookInvocationGetReceiver(ABIObjCHookInvocation *invocation, ABIResolutionFailure **error);
 /// Copies one value into caller storage of exactly the declared size. Object pointers remain borrowed for the callback; blocks require copy if escaping.
-bool ABIObjCHookReadArgument(ABIObjCHookInvocation *invocation, size_t index,
+bool ABIObjCHookInvocationReadArgument(ABIObjCHookInvocation *invocation, size_t index,
     void *value, size_t size, ABIResolutionFailure **error);
-/// Calls the next member of this snapshot, not selector dispatch. Null arguments and count zero reuse incoming arguments. Otherwise supply the full explicit argument list with aligned storage of each declared type.
-bool ABIObjCHookProceed(ABIObjCHookInvocation *invocation,
+/// Calls the next member of this snapshot, not selector dispatch, with the full explicit argument list in aligned storage. Null/zero is valid only for a zero-argument signature.
+bool ABIObjCHookInvocationProceed(ABIObjCHookInvocation *invocation,
     const void *const *arguments, size_t count, ABIResolutionFailure **error);
+/// Calls the next member of this snapshot with unchanged incoming arguments.
+bool ABIObjCHookInvocationProceedWithOriginalArguments(ABIObjCHookInvocation *invocation,
+    ABIResolutionFailure **error);
 /// Copies the most recent downstream result. Object/block references remain valid until this callback ends, including across further proceed calls.
-bool ABIObjCHookReadResult(ABIObjCHookInvocation *invocation,
+bool ABIObjCHookInvocationReadResult(ABIObjCHookInvocation *invocation,
     void *value, size_t size, ABIResolutionFailure **error);
 /// Sets a candidate result, retained/copied until callback completion. Committed only if the callback succeeds. Void accepts null/zero. Failure discards it, preserving a completed downstream result or continuing original arguments.
-bool ABIObjCHookSetResult(ABIObjCHookInvocation *invocation,
+bool ABIObjCHookInvocationSetResult(ABIObjCHookInvocation *invocation,
     const void *value, size_t size, ABIResolutionFailure **error);
 
-bool ABIObjCInitializerReadArgument(ABIObjCInitializerArguments *arguments, size_t index,
+bool ABIObjCInitializerArgumentsReadArgument(ABIObjCInitializerArguments *arguments, size_t index,
     void *value, size_t size, ABIResolutionFailure **error);
 /// Replaces one explicit argument; object/block values are retained/copied for continuation. A failing before callback discards all replacements.
-bool ABIObjCInitializerSetArgument(ABIObjCInitializerArguments *arguments, size_t index,
+bool ABIObjCInitializerArgumentsSetArgument(ABIObjCInitializerArguments *arguments, size_t index,
     const void *value, size_t size, ABIResolutionFailure **error);
 
 /// One declaration in a coordinated installation. Each request owns one context reference; callbacks and signatures have the single-installation contracts.
@@ -111,6 +115,7 @@ typedef struct {
     ABIObjCHookContextRelease releaseContext;
 } ABIObjCHookRequest;
 typedef struct ABIObjCHookInstallation ABIObjCHookInstallation;
+typedef int32_t ABIObjCHookInstallationPhase;
 enum { ABIObjCHookPreparation = 1, ABIObjCHookActivation = 2 };
 /// Validates every request before publishing, then revalidates/installs in order. On activation failure, invalidates only this operation's earlier registrations. Visibility is not atomic across methods. Published entries can remain.
 ///
@@ -120,15 +125,15 @@ ABIObjCHookInstallation *ABIInstallObjCHooks(const ABIObjCHookRequest *requests,
 void ABIInvalidateObjCHookInstallation(ABIObjCHookInstallation *installation);
 /// Releases the result's references. Independently retained handles remain owned.
 void ABIReleaseObjCHookInstallation(ABIObjCHookInstallation *installation);
-size_t ABIObjCHookInstallationCount(const ABIObjCHookInstallation *installation);
+size_t ABIObjCHookInstallationGetCount(const ABIObjCHookInstallation *installation);
 /// Borrows a handle; index must be less than Count, including on partial failure.
-ABIObjCMethodHook *ABIObjCHookInstallationGet(const ABIObjCHookInstallation *installation, size_t index);
+ABIObjCMethodHook *ABIObjCHookInstallationGetHook(const ABIObjCHookInstallation *installation, size_t index);
 /// Borrowed failure, or null on success. Readable regardless of method ownership.
-const ABIResolutionFailure *ABIObjCHookInstallationFailure(const ABIObjCHookInstallation *installation);
+const ABIResolutionFailure *ABIObjCHookInstallationGetFailure(const ABIObjCHookInstallation *installation);
 /// SIZE_MAX on success; otherwise the zero-based failing request index.
-size_t ABIObjCHookInstallationFailedIndex(const ABIObjCHookInstallation *installation);
+size_t ABIObjCHookInstallationGetFailedIndex(const ABIObjCHookInstallation *installation);
 /// Zero on success; otherwise preparation or activation.
-int32_t ABIObjCHookInstallationPhase(const ABIObjCHookInstallation *installation);
+ABIObjCHookInstallationPhase ABIObjCHookInstallationGetPhase(const ABIObjCHookInstallation *installation);
 
 #ifdef __cplusplus
 }

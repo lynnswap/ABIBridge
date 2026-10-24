@@ -10,20 +10,28 @@ static int released, storage_released, expected_released;
 static void release_storage(void *context) { assert(released==expected_released); ++storage_released; free(context); }
 static bool callback(void *context,ABIVirtualInvocation *call,ABIResolutionFailure **error) {
     Context *state=context;
-    void *receiver=ABIVirtualInvocationReceiver(call,error);
+    void *receiver=ABIVirtualInvocationGetReceiver(call,error);
     assert(receiver==state->first || receiver==state->second);
     int value=0;
-    if(!ABIVirtualReadArgument(call,0,&value,sizeof(value),error)) return false;
-    ++value; void *arguments[]={&value};
+    if(!ABIVirtualInvocationReadArgument(call,0,&value,sizeof(value),error)) return false;
+    ABIResolutionFailure *missing=NULL;
+    assert(!ABIVirtualInvocationProceed(call,NULL,0,&missing));
+    assert(missing && ABIResolutionFailureGetCode(missing)==ABIFailureInvalidRequest);
+    ABIReleaseResolutionFailure(missing);
+    if(!ABIVirtualInvocationProceedWithOriginalArguments(call,error)) return false;
+    int original=0;
+    if(!ABIVirtualInvocationReadResult(call,&original,sizeof(original),error)) return false;
+    ++value; const void *arguments[]={&value};
     ABIResolutionFailure *oversized=NULL;
-    assert(!ABIVirtualProceed(call,arguments,UINT_MAX,&oversized));
+    assert(!ABIVirtualInvocationProceed(call,arguments,UINT_MAX,&oversized));
     assert(oversized && ABIResolutionFailureGetCode(oversized)==ABIFailureInvalidRequest);
     ABIReleaseResolutionFailure(oversized);
-    if(!ABIVirtualProceed(call,arguments,1,error)) return false;
+    if(!ABIVirtualInvocationProceed(call,arguments,1,error)) return false;
     int result=0;
-    if(!ABIVirtualCopyResult(call,&result,sizeof(result),error)) return false;
+    if(!ABIVirtualInvocationReadResult(call,&result,sizeof(result),error)) return false;
+    assert(result==original+1);
     result+=10;
-    return ABIVirtualSetResult(call,&result,sizeof(result),error);
+    return ABIVirtualInvocationSetResult(call,&result,sizeof(result),error);
 }
 static void failure(void *context,const ABIResolutionFailure *error) { (void)context; (void)error; assert(false); }
 static void release(void *context) { ++released; free(context); }
@@ -44,10 +52,10 @@ int main(int argc,char **argv) {
     ABIVirtualEntryInfo info=ABIVirtualEntryGetInfo(selected);
     ABIVirtualHook *hook=ABIInstallSharedVirtualHook(info,NULL,NULL,
         integer,parameters,1,context,callback,failure,release);
-    assert(hook && !ABIVirtualHookFailure(hook));
+    assert(hook && !ABIVirtualHookGetFailure(hook));
     ABIReleaseVirtualEntry(selected); ABIReleaseSymbolRuntime(runtime); ABIReleaseValueType(integer);
     assert(invoke(0,2)==53 && invoke(1,2)==103);
-    assert(ABIVirtualHookStatus(hook)==ABIVirtualActive && ABIVirtualHookMutation(hook).didWrite);
+    assert(ABIVirtualHookGetStatus(hook)==ABIVirtualActive && ABIVirtualHookGetMutation(hook).didWrite);
     ABIInvalidateVirtualHook(hook);
     assert(released==1 && invoke(0,2)==42);
     ABIReleaseVirtualHook(hook); assert(released==1);
@@ -59,7 +67,7 @@ int main(int argc,char **argv) {
         ABIVirtualHook *bad=ABIInstallSharedVirtualHook(info,malloc(1),release_storage,
             integer,inner ? invalid : NULL,inner==2 ? UINT_MAX : inner==3 ? SIZE_MAX : 1,
             malloc(1),callback,failure,release);
-        assert(bad && ABIVirtualHookFailure(bad));
+        assert(bad && ABIVirtualHookGetFailure(bad));
         assert(released==expected_released && storage_released==inner+1);
         ABIReleaseVirtualHook(bad);
         assert(released==expected_released && invoke(0,2)==42);

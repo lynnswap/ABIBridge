@@ -58,7 +58,7 @@ BOOL ABIObjCMethodHookIsDisplaced(Class type, SEL selector, BOOL classMethod);
 void ABIInvalidateObjCMethodHook(ABIObjCMethodHook *hook);
 void ABIReleaseObjCMethodHook(ABIObjCMethodHook *hook);
 /// 0 = invalidated, 1 = active, 2 = displaced by another runtime writer.
-int32_t ABIObjCMethodHookStatus(const ABIObjCMethodHook *hook);
+int32_t ABIObjCMethodHookGetStatus(const ABIObjCMethodHook *hook);
 
 #ifdef __cplusplus
 }
