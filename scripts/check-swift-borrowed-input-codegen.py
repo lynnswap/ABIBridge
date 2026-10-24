@@ -4,10 +4,10 @@ can borrow from (#462).
 
 Swift passes an input that a result has a scoped (`borrow`) dependency on by
 address when its type sets the addressable-for-dependencies bit (AFD), even a
-tuple, whose elements it otherwise passes separately. ABIBridge cannot tell
-which inputs a result borrows from, so in a call with a scoped result it
-passes a borrowed input only where Swift passes it alike with or without the
-dependency, and leaves every other input undecided.
+tuple, whose elements it otherwise passes separately. declaredAs: can state
+these dependencies. Without that information ABIBridge passes a borrowed
+input only where Swift passes it alike with or without the dependency,
+and leaves every other input undecided.
 
 This check compiles Tests/ArchitectureValidation/CompilerProbes/BorrowedInputs
 for arm64, arm64e, and arm64_32 at -Onone and -O, and fails when one of these
@@ -407,6 +407,37 @@ def check_facts(compiled, label, require):
                 f"{label}: borrow{name} must keep the convention of its input")
 
 
+def check_declared_inputs(compiled, label, require):
+    """The same stated input positions used by the public runtime tests,
+    including a self address after polymorphic arguments."""
+    for name, expected in {"borrowFirst": [0], "borrowSecond": [1], "borrowBoth": [0, 1]}.items():
+        parameters = sil_parameters(compiled.sil[compiled.symbol(f"{MODULE}.{name}")])
+        indirect = [index for index, (convention, _) in enumerate(parameters)
+                    if "@in_guaranteed" in convention.split()]
+        require(len(parameters) == 2 and indirect == expected,
+                f"{label}: {name} must pass exactly the stated inputs by address: {parameters}")
+    symbol = compiled.symbol(f"{MODULE}.Label.scopedGeneric")
+    require(len(compiled.ir[symbol]) == 3 and compiled.ir[symbol][-1] == "ptr noalias swiftself"
+            and compiled.ir[symbol][-2] == "ptr",
+            f"{label}: addressable self must follow the generic metadata: {compiled.ir[symbol]}")
+    symbol = compiled.symbol(f"{MODULE}.borrowClassBoundTuple")
+    parameters = sil_parameters(compiled.sil[symbol])
+    require(len(parameters) == 2 and all(not is_address(convention) for convention, _ in parameters),
+            f"{label}: a tuple of a class-bound parameter and Int64 must keep its expanded convention")
+    for name in ["projected", "projectedOptional", "opaqueProjected"]:
+        symbol = compiled.symbol(f"{MODULE}.{name}")
+        parameters = sil_parameters(compiled.sil[symbol])
+        require([convention for convention, _ in parameters] == ["@in_guaranteed", "@in"],
+                f"{label}: {name} must keep the declared input abstraction")
+    symbol = compiled.symbol(f"{MODULE}.projectedBox")
+    require(len(compiled.ir[symbol]) == 5 and compiled.ir[symbol][-2:] == ["ptr", "ptr"],
+            f"{label}: an indirect tuple cannot fulfill its class field's generic metadata: {compiled.ir[symbol]}")
+    symbol = compiled.symbol(f"{MODULE}.independentString")
+    plain = compiled.symbol(f"{MODULE}.takeString")
+    require(compiled.ir[symbol] == compiled.ir[plain],
+            f"{label}: explicit no-borrow information must preserve ordinary String passing")
+
+
 def main():
     root = Path(__file__).resolve().parent.parent
     output = root / ".build/swift-borrowed-input-codegen"
@@ -414,7 +445,7 @@ def main():
     # Swift 6.4 accepts lifetime dependencies in function types.
     closures = (int(version[1]), int(version[2])) >= (6, 4)
     configurations = [(target, sdk, optimization) for target, sdk in TARGETS for optimization in OPTIMIZATIONS]
-    with ThreadPoolExecutor(max_workers=len(configurations)) as pool:
+    with ThreadPoolExecutor(max_workers=2) as pool:
         directories = list(pool.map(lambda arguments: compile_configuration(root, output, *arguments),
                                     configurations))
     problems = []
@@ -430,6 +461,7 @@ def main():
         compiled = Compiled((directory / "provider.ll").read_text(), (directory / "provider.sil").read_text())
         check_records(compiled, closures, label, require)
         check_facts(compiled, label, require)
+        check_declared_inputs(compiled, label, require)
         rules = Rules(compiled)
         found = positions(compiled, closures)
         for kind, name, model, expected, position, alike in found:

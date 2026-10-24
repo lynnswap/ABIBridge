@@ -4,13 +4,16 @@ import ABIBridgeCore
 final class SwiftOpaqueResultPlan: Sendable {
     let type: CValueType
     let value: SwiftRuntimeValuePlan
+    let invertedProtocols: UInt16
 
     private init(
         metadata: Any.Type,
         classBound: Bool,
+        invertedProtocols: UInt16,
         owners: [NativeImage],
         resolver: SymbolResolver
     ) throws {
+        self.invertedProtocols = invertedProtocols
         let layout = ABISwiftGetValueLayout(unsafeBitCast(metadata, to: UnsafeRawPointer.self))
         type =
             try classBound
@@ -64,9 +67,8 @@ final class SwiftOpaqueResultPlan: Sendable {
         resolver: SymbolResolver,
         indices: Set<Int>,
         binding: SwiftGenericBinding
-    ) throws -> [Int: SwiftRuntimeValuePlan] {
+    ) throws -> [Int: SwiftOpaqueResultPlan] {
         try prepare(entry: entry, resolver: resolver, indices: indices, binding: binding)
-            .mapValues(\.value)
     }
 
     private static func prepare(
@@ -135,6 +137,7 @@ final class SwiftOpaqueResultPlan: Sendable {
             results[index] = try SwiftOpaqueResultPlan(
                 metadata: unsafeBitCast(response.address, to: Any.Type.self),
                 classBound: descriptor.isClassBound(index: index, binding: binding),
+                invertedProtocols: descriptor.invertedProtocols(index: index, binding: binding),
                 owners: [entry.provenance, symbolDescriptor.image, accessor.image],
                 resolver: resolver
             )
@@ -254,15 +257,27 @@ final class SwiftOpaqueResultPlan: Sendable {
             return Arguments(words: SwiftGenericArgumentBuffer(words), packs: packs)
         }
 
-        func isClassBound(index: Int, binding: SwiftGenericBinding?) -> Bool {
+        private func opaqueParameter(index: Int, binding: SwiftGenericBinding?) -> SwiftFormalType {
             let depth =
                 (binding?.declaration.parameters.map { parameter in
                     Int(parameter.name.drop(while: { $0.isLetter })) ?? 0
                 }.max() ?? -1) + 1
-            let subject = SwiftFormalType.named(
-                SwiftFormalType.parameterName(depth: depth, index: index),
-                []
-            )
+            return .named(SwiftFormalType.parameterName(depth: depth, index: index), [])
+        }
+
+        func invertedProtocols(index: Int, binding: SwiftGenericBinding?) -> UInt16 {
+            let subject = opaqueParameter(index: index, binding: binding)
+            return requirements.reduce(into: 0) { flags, requirement in
+                if case .invertedProtocols(let type, let mask) = requirement.value.value,
+                    type == subject
+                {
+                    flags |= mask
+                }
+            }
+        }
+
+        func isClassBound(index: Int, binding: SwiftGenericBinding?) -> Bool {
+            let subject = opaqueParameter(index: index, binding: binding)
             return requirements.contains { requirement in
                 guard requirement.value.subject == subject else { return false }
                 if requirement.classBound { return true }

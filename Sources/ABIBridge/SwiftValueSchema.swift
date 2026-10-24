@@ -117,7 +117,7 @@ struct SwiftValueSchema: Sendable {
                     "The opaque result ABI has not been resolved."
                 )
             }
-            self = Self(storage: opaque.type, metadata: opaque.valueType.metadata)
+            self = Self(storage: opaque.type, metadata: opaque.value.valueType.metadata)
             return
         }
         if formal.nominalDeclaration != nil, !binding.dependsOnParameters(formal),

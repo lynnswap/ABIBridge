@@ -26,7 +26,8 @@ struct SwiftReceiverPlan: Sendable {
         isMutating: Bool?,
         isConsuming: Bool,
         protocolSelf: SwiftFormalType?,
-        validateClass: Bool
+        validateClass: Bool,
+        borrowed: Bool? = nil
     ) throws {
         self.conversion = conversion
         let schema = schema ?? conversion.schema
@@ -46,8 +47,22 @@ struct SwiftReceiverPlan: Sendable {
         self.isMutating = isMutating
         self.isConsuming = isConsuming
         expectedClass = validateClass ? metadata as? AnyClass : nil
+        if borrowed == true && isConsuming {
+            throw ABIResolutionError.unsupportedDeclaration(
+                "The declared result cannot borrow consuming self."
+            )
+        }
+        let borrowedAddress =
+            try borrowed == true && !isMutating && !indirect && !(metadata is AnyClass)
+            ? SwiftBorrowedInputs.passesByAddress(
+                SwiftInferredValue.addressability(of: metadata),
+                of: metadata,
+                input: .receiver,
+                tuple: false,
+                borrowed: true
+            ) : false
         // Mutating protocol Self addresses the receiver slot, even when class-bound.
-        if (protocolSelf != nil && isMutating) || indirect {
+        if (protocolSelf != nil && isMutating) || indirect || borrowedAddress {
             mode = .address
         } else if metadata is AnyClass {
             guard ABIValueTypeIsPointer(schema.type.handle) else {
@@ -102,16 +117,17 @@ struct SwiftReceiverPlan: Sendable {
     /// Checks that `self` passes as Swift passes it where the call's result
     /// borrows from it; see ``SwiftBorrowedInputs``. The declaration's
     /// `self` type decides, whatever represents it.
-    func requireBorrowable() throws {
+    func requireBorrowable(borrowed: Bool? = nil) throws {
         // Swift rejects a borrow dependency on a consuming self, and a class
         // instance, a mutating self, or an indirect self passes as one
         // pointer either way.
         guard mode == .value, !isConsuming else { return }
-        try SwiftBorrowedInputs.require(
+        _ = try SwiftBorrowedInputs.passesByAddress(
             SwiftInferredValue.addressability(of: metadata),
             of: metadata,
             input: .receiver,
-            tuple: false
+            tuple: false,
+            borrowed: borrowed
         )
     }
 

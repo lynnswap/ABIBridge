@@ -240,6 +240,34 @@ public struct RuntimeScopedResult: ~Copyable, ~Escapable, RuntimeScopedReadable 
     public borrowing func read() -> Int64 { owner.takeUnretainedValue().number }
     deinit { counts.destroyed() }
 }
+#if !os(watchOS)
+@available(macOS 26.0, iOS 26.0, tvOS 26.0, visionOS 26.0, *)
+public struct RuntimeScopedText: ~Escapable, RuntimeScopedReadable {
+    private let bytes: Span<UInt8>
+    @_lifetime(borrow text)
+    public init(_ text: borrowing String) { bytes = text.utf8Span.span }
+    public borrowing func read() -> Int64 {
+        var value: Int64 = 0
+        for index in bytes.indices { value = value * 10 + Int64(bytes[index] - 48) }
+        return value
+    }
+}
+@available(macOS 26.0, iOS 26.0, tvOS 26.0, visionOS 26.0, *)
+@_lifetime(borrow second)
+@inline(never) public func makeRuntimeScopedText(
+    _ first: String,
+    _ second: String
+) -> some RuntimeScopedReadable & ~Copyable & ~Escapable {
+    RuntimeScopedText(second)
+}
+extension String {
+    @available(macOS 26.0, iOS 26.0, tvOS 26.0, visionOS 26.0, *)
+    @_lifetime(borrow self)
+    @inline(never) public func runtimeScopedText<Value>(_ value: Value) -> RuntimeScopedText {
+        RuntimeScopedText(self)
+    }
+}
+#endif
 @_lifetime(borrow owner)
 @inline(never) public func makeRuntimeScoped(_ owner: borrowing RuntimeScopedOwner, _ fail: Bool) throws -> some RuntimeScopedReadable & ~Copyable & ~Escapable {
     if fail { throw RuntimeTicketFailure.rejected }

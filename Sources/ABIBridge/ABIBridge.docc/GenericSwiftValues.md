@@ -91,6 +91,8 @@ Dependent results, initializers, static members, and inherited members use that 
 
 `declaredAs:` accepts the provider's formal function type, optionally prefixed by its complete canonical generic signature. It is available on free functions, methods, initializers, getters, setters, and bound object members. Keep `as:` as the concrete function type used by the caller.
 
+`declaredAs:` also accepts a function result's `@_lifetime(borrow name)` dependencies. See <doc:SwiftOpaqueResults#Inputs-that-the-result-can-borrow-from> for parameter names, `self`, and the difference between an explicit dependency and missing information.
+
 Most declarations need only `as:` and their generic arguments. Generic getter symbols omit the formal error type. Supply `declaredAs: "() throws(B) -> A"` for a getter declared with `throws(Failure)`, even when `Failure` is bound to `Never`. Include `async` for an async getter and use a qualified name for a fixed error type; see <doc:SwiftMemberInvocation>.
 
 A member combining a nominal protocol constraint with a superclass constraint may need a canonical generic signature. A retroactive superclass conformance can change hidden witnesses without changing the symbol name. Runtime conformance lookup cannot show whether the provider imported it during compilation. A conformance added in a newer version of a dependency can produce the same ambiguity. Preparation requests `declaredAs:` when it detects this ambiguity.

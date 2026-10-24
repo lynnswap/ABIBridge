@@ -29,6 +29,99 @@ private final class RuntimeBorrowCopy: @unchecked Sendable {
 }
 
 struct SwiftGenericBindingTests {
+    @Test func declaredLifetimeAttributesKeepNamesAndMissingEvidenceSeparate() throws {
+        func attributes(_ source: String) throws -> SwiftFunctionAttributes {
+            guard
+                case .function(_, _, _, let attributes) = try SwiftDeclaredSignature(source)
+                    .function
+            else {
+                preconditionFailure("A declared signature is a function.")
+            }
+            return attributes
+        }
+        #expect(try attributes("(_ value: Swift.String) -> Swift.Int64").borrowedInputs == nil)
+        for dependency in ["copy value", "&value", "immortal"] {
+            #expect(
+                try attributes("@_lifetime(\(dependency)) (_ value: Swift.String) -> Swift.Int64")
+                    .borrowedInputs == []
+            )
+        }
+        let source =
+            "@_lifetime(borrow first, copy second) (_ first: Swift.String, from second: Swift.String) -> Swift.Int64"
+        #expect(try attributes(source).borrowedInputs == [.argument(0)])
+        #expect(try attributes(source).globalActor == nil)
+        #expect(
+            try attributes("@_lifetimeActor () -> Swift.Int64").globalActor?.spelling
+                == "_lifetimeActor"
+        )
+        #expect(
+            try SwiftDeclaredSignature(source).function.spelling
+                == SwiftDeclaredSignature(
+                    "(_ first: Swift.String, from second: Swift.String) -> Swift.Int64"
+                ).function.spelling
+        )
+        for dependency in ["missing", "0", "borrow missing", "value: borrow value"] {
+            #expect(throws: ABIResolutionError.self) {
+                try attributes("@_lifetime(\(dependency)) (_ value: Swift.String) -> Swift.Int64")
+            }
+        }
+        let nested = try SwiftDeclaredSignature(
+            "() -> (@_lifetime(borrow value) (_ value: Swift.String) -> Swift.Int64)?"
+        ).function
+        #expect(nested.hasDeclaredLifetime)
+    }
+
+    @Test func conditionalResultEscapabilityUsesTheDeclaredArguments() throws {
+        func query(_ result: String, signature: Any.Type, suppressesEscapable: Bool) throws -> Bool
+        {
+            let formal = try SwiftFormalType(result)
+            let declaration = SwiftGenericDeclaration(
+                parameters: [.init(name: "A", isPack: false)],
+                requirements: suppressesEscapable ? [.invertedProtocols(.named("A", []), 2)] : [],
+                arguments: [],
+                result: formal,
+                failure: nil,
+                isAsync: false,
+                consumesArguments: false
+            )
+            let binding = try SwiftGenericBinding(
+                declaration: declaration,
+                arguments: [.type(Int64.self)],
+                signature: SwiftFunctionSignature(signature),
+                resolver: .shared
+            )
+            return try binding.mayBeNonescapable(formal)
+        }
+        #expect(
+            try query(
+                "Swift.Optional<A>",
+                signature: (() -> Int64?).self,
+                suppressesEscapable: true
+            )
+        )
+        #expect(
+            try !query(
+                "Swift.Optional<A>",
+                signature: (() -> Int64?).self,
+                suppressesEscapable: false
+            )
+        )
+        #expect(
+            try !query(
+                "Swift.UnsafePointer<A>",
+                signature: (() -> UnsafePointer<Int64>).self,
+                suppressesEscapable: true
+            )
+        )
+        #expect(
+            try !query(
+                "(A) -> A",
+                signature: (() -> (Int64) -> Int64).self,
+                suppressesEscapable: true
+            )
+        )
+    }
+
     @Test func extensionNestedMetadataKeepsItsDeclarationIdentity() throws {
         let formal = try SwiftFormalType(SwiftSyntax.metadataType(FixtureExtensionIdentity.self))
         let binding = try SwiftGenericBinding(
@@ -909,6 +1002,16 @@ struct SwiftGenericBindingTests {
             )
         )
         #expect(singleton.count == 1 && singleton[0] == Int64.self)
+        let addressability = try SwiftBorrowedInputs.addressability(
+            of: .tuple([
+                .nominal("Swift.Int64", []), .pack(element, shape: element),
+                .nominal("Swift.Int64", []),
+            ]),
+            native: (Int64, Int64).self,
+            binding: empty
+        )
+        // Empty packs retain the declaration's generic tuple abstraction.
+        #expect(addressability.isSet)
     }
 
     @Test func explicitNominalSourcesRemoveOnlyFulfilledMetadataWords() throws {

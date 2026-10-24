@@ -121,6 +121,11 @@ void *ABISwiftIncomingPreparedContext(ABISwiftIncomingCall *call);
 /// Reads a directly passed pointer word using the candidate's physical plan. It never dereferences the pointer or any unrelated argument.
 bool ABISwiftIncomingReadPointer(ABISwiftIncomingCall *call, const ABISwiftCallInterface *interface,
     size_t index, uintptr_t *value, ABIResolutionFailure **error);
+/// Reads the incoming storage address of a formally indirect parameter, before preparing its values.
+bool ABISwiftIncomingReadIndirectAddress(ABISwiftIncomingCall *call, const ABISwiftCallInterface *interface,
+    size_t index, uintptr_t *value, ABIResolutionFailure **error);
+bool ABISwiftAsyncIncomingReadIndirectAddress(ABISwiftIncomingCall *call, const ABISwiftAsyncCallInterface *interface,
+    size_t index, uintptr_t *value, ABIResolutionFailure **error);
 /// Selects the interface and value operations for this invocation. Success owns context through functions.releaseContext; failure consumes neither. An invocation with preparesArguments selects at most once, before reading values.
 bool ABISwiftIncomingPrepare(ABISwiftIncomingCall *call, const ABISwiftCallInterface *interface,
     ABISwiftCallbackFunctions functions, void *context, ABIResolutionFailure **error);

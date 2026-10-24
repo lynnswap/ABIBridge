@@ -140,6 +140,7 @@ struct SwiftGenericTypeContext: Sendable {
     let keyParameters: Set<String>
     let conformances: [SwiftGenericBinding.Conformance]
     let requirements: [SwiftGenericDeclaration.Requirement]
+    let conditionalInvertibleRequirements: [UInt16: [SwiftGenericDeclaration.Requirement]]
 
     init(metadata: Any.Type) throws {
         var failure: OpaquePointer?
@@ -175,6 +176,21 @@ struct SwiftGenericTypeContext: Sendable {
             try SwiftMetadataRequirement(ABISwiftTypeMetadataRequirement(result, index)!)
         }
         requirements = decoded.map(\.value)
+        var conditional: [UInt16: [SwiftGenericDeclaration.Requirement]] = [:]
+        for protocolBit: UInt16 in [1, 2] {
+            conditional[protocolBit] = try
+                (0..<ABISwiftTypeMetadataConditionalRequirementCount(result, protocolBit))
+                .compactMap { index in
+                    let raw = RuntimeGenericRequirement(
+                        ABISwiftTypeMetadataConditionalRequirement(result, protocolBit, index)!
+                    )
+                    // Parameter-index records state the query's generic environment;
+                    // 0xffff records are the actual conformance conditions.
+                    if raw.kind == 5 && raw.invertedGenericParameterIndex != .max { return nil }
+                    return try SwiftMetadataRequirement(raw).value
+                }
+        }
+        conditionalInvertibleRequirements = conditional
         conformances = decoded.compactMap { requirement in
             guard case .conformance(let subject, let name) = requirement.value else { return nil }
             return .init(
