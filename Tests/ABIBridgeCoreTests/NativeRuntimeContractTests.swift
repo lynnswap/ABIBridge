@@ -60,15 +60,17 @@ struct NativeRuntimeContractTests {
                 let malformedFailure = try #require(results[1].failure)
                 #expect(results[1].symbol == nil)
                 #expect(
-                    ABIResolutionFailureCode(malformedFailure) == Int32(ABIFailureInvalidRequest)
+                    ABIResolutionFailureGetCode(malformedFailure) == Int32(ABIFailureInvalidRequest)
                 )
                 let emptyFailure = try #require(results[2].failure)
-                #expect(ABIResolutionFailureCode(emptyFailure) == Int32(ABIFailureImageNotLoaded))
+                #expect(
+                    ABIResolutionFailureGetCode(emptyFailure) == Int32(ABIFailureImageNotLoaded)
+                )
                 let formFailure = try #require(results[4].failure)
-                #expect(ABIResolutionFailureCode(formFailure) == Int32(ABIFailureInvalidRequest))
-                ABIRuntimeRemoveCachedResults(runtime)
+                #expect(ABIResolutionFailureGetCode(formFailure) == Int32(ABIFailureInvalidRequest))
+                ABISymbolRuntimeRemoveCachedResults(runtime)
                 let symbol = try #require(results[0].symbol)
-                #expect(ABIResolvedSymbolAddress(symbol) != nil)
+                #expect(ABIResolvedSymbolGetAddress(symbol) != nil)
             }
         }
     }
@@ -81,18 +83,21 @@ struct NativeRuntimeContractTests {
             ("ABICAnswer", Int32(ABINameLinker)), ("_ABICAnswer", Int32(ABINameMachO)),
         ] {
             var failure: OpaquePointer?
-            let handle = name.withCString {
-                ABIResolveSymbolWithNameForm(
-                    runtime,
-                    $0,
-                    form,
-                    Int32(ABILanguageC),
-                    Int32(ABISymbolFunction),
-                    Int32(ABIImagePath),
-                    imagePath,
-                    Int32(ABIImageLoadIfNeeded),
-                    &failure
-                )
+            let handle = name.withCString { name in
+                var scope = ABIImageSelector(scope: Int32(ABIImagePath), selector: imagePath)
+                return withUnsafePointer(to: &scope) { scope in
+                    var request = ABISymbolRequest()
+                    request.declaration = ABIDeclaration(
+                        name: name,
+                        language: Int32(ABILanguageC),
+                        kind: Int32(ABISymbolFunction),
+                        nameForm: form
+                    )
+                    request.imageScopes = scope
+                    request.imageScopeCount = 1
+                    request.loading = Int32(ABIImageLoadIfNeeded)
+                    return ABIResolveSymbol(runtime, &request, &failure)
+                }
             }
             let owned = try #require(handle)
             #expect(failure == nil)
@@ -107,22 +112,25 @@ struct NativeRuntimeContractTests {
             )
         }
         var failure: OpaquePointer?
-        let invalid = "getpid".withCString {
-            ABIResolveSymbolWithNameForm(
-                runtime,
-                $0,
-                -1,
-                Int32(ABILanguageC),
-                Int32(ABISymbolFunction),
-                Int32(ABIImageAutomatic),
-                nil,
-                Int32(ABIImageLoadIfNeeded),
-                &failure
-            )
+        let invalid = "getpid".withCString { name in
+            var scope = ABIImageSelector(scope: Int32(ABIImageAutomatic), selector: nil)
+            return withUnsafePointer(to: &scope) { scope in
+                var request = ABISymbolRequest()
+                request.declaration = ABIDeclaration(
+                    name: name,
+                    language: Int32(ABILanguageC),
+                    kind: Int32(ABISymbolFunction),
+                    nameForm: -1
+                )
+                request.imageScopes = scope
+                request.imageScopeCount = 1
+                request.loading = Int32(ABIImageLoadIfNeeded)
+                return ABIResolveSymbol(runtime, &request, &failure)
+            }
         }
         #expect(invalid == nil)
         let error = try #require(failure)
-        #expect(ABIResolutionFailureCode(error) == Int32(ABIFailureInvalidRequest))
+        #expect(ABIResolutionFailureGetCode(error) == Int32(ABIFailureInvalidRequest))
         ABIReleaseResolutionFailure(error)
     }
 
@@ -139,19 +147,18 @@ struct NativeRuntimeContractTests {
                 ABIResolveCXXVTable(
                     runtime,
                     $0,
-                    scope,
-                    imagePath,
+                    ABIImageSelector(scope: scope, selector: imagePath),
                     Int32(ABIImageLoadIfNeeded),
                     &failure
                 )
             }
             #expect(symbol == nil)
             let error = try #require(failure)
-            #expect(ABIResolutionFailureCode(error) == expected)
+            #expect(ABIResolutionFailureGetCode(error) == expected)
             if expected == Int32(ABIFailureDeclarationNotFound) {
                 // The message is the failure's description.
                 #expect(
-                    String(cString: ABIResolutionFailureMessage(error))
+                    String(cString: ABIResolutionFailureGetMessage(error))
                         == "Cannot find vtable for ABIBridgeMissingType::Renderer."
                 )
             }
@@ -163,24 +170,30 @@ struct NativeRuntimeContractTests {
         let runtime = try #require(ABICreateSymbolRuntime())
         defer { ABIReleaseSymbolRuntime(runtime) }
         var failure: OpaquePointer?
-        let symbol = "missing".withCString {
-            ABIResolveSymbol(
-                runtime,
-                $0,
-                -1,
-                Int32(ABISymbolFunction),
-                Int32(ABIImageAutomatic),
-                nil,
-                Int32(ABIImageLoadIfNeeded),
-                &failure
-            )
+        let symbol = "missing".withCString { name in
+            var scope = ABIImageSelector(scope: Int32(ABIImageAutomatic), selector: nil)
+            return withUnsafePointer(to: &scope) { scope in
+                var request = ABISymbolRequest()
+                request.declaration = ABIDeclaration(
+                    name: name,
+                    language: -1,
+                    kind: Int32(ABISymbolFunction),
+                    nameForm: Int32(ABINameSource)
+                )
+                request.imageScopes = scope
+                request.imageScopeCount = 1
+                request.loading = Int32(ABIImageLoadIfNeeded)
+                return ABIResolveSymbol(runtime, &request, &failure)
+            }
         }
         #expect(symbol == nil)
         let error = try #require(failure)
         defer { ABIReleaseResolutionFailure(error) }
-        #expect(ABIResolutionFailureCode(error) == Int32(ABIFailureInvalidRequest))
+        #expect(ABIResolutionFailureGetCode(error) == Int32(ABIFailureInvalidRequest))
         #expect(
-            String(cString: ABIResolutionFailureMessage(error)).contains("Unknown source language")
+            String(cString: ABIResolutionFailureGetMessage(error)).contains(
+                "Unknown source language"
+            )
         )
     }
 }

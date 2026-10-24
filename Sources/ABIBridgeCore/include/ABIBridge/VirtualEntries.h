@@ -24,9 +24,9 @@ ABIVirtualEntry *ABICopyVirtualEntry(ABISymbolRuntime *runtime,
     const void *addressPoint, size_t entryCount, const char *name,
     ABIResolutionFailure **error);
 /// Returns copied metadata for a live nonnull entry.
-ABIVirtualEntryInfo ABIVirtualEntryGet(const ABIVirtualEntry *entry);
+ABIVirtualEntryInfo ABIVirtualEntryGetInfo(const ABIVirtualEntry *entry);
 /// Returns the original symbol (possibly a thunk), borrowed until entry release.
-const char *ABIVirtualEntrySymbolName(const ABIVirtualEntry *entry);
+const char *ABIVirtualEntryGetSymbolName(const ABIVirtualEntry *entry);
 /// Releases an owned entry. Null is accepted; do not race final release with reads.
 void ABIReleaseVirtualEntry(ABIVirtualEntry *entry);
 #ifdef __cplusplus

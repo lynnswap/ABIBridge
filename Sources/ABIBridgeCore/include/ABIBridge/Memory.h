@@ -9,6 +9,7 @@ extern "C" {
 #endif
 
 /// Outcome of a bounded current-process read.
+typedef int32_t ABIMemoryReadStatus;
 enum {
     ABIMemoryReadComplete = 0,
     ABIMemoryReadInvalidRange = 1,
@@ -19,7 +20,7 @@ enum {
 /// A copied prefix and the reason reading stopped.
 typedef struct ABIMemoryReadResult {
     /// One of the ABIMemoryRead constants.
-    int32_t status;
+    ABIMemoryReadStatus status;
     /// Bytes successfully copied from the beginning of the requested range.
     size_t byteCount;
     /// Original kern_return_t, or zero when no OS error occurred.

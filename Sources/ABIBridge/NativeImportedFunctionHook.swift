@@ -105,8 +105,8 @@ func prepareImportedCallback<Result, each Argument>(
 }
 
 func importedHookFailure(_ error: OpaquePointer) -> NSError {
-    NSError(domain: "ABIBridge.ImportedHook", code: Int(ABIResolutionFailureCode(error)),
-        userInfo: [NSLocalizedDescriptionKey: String(cString: ABIResolutionFailureMessage(error))])
+    NSError(domain: "ABIBridge.ImportedHook", code: Int(ABIResolutionFailureGetCode(error)),
+        userInfo: [NSLocalizedDescriptionKey: String(cString: ABIResolutionFailureGetMessage(error))])
 }
 
 extension ABIRuntime {
@@ -143,8 +143,8 @@ extension ABIRuntime {
         let hook = NativeImportedFunctionHook(handle)
         if let error = ABIImportedHookFailure(handle) {
             let index=ABIImportedHookFailedIndex(handle)
-            throw NativeImportedHookInstallationError(underlyingError: NSError(domain: "ABIBridge.ImportedHook",code: Int(ABIResolutionFailureCode(error)),
-                userInfo: [NSLocalizedDescriptionKey: String(cString: ABIResolutionFailureMessage(error))]),
+            throw NativeImportedHookInstallationError(underlyingError: NSError(domain: "ABIBridge.ImportedHook",code: Int(ABIResolutionFailureGetCode(error)),
+                userInfo: [NSLocalizedDescriptionKey: String(cString: ABIResolutionFailureGetMessage(error))]),
                 failedIndex: index < 0 ? nil : index, registration: hook)
         }
         return hook

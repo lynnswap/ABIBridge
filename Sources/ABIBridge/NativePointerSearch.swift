@@ -200,20 +200,20 @@ extension NativeMemoryRegion {
                 default: throw NativePointerSearchError.invalidOptions
                 }
             }
-            defer { ABIFreePointerSearch(result) }
-            let candidates = (0..<ABIPointerSearchCandidateCount(result)).map { index in
-                let value = ABIPointerSearchCandidateAt(result, index)
+            defer { ABIReleasePointerSearchResult(result) }
+            let candidates = (0..<ABIPointerSearchResultGetCandidateCount(result)).map { index in
+                let value = ABIPointerSearchResultGetCandidate(result, index)
                 return NativePointerCandidate(value, in: self)
             }
-            let failures = (0..<ABIPointerSearchFailureCount(result)).map { index in
-                let value = ABIPointerSearchFailureAt(result, index)
+            let failures = (0..<ABIPointerSearchResultGetFailureCount(result)).map { index in
+                let value = ABIPointerSearchResultGetFailure(result, index)
                 return NativePointerSearchFailure(value)
             }
             return NativePointerSearchResult(
                 candidates: candidates, failures: failures,
-                distinctCount: ABIPointerSearchDistinctCount(result),
-                visitedCount: ABIPointerSearchVisitedCount(result),
-                isComplete: ABIPointerSearchIsComplete(result) != 0
+                distinctCount: ABIPointerSearchResultGetDistinctCount(result),
+                visitedCount: ABIPointerSearchResultGetVisitedCount(result),
+                isComplete: ABIPointerSearchResultIsComplete(result) != 0
             )
         }
     }

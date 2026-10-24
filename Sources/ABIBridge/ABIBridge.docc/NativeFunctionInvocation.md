@@ -17,7 +17,7 @@ int result = add.unsafe_invoke(20, 22);
 
 The example requires a loaded library defining the declaration. Construct the handle from an owned `resolved_symbol` without repeating lookup. Batch results work the same way. For C handles transferred from Swift through `ResolvedSymbol.copyNativeHandle()`, first use `resolved_symbol::adopt`; use `retain` for borrowed handles. The resulting function retains the implementation image.
 
-A constructor rejects empty handles, data/vtable symbols, and declarations marked with other source-language calling conventions. These checks use declaration metadata, not signature inference: C++ mangled names do not establish a complete calling contract. `ABIResolvedSymbolKind` and `ABIResolvedSymbolLanguage` expose this metadata through the C inspection interface.
+A constructor rejects empty handles, data/vtable symbols, and declarations marked with other source-language calling conventions. These checks use declaration metadata, not signature inference: C++ mangled names do not establish a complete calling contract. `ABIResolvedSymbolGetKind` and `ABIResolvedSymbolGetLanguage` expose this metadata through the C inspection interface.
 
 ## Supply the actual signature
 

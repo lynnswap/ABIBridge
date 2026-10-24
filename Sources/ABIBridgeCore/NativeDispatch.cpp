@@ -8,7 +8,7 @@
 struct ABIVirtualCallTarget {
     ABIUnmanagedFunction function = nullptr;
     uint64_t generation = 0;
-    std::unique_ptr<ABIImageLease, decltype(&ABIReleaseImage)> image{nullptr, ABIReleaseImage};
+    std::unique_ptr<ABIImageLease, decltype(&ABIReleaseImageLease)> image{nullptr, ABIReleaseImageLease};
 };
 
 namespace {

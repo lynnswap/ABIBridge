@@ -67,6 +67,6 @@ Only the requested explicit target is acquired. ABIBridge uses its existing symb
 
 C++ and Objective-C++ use `Runtime::resolve(query, selector, image_loading::if_needed)` by default, or `image_loading::loaded_only` for inspection. `image_selector::install_name` carries dyld spellings. A `symbol_request` stores the same policy in `loading`.
 
-Pass `ABIImageLoadIfNeeded` or `ABIImageLoadedOnly` before the failure output in `ABIResolveSymbol`, `ABIResolveSymbolWithNameForm`, and `ABIResolveCXXVTable`. Zero-initialized `ABISymbolRequest` values select the former. Rebuild C consumers when adopting changed headers or request layouts.
+Set `ABISymbolRequest.loading` to `ABIImageLoadIfNeeded` or `ABIImageLoadedOnly` for single or batch C lookup. Zero selects the former. `ABIResolveCXXVTable` takes an `ABIImageSelector` and the same loading policy before its failure output. Rebuild C consumers when adopting changed headers or request layouts.
 
 Platform loader and code-signing rules determine which targets can be acquired. Package build coverage does not establish runtime loading permission for every library on every Apple platform.

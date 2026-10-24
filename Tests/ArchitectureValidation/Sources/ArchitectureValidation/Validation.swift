@@ -764,12 +764,12 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         guard let result = ABICopyPointerSearch(&options, &error) else {
             throw ArchitectureValidationFailure(description: "Pointer search failed: \(error)")
         }
-        defer { ABIFreePointerSearch(result) }
+        defer { ABIReleasePointerSearchResult(result) }
         try check(
-            ABIPointerSearchIsComplete(result) != 0 && ABIPointerSearchDistinctCount(result) == 1,
+            ABIPointerSearchResultIsComplete(result) != 0 && ABIPointerSearchResultGetDistinctCount(result) == 1,
             "Bounded pointer discovery"
         )
-        let candidate = ABIPointerSearchCandidateAt(result, 0)
+        let candidate = ABIPointerSearchResultGetCandidate(result, 0)
         try check(
             candidate.pointerBits == UInt(bitPattern: object)
                 && candidate.vptrBits == UInt(bitPattern: table),

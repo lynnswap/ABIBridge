@@ -195,7 +195,7 @@ ABIImageObservation *ABIObserveLoadedImages(void *context, ABIImageObservationHa
         std::shared_ptr<ObservationCallback> callback;
         { std::lock_guard lock(state->mutex); callback = state->callback; }
         if (!callback) return;
-        std::unique_ptr<ABIImageList, decltype(&ABIFreeImageList)> snapshot(ABICopyLoadedImages(), ABIFreeImageList);
+        std::unique_ptr<ABIImageList, decltype(&ABIReleaseImageList)> snapshot(ABICopyLoadedImages(), ABIReleaseImageList);
         callback->handler(callback->context, snapshot.get());
     });
     dispatch_source_set_cancel_handler_f(state->source, [](void *context) {
@@ -254,17 +254,17 @@ ABIImageList *ABICopyLoadedImages(void)
     return new ABIImageList { state.snapshot, state.revision };
 }
 
-size_t ABIImageListCount(const ABIImageList *list)
+size_t ABIImageListGetCount(const ABIImageList *list)
 {
     return list->images->size();
 }
 
-uint64_t ABIImageListRevision(const ABIImageList *list)
+uint64_t ABIImageListGetRevision(const ABIImageList *list)
 {
     return list->revision;
 }
 
-ABIImageInfo ABIImageListGet(const ABIImageList *list, size_t index)
+ABIImageInfo ABIImageListGetImage(const ABIImageList *list, size_t index)
 {
     const auto& image = list->images->at(index);
     ABIImageInfo result { image.header, image.slide, image.generation, {}, image.path.c_str() };
@@ -272,12 +272,12 @@ ABIImageInfo ABIImageListGet(const ABIImageList *list, size_t index)
     return result;
 }
 
-void ABIFreeImageList(ABIImageList *list)
+void ABIReleaseImageList(ABIImageList *list)
 {
     delete list;
 }
 
-ABIImageLease *ABIRetainLoadedImage(uint64_t generation)
+ABIImageLease *ABIAcquireImageLease(uint64_t generation)
 {
     if (!initialize())
         return nullptr;
@@ -470,12 +470,12 @@ ABIImageLease *ABIOpenLoadedImage(uint64_t generation, ABIResolutionFailure **er
             auto *lease = ABIOpenImage(path.c_str(), true, &failure);
             if (lease) {
                 if (lease->image.generation == generation) return lease;
-                ABIReleaseImage(lease);
+                ABIReleaseImageLease(lease);
                 loadingFailure(error, ABIFailureImageChanged, "The loader acquired a different image generation.");
                 return nullptr;
             }
-            const auto code = ABIResolutionFailureCode(failure);
-            messages += (messages.empty() ? "" : "\n") + path + ": " + ABIResolutionFailureMessage(failure);
+            const auto code = ABIResolutionFailureGetCode(failure);
+            messages += (messages.empty() ? "" : "\n") + path + ": " + ABIResolutionFailureGetMessage(failure);
             ABIReleaseResolutionFailure(failure);
             if (code != ABIFailureImageLoadFailed) {
                 loadingFailure(error, code, messages);
@@ -491,7 +491,7 @@ ABIImageLease *ABIOpenLoadedImage(uint64_t generation, ABIResolutionFailure **er
     return nullptr;
 }
 
-ABIImageInfo ABIImageLeaseGet(const ABIImageLease *lease)
+ABIImageInfo ABIImageLeaseGetInfo(const ABIImageLease *lease)
 {
     const auto& image = lease->image;
     ABIImageInfo result { image.header, image.slide, image.generation, {}, image.path.c_str() };
@@ -504,7 +504,7 @@ bool ABIImageIsInSharedCache(const char *path)
     return _dyld_shared_cache_contains_path(path);
 }
 
-void ABIReleaseImage(ABIImageLease *lease)
+void ABIReleaseImageLease(ABIImageLease *lease)
 {
     if (!lease)
         return;

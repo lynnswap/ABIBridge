@@ -7,7 +7,7 @@
 #include <memory>
 
 struct ABISwiftAsyncDescriptor {
-    std::unique_ptr<ABIImageLease, decltype(&ABIReleaseImage)> image{nullptr, ABIReleaseImage};
+    std::unique_ptr<ABIImageLease, decltype(&ABIReleaseImageLease)> image{nullptr, ABIReleaseImageLease};
     std::unique_ptr<ABIVirtualCallTarget, decltype(&ABIReleaseVirtualCallTarget)> entry{nullptr, ABIReleaseVirtualCallTarget};
     uint32_t contextSize = 0;
 };

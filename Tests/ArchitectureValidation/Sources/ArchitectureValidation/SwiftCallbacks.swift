@@ -19,7 +19,7 @@ private final class CallbackValidationBox {
 private func callbackFailure(_ error: OpaquePointer?) -> ArchitectureValidationFailure {
     guard let error else { return .init(description: "Swift callback failed without a message") }
     defer { ABIReleaseResolutionFailure(error) }
-    return .init(description: String(cString: ABIResolutionFailureMessage(error)!))
+    return .init(description: String(cString: ABIResolutionFailureGetMessage(error)!))
 }
 private func requireCallback(_ value: Bool, _ message: String) throws {
     if !value { throw ArchitectureValidationFailure(description: message) }

@@ -17,15 +17,15 @@ static void test_lazy_libraries(void) {
     ABIResolutionFailure *error = NULL;
     ABILazyLibraryList *list = ABICopyLazyLibrariesInFile(path, &error);
     unlink(path);
-    assert(list && !error && ABILazyLibraryListCount(list) == 3);
-    ABILazyLibraryInfo info = ABILazyLibraryListGet(list, 0);
+    assert(list && !error && ABILazyLibraryListGetCount(list) == 3);
+    ABILazyLibraryInfo info = ABILazyLibraryListGetLibrary(list, 0);
     assert(info.isOptional == ABIDiagnosticTrue && info.isInitialized == ABIDiagnosticUnknown);
     assert(info.symbolCount == 3 && strcmp(info.path, "@rpath/Example.dylib") == 0);
-    assert(strcmp(ABILazyLibraryListSymbol(list, 0, 0).name, "Example::Renderer::refresh()") == 0);
-    assert(ABILazyLibraryListGet(list, 2).symbolsAvailable == ABIDiagnosticFalse);
-    ABIFreeLazyLibraryList(list);
+    assert(strcmp(ABILazyLibraryListGetSymbol(list, 0, 0).name, "Example::Renderer::refresh()") == 0);
+    assert(ABILazyLibraryListGetLibrary(list, 2).symbolsAvailable == ABIDiagnosticFalse);
+    ABIReleaseLazyLibraryList(list);
     assert(!ABICopyLazyLibrariesForImage(UINT64_MAX, &error));
-    assert(error && ABIResolutionFailureCode(error) == ABIFailureImageChanged);
+    assert(error && ABIResolutionFailureGetCode(error) == ABIFailureImageChanged);
     ABIReleaseResolutionFailure(error);
 }
 
@@ -65,58 +65,59 @@ int main(int argc, char **argv) {
     int32_t search_error = -1;
     ABIPointerSearchResult *search = ABICopyPointerSearch(&options, &search_error);
     assert(search && search_error == ABIPointerSearchSuccess);
-    assert(ABIPointerSearchIsComplete(search) && ABIPointerSearchDistinctCount(search) == 1);
-    assert(ABIPointerSearchCandidateCount(search) == 2 && ABIPointerSearchVisitedCount(search) == 3);
-    assert(ABIPointerSearchCandidateAt(search, 1).pointerBits == (uintptr_t)object);
-    assert(ABIPointerSearchFailureCount(search) == 0);
-    ABIFreePointerSearch(search);
+    assert(ABIPointerSearchResultIsComplete(search) && ABIPointerSearchResultGetDistinctCount(search) == 1);
+    assert(ABIPointerSearchResultGetCandidateCount(search) == 2 && ABIPointerSearchResultGetVisitedCount(search) == 3);
+    assert(ABIPointerSearchResultGetCandidate(search, 1).pointerBits == (uintptr_t)object);
+    assert(ABIPointerSearchResultGetFailureCount(search) == 0);
+    ABIReleasePointerSearchResult(search);
     options.stride = 0;
     assert(!ABICopyPointerSearch(&options, &search_error));
     assert(search_error == ABIPointerSearchInvalidOptions);
-    ABIFreePointerSearch(NULL);
+    ABIReleasePointerSearchResult(NULL);
 
     ABISymbolRuntime *shared = ABICopySharedSymbolRuntime();
-    ABIRuntimeRemoveCachedResults(shared);
+    ABISymbolRuntimeRemoveCachedResults(shared);
     ABIReleaseSymbolRuntime(shared);
 
     void *library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
     assert(library);
     ABISymbolRuntime *runtime = ABICreateSymbolRuntime();
     ABIResolutionFailure *failure = NULL;
-    ABIResolvedSymbol *missing = ABIResolveSymbol(
-        runtime, "ABIBridgeFixtureMissing", ABILanguageC, ABISymbolFunction,
-        ABIImagePath, argv[1], ABIImageLoadIfNeeded, &failure);
+    ABIResolvedSymbol *missing = ABIResolveSymbol(runtime, &(ABISymbolRequest){
+        .declaration = {"ABIBridgeFixtureMissing", ABILanguageC, ABISymbolFunction, ABINameSource},
+        .imageScopes = &(ABIImageSelector){ABIImagePath, argv[1]},
+        .imageScopeCount = 1, .loading = ABIImageLoadIfNeeded
+    }, &failure);
     assert(!missing && failure);
-    assert(ABIResolutionFailureCode(failure) == ABIFailureDeclarationNotFound);
+    assert(ABIResolutionFailureGetCode(failure) == ABIFailureDeclarationNotFound);
     ABIResolutionFailure *saved_failure = failure;
 
-    ABIResolvedSymbol *table = ABIResolveCXXVTable(
-        runtime, "ABIBridgeFixture::VirtualCounter", ABIImagePath, argv[1], ABIImageLoadIfNeeded, &failure);
+    ABIResolvedSymbol *table = ABIResolveCXXVTable(runtime, "ABIBridgeFixture::VirtualCounter", (ABIImageSelector){ABIImagePath, argv[1]}, ABIImageLoadIfNeeded, &failure);
     assert(table && !failure);
     // Independent address oracle for this compiler-generated fixture.
-    assert(ABIResolvedSymbolAddress(table) ==
+    assert(ABIResolvedSymbolGetAddress(table) ==
            dlsym(library, "_ZTVN16ABIBridgeFixture14VirtualCounterE"));
     // This fixture has one primary absolute entry after two ABI header words.
-    const void *address_point = (const char *)ABIResolvedSymbolAddress(table) + 2 * sizeof(void *);
+    const void *address_point = (const char *)ABIResolvedSymbolGetAddress(table) + 2 * sizeof(void *);
     ABIVirtualEntry *entry = ABICopyVirtualEntry(runtime, address_point, 1,
         "ABIBridgeFixture::VirtualCounter::current() const", &failure);
     assert(entry && !failure);
-    ABIVirtualEntryInfo selected = ABIVirtualEntryGet(entry);
+    ABIVirtualEntryInfo selected = ABIVirtualEntryGetInfo(entry);
     assert(selected.addressPoint == address_point && selected.index == 0 && selected.entryCount == 1);
     assert(selected.key == ABIAuthenticationUnsigned);
-    assert(strstr(ABIVirtualEntrySymbolName(entry), "current"));
+    assert(strstr(ABIVirtualEntryGetSymbolName(entry), "current"));
     ABIReleaseVirtualEntry(entry);
     ABIReleaseVirtualEntry(NULL);
 
     ABIImageInfo image;
-    ABIResolvedSymbolImage(table, &image);
+    ABIResolvedSymbolGetImage(table, &image);
     assert(image.header && image.generation && image.path);
 
     ABIImageList *images = ABICopyLoadedImages();
     assert(images);
     int found = 0;
-    for (size_t i = 0; i < ABIImageListCount(images); ++i) {
-        ABIImageInfo entry = ABIImageListGet(images, i);
+    for (size_t i = 0; i < ABIImageListGetCount(images); ++i) {
+        ABIImageInfo entry = ABIImageListGetImage(images, i);
         if (entry.generation == image.generation) {
             assert(entry.header == image.header && entry.slide == image.slide);
             assert(memcmp(entry.uuid, image.uuid, sizeof(image.uuid)) == 0);
@@ -125,31 +126,41 @@ int main(int argc, char **argv) {
         }
     }
     assert(found);
-    ABIImageLease *lease = ABIRetainLoadedImage(image.generation);
+    ABIImageLease *lease = ABIAcquireImageLease(image.generation);
     assert(lease);
-    ABIFreeImageList(images);
+    ABIReleaseImageList(images);
     assert(strlen(image.path) > 0); // This path is owned by the symbol, not the list.
 
-    ABIResolvedSymbol *counter = ABIResolveSymbol(
-        runtime, "ABIBridgeFixture::counter", ABILanguageCXX, ABISymbolData,
-        ABIImagePath, argv[1], ABIImageLoadIfNeeded, &failure);
+    ABIResolvedSymbol *counter = ABIResolveSymbol(runtime, &(ABISymbolRequest){
+        .declaration = {"ABIBridgeFixture::counter", ABILanguageCXX, ABISymbolData, ABINameSource},
+        .imageScopes = &(ABIImageSelector){ABIImagePath, argv[1]},
+        .imageScopeCount = 1, .loading = ABIImageLoadIfNeeded
+    }, &failure);
     assert(counter && !failure);
-    assert(!ABIResolveSymbol(runtime, "missing", ABILanguageC, ABISymbolData,
-                             ABIImagePath, NULL, ABIImageLoadIfNeeded, &failure));
-    assert(ABIResolutionFailureCode(failure) == ABIFailureInvalidRequest);
+    assert(!ABIResolveSymbol(runtime, &(ABISymbolRequest){
+        .declaration = {"missing", ABILanguageC, ABISymbolData, ABINameSource},
+        .imageScopes = &(ABIImageSelector){ABIImagePath, NULL},
+        .imageScopeCount = 1, .loading = ABIImageLoadIfNeeded
+    }, &failure));
+    assert(ABIResolutionFailureGetCode(failure) == ABIFailureInvalidRequest);
     ABIReleaseResolutionFailure(failure);
     failure = NULL;
-    assert(!ABIResolveSymbol(runtime, "missing", -1, ABISymbolData,
-                             ABIImageAutomatic, NULL, ABIImageLoadIfNeeded, NULL));
+    assert(!ABIResolveSymbol(runtime, &(ABISymbolRequest){
+        .declaration = {"missing", -1, ABISymbolData, ABINameSource},
+        .imageScopes = &(ABIImageSelector){ABIImageAutomatic, NULL},
+        .imageScopeCount = 1, .loading = ABIImageLoadIfNeeded
+    }, NULL));
 
     ABIImageSelector scopes[] = {{ABIImageFramework, "ABIBridgeAbsentFixture"}, {ABIImagePath, argv[1]}};
     ABIDeclaration counter_declaration = {"ABIBridgeFixture::counter", ABILanguageCXX, ABISymbolData};
     ABIDeclaration exact_counter = {"_ZN16ABIBridgeFixture7counterE", ABILanguageCXX, ABISymbolData, ABINameLinker};
-    ABIResolvedSymbol *literal_counter = ABIResolveSymbolWithNameForm(
-        runtime, "__ZN16ABIBridgeFixture7counterE", ABINameMachO,
-        ABILanguageCXX, ABISymbolData, ABIImagePath, argv[1], ABIImageLoadIfNeeded, &failure);
+    ABIResolvedSymbol *literal_counter = ABIResolveSymbol(runtime, &(ABISymbolRequest){
+        .declaration = {"__ZN16ABIBridgeFixture7counterE", ABILanguageCXX, ABISymbolData, ABINameMachO},
+        .imageScopes = &(ABIImageSelector){ABIImagePath, argv[1]},
+        .imageScopeCount = 1, .loading = ABIImageLoadIfNeeded
+    }, &failure);
     assert(literal_counter && !failure);
-    assert(ABIResolvedSymbolAddress(literal_counter) == ABIResolvedSymbolAddress(counter));
+    assert(ABIResolvedSymbolGetAddress(literal_counter) == ABIResolvedSymbolGetAddress(counter));
     ABIReleaseResolvedSymbol(literal_counter);
     ABISymbolRequest requests[] = {
         {counter_declaration, &exact_counter, 1, scopes, 2},
@@ -160,8 +171,17 @@ int main(int argc, char **argv) {
     ABIResolveSymbols(runtime, requests, 2, outcomes);
     assert(outcomes[0].symbol && !outcomes[0].failure);
     assert(!outcomes[1].symbol && outcomes[1].failure);
-    assert(*(const int *)ABIResolvedSymbolAddress(outcomes[0].symbol) == 42);
-    assert(ABIResolutionFailureCode(outcomes[1].failure) == ABIFailureDeclarationNotFound);
+    assert(*(const int *)ABIResolvedSymbolGetAddress(outcomes[0].symbol) == 42);
+    assert(ABIResolutionFailureGetCode(outcomes[1].failure) == ABIFailureDeclarationNotFound);
+    ABIResolvedSymbol *aliased = ABIResolveSymbol(runtime, &requests[0], &failure);
+    assert(aliased && !failure && ABIResolvedSymbolGetAddress(aliased) == ABIResolvedSymbolGetAddress(counter));
+    ABIReleaseResolvedSymbol(aliased);
+    ABISymbolRequest empty_request = requests[0];
+    empty_request.imageScopeCount = 0;
+    assert(!ABIResolveSymbol(runtime, &empty_request, &failure));
+    assert(failure && ABIResolutionFailureGetCode(failure) == ABIFailureImageNotLoaded);
+    ABIReleaseResolutionFailure(failure);
+    failure = NULL;
     ABIReleaseResolvedSymbol(outcomes[0].symbol);
     ABIReleaseResolutionFailure(outcomes[1].failure);
 
@@ -174,7 +194,7 @@ int main(int argc, char **argv) {
         lazy_candidates, 2
     };
     ABISymbolResult lazy_result = {0};
-    ABIResolveSymbols(runtime, &lazy_request, 1, &lazy_result);
+    lazy_result.symbol = ABIResolveSymbol(runtime, &lazy_request, &lazy_result.failure);
     assert(lazy_result.symbol && !lazy_result.failure);
     lazy_request.declaration = exact_counter;
     lazy_request.fallbacks = lazy_candidates + 1;
@@ -186,31 +206,31 @@ int main(int argc, char **argv) {
     lazy_request.fallbacks = NULL;
     ABISymbolResult invalid_result = {0};
     ABIResolveSymbols(runtime, &lazy_request, 1, &invalid_result);
-    assert(!invalid_result.symbol && ABIResolutionFailureCode(invalid_result.failure) == ABIFailureInvalidRequest);
+    assert(!invalid_result.symbol && ABIResolutionFailureGetCode(invalid_result.failure) == ABIFailureInvalidRequest);
     ABIReleaseResolutionFailure(invalid_result.failure);
 
     assert(dlclose(library) == 0);
-    ABIRuntimeRemoveCachedResults(runtime);
+    ABISymbolRuntimeRemoveCachedResults(runtime);
     ABIReleaseSymbolRuntime(runtime);
-    assert(*(const int *)ABIResolvedSymbolAddress(lazy_result.symbol) == 42);
+    assert(*(const int *)ABIResolvedSymbolGetAddress(lazy_result.symbol) == 42);
     ABIReleaseResolvedSymbol(lazy_result.symbol);
-    assert(strstr(ABIResolutionFailureMessage(saved_failure), "ABIBridgeFixtureMissing"));
+    assert(strstr(ABIResolutionFailureGetMessage(saved_failure), "ABIBridgeFixtureMissing"));
     ABIReleaseResolutionFailure(saved_failure);
-    assert(*(const int *)ABIResolvedSymbolAddress(counter) == 42);
+    assert(*(const int *)ABIResolvedSymbolGetAddress(counter) == 42);
     assert(strlen(image.path) > 0);
 
-    const int *borrowed = ABIResolvedSymbolAddress(counter);
+    const int *borrowed = ABIResolvedSymbolGetAddress(counter);
     ABIResolvedSymbol *retained_counter = ABIRetainResolvedSymbol(counter);
     ABIReleaseResolvedSymbol(counter);
-    assert(*(const int *)ABIResolvedSymbolAddress(retained_counter) == 42);
+    assert(*(const int *)ABIResolvedSymbolGetAddress(retained_counter) == 42);
     ABIReleaseResolvedSymbol(retained_counter);
     ABIReleaseResolvedSymbol(table);
     // An independent lease protects addresses but does not own a symbol's path.
     assert(*borrowed == 42);
-    ABIReleaseImage(lease);
-    assert(!ABIRetainLoadedImage(image.generation));
-    ABIFreeImageList(NULL);
-    ABIReleaseImage(NULL);
+    ABIReleaseImageLease(lease);
+    assert(!ABIAcquireImageLease(image.generation));
+    ABIReleaseImageList(NULL);
+    ABIReleaseImageLease(NULL);
     ABIReleaseResolutionFailure(NULL);
     puts("C inspection consumer passed: public header, vtable lookup, leases, and errors.");
     return 0;

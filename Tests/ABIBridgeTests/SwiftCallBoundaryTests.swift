@@ -88,7 +88,7 @@ struct SwiftCallBoundaryTests {
             try #require(ABICreateStructType($0.baseAddress, $0.count, &failure))
         }
         defer { ABIReleaseValueType(triple) }
-        #expect(ABIValueTypeSize(triple) == 3)
+        #expect(ABIValueTypeGetSize(triple) == 3)
         let parameters: [OpaquePointer?] = [triple]
         let interface = try parameters.withUnsafeBufferPointer {
             try #require(ABICreateSwiftCallInterface(triple, $0.baseAddress, $0.count, &failure))

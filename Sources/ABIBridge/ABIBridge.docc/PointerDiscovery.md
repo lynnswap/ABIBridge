@@ -117,7 +117,7 @@ if (auto candidate = result.unique_candidate()) {
 
 Candidate copies retain `source_region` and its optional `std::shared_ptr<void>` owner. `pointer_search_options` provides the same layout, policy, normalization, and hint fields as Swift. Setup failures throw `pointer_search_error`; read failures remain in the result.
 
-C callers initialize `ABIPointerSearchOptions` with `ABIDefaultPointerSearchOptions()`, fill in the region and address point, then call `ABICopyPointerSearch`. Results own copied evidence and must be released with `ABIFreePointerSearch`. C callers keep their own region and pointee owners alive.
+C callers initialize `ABIPointerSearchOptions` with `ABIDefaultPointerSearchOptions()`, fill in the region and address point, then call `ABICopyPointerSearch`. Results own copied evidence and must be released with `ABIReleasePointerSearchResult`. C callers keep their own region and pointee owners alive.
 
 ## Validation scope
 

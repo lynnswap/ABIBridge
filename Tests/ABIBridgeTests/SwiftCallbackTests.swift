@@ -762,7 +762,7 @@ struct SwiftCallbackTests {
                     MemoryLayout<Int64>.size,
                     &error
                 )
-                status.withLock { $0 = success ? 0 : error.map(ABIResolutionFailureCode) ?? -1 }
+                status.withLock { $0 = success ? 0 : error.map(ABIResolutionFailureGetCode) ?? -1 }
                 if let error { ABIReleaseResolutionFailure(error) }
                 done.signal()
             }

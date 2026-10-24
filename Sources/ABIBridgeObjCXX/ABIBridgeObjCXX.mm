@@ -29,7 +29,7 @@ struct ABIObjCImplementation {
     bool returnsRetained = false;
     bool consumesReceiver = false;
     std::vector<char> consumedParameters;
-    using ImageLease = std::unique_ptr<ABIImageLease, decltype(&ABIReleaseImage)>;
+    using ImageLease = std::unique_ptr<ABIImageLease, decltype(&ABIReleaseImageLease)>;
     std::vector<ImageLease> images;
 };
 
@@ -54,15 +54,15 @@ bool retainImplementationImage(
     Dl_info info{};
     const bool hasAddress = address && dladdr(address, &info) && info.dli_fbase;
     if (!hasAddress && !path) return true;
-    std::unique_ptr<ABIImageList, decltype(&ABIFreeImageList)> images(ABICopyLoadedImages(), ABIFreeImageList);
+    std::unique_ptr<ABIImageList, decltype(&ABIReleaseImageList)> images(ABICopyLoadedImages(), ABIReleaseImageList);
     if (!images) { fail(error, ABIFailureImageUnavailable, @"The loaded image catalog is unavailable."); return false; }
-    for (size_t index = 0; index < ABIImageListCount(images.get()); ++index) {
-        const auto image = ABIImageListGet(images.get(), index);
+    for (size_t index = 0; index < ABIImageListGetCount(images.get()); ++index) {
+        const auto image = ABIImageListGetImage(images.get(), index);
         const bool matches = hasAddress ? image.header == reinterpret_cast<uintptr_t>(info.dli_fbase)
                                         : std::strcmp(image.path, path) == 0;
         if (!matches) continue;
-        if (auto* lease = ABIRetainLoadedImage(image.generation)) {
-            plan.images.emplace_back(lease, ABIReleaseImage);
+        if (auto* lease = ABIAcquireImageLease(image.generation)) {
+            plan.images.emplace_back(lease, ABIReleaseImageLease);
             return true;
         }
         break;
@@ -336,7 +336,7 @@ struct ABIObjCInvocation {
     bool classMethod = false;
     IMP implementation = nullptr;
     ABIObjCInvocation *parent = nullptr;
-    using ImageLease = std::unique_ptr<ABIImageLease, decltype(&ABIReleaseImage)>;
+    using ImageLease = std::unique_ptr<ABIImageLease, decltype(&ABIReleaseImageLease)>;
     std::vector<ImageLease> images;
 
     ABIObjCInvocation(id receiver, NSMethodSignature *signature, SEL selector, Ownership ownership)
@@ -721,8 +721,8 @@ static BOOL invokeCImplementation(
     if (!success) {
         ownership.reclaim();
         if (plan->ownership.consumed) CFRelease((__bridge CFTypeRef)receiver);
-        fail(error, failure ? ABIResolutionFailureCode(failure) : ABIFailureInvalidRequest,
-             failure ? @(ABIResolutionFailureMessage(failure)) : @"Captured invocation failed.");
+        fail(error, failure ? ABIResolutionFailureGetCode(failure) : ABIFailureInvalidRequest,
+             failure ? @(ABIResolutionFailureGetMessage(failure)) : @"Captured invocation failed.");
         if (failure) ABIReleaseResolutionFailure(failure);
         return NO;
     }

@@ -98,18 +98,18 @@ inline pointer_search_result find_pointers(
         static_cast<std::int32_t>(options.policy), options.hint_offset.value_or(SIZE_MAX)
     };
     std::int32_t error = 0;
-    std::unique_ptr<ABIPointerSearchResult, decltype(&ABIFreePointerSearch)>
-        native(ABICopyPointerSearch(&query, &error), ABIFreePointerSearch);
+    std::unique_ptr<ABIPointerSearchResult, decltype(&ABIReleasePointerSearchResult)>
+        native(ABICopyPointerSearch(&query, &error), ABIReleasePointerSearchResult);
     if (!native) throw pointer_search_error(error);
     pointer_search_result result{
-        {}, {}, ABIPointerSearchDistinctCount(native.get()),
-        ABIPointerSearchVisitedCount(native.get()), bool(ABIPointerSearchIsComplete(native.get()))
+        {}, {}, ABIPointerSearchResultGetDistinctCount(native.get()),
+        ABIPointerSearchResultGetVisitedCount(native.get()), bool(ABIPointerSearchResultIsComplete(native.get()))
     };
-    for (std::size_t i = 0; i < ABIPointerSearchCandidateCount(native.get()); ++i) {
-        result.candidates.push_back({ABIPointerSearchCandidateAt(native.get(), i), region});
+    for (std::size_t i = 0; i < ABIPointerSearchResultGetCandidateCount(native.get()); ++i) {
+        result.candidates.push_back({ABIPointerSearchResultGetCandidate(native.get(), i), region});
     }
-    for (std::size_t i = 0; i < ABIPointerSearchFailureCount(native.get()); ++i) {
-        result.failures.push_back(ABIPointerSearchFailureAt(native.get(), i));
+    for (std::size_t i = 0; i < ABIPointerSearchResultGetFailureCount(native.get()); ++i) {
+        result.failures.push_back(ABIPointerSearchResultGetFailure(native.get(), i));
     }
     return result;
 }

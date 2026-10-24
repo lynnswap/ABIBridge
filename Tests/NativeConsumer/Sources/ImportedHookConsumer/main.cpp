@@ -27,14 +27,14 @@ static void checkSelectionLifetime(const char *path) {
         assert(selection && !error && ABIImportSelectionCount(selection)==1);
         const auto slot=ABIImportSelectionGet(selection,0);
         assert(slot.generation!=previous && slot.slot);
-        ABIRuntimeRemoveCachedResults(runtime.native_handle());
+        ABISymbolRuntimeRemoveCachedResults(runtime.native_handle());
         dlclose(loader);
-        auto *retained=ABIRetainLoadedImage(slot.generation); assert(retained);
-        ABIReleaseImage(retained);
+        auto *retained=ABIAcquireImageLease(slot.generation); assert(retained);
+        ABIReleaseImageLease(retained);
         assert(*reinterpret_cast<const uintptr_t*>(slot.slot)!=0);
         ABIReleaseImportSelection(selection);
-        auto *remaining=ABIRetainLoadedImage(slot.generation);
-        if(remaining) ABIReleaseImage(remaining);
+        auto *remaining=ABIAcquireImageLease(slot.generation);
+        if(remaining) ABIReleaseImageLease(remaining);
         assert(!remaining);
         previous=slot.generation;
     }

@@ -70,19 +70,20 @@ For a framework containing an `Example::Renderer` type:
 ABISymbolRuntime *runtime = ABICreateSymbolRuntime();
 ABIResolutionFailure *failure = NULL;
 ABIResolvedSymbol *table = ABIResolveCXXVTable(
-    runtime, "Example::Renderer", ABIImageFramework, "Example", ABIImageLoadIfNeeded, &failure
+    runtime, "Example::Renderer", (ABIImageSelector){ABIImageFramework, "Example"},
+    ABIImageLoadIfNeeded, &failure
 );
 if (!table) {
-    fprintf(stderr, "%d: %s\n", (int)ABIResolutionFailureCode(failure),
-            ABIResolutionFailureMessage(failure));
+    fprintf(stderr, "%d: %s\n", (int)ABIResolutionFailureGetCode(failure),
+            ABIResolutionFailureGetMessage(failure));
     ABIReleaseResolutionFailure(failure);
     ABIReleaseSymbolRuntime(runtime);
     return;
 }
 
 ABIImageInfo image;
-ABIResolvedSymbolImage(table, &image);
-const void *address = ABIResolvedSymbolAddress(table);
+ABIResolvedSymbolGetImage(table, &image);
+const void *address = ABIResolvedSymbolGetAddress(table);
 // Inspect address using the type's actual layout while table remains alive.
 ABIReleaseSymbolRuntime(runtime);
 // The table handle independently retains its image.
@@ -105,7 +106,7 @@ auto symbol = runtime.resolve(abi_bridge::declaration::linker_name(
 
 Linker form adds one Mach-O underscore without examining the prefix. Mach-O form uses the literal symbol-table spelling unchanged. Neither form demangles or normalizes the name. Image selection, storage validation, ambiguity, and ownership use the ordinary resolver.
 
-C uses `ABIResolveSymbolWithNameForm` with `ABINameSource`, `ABINameLinker`, or `ABINameMachO`. `ABIResolveSymbol` remains the source-form convenience entry point. Batch declarations carry the same choice in `ABIDeclaration.nameForm`; zero selects source form. Initialize all fields or use zero-initialized C aggregates. C++ declarations preserve their form when used in batches.
+C sets `ABIDeclaration.nameForm` to `ABINameSource`, `ABINameLinker`, or `ABINameMachO`. Both `ABIResolveSymbol` and `ABIResolveSymbols` take `ABISymbolRequest`, preserving each declaration's language, storage kind, and name form. Zero selects source form; initialize all fields or use zero-initialized C aggregates. C++ declarations preserve their form when used in batches.
 
 The language is retained as metadata for exact spellings, so a mangled C++ or Swift name does not need to be labeled as C. Exact Objective-C symbols can also be inspected; Objective-C selector invocation still uses the separate Swift frontend.
 
@@ -148,12 +149,14 @@ if (result.symbol) {
     // This independently owned symbol can be kept after the batch ends.
     ABIReleaseResolvedSymbol(result.symbol);
 } else {
-    fprintf(stderr, "%s\\n", ABIResolutionFailureMessage(result.failure));
+    fprintf(stderr, "%s\\n", ABIResolutionFailureGetMessage(result.failure));
     ABIReleaseResolutionFailure(result.failure);
 }
 ```
 
-Each output contains exactly one owned symbol or failure. Release old output references before reusing storage; the call overwrites them without releasing them. At count zero, both input and output arrays may be null. Request strings and nested arrays are borrowed only for the duration of the call. Invalid fields fail their request independently.
+The same request resolves individually with `ABIResolveSymbol(runtime, &request, &failure)`. Success returns one owned `ABIResolvedSymbol *` and clears the failure output; release that symbol with `ABIReleaseResolvedSymbol`.
+
+Each batch output contains exactly one owned symbol or failure. Release old output references before reusing storage; the call overwrites them without releasing them. At count zero, both input and output arrays may be null. Request strings and nested arrays are borrowed only for the duration of the call. Invalid fields fail their request independently.
 
 Scopes advance only when an image or declaration is absent. Missing aliases are ignored; found aliases must agree on address and image generation. Ambiguity or invalid storage stops lookup. Empty scopes match no images. Batches reuse scope results through the Swift backend without an atomic loader snapshot.
 
@@ -199,7 +202,7 @@ Swift's `ResolvedSymbol(retainingNativeHandle:)` imports a borrowed C handle wit
 
 `ABICopyLoadedImages()` returns an immutable snapshot with a count and indexed `ABIImageInfo` entries. Each load has a generation that changes on reload. Snapshots contain descriptions rather than loader references: an image can disappear after the snapshot is taken.
 
-Call `ABIRetainLoadedImage(info.generation)` to acquire a separate loader lease. A null result means the generation disappeared or could not be retained. A non-null lease keeps the image loaded until `ABIReleaseImage`; the platform may independently keep it loaded longer. This operation does not load a missing image.
+Call `ABIAcquireImageLease(info.generation)` to acquire a separate loader lease. A null result means the generation disappeared or could not be retained. A non-null lease keeps the image loaded until `ABIReleaseImageLease`; the platform may independently keep it loaded longer. This operation does not load a missing image.
 
 If catalog initialization cannot retain the callback image, snapshot creation returns null without a detailed error object. A valid empty snapshot is distinct from this failure.
 
@@ -209,11 +212,13 @@ If catalog initialization cannot retain the callback image, snapshot creation re
 | --- | --- |
 | Runtime returned by create/copy | One acquired reference, released with `ABIReleaseSymbolRuntime` |
 | Resolved symbol | One owned reference, released with `ABIReleaseResolvedSymbol`; independently retains its image |
-| Image snapshot | Released with `ABIFreeImageList`; owns the paths in its entries |
-| Image lease | Released with `ABIReleaseImage`; retains code/data, not strings owned by other handles |
+| Image snapshot | Released with `ABIReleaseImageList`; owns the paths in its entries |
+| Image lease | Released with `ABIReleaseImageLease`; retains code/data, not strings owned by other handles |
 | Failure | Released with `ABIReleaseResolutionFailure`; owns its message |
-| `ABIResolvedSymbolAddress` result | Borrowed; keep the symbol or a separate image lease alive |
-| `ABIResolvedSymbolImage` path | Borrowed from the symbol even if a separate lease keeps the image loaded |
+| `ABIResolvedSymbolGetAddress` result | Borrowed; keep the symbol or a separate image lease alive |
+| `ABIResolvedSymbolGetImage` path | Borrowed from the symbol even if a separate lease keeps the image loaded |
+
+Opaque owners use `Release` functions; allocated string buffers use `ABIFreeString`. Property accessors use `Get` for borrowed pointers or copied scalar descriptions, and `Copy` for an independently owned result. Predicate queries use `Is` or `Equal`.
 
 Copying a handle pointer does not acquire another reference. Each call to `ABICopySharedSymbolRuntime` does acquire one, sharing the backend with Swift's `ABIRuntime.shared`. Independent runtimes own independent caches.
 

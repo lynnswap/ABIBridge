@@ -136,7 +136,7 @@ const char *ABIValidateNativeCalls() {
             ABICopyVirtualCallTarget(table, ABIAuthenticationInstructionA, ABIValidationSlotDiscriminator(), true, &error),
             ABIReleaseVirtualCallTarget);
         if (!target) {
-            failure = ABIResolutionFailureMessage(error);
+            failure = ABIResolutionFailureGetMessage(error);
             ABIReleaseResolutionFailure(error);
             return failure.c_str();
         }

@@ -39,11 +39,11 @@ extern "C" void ABIBridgeTestConstructorEntered(const void *initializer) {
     assert(dladdr(initializer, &info) && info.dli_fbase);
     auto* images = ABICopyLoadedImages();
     assert(images);
-    for (size_t i = 0; i < ABIImageListCount(images); ++i) {
-        const auto image = ABIImageListGet(images, i);
+    for (size_t i = 0; i < ABIImageListGetCount(images); ++i) {
+        const auto image = ABIImageListGetImage(images, i);
         if (image.header == reinterpret_cast<uintptr_t>(info.dli_fbase)) constructorGeneration = image.generation;
     }
-    ABIFreeImageList(images);
+    ABIReleaseImageList(images);
     assert(constructorGeneration != 0);
     abi_bridge::InvocationRuntime::current().remove_cached_results();
     std::thread worker([] {

@@ -59,7 +59,7 @@ int main(int argc, char **argv) {
         [cancelledEvents](const imported_image_update& value) noexcept { cancelledEvents->append(value); });
     auto set=reinterpret_cast<void(*)(void(*)(void*),void*)>(dlsym(provider,"ABISetImportedMonitorInitializer")); assert(set);
     set([](void *context) {
-        auto *images=ABICopyLoadedImages(); assert(images && ABIImageListCount(images)); ABIFreeImageList(images);
+        auto *images=ABICopyLoadedImages(); assert(images && ABIImageListGetCount(images)); ABIReleaseImageList(images);
         static_cast<imported_hook_monitor*>(context)->invalidate();
     },&cancelled);
     const std::string path=argv[3];

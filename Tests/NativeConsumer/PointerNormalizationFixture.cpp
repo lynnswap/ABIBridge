@@ -38,12 +38,12 @@ static void check(uintptr_t *slots, uintptr_t expected, uintptr_t object, uintpt
     int32_t error = -1;
     auto *result = ABICopyPointerSearch(&options, &error);
     assert(result && error == ABIPointerSearchSuccess);
-    assert(ABIPointerSearchIsComplete(result) && ABIPointerSearchDistinctCount(result) == 1);
-    assert(ABIPointerSearchCandidateCount(result) == 1);
-    const auto found = ABIPointerSearchCandidateAt(result, 0);
+    assert(ABIPointerSearchResultIsComplete(result) && ABIPointerSearchResultGetDistinctCount(result) == 1);
+    assert(ABIPointerSearchResultGetCandidateCount(result) == 1);
+    const auto found = ABIPointerSearchResultGetCandidate(result, 0);
     assert(found.offset == sizeof(uintptr_t) && found.pointerBits == slots[1]);
     assert(found.addressForInspection == object && found.vptrBits == vptr);
-    ABIFreePointerSearch(result);
+    ABIReleasePointerSearchResult(result);
     const auto single = ABIInspectPointer(options.address, options.byteCount, sizeof(uintptr_t), expected, 0, mode);
     assert(single.status == ABIPointerInspectionMatch);
     assert(single.candidate.pointerBits == slots[1] && single.candidate.vptrBits == vptr);

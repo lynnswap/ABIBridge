@@ -4,7 +4,7 @@
 
 namespace {
 struct TableOwner {
-    std::unique_ptr<ABIImageLease,decltype(&ABIReleaseImage)> image{nullptr,ABIReleaseImage};
+    std::unique_ptr<ABIImageLease,decltype(&ABIReleaseImageLease)> image{nullptr,ABIReleaseImageLease};
     void *context = nullptr;
     ABIImportedContextRelease release = nullptr;
     ~TableOwner() { if (release) release(context); }
@@ -36,7 +36,7 @@ ABIImportedHook *ABICreateManagedVirtualHook(ABIManagedVirtualEntry entry,
     owner->image.reset(abibridge::copyContainingImage(slot,&error));
     if (error) return ABICreateFailedImportedHook(error);
     owner->context=storageContext; owner->release=releaseStorage; storageOwner.relinquish();
-    const auto generation=owner->image ? ABIImageLeaseGet(owner->image.get()).generation : 0;
+    const auto generation=owner->image ? ABIImageLeaseGetInfo(owner->image.get()).generation : 0;
     std::vector<abibridge::ManagedFunctionSlot> slots;
     slots.push_back({{reinterpret_cast<uintptr_t>(slot),generation,entry.key,entry.discriminator,entry.addressDiversity},
         std::move(owner),releaseStorage!=nullptr});

@@ -33,8 +33,8 @@ private:
 class virtual_hook_installation_error : public std::runtime_error {
 public:
     explicit virtual_hook_installation_error(virtual_hook_handle handle):std::runtime_error(
-        ABIResolutionFailureMessage(ABIVirtualHookFailure(handle.native_handle()))), handle_(std::move(handle)) {}
-    int32_t code() const { return ABIResolutionFailureCode(ABIVirtualHookFailure(handle_.native_handle())); }
+        ABIResolutionFailureGetMessage(ABIVirtualHookFailure(handle.native_handle()))), handle_(std::move(handle)) {}
+    int32_t code() const { return ABIResolutionFailureGetCode(ABIVirtualHookFailure(handle_.native_handle())); }
     const virtual_hook_handle& registration() const noexcept { return handle_; }
 private:
     virtual_hook_handle handle_;
@@ -111,7 +111,7 @@ template<class R,class... A> struct virtual_installer<R(A...)> {
         auto *handle=ABIInstallSharedVirtualHook(entry,storage.release(),releaseStorage,
             result.get(),parameters.data(),parameters.size(),state.release(),State::invoke,
             [](void *context,const ABIResolutionFailure *error) {
-                static_cast<State*>(context)->failure(resolution_error(ABIResolutionFailureCode(error),ABIResolutionFailureMessage(error)));
+                static_cast<State*>(context)->failure(resolution_error(ABIResolutionFailureGetCode(error),ABIResolutionFailureGetMessage(error)));
             },[](void *context) { delete static_cast<State*>(context); });
         auto owned=virtual_hook_handle::adopt(handle);
         if(ABIVirtualHookFailure(handle)) throw virtual_hook_installation_error(owned);
@@ -161,7 +161,7 @@ public:
         ABIResolutionFailure *error=nullptr;
         std::shared_ptr<ABIVirtualEntry> selected(ABICopyVirtualEntry(runtime.native_handle(),address_,count_,name.c_str(),&error),ABIReleaseVirtualEntry);
         detail::callback_require(selected!=nullptr,error);
-        virtual_entry result(ABIVirtualEntryGet(selected.get()),owner_);
+        virtual_entry result(ABIVirtualEntryGetInfo(selected.get()),owner_);
         result.selected_=std::move(selected);
         return result;
     }

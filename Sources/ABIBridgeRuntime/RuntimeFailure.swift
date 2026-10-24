@@ -13,7 +13,7 @@ package func consumeRuntimeCallFailure(
     defer { ABIReleaseResolutionFailure(failure) }
     return NSError(
         domain: domain,
-        code: Int(ABIResolutionFailureCode(failure)),
-        userInfo: [NSLocalizedDescriptionKey: String(cString: ABIResolutionFailureMessage(failure))]
+        code: Int(ABIResolutionFailureGetCode(failure)),
+        userInfo: [NSLocalizedDescriptionKey: String(cString: ABIResolutionFailureGetMessage(failure))]
     )
 }

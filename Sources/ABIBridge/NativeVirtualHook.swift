@@ -159,6 +159,6 @@ extension NativeVTable.Entry {
 }
 
 private func virtualHookFailure(_ error: OpaquePointer) -> NSError {
-    NSError(domain: "ABIBridge.VirtualHook", code: Int(ABIResolutionFailureCode(error)),
-        userInfo: [NSLocalizedDescriptionKey: String(cString: ABIResolutionFailureMessage(error))])
+    NSError(domain: "ABIBridge.VirtualHook", code: Int(ABIResolutionFailureGetCode(error)),
+        userInfo: [NSLocalizedDescriptionKey: String(cString: ABIResolutionFailureGetMessage(error))])
 }

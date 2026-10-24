@@ -126,8 +126,8 @@ ABIObjCReplacement *ABICreateObjCReplacement(ABIObjCInvocation *binding,
         }, entry.get(), &failure);
     if (!entry->closure) {
         if (error) *error = [NSError errorWithDomain:ABIObjCInvocationErrorDomain
-            code:failure ? ABIResolutionFailureCode(failure) : ABIFailureUnsupportedDeclaration
-            userInfo:@{NSLocalizedDescriptionKey: failure ? @(ABIResolutionFailureMessage(failure)) : @"Callback preparation failed."}];
+            code:failure ? ABIResolutionFailureGetCode(failure) : ABIFailureUnsupportedDeclaration
+            userInfo:@{NSLocalizedDescriptionKey: failure ? @(ABIResolutionFailureGetMessage(failure)) : @"Callback preparation failed."}];
         if (failure) ABIReleaseResolutionFailure(failure);
         return nullptr;
     }
@@ -197,8 +197,8 @@ BOOL ABIObjCReplacementProceed(ABIObjCReplacementCall *call, const void *const *
     if (!success) {
         ownership.reclaim();
         if (error) *error = [NSError errorWithDomain:ABIObjCInvocationErrorDomain
-            code:failure ? ABIResolutionFailureCode(failure) : ABIFailureInvalidRequest
-            userInfo:@{NSLocalizedDescriptionKey: failure ? @(ABIResolutionFailureMessage(failure)) : @"Invalid continuation storage."}];
+            code:failure ? ABIResolutionFailureGetCode(failure) : ABIFailureInvalidRequest
+            userInfo:@{NSLocalizedDescriptionKey: failure ? @(ABIResolutionFailureGetMessage(failure)) : @"Invalid continuation storage."}];
         if (failure) ABIReleaseResolutionFailure(failure);
         return NO;
     }
