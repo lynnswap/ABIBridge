@@ -79,6 +79,36 @@ struct SwiftKeyPathTests {
         #expect(!value.isConsumed)
     }
 
+    @Test func constrainedExistentialPropertiesPreserveIdentityAndWriteback() throws {
+        let runtime = ABIRuntime()
+        let root = try runtime.resolveSwiftTypeAndWait(
+            named: "ManagedSwiftFixtures.RuntimeKeyPathSequenceRoot"
+        )
+        let getter = try root.resolveAndWait(.getter("sequence", as: (() -> NativeSwiftValue).self))
+        let sequence = try unsafe getter.unsafeInvoke(on: RuntimeKeyPathSequenceRoot())
+        let value = try root.resolveWritableKeyPathAndWait(
+            named: "sequence",
+            valueType: sequence.type
+        )
+        let path = try value.copy().take(
+            as: WritableKeyPath<RuntimeKeyPathSequenceRoot, any Sequence<Int>>.self
+        )
+        #expect(path == \RuntimeKeyPathSequenceRoot.sequence)
+        var receiver = RuntimeKeyPathSequenceRoot()
+        receiver[keyPath: path] = [2, 3]
+        #expect(Array(receiver.sequence) == [2, 3])
+        let otherGetter = try root.resolveAndWait(
+            .getter("otherSequence", as: (() -> NativeSwiftValue).self)
+        )
+        let other = try unsafe otherGetter.unsafeInvoke(on: RuntimeKeyPathSequenceRoot())
+        #expect {
+            try root.resolveWritableKeyPathAndWait(named: "sequence", valueType: other.type)
+        } throws: { error in
+            guard case ABIResolutionError.signatureMismatch = error else { return false }
+            return true
+        }
+    }
+
     @Test func extensionPropertyUsesItsOwnIdentityAndImplementation() throws {
         let runtime = ABIRuntime()
         let root = try runtime.resolveSwiftTypeAndWait(named: "Swift.String")
