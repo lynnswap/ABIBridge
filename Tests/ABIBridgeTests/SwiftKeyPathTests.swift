@@ -257,6 +257,59 @@ struct SwiftKeyPathTests {
             #expect(read(object, through: path) as? String == "stored")
         }
     }
+
+    @Test func extensionPropertiesOfOtherModulesDoNotHideSharedCacheDescriptors() async throws {
+        let module = "VisibleKeyPath_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let fixture = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                extension String {
+                    public var sharedName: String {
+                        get { self + "!" }
+                        set {}
+                    }
+                }
+                """,
+            linkArguments: ["-parse-as-library", "-enable-library-evolution"]
+        )
+        defer { fixture.cleanup() }
+        let image = try #require(
+            try await RuntimeSymbolResolver().images(matching: .path(fixture.libraryURL)).first
+        )
+        // The image exports this module's `sharedName`; only a local symbol
+        // describes another module's property of that name.
+        let exported = try #require(
+            RuntimeSymbolResolver().exportedSymbols(withPrefix: "_$s", in: image).first {
+                $0.name.hasSuffix("10sharedNameSSvpMV")
+            }
+        )
+        let other = "Other" + module
+        let local = (
+            name: exported.name.replacingOccurrences(
+                of: "\(module.count)\(module)E", with: "\(other.count)\(other)E"
+            ),
+            address: exported.address
+        )
+        #expect(local.name != exported.name)
+        let resolver = RuntimeSymbolResolver(capturingSharedCacheSymbols: { _, _, source in
+            guard source == .loaded else { return nil }
+            return SharedCacheSymbols.CapturedSymbols(
+                slide: 0,
+                readers: [{ record in local.name.withCString { record($0, local.address) } }],
+                imageIdentity: image.identity
+            )
+        })
+        let runtime = ABIRuntime(resolver: SymbolResolver(resolver))
+        let string = try await runtime.resolveSwiftType(named: "Swift.String")
+        let value = try await string.resolveWritableKeyPath(
+            named: "(extension in \(other)):Swift.String.sharedName",
+            valueType: string
+        )
+        try value.withCopy {
+            let path = try #require($0 as? KeyPath<String, String>)
+            #expect("text"[keyPath: path] == "text!")
+        }
+    }
     #endif
 
     @Test func unavailableAndMismatchedPropertiesReportFailure() throws {

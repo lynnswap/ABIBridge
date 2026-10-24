@@ -96,18 +96,26 @@ extension NativeSwiftType {
         guard let path = SwiftMemberPath(owner: rootName, member: query.member) else {
             throw ABIResolutionError.declarationNotFound(displayed)
         }
-        let descriptors = try resolver.swiftMemberCandidates(
-            SwiftMemberMatch(
-                path: path,
-                accessor: nil,
-                isStatic: false,
-                initializer: .excluded,
-                entry: .propertyDescriptor
-            ),
-            owner: rootName,
-            in: query.extensionModule == nil ? image : nil,
-            extensionsOnly: query.extensionModule != nil
-        ).filter { $0.record.kind == .variable && query.isDeclared(by: $0.record) }
+        func candidates(includingSharedCache: Bool) throws -> [SwiftCandidate] {
+            try resolver.swiftMemberCandidates(
+                SwiftMemberMatch(
+                    path: path,
+                    accessor: nil,
+                    isStatic: false,
+                    initializer: .excluded,
+                    entry: .propertyDescriptor
+                ),
+                owner: rootName,
+                in: query.extensionModule == nil ? image : nil,
+                extensionsOnly: query.extensionModule != nil,
+                includingSharedCache: includingSharedCache
+            ).filter { $0.record.kind == .variable && query.isDeclared(by: $0.record) }
+        }
+        // As for members, the images can hold another extension's property
+        // of that name while only the shared cache's local symbols describe
+        // the requested one.
+        var descriptors = try candidates(includingSharedCache: false)
+        if descriptors.isEmpty { descriptors = try candidates(includingSharedCache: true) }
         guard descriptors.count <= 1 else {
             throw ABIResolutionError.ambiguousDeclaration(
                 displayed,
