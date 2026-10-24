@@ -25,9 +25,31 @@ hook.invalidate()
 
 When the receiver type is importable, `call.receiver(as: Renderer.self)` returns the same instance and permits ordinary property access before or after `proceed`. For a private type, prepare getter/setter handles before installing the hook, then call their synchronous `unsafeInvoke(on:)` operations using the receiver. These handles call their captured implementation rather than redispatching through the hooked entry.
 
-Use `method.hookImportedCalls(in:using:onFailure:body:)` to intercept references to a concrete member implementation in loaded callers. A final method has no virtual table entry, but can still have importing references. An ordinary virtual call does not necessarily use an import reference. Value methods use importing references; they do not acquire a class metadata table. Import selection follows the loaded-image, provider-filter and protection contracts in <doc:SwiftFunctionHooks>.
+Use `method.hookImportedCalls(in:using:onFailure:body:)` to intercept references to a concrete member implementation in loaded callers. A final method has no virtual table entry, but can still have importing references. An ordinary virtual call does not necessarily use an import reference. Concrete value methods use importing references; protocol requirements use witness-table slots. Import selection follows the loaded-image, provider-filter and protection contracts in <doc:SwiftFunctionHooks>.
 
-Other images call a library-evolution class member through its dispatch thunk, which dispatches on the receiver's class. Import selection includes references to that thunk, whether lookup selected the member's own code or, in an image that keeps only its exports, the class's virtual-table entry; `proceed` then calls the thunk, which runs the receiver's override. A protocol requirement resolved by a protocol-qualified name is called through its dispatch thunk too. Its hook receives the calls of the lookup type's conformance, and calls of other conforming types continue to their witnesses. A conformance's witness has no importing references, and `hookVirtualCalls` changes only class virtual-table entries, so it rejects protocol requirements. Hooks intercept methods, getters, and setters, as the declaration's record says; initializers, deinitializers, and coroutines are rejected.
+Other images call a library-evolution class member through its dispatch thunk, which dispatches on the receiver's class. Import selection includes references to that thunk, whether lookup selected the member's own code or, in an image that keeps only its exports, the class's virtual-table entry; `proceed` then calls the thunk, which runs the receiver's override. A protocol requirement resolved by a protocol-qualified name is called through its dispatch thunk too. Its hook receives the calls of the lookup type's conformance, and calls of other conforming types continue to their witnesses. A conformance's witness has no importing references. Use `hookVirtualCalls` on a protocol-qualified requirement to intercept its conformance's witness-table slot, including calls from nonresilient clients without a dispatch-thunk import. Imported-member hooks require ordinary methods, getters, or setters.
+
+## Hook protocol requirements
+
+Resolve a concrete conforming type, then qualify the member with its protocol:
+
+```swift
+let counter = try await runtime.resolveSwiftType(named: "Rendering.Counter")
+let read = try await counter.resolve(.method(
+    "Rendering.Readable.read(_:)", as: ((Int64) -> Int64).self
+))
+let hook = try await unsafe read.hookVirtualCalls(
+    onFailure: { error in print(error) }
+) { call, value in
+    try call.proceed(value + 1) + 100
+}
+```
+
+The hook changes the actual table returned by Swift's conformance lookup. It supports instance methods, getters/setters, static requirements, and initializer requirements. Use `staticMethod`, `staticGetter`, `staticSetter`, or `initializer` for requirements called on a type; their callbacks use `NativeSwiftFunctionInvocation`. Async requirements publish an async descriptor, preserving predecessor context size and the slot's authentication schema. Yielding accessors and deinitializers need separate support.
+
+Another conformance's table is unchanged. Generic and conditional conformances can share physical tables; typed callbacks select the incoming Self and generic binding, and other bindings continue to their witnesses. Invalidation removes that callback while the stable dispatcher remains callable. A compiled replacement changes every call through its physical slot and must accept all those bindings.
+
+Slot identity comes from protocol requirement descriptors. When a binary has no method-descriptor symbols, lookup uses the UUID-matched original Mach-O fixups and local witness symbols. Missing evidence or code folded across indistinguishable requirements produces `metadataUnavailable`, including after stripping. It never selects a slot from the pointer a previous hook installed. The pattern field supplies identity evidence, not the mutation address. Swift can return the pattern itself as a shared canonical table when no instantiation is needed; otherwise only the instantiated table changes. Direct, inlined, or devirtualized calls bypass witness dispatch.
 
 ## Hook class members
 
@@ -45,13 +67,13 @@ let hook = try await unsafe scale.hookVirtualCalls(
 }
 ```
 
-The callback receives `NativeSwiftFunctionInvocation<Signature>`, and `proceed` passes the incoming metatype on. Selection, class scope, chaining, and invalidation follow the rules for instance members below. A `static` or `final class` member has no entry, as a final method has none, so `hookVirtualCalls` throws ``ABIResolutionError/unsupportedDeclaration(_:)`` for it; free functions and the static members of structs and enums have no entry either.
+The callback receives `NativeSwiftFunctionInvocation<Signature>`, and `proceed` passes the incoming metatype on. Selection, class scope, chaining, and invalidation follow the rules for instance members below. A `static` or `final class` member has no entry, as a final method has none, so `hookVirtualCalls` throws ``ABIResolutionError/unsupportedDeclaration(_:)`` for it; free functions and concrete static members of structs and enums have no entry either. Protocol-qualified static requirements use their conformance's witness table.
 
 ## Await asynchronous methods
 
 An async method uses the same registration and `NativeSwiftMethodInvocation<Signature>`. Include its native isolation convention in the signature, and await `call.proceed(...)`. `call.receiver(as:)` remains available before and after suspension while the callback runs on the same Swift task. Native argument and receiver storage stays live until completion.
 
-Virtual async methods use the class metadata's async descriptor slot. The published descriptor preserves the captured predecessor's context size, so calls still pass through after invalidation. Imported async members intercept their implementation's function references. In both cases, callback failures, cancellation, snapshots, and code lifetime follow <doc:SwiftFunctionHooks>.
+Virtual async methods use the class metadata's or conformance witness table's async descriptor slot. The published descriptor preserves the captured predecessor's context size, so calls still pass through after invalidation. Imported async members intercept their implementation's function references. In both cases, callback failures, cancellation, snapshots, and code lifetime follow <doc:SwiftFunctionHooks>.
 
 ## Inspect value receivers
 
