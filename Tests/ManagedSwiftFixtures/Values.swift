@@ -66,3 +66,11 @@ public struct WideLabel {
 @inline(never) public func makeWideLabelPair(_ name: String) -> (WideLabel, Int64) {
     (makeWideLabel(name), 8)
 }
+
+extension Int {
+    /// A class whose demangled name leads with the extension that nests it.
+    public final class RuntimeNestedCounter {
+        public init() {}
+        public func value() -> Int { 7 }
+    }
+}

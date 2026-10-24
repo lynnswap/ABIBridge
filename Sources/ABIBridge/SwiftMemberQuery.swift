@@ -45,7 +45,11 @@ struct SwiftMemberQuery {
             SwiftMemberLookup.member(of: name)
             ?? (spellsStatic ? String(name.dropFirst(7)) : name)
         extensionModule = Self.extensionModule(of: name)
-        isComplete = SwiftMemberLookup.hasSignature(name)
+        // An accessor's name is complete when it spells the accessor and its
+        // value type; a property can be named like a destructor.
+        isComplete =
+            request.role == .getter || request.role == .setter
+            ? SwiftMemberLookup.isAccessor(name) : SwiftMemberLookup.hasSignature(name)
         if request.role == .initializer {
             guard member.hasPrefix("init(") || member.hasPrefix("init<") else {
                 throw ABIResolutionError.unsupportedDeclaration(

@@ -106,11 +106,17 @@ struct SwiftKeyPathTests {
             named: "ManagedSwiftFixtures.RuntimeKeyPathReferenceRoot"
         )
         let string = try runtime.resolveSwiftTypeAndWait(named: "Swift.String")
-        let value = try root.resolveWritableKeyPathAndWait(named: "🐱", valueType: string)
-        let path = try value.copy().take(
-            as: ReferenceWritableKeyPath<RuntimeKeyPathReferenceRoot, String>.self
-        )
-        #expect(path == \RuntimeKeyPathReferenceRoot.🐱)
+        for (name, expected) in [
+            ("🐱", \RuntimeKeyPathReferenceRoot.🐱),
+            // Spelled like a destructor, which names nothing to a property.
+            ("deinit", \RuntimeKeyPathReferenceRoot.`deinit`),
+        ] {
+            let value = try root.resolveWritableKeyPathAndWait(named: name, valueType: string)
+            let path = try value.copy().take(
+                as: ReferenceWritableKeyPath<RuntimeKeyPathReferenceRoot, String>.self
+            )
+            #expect(path == expected)
+        }
     }
 
     #if DEBUG

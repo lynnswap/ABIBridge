@@ -199,6 +199,18 @@ struct ResolutionRequestTests {
         #expect(try unsafe declared.unsafeInvoke(on: [10, 20, 30], 2) == 30)
     }
 
+    @MainActor @Test func typesNestedInExtensionsResolveTheirMembers() async throws {
+        let runtime = ABIRuntime()
+        let type = try await runtime.resolveSwiftType(
+            named: "(extension in ManagedSwiftFixtures):Swift.Int.RuntimeNestedCounter"
+        )
+        let make = try await type.resolve(
+            .initializer("init()", as: (() -> Int.RuntimeNestedCounter).self)
+        )
+        let value = try await type.resolve(.method("value()", as: (() -> Int).self))
+        #expect(try unsafe value.unsafeInvoke(on: make.unsafeInvoke()) == 7)
+    }
+
     @MainActor @Test func receiverConventionsSelectHowSelfPasses() async throws {
         let runtime = ABIRuntime()
         let type = try await runtime.resolveSwiftType(named: "ABIBridgeTests.SwiftRequestToggle")

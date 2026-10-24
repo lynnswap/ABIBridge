@@ -81,6 +81,11 @@ public final class RuntimeKeyPathReferenceRoot {
         get { storage }
         set { storage = newValue }
     }
+
+    public var `deinit`: String {
+        get { storage }
+        set { storage = newValue }
+    }
 }
 
 private let runtimeKeyPathTags = Mutex<[ObjectIdentifier: String]>([:])

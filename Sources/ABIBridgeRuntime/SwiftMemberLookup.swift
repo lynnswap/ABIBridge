@@ -84,11 +84,20 @@ package enum SwiftMemberLookup {
     }
 
     package static func belongs(_ declaration: String, to owner: String) -> Bool {
-        var nominal = owner
-        for group in SwiftGenericSyntax.groups(in: nominal).reversed() {
-            nominal.removeSubrange(group.range)
-        }
-        return Self.owner(of: declaration) == nominal
+        Self.owner(of: declaration).map(ownerKey) == ownerKey(owner)
+    }
+
+    /// The lookup key of a member's owner: a type, a protocol, or a module,
+    /// named as the demangler spells it.
+    ///
+    /// The key leaves out the generic clauses and the extension contexts
+    /// that the spelling can lead with, such as the `(extension in M):` of a
+    /// type nested in an extension, which a member's name leaves out of its
+    /// owner.
+    static func ownerKey(_ owner: String) -> [UInt8] {
+        var name = removingGenerics(owner)
+        while let declared = SymbolIndex.extensionMemberName(name) { name = declared }
+        return DeclarationKey.make(name)
     }
 
     /// The text of `source` without its generic parameter clauses.
@@ -166,10 +175,7 @@ package struct SwiftMemberPath: Hashable, Sendable {
     ///     `SwiftMemberLookup.memberKey(_:)` reads it.
     package init?(owner: String, member: String) {
         guard let key = SwiftMemberLookup.memberKey(member) else { return nil }
-        self.init(
-            ownerKey: DeclarationKey.make(SwiftMemberLookup.removingGenerics(owner)),
-            memberKey: key
-        )
+        self.init(ownerKey: SwiftMemberLookup.ownerKey(owner), memberKey: key)
     }
 
     private init(ownerKey: [UInt8], memberKey: [UInt8]) {
