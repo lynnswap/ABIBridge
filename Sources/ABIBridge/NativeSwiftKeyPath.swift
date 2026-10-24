@@ -72,7 +72,7 @@ extension NativeSwiftType {
         let rootName = try swiftNativeTypeName(metadata)
         let query = try SwiftMemberQuery(
             .init(role: .getter, isStatic: false, name: name, options: .init())
-        )
+        ).inContext(of: rootName)
         if query.qualifier != nil, !SwiftMemberLookup.belongs(name, to: rootName) {
             throw ABIResolutionError.unsupportedDeclaration(
                 "The writable key path property must belong to " + rootName + "."
@@ -97,19 +97,25 @@ extension NativeSwiftType {
             throw ABIResolutionError.declarationNotFound(displayed)
         }
         func candidates(includingSharedCache: Bool) throws -> [SwiftCandidate] {
-            try resolver.swiftMemberCandidates(
-                SwiftMemberMatch(
-                    path: path,
-                    accessor: nil,
-                    isStatic: false,
-                    initializer: .excluded,
-                    entry: .propertyDescriptor
-                ),
-                owner: rootName,
-                in: query.extensionModule == nil ? image : nil,
-                extensionsOnly: query.extensionModule != nil,
-                includingSharedCache: includingSharedCache
-            ).filter { $0.record.kind == .variable && query.isDeclared(by: $0.record) }
+            let tiers =
+                query.includesOwnerExtension ? [false, true] : [query.extensionModule != nil]
+            for extensionsOnly in tiers {
+                let found = try resolver.swiftMemberCandidates(
+                    SwiftMemberMatch(
+                        path: path,
+                        accessor: nil,
+                        isStatic: false,
+                        initializer: .excluded,
+                        entry: .propertyDescriptor
+                    ),
+                    owner: rootName,
+                    in: extensionsOnly ? nil : image,
+                    extensionsOnly: extensionsOnly,
+                    includingSharedCache: includingSharedCache
+                ).filter { $0.record.kind == .variable && query.isDeclared(by: $0.record) }
+                if !found.isEmpty { return found }
+            }
+            return []
         }
         // As for members, the images can hold another extension's property
         // of that name while only the shared cache's local symbols describe

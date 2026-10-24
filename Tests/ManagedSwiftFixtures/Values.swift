@@ -70,8 +70,20 @@ public struct WideLabel {
 extension Int {
     /// A class whose demangled name leads with the extension that nests it.
     public final class RuntimeNestedCounter {
+        private var storage = "nested"
         public init() {}
         public func value() -> Int { 7 }
+        public var text: String {
+            get { storage }
+            set { storage = newValue }
+        }
+    }
+}
+
+extension Int.RuntimeNestedCounter {
+    public var extraText: String {
+        get { text + "!" }
+        set { text = newValue }
     }
 }
 

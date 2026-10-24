@@ -15,8 +15,12 @@ struct SwiftMemberQuery {
     let qualifier: String?
     /// The member relative to its owner, as the name spells it.
     let member: String
-    /// The module of the extension that the name spells.
+    /// The module of the extension context that the name spells.
     let extensionModule: String?
+    /// Whether that context can belong to the owner itself. A nominal type
+    /// declared in an extension and its own extension members can lead with
+    /// the same extension prefix; their records distinguish the two tiers.
+    private(set) var includesOwnerExtension = false
     /// Whether the name spells a complete declaration, which selects the
     /// candidates it spells.
     let isComplete: Bool
@@ -61,6 +65,17 @@ struct SwiftMemberQuery {
 
     var role: SwiftMemberRequest.Role { request.role }
     var isStatic: Bool { request.isStatic }
+
+    /// Uses the resolved type's declaration name to identify an owner
+    /// extension context in the request.
+    func inContext(of owner: String) -> Self {
+        var query = self
+        query.includesOwnerExtension =
+            extensionModule != nil
+            && SwiftMemberLookup.belongs(request.name, to: owner)
+            && Self.extensionModule(of: owner) == extensionModule
+        return query
+    }
 
     var accessor: RuntimeSwiftDeclaration.Accessor? {
         switch request.role {
@@ -120,14 +135,16 @@ struct SwiftMemberQuery {
         }
     }
 
-    /// Whether `record` declares the member in the extension that the name
-    /// spells, when it spells one.
+    /// Whether `record` belongs to the extension context that the name
+    /// spells, including a nominal member whose owner contributes it.
     func isDeclared(by record: RuntimeSwiftDeclaration) -> Bool {
         guard let extensionModule else { return true }
         switch record.context {
         case .extension(let module, _), .protocolExtension(let module):
             return module == extensionModule
-        case .nominal, .protocolRequirement:
+        case .nominal:
+            return includesOwnerExtension
+        case .protocolRequirement:
             return false
         }
     }

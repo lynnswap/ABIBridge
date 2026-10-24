@@ -100,6 +100,24 @@ struct SwiftKeyPathTests {
         }
     }
 
+    @Test func propertiesOfTypesDeclaredInExtensionsKeepTheirOwnerContext() throws {
+        let runtime = ABIRuntime()
+        let owner = "(extension in ManagedSwiftFixtures):Swift.Int.RuntimeNestedCounter"
+        let root = try runtime.resolveSwiftTypeAndWait(named: owner)
+        let string = try runtime.resolveSwiftTypeAndWait(named: "Swift.String")
+        for (name, expected) in [
+            ("text", \Int.RuntimeNestedCounter.text),
+            (owner + ".text", \Int.RuntimeNestedCounter.text),
+            (owner + ".extraText", \Int.RuntimeNestedCounter.extraText),
+        ] {
+            let value = try root.resolveWritableKeyPathAndWait(named: name, valueType: string)
+            let path = try value.copy().take(
+                as: ReferenceWritableKeyPath<Int.RuntimeNestedCounter, String>.self
+            )
+            #expect(path == expected)
+        }
+    }
+
     @Test func propertyNamesNeedOnlyBeSwiftIdentifiers() throws {
         let runtime = ABIRuntime()
         let root = try runtime.resolveSwiftTypeAndWait(
