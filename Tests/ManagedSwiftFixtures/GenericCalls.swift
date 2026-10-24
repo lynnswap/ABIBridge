@@ -1,5 +1,14 @@
 @inline(never) public func runGeneric<Value>(_ apply: () -> Value) -> Value { apply() }
 
+extension Int {
+    @frozen public struct RuntimeExtensionIdentity<Value> {
+        public var value: Value
+        public init(_ value: Value) { self.value = value }
+    }
+}
+
+public typealias FixtureExtensionIdentity = Int.RuntimeExtensionIdentity<Int64>
+
 @inline(never) public func closurePackGeneric<each Value>(_ bodies: repeat () -> each Value) -> (repeat each Value) {
     (repeat (each bodies)())
 }
