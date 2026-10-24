@@ -5,15 +5,22 @@
 #include <algorithm>
 
 namespace abi_bridge {
+enum class imported_image_state : std::int32_t {
+    installed = ABIImportedImageInstalled,
+    no_match = ABIImportedImageNoMatch,
+    failed = ABIImportedImageFailed,
+    removed = ABIImportedImageRemoved
+};
+
 /// Copied asynchronous image outcome. Hook owners preserve partial effects.
 struct imported_image_update {
     image_description image;
-    int32_t state;
+    imported_image_state state;
     std::optional<imported_hook_handle> hook;
     std::optional<resolution_error> failure;
 
     explicit imported_image_update(ABIImportedImageUpdate value)
-        : image{{value.image.header, value.image.slide, value.image.generation}, {}, value.image.path}, state(value.state) {
+        : image{{value.image.header, value.image.slide, value.image.generation}, {}, value.image.path}, state(static_cast<imported_image_state>(value.state)) {
         std::copy_n(value.image.uuid, 16, image.uuid.begin());
         if (value.hook) hook = imported_hook_handle::adopt(ABIRetainImportedHook(value.hook));
         if (value.failure) failure.emplace(ABIResolutionFailureGetCode(value.failure), ABIResolutionFailureGetMessage(value.failure));
@@ -44,8 +51,8 @@ template<class R,class... A> struct imported_monitor_factory<R(A...)> {
     template<class Body,class OnFailure,class OnImageUpdate>
     static imported_hook_monitor create(const declaration& query, const image_selector& importer,
         const image_selector *provider, Body body, OnFailure onFailure, OnImageUpdate onImageUpdate) {
-        static_assert(std::is_nothrow_invocable_v<OnFailure,const resolution_error&>, "Failure handlers must be noexcept.");
-        static_assert(std::is_nothrow_invocable_v<OnImageUpdate,const imported_image_update&>, "Image handlers must be noexcept.");
+        static_assert(std::is_nothrow_invocable_v<std::decay_t<OnFailure>&,const resolution_error&>, "Failure handlers must be noexcept.");
+        static_assert(std::is_nothrow_invocable_v<std::decay_t<OnImageUpdate>&,const imported_image_update&>, "Image handlers must be noexcept.");
         if (query.name.find('\0') != std::string::npos) throw resolution_error(ABIFailureInvalidRequest, "Declaration contains a NUL.");
         auto result = callback_type<R>();
         std::array<std::shared_ptr<ABIValueType>,sizeof...(A)> parameters{callback_type<A>()...};

@@ -15,7 +15,7 @@ struct Events {
     void append(const imported_image_update& value) {
         std::lock_guard lock(mutex); values.push_back(value); changed.notify_all();
     }
-    void wait(int32_t kind, uint64_t after = 0) {
+    void wait(imported_image_state kind, uint64_t after = 0) {
         std::unique_lock lock(mutex);
         assert(changed.wait_for(lock, std::chrono::seconds(10), [&] {
             return !values.empty() && values.back().state == kind && values.back().image.identity.load_generation > after;
@@ -34,10 +34,10 @@ int main(int argc, char **argv) {
     uint64_t previous=0;
     for(int i=0;i<3;++i) {
         auto *provider=dlopen(argv[1],RTLD_NOW|RTLD_LOCAL); assert(provider);
-        absent->wait(ABIImportedImageNoMatch,previous); previous=absent->generation();
+        absent->wait(imported_image_state::no_match,previous); previous=absent->generation();
         assert(noMatch.images().size()==1);
         dlclose(provider);
-        absent->wait(ABIImportedImageRemoved);
+        absent->wait(imported_image_state::removed);
         assert(noMatch.images().empty());
     }
     noMatch.invalidate();
@@ -48,7 +48,7 @@ int main(int argc, char **argv) {
         [events](const imported_image_update& value) noexcept { events->append(value); });
     auto *provider=dlopen(argv[1],RTLD_NOW|RTLD_LOCAL); assert(provider);
     auto *caller=dlopen(argv[2],RTLD_NOW|RTLD_LOCAL); assert(caller);
-    events->wait(ABIImportedImageInstalled);
+    events->wait(imported_image_state::installed);
     auto call=reinterpret_cast<int32_t(*)(int32_t,int32_t)>(dlsym(caller,"ABIMonitoredCall")); assert(call);
     assert(call(20,21)==42);
     monitor.invalidate(); assert(call(20,22)==42);

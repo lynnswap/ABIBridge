@@ -12,7 +12,7 @@ inline void checkPublicNativeInvocation(const char *path) {
         void *library = dlopen(path, RTLD_NOW | RTLD_LOCAL);
         assert(library);
         const auto scope = image_selector::path(path);
-        Runtime runtime;
+        abi_bridge::runtime runtime;
         auto symbol = runtime.resolve(declaration("ABIBridgeFixture::add(int, int)"), scope);
         generation = symbol.image().load_generation;
         // C handles use the same path for symbols transferred from Swift.
@@ -82,7 +82,7 @@ inline void checkPublicNativeInvocation(const char *path) {
         assert(rebound.unsafe_invoke(1) == 43);
         // Construct outside a resolver's lifetime as well as after clearing it.
         auto independent = [&] {
-            Runtime temporary;
+            abi_bridge::runtime temporary;
             return function<int(int, int)>(temporary.resolve(declaration("ABIBridgeFixture::add(int, int)"), scope));
         }();
         assert(independent.unsafe_invoke(20, 22) == 42);

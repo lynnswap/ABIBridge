@@ -6,10 +6,17 @@
 #include <tuple>
 
 namespace abi_bridge {
+enum class virtual_hook_status : std::int32_t {
+    inactive = ABIVirtualInactive,
+    active = ABIVirtualActive,
+    displaced = ABIVirtualDisplaced,
+    unreadable = ABIVirtualUnreadable
+};
+
 /// Copied registration state and immutable installation/rollback effects.
 struct virtual_hook_slot {
     uintptr_t address;
-    int32_t status;
+    virtual_hook_status status;
     ABIPointerSlotResult mutation, rollback;
 };
 
@@ -21,7 +28,7 @@ public:
     void invalidate() const { ABIInvalidateVirtualHook(value_.get()); }
     std::optional<virtual_hook_slot> slot() const {
         if (!ABIVirtualHookHasEntry(value_.get())) return std::nullopt;
-        return virtual_hook_slot{ABIVirtualHookGetSlot(value_.get()), ABIVirtualHookGetStatus(value_.get()),
+        return virtual_hook_slot{ABIVirtualHookGetSlot(value_.get()), static_cast<virtual_hook_status>(ABIVirtualHookGetStatus(value_.get())),
             ABIVirtualHookGetMutation(value_.get()), ABIVirtualHookGetRollback(value_.get())};
     }
 private:
@@ -33,10 +40,13 @@ private:
 class virtual_hook_installation_error : public std::runtime_error {
 public:
     explicit virtual_hook_installation_error(virtual_hook_handle handle):std::runtime_error(
-        ABIResolutionFailureGetMessage(ABIVirtualHookGetFailure(handle.native_handle()))), handle_(std::move(handle)) {}
-    int32_t code() const { return ABIResolutionFailureGetCode(ABIVirtualHookGetFailure(handle_.native_handle())); }
+        ABIResolutionFailureGetMessage(ABIVirtualHookGetFailure(handle.native_handle()))),
+        cause_(ABIResolutionFailureGetCode(ABIVirtualHookGetFailure(handle.native_handle())),
+            ABIResolutionFailureGetMessage(ABIVirtualHookGetFailure(handle.native_handle()))), handle_(std::move(handle)) {}
+    const resolution_error& cause() const noexcept { return cause_; }
     const virtual_hook_handle& registration() const noexcept { return handle_; }
 private:
+    resolution_error cause_;
     virtual_hook_handle handle_;
 };
 
@@ -79,7 +89,7 @@ template<class Signature> struct virtual_installer;
 template<class R,class... A> struct virtual_installer<R(A...)> {
     template<class Body,class OnFailure> static virtual_hook_handle install(
         ABIVirtualEntryInfo entry,std::shared_ptr<const void> owner,Body body,OnFailure failure) {
-        static_assert(std::is_nothrow_invocable_v<OnFailure,const resolution_error&>,"Failure handlers must be noexcept.");
+        static_assert(std::is_nothrow_invocable_v<std::decay_t<OnFailure>&,const resolution_error&>,"Failure handlers must be noexcept.");
         auto result=callback_type<R>();
         std::array<std::shared_ptr<ABIValueType>,sizeof...(A)> types{callback_type<A>()...};
         std::array<const ABIValueType*,sizeof...(A)> parameters{};
@@ -156,7 +166,7 @@ public:
         return virtual_table(__builtin_get_vtable_pointer(&object),count,std::move(owner));
     }
     /// Selects the original implementation declaration, including qualifiers; aliases/thunks follow the same rules as Swift NativeVTable.entry(named:).
-    virtual_entry entry(const Runtime& runtime,const std::string& name) const {
+    virtual_entry entry(const runtime& runtime,const std::string& name) const {
         if(name.find('\0')!=std::string::npos) throw resolution_error(ABIFailureInvalidRequest,"Declaration contains a NUL.");
         ABIResolutionFailure *error=nullptr;
         std::shared_ptr<ABIVirtualEntry> selected(ABICopyVirtualEntry(runtime.native_handle(),address_,count_,name.c_str(),&error),ABIReleaseVirtualEntry);

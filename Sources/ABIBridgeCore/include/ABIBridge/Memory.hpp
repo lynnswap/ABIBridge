@@ -11,16 +11,23 @@
 
 namespace abi_bridge {
 
+/// Outcome of a bounded current-process read, preserving partial copied bytes.
+enum class memory_read_status : std::int32_t {
+    complete = ABIMemoryReadComplete,
+    invalid_range = ABIMemoryReadInvalidRange,
+    failed = ABIMemoryReadFailed,
+    partial = ABIMemoryReadPartial
+};
+
 /// Owned copied bytes, independent of the source region's lifetime. Even a complete read is not atomic and does not prove pointee validity.
 struct memory_read_result final {
     std::uintptr_t source_address;
     std::size_t requested_byte_count;
     std::vector<std::byte> bytes;
-    /// One of the ABIMemoryRead constants.
-    std::int32_t status;
+    memory_read_status status;
     /// Original kern_return_t, or zero without an OS error.
     std::int32_t system_error;
-    bool is_complete() const noexcept { return status == ABIMemoryReadComplete; }
+    bool is_complete() const noexcept { return status == memory_read_status::complete; }
 };
 
 /// A bounded current-process address range, not a promise of readable memory. Copies retain the optional owner. The caller supplies allocation bounds, pointee ownership, and synchronization; retaining an owner alone does not prevent its storage from moving or being destroyed explicitly.
@@ -45,10 +52,10 @@ public:
         if (offset > byte_count_ || count > byte_count_ - offset) {
             throw std::out_of_range("Memory read exceeds the region.");
         }
-        memory_read_result result{address_ + offset, count, std::vector<std::byte>(count), 0, 0};
+        memory_read_result result{address_ + offset, count, std::vector<std::byte>(count), memory_read_status::complete, 0};
         const auto read = ABIReadMemory(result.source_address, count, result.bytes.data());
         result.bytes.resize(read.byteCount);
-        result.status = read.status;
+        result.status = static_cast<memory_read_status>(read.status);
         result.system_error = read.systemError;
         return result;
     }

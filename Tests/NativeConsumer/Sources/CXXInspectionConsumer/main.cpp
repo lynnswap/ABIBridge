@@ -1,5 +1,6 @@
 #include <ABIBridge/Inspection.hpp>
 #include "../../MemoryFixture.hpp"
+#include "../../CallbackConstraintsFixture.hpp"
 #include "../../PointerSearchFixture.hpp"
 #include "../../NativeInvocationFixture.hpp"
 #include "../../LazyLibraryFixture.h"
@@ -47,7 +48,7 @@ int main(int argc, char **argv) {
     checkMemoryReads();
     checkPointerSearch();
     using namespace abi_bridge;
-    Runtime::current().remove_cached_results();
+    abi_bridge::runtime::current().remove_cached_results();
     void *library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
     assert(library);
     const auto scope = image_selector::path(argv[1]);
@@ -59,7 +60,7 @@ int main(int argc, char **argv) {
     std::optional<resolution_error> savedError;
     image_description copiedDescription{};
     {
-        Runtime runtime;
+        abi_bridge::runtime runtime;
         auto copy = runtime;
         auto moved = std::move(copy);
         assert(runtime && moved && !copy);

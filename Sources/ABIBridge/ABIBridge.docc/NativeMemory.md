@@ -42,7 +42,7 @@ if (!result.is_complete()) {
 }
 ```
 
-The optional C++ owner is a `std::shared_ptr<void>`. Region copies retain it; `memory_read_result` does not. Out-of-bounds requests throw `std::out_of_range`; an overflowing region throws `std::invalid_argument`. Memory allocation failures follow standard C++ exception behavior. These wrappers are also usable from Objective-C++ under ARC or manual reference counting.
+`memory_read_result.status` uses `memory_read_status` for complete, partial, failed, and invalid-range outcomes; copied bytes and the original system error remain available. The optional C++ owner is a `std::shared_ptr<void>`. Region copies retain it; `memory_read_result` does not. Out-of-bounds requests throw `std::out_of_range`; an overflowing region throws `std::invalid_argument`. Memory allocation failures follow standard C++ exception behavior. These wrappers are also usable from Objective-C++ under ARC or manual reference counting.
 
 ```c
 #include <ABIBridge/Inspection.h>

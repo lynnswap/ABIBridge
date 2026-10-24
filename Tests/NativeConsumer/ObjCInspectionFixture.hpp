@@ -44,7 +44,7 @@ int main(int argc, char **argv) {
         assert(library);
         __attribute__((objc_precise_lifetime)) CXXInspectionOwner *owner = nil;
         {
-            Runtime runtime;
+            abi_bridge::runtime runtime;
             auto table = runtime.resolve(
                 declaration::vtable_for("ABIBridgeFixture::VirtualCounter"),
                 image_selector::path(argv[1]));

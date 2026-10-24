@@ -96,7 +96,7 @@ int main() {
     void* context = &token;
     Pair variadicPair{3,4};
     void* variadicArguments[] = {&prefix, &count, &integer, &real, &context, &variadicPair};
-    auto variadicSymbol = abi_bridge::Runtime::current().resolve(
+    auto variadicSymbol = abi_bridge::runtime::current().resolve(
         abi_bridge::declaration("dynamicVariadic", abi_bridge::language::c));
     const double expectedVariadic = dynamicVariadic(prefix, count, integer, real, context, variadicPair);
     double variadicResult = 0;
@@ -104,7 +104,7 @@ int main() {
     assert(variadicResult == expectedVariadic);
     abi_bridge::function<double(float, int, ...)> typedVariadic(variadicSymbol);
     assert(typedVariadic.unsafe_invoke(prefix, count, integer, real, context, variadicPair) == expectedVariadic);
-    auto methodSymbol = abi_bridge::Runtime::current().resolve(
+    auto methodSymbol = abi_bridge::runtime::current().resolve(
         abi_bridge::declaration("VariadicReceiver::run(int, ...) const", abi_bridge::language::cxx));
     abi_bridge::method<double(int, ...) const> variadicMethod(methodSymbol);
     auto receiver = std::make_shared<VariadicReceiver>();
@@ -139,7 +139,7 @@ int main() {
     uint8_t input = 0x5a;
     void* arguments[] = {&input};
     uint8_t guarded[] = {0xcc, 0, 0xdd};
-    auto symbol = abi_bridge::Runtime::current().resolve(
+    auto symbol = abi_bridge::runtime::current().resolve(
         abi_bridge::declaration("dynamicTiny", abi_bridge::language::c));
     invoke(tiny.get(), ABIUnsafeFunctionAtAddress(symbol.unsafe_address()), &guarded[1], arguments);
     assert(guarded[0] == 0xcc && guarded[1] == 0xa5 && guarded[2] == 0xdd);

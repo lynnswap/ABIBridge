@@ -20,7 +20,7 @@ static void checkDuplicateInstallNames(const std::filesystem::path& directory) {
     assert(first && second && first != second);
     auto expected = reinterpret_cast<int (*)()>(dlsym(first, "ABIBridgeIdentityValue"));
     assert(expected && expected() == 1);
-    Runtime runtime;
+    abi_bridge::runtime runtime;
     auto symbol = runtime.resolve({"ABIBridgeIdentityValue", language::c},
                                   image_selector::install_name("@rpath/libIdentityAlias.dylib"));
     // The install-name alias identifies the first loader. The second library
@@ -36,7 +36,7 @@ static void checkDuplicateInstallNames(const std::filesystem::path& directory) {
 extern "C" __attribute__((used)) void ABIBridgeLoadingDidInitialize() {
     // Reenter the same resolver while dyld is executing the new library's
     // constructor. Neither the catalog nor index lock may span dlopen.
-    auto runtime = abi_bridge::Runtime::current();
+    auto runtime = abi_bridge::runtime::current();
     auto pid = abi_bridge::function<pid_t()>(runtime.resolve({"getpid", abi_bridge::language::c}));
     assert(pid.unsafe_invoke() == getpid());
     runtime.remove_cached_results();
@@ -46,7 +46,7 @@ extern "C" __attribute__((used)) void ABIBridgeLoadingDidInitialize() {
 int main(int argc, char **argv) {
     assert(argc == 2);
     using namespace abi_bridge;
-    auto runtime = Runtime::current();
+    auto runtime = abi_bridge::runtime::current();
     const auto scope = image_selector::install_name("@rpath/libLoadingFixture.dylib");
     const declaration query("ABIBridgeLoadedValue", language::c);
     try {
