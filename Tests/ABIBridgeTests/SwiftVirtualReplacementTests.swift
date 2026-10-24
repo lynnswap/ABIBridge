@@ -11,10 +11,7 @@ struct SwiftVirtualReplacementTests {
         let fixture = try CompiledSwiftReplacementFixture(writable: false);
         defer { fixture.cleanup() }
         let name = fixture.module + ".ReplacementRenderer"
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: name,
-            in: fixture.providerScope
-        )
+        let type = try await fixture.runtime.resolve(.swift(.type(name)), in: fixture.providerScope)
         let make = try await fixture.runtime.resolve(
             .swift(
                 .function(
@@ -110,16 +107,16 @@ struct SwiftVirtualReplacementTests {
         let fixture = try CompiledSwiftReplacementFixture(writable: false)
         defer { fixture.cleanup() }
         let baseName = fixture.module + ".ReplacementRenderer"
-        let base = try await fixture.runtime.resolveSwiftType(
-            named: baseName,
+        let base = try await fixture.runtime.resolve(
+            .swift(.type(baseName)),
             in: fixture.providerScope
         )
-        let inherited = try await fixture.runtime.resolveSwiftType(
-            named: fixture.module + ".InheritedRenderer",
+        let inherited = try await fixture.runtime.resolve(
+            .swift(.type(fixture.module + ".InheritedRenderer")),
             in: fixture.providerScope
         )
-        let overridden = try await fixture.runtime.resolveSwiftType(
-            named: fixture.module + ".OverridingRenderer",
+        let overridden = try await fixture.runtime.resolve(
+            .swift(.type(fixture.module + ".OverridingRenderer")),
             in: fixture.providerScope
         )
         let replacement = try await base.resolve(
@@ -206,8 +203,8 @@ struct SwiftVirtualReplacementTests {
         let fixture = try CompiledSwiftReplacementFixture(writable: false)
         defer { fixture.cleanup() }
         let baseName = fixture.module + ".ReplacementRenderer"
-        let base = try await fixture.runtime.resolveSwiftType(
-            named: baseName,
+        let base = try await fixture.runtime.resolve(
+            .swift(.type(baseName)),
             in: fixture.providerScope
         )
         let kindReplacement = try await base.resolve(
@@ -272,8 +269,8 @@ struct SwiftVirtualReplacementTests {
         for (index, name) in ["ReplacementRenderer", "InheritedRenderer", "OverridingRenderer"]
             .enumerated()
         {
-            let type = try await fixture.runtime.resolveSwiftType(
-                named: fixture.module + "." + name,
+            let type = try await fixture.runtime.resolve(
+                .swift(.type(fixture.module + "." + name)),
                 in: fixture.providerScope
             )
             let kind = try unsafe await type.resolve(
@@ -345,10 +342,7 @@ struct SwiftVirtualReplacementTests {
         let fixture = try CompiledSwiftReplacementFixture(writable: false)
         defer { fixture.cleanup() }
         let name = fixture.module + ".ReplacementRenderer"
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: name,
-            in: fixture.providerScope
-        )
+        let type = try await fixture.runtime.resolve(.swift(.type(name)), in: fixture.providerScope)
         let make = try await fixture.runtime.resolve(
             .swift(
                 .function(
@@ -425,9 +419,9 @@ struct SwiftVirtualReplacementTests {
         )
         defer { child.cleanup() }
         let runtime = ABIRuntime(), childName = childModule + ".Child"
-        let type = try await runtime.resolveSwiftType(named: childName, in: .path(child.libraryURL))
-        let parentType = try await runtime.resolveSwiftType(
-            named: parentModule + ".Parent",
+        let type = try await runtime.resolve(.swift(.type(childName)), in: .path(child.libraryURL))
+        let parentType = try await runtime.resolve(
+            .swift(.type(parentModule + ".Parent")),
             in: .path(parent.libraryURL)
         )
         let replacement = try await parentType.resolve(
@@ -491,8 +485,8 @@ struct SwiftVirtualReplacementTests {
         defer { fixture.cleanup() }
         let childName = fixture.module + ".CoalescedChild",
             parentName = fixture.module + ".CoalescedParent"
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: childName,
+        let type = try await fixture.runtime.resolve(
+            .swift(.type(childName)),
             in: fixture.providerScope
         )
         let make = try await fixture.runtime.resolve(
@@ -602,14 +596,15 @@ struct SwiftVirtualReplacementTests {
         defer { child.cleanup() }
         let runtime = ABIRuntime(), name = childModule + ".Child"
         _ = try runtime.resolveAndWait(
-            .init(
-                name: "method descriptor for " + parentModule + ".Parent.value() -> Swift.Int64",
-                language: .swift,
-                kind: .data
+            .swift(
+                .symbol(
+                    "method descriptor for " + parentModule + ".Parent.value() -> Swift.Int64",
+                    kind: .data
+                )
             ),
             in: .path(parent.libraryURL)
         )
-        let type = try await runtime.resolveSwiftType(named: name, in: .path(child.libraryURL))
+        let type = try await runtime.resolve(.swift(.type(name)), in: .path(child.libraryURL))
         let method = try await type.resolve(.swift(.method("value()", as: (() -> Int64).self)))
         let replacement = try await type.resolve(
             .swift(

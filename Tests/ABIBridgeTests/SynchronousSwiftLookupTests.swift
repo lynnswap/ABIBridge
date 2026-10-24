@@ -15,8 +15,8 @@ struct SynchronousSwiftLookupTests {
         let preparation = Task {
             try await runtime.prepare { runtime in
                 defer { pause.finish() }
-                let type = try runtime.resolveSwiftTypeAndWait(
-                    named: "ABIBridgeTests.SwiftMemberRenderer"
+                let type = try runtime.resolveAndWait(
+                    .swift(.type("ABIBridgeTests.SwiftMemberRenderer"))
                 )
                 let method = try type.resolveAndWait(
                     .swift(
@@ -40,11 +40,11 @@ struct SynchronousSwiftLookupTests {
         let method: NativeSwiftMethod<(Int) -> Int>
         let getter: NativeSwiftMethod<() -> String>
         if asynchronous {
-            type = try await runtime.resolveSwiftType(named: "ABIBridgeTests.SwiftMemberRenderer")
+            type = try await runtime.resolve(.swift(.type("ABIBridgeTests.SwiftMemberRenderer")))
             method = try await type.resolve(.swift(.method("render(_:)", as: ((Int) -> Int).self)))
             getter = try await type.resolve(.swift(.getter("text", as: (() -> String).self)))
         } else {
-            type = try runtime.resolveSwiftTypeAndWait(named: "ABIBridgeTests.SwiftMemberRenderer")
+            type = try runtime.resolveAndWait(.swift(.type("ABIBridgeTests.SwiftMemberRenderer")))
             method = try type.resolveAndWait(.swift(.method("render(_:)", as: ((Int) -> Int).self)))
             getter = try type.resolveAndWait(.swift(.getter("text", as: (() -> String).self)))
         }
@@ -73,8 +73,8 @@ struct SynchronousSwiftLookupTests {
         let preparation = Task {
             try await runtime.prepare { runtime in
                 defer { pause.finish() }
-                let type = try runtime.resolveSwiftTypeAndWait(
-                    named: "ABIBridgeTests.SwiftMemberRenderer"
+                let type = try runtime.resolveAndWait(
+                    .swift(.type("ABIBridgeTests.SwiftMemberRenderer"))
                 )
                 let initialize = try type.resolveAndWait(
                     .swift(
@@ -113,7 +113,7 @@ struct SynchronousSwiftLookupTests {
         let standard: NativeSwiftFunction<() -> String>
         let count: NativeSwiftFunction<(Int) -> Void>
         if asynchronous {
-            type = try await runtime.resolveSwiftType(named: "ABIBridgeTests.SwiftMemberRenderer")
+            type = try await runtime.resolve(.swift(.type("ABIBridgeTests.SwiftMemberRenderer")))
             initialize = try await type.resolve(
                 .swift(
                     .initializer(
@@ -141,7 +141,7 @@ struct SynchronousSwiftLookupTests {
             )
             count = try await type.resolve(.swift(.staticSetter("count", as: ((Int) -> Void).self)))
         } else {
-            type = try runtime.resolveSwiftTypeAndWait(named: "ABIBridgeTests.SwiftMemberRenderer")
+            type = try runtime.resolveAndWait(.swift(.type("ABIBridgeTests.SwiftMemberRenderer")))
             initialize = try type.resolveAndWait(
                 .swift(
                     .initializer(

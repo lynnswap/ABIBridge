@@ -61,7 +61,7 @@ import SwiftValueFixtures
     }
     try check(counts.destructions == 2, "Consuming copies destroy their final references exactly once")
 
-    let type = try await runtime.resolveSwiftType(named: "SwiftValueFixtures.ArgumentOwner")
+    let type = try await runtime.resolve(.swift(.type("SwiftValueFixtures.ArgumentOwner")))
     let make = try await type.resolve(
         .swift(
             .initializer(

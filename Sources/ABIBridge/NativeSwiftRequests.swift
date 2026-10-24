@@ -1,10 +1,10 @@
-/// A native callable declaration and the language used to resolve it.
+/// A native declaration and the language used to resolve it.
 ///
 /// Language factories wrap typed declarations without performing lookup or
 /// preparing a call. Save a request for later resolution, or
 /// pass it directly to `resolve` or `resolveAndWait`. Scope and loading options
 /// belong to resolution, and each returned handle retains its existing
-/// invocation and ownership contract.
+/// result and ownership contract.
 public struct NativeRequest<Declaration> {
     let declaration: Declaration
 }
@@ -499,5 +499,85 @@ public struct NativeSwiftTypeMemberRequest<Signature>: Sendable {
             declaredSignature: declaredSignature,
             valueABIs: valueABIs
         )
+    }
+}
+
+/// A concrete Swift class, struct, or enum to resolve without constructing a value.
+///
+/// Wrap with `NativeRequest.swift` and resolve with an `ABIRuntime`. The request
+/// retains runtime type arguments; scope and loading belong to resolution.
+public struct NativeSwiftTypeRequest: Sendable {
+    let name: String
+    let representation: Any.Type?
+    let genericArguments: [NativeSwiftGenericArgument]
+
+    /// Describes a module-qualified Swift type and its specialization.
+    /// - Parameters:
+    ///   - name: A module-qualified nominal type name.
+    ///   - genericArguments: Type arguments in outer-to-inner declaration order.
+    public static func type(
+        _ name: String,
+        genericArguments: [NativeSwiftGenericArgument] = []
+    ) -> Self {
+        Self(name: name, representation: nil, genericArguments: genericArguments)
+    }
+
+    /// Describes a Swift type with an explicit receiver representation.
+    ///
+    /// Use an `ABIBridgeValue` adapter when the native type cannot be imported.
+    /// The representation describes fixed storage and ownership; it does not
+    /// establish compatibility with a resilient or generic declaration.
+    /// - Parameters:
+    ///   - name: A module-qualified nominal type name.
+    ///   - representation: A Swift type or adapter for receiver values.
+    ///   - genericArguments: Type arguments in outer-to-inner declaration order.
+    public static func type<Representation>(
+        _ name: String,
+        as representation: Representation.Type,
+        genericArguments: [NativeSwiftGenericArgument] = []
+    ) -> Self {
+        Self(name: name, representation: representation, genericArguments: genericArguments)
+    }
+}
+
+/// A computed instance property whose native writable key path is to be created.
+///
+/// Resolve on a `NativeSwiftType`. The owned result contains the concrete native
+/// `WritableKeyPath` or `ReferenceWritableKeyPath`; its root and value need not
+/// be available at compile time. The request retains its value type metadata.
+public struct NativeSwiftWritableKeyPathRequest: Sendable {
+    let name: String
+    let valueType: NativeSwiftType
+    let keyValueCodingKey: String?
+
+    /// Describes a writable computed property.
+    /// - Parameters:
+    ///   - name: A property name, or a complete property name such as
+    ///     `(extension in Module):OtherModule.Root.property`.
+    ///   - valueType: The property's actual native value type, checked against
+    ///     its descriptor declaration.
+    ///   - keyValueCodingKey: The same property's Objective-C KVC key, including
+    ///     any `@objc` rename. Nil omits KVC compatibility. Resolution does not
+    ///     verify the correspondence; KVC/KVO retain their runtime requirements.
+    public static func writableKeyPath(
+        _ name: String,
+        valueType: NativeSwiftType,
+        keyValueCodingKey: String? = nil
+    ) -> Self {
+        Self(name: name, valueType: valueType, keyValueCodingKey: keyValueCodingKey)
+    }
+}
+
+extension NativeRequest {
+    /// Describes a Swift type, resolved with an `ABIRuntime`.
+    public static func swift(_ declaration: NativeSwiftTypeRequest) -> Self
+    where Declaration == NativeSwiftTypeRequest {
+        Self(declaration: declaration)
+    }
+
+    /// Describes a writable key path, resolved on its native root type.
+    public static func swift(_ declaration: NativeSwiftWritableKeyPathRequest) -> Self
+    where Declaration == NativeSwiftWritableKeyPathRequest {
+        Self(declaration: declaration)
     }
 }

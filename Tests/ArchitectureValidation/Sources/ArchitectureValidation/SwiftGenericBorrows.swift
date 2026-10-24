@@ -59,7 +59,7 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     }
     try check(scalar && applications == 1, "Generic Bool result and scoped callback preserve caller isolation")
 
-    let stringType = try await runtime.resolveSwiftType(named: "Swift.String")
+    let stringType = try await runtime.resolve(.swift(.type("Swift.String")))
     let string = try await runtime.resolve(
         .swift(
             .function(
@@ -164,7 +164,7 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
     try check(try unsafe await readClosureData.unsafeInvoke(closureData, AsyncClosureDataReader(readClosureBody)) == 42,
         "Async callbacks preserve owned closure wrappers used as generic data across suspension")
 
-    let type = try await runtime.resolveSwiftType(named: "SwiftValueFixtures.BorrowedRuntimeRecord")
+    let type = try await runtime.resolve(.swift(.type("SwiftValueFixtures.BorrowedRuntimeRecord")))
     let text = try await type.resolve(
         .swift(
             .getter(
@@ -748,9 +748,16 @@ private struct GenericBorrowPointer: ABIBridgeValue, Equatable {
             )
         )
     )
-    try check(try unsafe ownedCall.unsafeInvoke(ownedFactory.unsafeInvoke(), 42, NativeSwiftClosure { ownedDeaths.increment() }) == 42
-        && ownedDeaths.count == 3, "Native consuming nested reabstraction authenticates and transfers exactly one owned context")
-    let fixedType = try await runtime.resolveSwiftType(named: "SwiftValueFixtures.RuntimeFixedPair")
+    try check(
+        try unsafe ownedCall.unsafeInvoke(
+            ownedFactory.unsafeInvoke(),
+            42,
+            NativeSwiftClosure { ownedDeaths.increment() }
+        ) == 42
+            && ownedDeaths.count == 3,
+        "Native consuming nested reabstraction authenticates and transfers exactly one owned context"
+    )
+    let fixedType = try await runtime.resolve(.swift(.type("SwiftValueFixtures.RuntimeFixedPair")))
     let fixedABI = try NativeType.structure(named: fixedType.name, fields: [.int64, .int64])
     let fixedABIs = [fixedType: fixedABI]
     let fixedMake = try await runtime.resolve(

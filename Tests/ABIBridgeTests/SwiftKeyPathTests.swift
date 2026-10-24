@@ -18,14 +18,12 @@ struct SwiftKeyPathTests {
         func makePath() async throws -> ReferenceWritableKeyPath<RuntimeKeyPathObservedRoot, String>
         {
             let runtime = ABIRuntime()
-            let root = try await runtime.resolveSwiftType(
-                named: "ManagedSwiftFixtures.RuntimeKeyPathObservedRoot"
+            let root = try await runtime.resolve(
+                .swift(.type("ManagedSwiftFixtures.RuntimeKeyPathObservedRoot"))
             )
-            let string = try await runtime.resolveSwiftType(named: "Swift.String")
-            let value = try await root.resolveWritableKeyPath(
-                named: "text",
-                valueType: string,
-                keyValueCodingKey: "nativeText"
+            let string = try await runtime.resolve(.swift(.type("Swift.String")))
+            let value = try await root.resolve(
+                .swift(.writableKeyPath("text", valueType: string, keyValueCodingKey: "nativeText"))
             )
             let copy = try value.copy()
             return try copy.take(
@@ -55,13 +53,14 @@ struct SwiftKeyPathTests {
 
     @MainActor @Test func computedPropertyPreservesNativeIdentityAndWriteback() async throws {
         let runtime = ABIRuntime()
-        let root = try await runtime.resolveSwiftType(
-            named: "ManagedSwiftFixtures.RuntimeKeyPathRoot"
+        let root = try await runtime.resolve(
+            .swift(.type("ManagedSwiftFixtures.RuntimeKeyPathRoot"))
         )
-        let payload = try await runtime.resolveSwiftType(
-            named: "ManagedSwiftFixtures.RuntimeKeyPathPayload"
+        let payload = try await runtime.resolve(
+            .swift(.type("ManagedSwiftFixtures.RuntimeKeyPathPayload"))
         )
-        let value = try await root.resolveWritableKeyPath(named: "payload", valueType: payload)
+        let request = NativeRequest.swift(.writableKeyPath("payload", valueType: payload))
+        let value = try await root.resolve(request)
         let canonical = runtimePayloadKeyPath()
         try value.withCopy {
             let path = try #require($0 as? AnyKeyPath)
@@ -81,16 +80,15 @@ struct SwiftKeyPathTests {
 
     @Test func constrainedExistentialPropertiesPreserveIdentityAndWriteback() throws {
         let runtime = ABIRuntime()
-        let root = try runtime.resolveSwiftTypeAndWait(
-            named: "ManagedSwiftFixtures.RuntimeKeyPathSequenceRoot"
+        let root = try runtime.resolveAndWait(
+            .swift(.type("ManagedSwiftFixtures.RuntimeKeyPathSequenceRoot"))
         )
         let getter = try root.resolveAndWait(
             .swift(.getter("sequence", as: (() -> NativeSwiftValue).self))
         )
         let sequence = try unsafe getter.unsafeInvoke(on: RuntimeKeyPathSequenceRoot())
-        let value = try root.resolveWritableKeyPathAndWait(
-            named: "sequence",
-            valueType: sequence.type
+        let value = try root.resolveAndWait(
+            .swift(.writableKeyPath("sequence", valueType: sequence.type))
         )
         let path = try value.copy().take(
             as: WritableKeyPath<RuntimeKeyPathSequenceRoot, any Sequence<Int>>.self
@@ -104,7 +102,7 @@ struct SwiftKeyPathTests {
         )
         let other = try unsafe otherGetter.unsafeInvoke(on: RuntimeKeyPathSequenceRoot())
         #expect {
-            try root.resolveWritableKeyPathAndWait(named: "sequence", valueType: other.type)
+            try root.resolveAndWait(.swift(.writableKeyPath("sequence", valueType: other.type)))
         } throws: { error in
             guard case ABIResolutionError.signatureMismatch = error else { return false }
             return true
@@ -113,14 +111,17 @@ struct SwiftKeyPathTests {
 
     @Test func extensionPropertyUsesItsOwnIdentityAndImplementation() throws {
         let runtime = ABIRuntime()
-        let root = try runtime.resolveSwiftTypeAndWait(named: "Swift.String")
-        let payload = try runtime.resolveSwiftTypeAndWait(
-            named: "ManagedSwiftFixtures.RuntimeKeyPathPayload"
+        let root = try runtime.resolveAndWait(.swift(.type("Swift.String")))
+        let payload = try runtime.resolveAndWait(
+            .swift(.type("ManagedSwiftFixtures.RuntimeKeyPathPayload"))
         )
-        let value = try root.resolveWritableKeyPathAndWait(
-            named:
-                "(extension in ManagedSwiftFixtures):Swift.String.runtimeKeyPathPayload",
-            valueType: payload
+        let value = try root.resolveAndWait(
+            .swift(
+                .writableKeyPath(
+                    "(extension in ManagedSwiftFixtures):Swift.String.runtimeKeyPathPayload",
+                    valueType: payload
+                )
+            )
         )
         try value.withCopy {
             let path = try #require($0 as? AnyKeyPath)
@@ -135,14 +136,14 @@ struct SwiftKeyPathTests {
     @Test func propertiesOfTypesDeclaredInExtensionsKeepTheirOwnerContext() throws {
         let runtime = ABIRuntime()
         let owner = "(extension in ManagedSwiftFixtures):Swift.Int.RuntimeNestedCounter"
-        let root = try runtime.resolveSwiftTypeAndWait(named: owner)
-        let string = try runtime.resolveSwiftTypeAndWait(named: "Swift.String")
+        let root = try runtime.resolveAndWait(.swift(.type(owner)))
+        let string = try runtime.resolveAndWait(.swift(.type("Swift.String")))
         for (name, expected) in [
             ("text", \Int.RuntimeNestedCounter.text),
             (owner + ".text", \Int.RuntimeNestedCounter.text),
             (owner + ".extraText", \Int.RuntimeNestedCounter.extraText),
         ] {
-            let value = try root.resolveWritableKeyPathAndWait(named: name, valueType: string)
+            let value = try root.resolveAndWait(.swift(.writableKeyPath(name, valueType: string)))
             let path = try value.copy().take(
                 as: ReferenceWritableKeyPath<Int.RuntimeNestedCounter, String>.self
             )
@@ -152,16 +153,16 @@ struct SwiftKeyPathTests {
 
     @Test func propertyNamesNeedOnlyBeSwiftIdentifiers() throws {
         let runtime = ABIRuntime()
-        let root = try runtime.resolveSwiftTypeAndWait(
-            named: "ManagedSwiftFixtures.RuntimeKeyPathReferenceRoot"
+        let root = try runtime.resolveAndWait(
+            .swift(.type("ManagedSwiftFixtures.RuntimeKeyPathReferenceRoot"))
         )
-        let string = try runtime.resolveSwiftTypeAndWait(named: "Swift.String")
+        let string = try runtime.resolveAndWait(.swift(.type("Swift.String")))
         for (name, expected) in [
             ("🐱", \RuntimeKeyPathReferenceRoot.🐱),
             // Spelled like a destructor, which names nothing to a property.
             ("deinit", \RuntimeKeyPathReferenceRoot.`deinit`),
         ] {
-            let value = try root.resolveWritableKeyPathAndWait(named: name, valueType: string)
+            let value = try root.resolveAndWait(.swift(.writableKeyPath(name, valueType: string)))
             let path = try value.copy().take(
                 as: ReferenceWritableKeyPath<RuntimeKeyPathReferenceRoot, String>.self
             )
@@ -173,10 +174,14 @@ struct SwiftKeyPathTests {
     @Test func objectiveCRootsResolveTheirExtensionProperties() throws {
         let runtime = ABIRuntime()
         let root = try runtime.swiftType(for: NSObject.self)
-        let string = try runtime.resolveSwiftTypeAndWait(named: "Swift.String")
-        let value = try root.resolveWritableKeyPathAndWait(
-            named: "(extension in ManagedSwiftFixtures):__C.NSObject.runtimeKeyPathTag",
-            valueType: string
+        let string = try runtime.resolveAndWait(.swift(.type("Swift.String")))
+        let value = try root.resolveAndWait(
+            .swift(
+                .writableKeyPath(
+                    "(extension in ManagedSwiftFixtures):__C.NSObject.runtimeKeyPathTag",
+                    valueType: string
+                )
+            )
         )
         let path = try value.copy().take(as: ReferenceWritableKeyPath<NSObject, String>.self)
         #expect(path == \NSObject.runtimeKeyPathTag)
@@ -238,14 +243,14 @@ struct SwiftKeyPathTests {
             )
         })
         let runtime = ABIRuntime(resolver: SymbolResolver(resolver))
-        let root = try await runtime.resolveSwiftType(
-            named: module + ".Root",
+        let root = try await runtime.resolve(
+            .swift(.type(module + ".Root")),
             in: .path(fixture.libraryURL)
         )
-        let string = try await runtime.resolveSwiftType(named: "Swift.String")
+        let string = try await runtime.resolve(.swift(.type("Swift.String")))
         // Key path lookup starts from indexes without the local symbols.
         runtime.removeCachedResults()
-        let value = try await root.resolveWritableKeyPath(named: "payload", valueType: string)
+        let value = try await root.resolve(.swift(.writableKeyPath("payload", valueType: string)))
         try value.withCopy {
             let path = try #require($0 as? AnyKeyPath)
             #expect(type(of: path).valueType == String.self)
@@ -292,12 +297,12 @@ struct SwiftKeyPathTests {
             )
         })
         let runtime = ABIRuntime(resolver: SymbolResolver(resolver))
-        let root = try await runtime.resolveSwiftType(
-            named: module + ".Root",
+        let root = try await runtime.resolve(
+            .swift(.type(module + ".Root")),
             in: .path(fixture.libraryURL)
         )
-        let string = try await runtime.resolveSwiftType(named: "Swift.String")
-        let value = try await root.resolveWritableKeyPath(named: "other", valueType: string)
+        let string = try await runtime.resolve(.swift(.type("Swift.String")))
+        let value = try await root.resolve(.swift(.writableKeyPath("other", valueType: string)))
         let make = try await root.resolve(
             .swift(.initializer("init()", as: (() -> AnyObject).self))
         )
@@ -362,10 +367,14 @@ struct SwiftKeyPathTests {
             )
         })
         let runtime = ABIRuntime(resolver: SymbolResolver(resolver))
-        let string = try await runtime.resolveSwiftType(named: "Swift.String")
-        let value = try await string.resolveWritableKeyPath(
-            named: "(extension in \(other)):Swift.String.sharedName",
-            valueType: string
+        let string = try await runtime.resolve(.swift(.type("Swift.String")))
+        let value = try await string.resolve(
+            .swift(
+                .writableKeyPath(
+                    "(extension in \(other)):Swift.String.sharedName",
+                    valueType: string
+                )
+            )
         )
         try value.withCopy {
             let path = try #require($0 as? KeyPath<String, String>)
@@ -376,21 +385,25 @@ struct SwiftKeyPathTests {
 
     @Test func unavailableAndMismatchedPropertiesReportFailure() throws {
         let runtime = ABIRuntime()
-        let root = try runtime.resolveSwiftTypeAndWait(
-            named: "ManagedSwiftFixtures.RuntimeKeyPathRoot"
+        let root = try runtime.resolveAndWait(
+            .swift(.type("ManagedSwiftFixtures.RuntimeKeyPathRoot"))
         )
-        let string = try runtime.resolveSwiftTypeAndWait(named: "Swift.String")
+        let string = try runtime.resolveAndWait(.swift(.type("Swift.String")))
         #expect(throws: ABIResolutionError.self) {
-            try root.resolveWritableKeyPathAndWait(named: "missing", valueType: string)
+            try root.resolveAndWait(.swift(.writableKeyPath("missing", valueType: string)))
         }
         #expect(throws: ABIResolutionError.self) {
-            try root.resolveWritableKeyPathAndWait(named: "payload", valueType: string)
+            try root.resolveAndWait(.swift(.writableKeyPath("payload", valueType: string)))
         }
-        let integer = try runtime.resolveSwiftTypeAndWait(named: "Swift.Int")
+        let integer = try runtime.resolveAndWait(.swift(.type("Swift.Int")))
         #expect(throws: ABIResolutionError.self) {
-            try root.resolveWritableKeyPathAndWait(
-                named: "ManagedSwiftFixtures.RuntimeKeyPathStoredRoot.number",
-                valueType: integer
+            try root.resolveAndWait(
+                .swift(
+                    .writableKeyPath(
+                        "ManagedSwiftFixtures.RuntimeKeyPathStoredRoot.number",
+                        valueType: integer
+                    )
+                )
             )
         }
     }

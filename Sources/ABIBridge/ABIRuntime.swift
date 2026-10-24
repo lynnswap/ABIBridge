@@ -46,35 +46,35 @@ public actor ABIRuntime {
     /// Loaded-image definitions take precedence. Shared-cache local symbols are searched only when no loaded-image definition matches. Multiple distinct definitions at the selected level produce an ambiguity error.
     ///
     /// - Parameters:
-    ///   - declaration: A source-level or exact name and storage requirement.
+    ///   - request: A language-qualified source-level or exact name and storage requirement.
     ///   - selector: The image scope; defaults to all loaded images.
     ///   - loading: Whether an explicit target may be acquired and initialized.
     /// - Returns: A symbol retaining its containing image.
     /// - Throws: ``ABIResolutionError`` for unavailable images, missing or
     ///   ambiguous declarations, unsupported languages, or invalid storage.
     public nonisolated func resolveAndWait(
-        _ declaration: NativeDeclaration,
+        _ request: NativeRequest<NativeSymbolLookupRequest>,
         in selector: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> ResolvedSymbol {
-        try resolver.resolve(declaration, in: selector, loading: loading)
+        try resolver.resolve(request.declaration.declaration, in: selector, loading: loading)
     }
 
     /// Finds a declaration in an already retained image.
     ///
     /// - Parameters:
-    ///   - declaration: A source-level or exact name and storage requirement.
+    ///   - request: A language-qualified source-level or exact name and storage requirement.
     ///   - image: The retained image whose index can be reused.
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A resolved symbol retaining that image.
     /// - Throws: ``ABIResolutionError`` when the declaration cannot be resolved
     ///   unambiguously in the requested storage.
     public nonisolated func resolveAndWait(
-        _ declaration: NativeDeclaration,
+        _ request: NativeRequest<NativeSymbolLookupRequest>,
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> ResolvedSymbol {
-        try resolver.resolve(declaration, in: image, loading: loading)
+        try resolver.resolve(request.declaration.declaration, in: image, loading: loading)
     }
 
     /// Resolves a requirement with aliases and ordered image fallback.
@@ -103,23 +103,23 @@ public actor ABIRuntime {
     ///
     /// This has the same resolution and image-retention contract as `resolveAndWait(_:in:loading:)`. Search, image acquisition, and index preparation run independently of the caller's actor.
     public nonisolated func resolve(
-        _ declaration: NativeDeclaration,
+        _ request: NativeRequest<NativeSymbolLookupRequest>,
         in selector: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
     ) async throws -> ResolvedSymbol {
         try await NativePreparation.run {
-            try self.resolveAndWait(declaration, in: selector, loading: loading)
+            try self.resolveAndWait(request, in: selector, loading: loading)
         }
     }
 
     /// Finds a declaration in a retained image on a worker queue.
     public nonisolated func resolve(
-        _ declaration: NativeDeclaration,
+        _ request: NativeRequest<NativeSymbolLookupRequest>,
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
     ) async throws -> ResolvedSymbol {
         try await NativePreparation.run {
-            try self.resolveAndWait(declaration, in: image, loading: loading)
+            try self.resolveAndWait(request, in: image, loading: loading)
         }
     }
 

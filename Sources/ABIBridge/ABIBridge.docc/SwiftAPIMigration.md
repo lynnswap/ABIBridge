@@ -2,6 +2,24 @@
 
 Describe Swift and Objective-C declarations with requests, choose async or synchronous resolution explicitly, then update earlier Swift callable and value handles to complete signatures, declaration-ordered generic arguments, and the shared runtime value interface.
 
+## Use requests for type, key path and raw symbol lookup
+
+Type and writable-key-path lookup now use the same `resolve` and `resolveAndWait` pair as callable lookup. Move the type name, representation and generic arguments into `.swift(.type(...))`; keep the image scope and loading policy on resolution.
+
+| Before | After |
+| --- | --- |
+| `runtime.resolveSwiftType(named: n, in: scope, genericArguments: args)` | `runtime.resolve(.swift(.type(n, genericArguments: args)), in: scope)` |
+| `runtime.resolveSwiftTypeAndWait(named: n, as: adapter, in: image)` | `runtime.resolveAndWait(.swift(.type(n, as: adapter)), in: image)` |
+| `type.resolveWritableKeyPath(named: n, valueType: value, keyValueCodingKey: key)` | `type.resolve(.swift(.writableKeyPath(n, valueType: value, keyValueCodingKey: key)))` |
+| `runtime.resolve(NativeDeclaration(name: n, language: .cxx))` | `runtime.resolve(.cxx(.symbol(n)))` |
+| `runtime.resolveAndWait(NativeDeclaration(linkerName: n, language: .swift, kind: .data))` | `runtime.resolveAndWait(.swift(.symbol(linkerName: n, kind: .data)))` |
+| `runtime.resolveAndWait(NativeDeclaration(machOName: n, language: .objectiveC, kind: .data))` | `runtime.resolveAndWait(.objc(.symbol(machOName: n, kind: .data)))` |
+| `runtime.resolveAndWait(NativeDeclaration(vtableFor: n))` | `runtime.resolveAndWait(.cxx(.symbol(vtableFor: n)))` |
+
+The same change applies to the async and synchronous counterparts and to every scope and retained-image overload. Saved type and key-path requests use `NativeRequest.swift(...)`; saved symbol requests use the matching language factory. A type request retains its runtime generic arguments, and a key-path request retains its native value type. Construction performs no lookup. Type metadata caches, representation and generic validation, image ownership and caller isolation retain their existing contracts.
+
+Single raw lookup no longer accepts `NativeDeclaration` directly. Use `.symbol` with a source, `linkerName:` or `machOName:` spelling and the existing storage kind. `NativeDeclaration` remains the descriptor used in diagnostics and on returned symbols. ``NativeSymbolRequest`` still supports cross-language aliases, ordered fallback, multiple image scopes and batch partial success without an outer language wrapper. Objective-C source selectors remain callable requests, separate from exact symbol inspection.
+
 ## Qualify Swift callable requests
 
 Wrap each Swift callable declaration in `.swift(...)` when passing it to `resolve` or `resolveAndWait`:
@@ -144,7 +162,7 @@ Functions named `resolve…` perform search and call preparation on a worker whi
 | Lazy-library metadata | `resolveLazyLibraries` | `resolveLazyLibrariesAndWait` |
 | C function request (`.c(.function(...))`) | `resolve` | `resolveAndWait` |
 | C++ function request (`.cxx(.function(...))`) | `resolve` | `resolveAndWait` |
-| Swift type | `resolveSwiftType` | `resolveSwiftTypeAndWait` |
+| Swift type and writable key-path requests | `resolve` | `resolveAndWait` |
 | C++ direct or virtual member request | `resolve` | `resolveAndWait` |
 | Named C++ virtual-table entry | `resolveEntry` | `resolveEntryAndWait` |
 | Swift enum payload | `resolveEnumPayload` | `resolveEnumPayloadAndWait` |
@@ -157,7 +175,7 @@ Compiled replacement planning follows the same suffix rule. Rename earlier synch
 For async type and method lookup:
 
 ```swift
-let type = try await runtime.resolveSwiftType(named: "Example.Counter")
+let type = try await runtime.resolve(.swift(.type("Example.Counter")))
 let read = try await type.resolve(.swift(.method("read()", as: (() -> Int64).self)))
 ```
 

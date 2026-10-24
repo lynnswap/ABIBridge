@@ -107,7 +107,7 @@ import SwiftValueFixtures
     try check(try unsafe await stack.unsafeInvoke(1, 2, 3, 4, 5, 6, 7, 8, 9, 10) == 385,
               "Async tail transfer preserves stack arguments")
 
-    let type = try await runtime.resolveSwiftType(named: "SwiftValueFixtures.AsyncValueOwner")
+    let type = try await runtime.resolve(.swift(.type("SwiftValueFixtures.AsyncValueOwner")))
     let member = try await type.resolve(
         .swift(
             .method(

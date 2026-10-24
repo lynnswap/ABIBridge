@@ -1056,224 +1056,103 @@ extension ABIRuntime {
         )
     }
 
-    /// Resolves a concrete Swift class, struct, or enum and caches its metadata.
+    /// Resolves a concrete Swift type and caches its metadata.
     ///
-    /// Search and preparation run synchronously on the caller's thread.
-    ///
+    /// Search and preparation run on the caller's thread. Explicit scopes can
+    /// acquire images; automatic scope searches only loaded images. The returned
+    /// type retains its metadata and implementation images without constructing
+    /// an instance. Generic arguments and any receiver representation come from
+    /// the request.
     /// - Parameters:
-    ///   - name: A module-qualified nominal type name.
+    ///   - request: A module-qualified type, optional specialization and representation.
     ///   - scope: Images to search; automatic scope stays loaded-only.
     ///   - loading: Whether an explicit target may be acquired and initialized.
-    ///   - genericArguments: Type arguments in outer-to-inner declaration order.
-    /// - Returns: A reusable type handle retaining its defining image.
+    /// - Returns: A reusable type handle retaining its defining images.
     /// - Throws: A lookup error or unavailable/unsupported metadata.
-    public nonisolated func resolveSwiftTypeAndWait(
-        named name: String,
+    public nonisolated func resolveAndWait(
+        _ request: NativeRequest<NativeSwiftTypeRequest>,
         in scope: ImageSelector = .automatic,
-        loading: ImageLoadingPolicy = .ifNeeded,
-        genericArguments: [NativeSwiftGenericArgument] = []
+        loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeSwiftType {
+        let specification = request.declaration
         let revision = swiftTypeCache.revision
-        let descriptor = try resolveAndWait(
-            .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data),
+        let descriptor = try resolver.resolve(
+            .init(
+                name: "nominal type descriptor for " + specification.name,
+                language: .swift,
+                kind: .data
+            ),
             in: scope,
             loading: loading
         )
         return try makeSwiftType(
-            named: name,
+            named: specification.name,
             descriptor: descriptor,
-            representation: nil,
-            genericArguments: genericArguments,
+            representation: specification.representation,
+            genericArguments: specification.genericArguments,
             revision: revision
         )
     }
 
     /// Resolves a Swift type without blocking the caller's executor.
     ///
-    /// Image acquisition, search, and metadata discovery run on a worker.
-    /// - Returns: A reusable type handle retaining its implementation images.
-    /// - Throws: The same lookup and metadata errors.
-    public nonisolated func resolveSwiftType(
-        named name: String,
+    /// Image acquisition, search, and metadata discovery run on a worker. The
+    /// scope, ownership and errors match synchronous resolution.
+    public nonisolated func resolve(
+        _ request: NativeRequest<NativeSwiftTypeRequest>,
         in scope: ImageSelector = .automatic,
-        loading: ImageLoadingPolicy = .ifNeeded,
-        genericArguments: [NativeSwiftGenericArgument] = []
+        loading: ImageLoadingPolicy = .ifNeeded
     ) async throws -> NativeSwiftType {
         try await prepare { runtime in
-            try runtime.resolveSwiftTypeAndWait(
-                named: name,
-                in: scope,
-                loading: loading,
-                genericArguments: genericArguments
-            )
+            try runtime.resolveAndWait(request, in: scope, loading: loading)
         }
     }
 
     /// Resolves a concrete Swift type within an already retained image.
     ///
-    /// Search and preparation run synchronously on the caller's thread.
-    ///
+    /// Search and preparation run on the caller's thread, reusing the image's
+    /// index. The result retains that image and its metadata dependencies.
     /// - Parameters:
-    ///   - name: A module-qualified nominal type name.
+    ///   - request: A module-qualified type, optional specialization and representation.
     ///   - image: The image whose symbol index is reused.
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
-    ///   - genericArguments: Type arguments in outer-to-inner declaration order.
-    /// - Returns: A reusable type handle retaining the image.
     /// - Throws: A lookup error or unavailable/unsupported metadata.
-    public nonisolated func resolveSwiftTypeAndWait(
-        named name: String,
+    public nonisolated func resolveAndWait(
+        _ request: NativeRequest<NativeSwiftTypeRequest>,
         in image: NativeImage,
-        loading: ImageLoadingPolicy = .ifNeeded,
-        genericArguments: [NativeSwiftGenericArgument] = []
+        loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeSwiftType {
+        let specification = request.declaration
         let revision = swiftTypeCache.revision
-        let descriptor = try resolveAndWait(
-            .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data),
+        let descriptor = try resolver.resolve(
+            .init(
+                name: "nominal type descriptor for " + specification.name,
+                language: .swift,
+                kind: .data
+            ),
             in: image,
             loading: loading
         )
         return try makeSwiftType(
-            named: name,
+            named: specification.name,
             descriptor: descriptor,
-            representation: nil,
-            genericArguments: genericArguments,
+            representation: specification.representation,
+            genericArguments: specification.genericArguments,
             revision: revision
         )
     }
 
-    /// Resolves a Swift type without blocking the caller's executor.
+    /// Resolves a Swift type in a retained image on a worker queue.
     ///
-    /// Image acquisition, search, and metadata discovery run on a worker.
-    /// - Returns: A reusable type handle retaining its implementation images.
-    /// - Throws: The same lookup and metadata errors.
-    public nonisolated func resolveSwiftType(
-        named name: String,
+    /// This has the same specialization, representation, ownership and failure
+    /// contract as synchronous resolution in that image.
+    public nonisolated func resolve(
+        _ request: NativeRequest<NativeSwiftTypeRequest>,
         in image: NativeImage,
-        loading: ImageLoadingPolicy = .ifNeeded,
-        genericArguments: [NativeSwiftGenericArgument] = []
+        loading: ImageLoadingPolicy = .ifNeeded
     ) async throws -> NativeSwiftType {
         try await prepare { runtime in
-            try runtime.resolveSwiftTypeAndWait(
-                named: name,
-                in: image,
-                loading: loading,
-                genericArguments: genericArguments
-            )
-        }
-    }
-
-    /// Resolves a Swift type with an explicit receiver representation.
-    ///
-    /// Search and preparation run synchronously on the caller's thread.
-    ///
-    /// Use an ABIBridgeValue adapter when the native type cannot be imported. The representation describes fixed storage and ownership; it does not establish ABI compatibility with a resilient or generic declaration.
-    /// - Parameters:
-    ///   - name: The qualified native type name.
-    ///   - representation: A Swift type or adapter for receiver values.
-    ///   - genericArguments: Type arguments in outer-to-inner declaration order.
-    ///   - scope: Images to search; automatic scope stays loaded-only.
-    ///   - loading: Whether an explicit target may be acquired and initialized.
-    /// - Returns: A reusable type handle with the chosen receiver representation.
-    /// - Throws: A lookup error or unavailable/unsupported metadata.
-    public nonisolated func resolveSwiftTypeAndWait<Representation>(
-        named name: String,
-        as representation: Representation.Type,
-        in scope: ImageSelector = .automatic,
-        loading: ImageLoadingPolicy = .ifNeeded,
-        genericArguments: [NativeSwiftGenericArgument] = []
-    ) throws -> NativeSwiftType {
-        let revision = swiftTypeCache.revision
-        let descriptor = try resolveAndWait(
-            .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data),
-            in: scope,
-            loading: loading
-        )
-        return try makeSwiftType(
-            named: name,
-            descriptor: descriptor,
-            representation: representation,
-            genericArguments: genericArguments,
-            revision: revision
-        )
-    }
-
-    /// Resolves a Swift type without blocking the caller's executor.
-    ///
-    /// Image acquisition, search, and metadata discovery run on a worker.
-    /// - Returns: A reusable type handle retaining its implementation images.
-    /// - Throws: The same lookup and metadata errors.
-    public nonisolated func resolveSwiftType<Representation>(
-        named name: String,
-        as representation: Representation.Type,
-        in scope: ImageSelector = .automatic,
-        loading: ImageLoadingPolicy = .ifNeeded,
-        genericArguments: [NativeSwiftGenericArgument] = []
-    ) async throws -> NativeSwiftType {
-        try await prepare { runtime in
-            try runtime.resolveSwiftTypeAndWait(
-                named: name,
-                as: representation,
-                in: scope,
-                loading: loading,
-                genericArguments: genericArguments
-            )
-        }
-    }
-
-    /// Resolves a Swift type and receiver adapter within a retained image.
-    ///
-    /// Search and preparation run synchronously on the caller's thread.
-    ///
-    /// - Parameters:
-    ///   - name: The qualified native type name.
-    ///   - representation: A Swift type or fixed-layout receiver adapter.
-    ///   - genericArguments: Type arguments in outer-to-inner declaration order.
-    ///   - image: The image whose symbol index is reused.
-    ///   - loading: Whether to ask dyld to acquire and initialize the image.
-    /// - Returns: A reusable type handle with the chosen representation.
-    /// - Throws: A lookup error or unavailable/unsupported metadata.
-    public nonisolated func resolveSwiftTypeAndWait<Representation>(
-        named name: String,
-        as representation: Representation.Type,
-        in image: NativeImage,
-        loading: ImageLoadingPolicy = .ifNeeded,
-        genericArguments: [NativeSwiftGenericArgument] = []
-    ) throws -> NativeSwiftType {
-        let revision = swiftTypeCache.revision
-        let descriptor = try resolveAndWait(
-            .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data),
-            in: image,
-            loading: loading
-        )
-        return try makeSwiftType(
-            named: name,
-            descriptor: descriptor,
-            representation: representation,
-            genericArguments: genericArguments,
-            revision: revision
-        )
-    }
-
-    /// Resolves a Swift type without blocking the caller's executor.
-    ///
-    /// Image acquisition, search, and metadata discovery run on a worker.
-    /// - Returns: A reusable type handle retaining its implementation images.
-    /// - Throws: The same lookup and metadata errors.
-    public nonisolated func resolveSwiftType<Representation>(
-        named name: String,
-        as representation: Representation.Type,
-        in image: NativeImage,
-        loading: ImageLoadingPolicy = .ifNeeded,
-        genericArguments: [NativeSwiftGenericArgument] = []
-    ) async throws -> NativeSwiftType {
-        try await prepare { runtime in
-            try runtime.resolveSwiftTypeAndWait(
-                named: name,
-                as: representation,
-                in: image,
-                loading: loading,
-                genericArguments: genericArguments
-            )
+            try runtime.resolveAndWait(request, in: image, loading: loading)
         }
     }
 

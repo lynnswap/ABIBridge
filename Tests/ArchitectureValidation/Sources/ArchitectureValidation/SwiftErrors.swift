@@ -108,9 +108,8 @@ extension ErrorCounter: ABIBridgeSwiftValue { public static var swiftABIType: Na
         try check(($0 as? LargeError)?.token === token && ($0 as? LargeError)?.d == 4,
                   "Large error uses its own indirect storage")
     }
-    let type = try await runtime.resolveSwiftType(
-        named: "SwiftValueFixtures.ErrorCounter",
-        as: ErrorCounter.self
+    let type = try await runtime.resolve(
+        .swift(.type("SwiftValueFixtures.ErrorCounter", as: ErrorCounter.self))
     )
     let advance = try await type.resolve(
         .swift(

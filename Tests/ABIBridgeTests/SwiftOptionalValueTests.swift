@@ -158,9 +158,10 @@ struct SwiftOptionalValueTests {
     /// nil selects every screen.
     @Test func methodsTakeAnOptionalScalarBeforeOtherArguments() async throws {
         typealias Handler = NativeSwiftClosure<(UInt32?) -> Void>
-        let type = try await ABIRuntime.shared.resolveSwiftType(
-            named: "ManagedSwiftFixtures.OptionalScreenAdapter",
-            as: OptionalScreenAdapter.self
+        let type = try await ABIRuntime.shared.resolve(
+            .swift(
+                .type("ManagedSwiftFixtures.OptionalScreenAdapter", as: OptionalScreenAdapter.self)
+            )
         )
         let register = try await type.resolve(
             .swift(
@@ -186,9 +187,8 @@ struct SwiftOptionalValueTests {
     /// so an explicit ABI must pass the same way.
     @Test func explicitOptionalABIsMustPassAsTheOptional() async throws {
         let runtime = ABIRuntime.shared
-        let optional = try await runtime.resolveSwiftType(
-            named: "Swift.Optional",
-            genericArguments: [.type(UInt32.self)]
+        let optional = try await runtime.resolve(
+            .swift(.type("Swift.Optional", genericArguments: [.type(UInt32.self)]))
         )
         let name = "ManagedSwiftFixtures.incrementedOptionalUInt32(_:)"
         let increment = try await runtime.resolve(
@@ -227,9 +227,8 @@ struct SwiftOptionalValueTests {
         }
         // The payload's entry decides the Optional's own storage.
         var abis = try await Self.recordABIs()
-        let frozenOptional = try await runtime.resolveSwiftType(
-            named: "Swift.Optional",
-            genericArguments: [.type(OptionalFrozenRecord.self)]
+        let frozenOptional = try await runtime.resolve(
+            .swift(.type("Swift.Optional", genericArguments: [.type(OptionalFrozenRecord.self)]))
         )
         abis[frozenOptional] = try .opaque(named: "Optional<OptionalFrozenRecord>")
         await #expect {
@@ -262,11 +261,10 @@ struct SwiftOptionalValueTests {
     @Test func explicitABIsStateOptionalsWithUndecidedPayloads() async throws {
         let runtime = ABIRuntime.shared
         typealias Payload = (UInt32, OptionalScreenBox<Int64>)
-        let optional = try await runtime.resolveSwiftType(
-            named: "Swift.Optional",
-            genericArguments: [.type(Payload.self)]
+        let optional = try await runtime.resolve(
+            .swift(.type("Swift.Optional", genericArguments: [.type(Payload.self)]))
         )
-        let uint32 = try await runtime.resolveSwiftType(named: "Swift.UInt32")
+        let uint32 = try await runtime.resolve(.swift(.type("Swift.UInt32")))
         let abi = try NativeType.structure(
             named: "Optional<Payload>",
             fields: [.uint64, .int64, .uint8]
@@ -290,10 +288,10 @@ struct SwiftOptionalValueTests {
     /// receiverABI for an Optional self must pass as the declaration passes
     /// self, which can differ from the Optional's own storage.
     @Test func optionalReceiverABIsFollowTheDeclaredSelf() async throws {
-        let type = try await ABIRuntime.shared.resolveSwiftType(
-            named: "Swift.Optional",
-            as: UInt32?.self,
-            genericArguments: [.type(UInt32.self)]
+        let type = try await ABIRuntime.shared.resolve(
+            .swift(
+                .type("Swift.Optional", as: UInt32?.self, genericArguments: [.type(UInt32.self)])
+            )
         )
         let opaque = try NativeType.opaque(named: "Optional<UInt32>")
         // A generic extension's method takes self by address.
@@ -373,8 +371,12 @@ struct SwiftOptionalValueTests {
     /// Optional payloads need that answer, so they keep explicit ABIs.
     private static func recordABIs() async throws -> [NativeSwiftType: NativeType] {
         let runtime = ABIRuntime.shared
-        let record = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.OptionalRuntimeRecord")
-        let frozen = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.OptionalFrozenRecord")
+        let record = try await runtime.resolve(
+            .swift(.type("ManagedSwiftFixtures.OptionalRuntimeRecord"))
+        )
+        let frozen = try await runtime.resolve(
+            .swift(.type("ManagedSwiftFixtures.OptionalFrozenRecord"))
+        )
         return [
             record: try .opaque(named: record.name),
             frozen: try .structure(named: "OptionalFrozenRecord", fields: [.uint64, .uint64, .int64]),

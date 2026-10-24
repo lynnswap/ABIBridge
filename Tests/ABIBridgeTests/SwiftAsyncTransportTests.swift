@@ -5,8 +5,11 @@ import Testing
 
 private func implementation(_ declaration: String) async throws -> SwiftAsyncImplementation {
     let runtime = ABIRuntime.shared
-    let symbol = try runtime.resolveAndWait(.init(name: declaration, language: .swift))
-    return try SwiftAsyncImplementation(entry: SwiftEntry(symbol: symbol), resolver: runtime.resolver)
+    let symbol = try runtime.resolveAndWait(.swift(.symbol(declaration)))
+    return try SwiftAsyncImplementation(
+        entry: SwiftEntry(symbol: symbol),
+        resolver: runtime.resolver
+    )
 }
 
 struct SwiftAsyncTransportTests {

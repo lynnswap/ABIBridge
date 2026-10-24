@@ -198,8 +198,8 @@ struct SwiftFunctionInvocationTests {
         )
         defer { library.cleanup() }
         let runtime = ABIRuntime()
-        let token = try await runtime.resolveSwiftType(
-            named: module + ".Token",
+        let token = try await runtime.resolve(
+            .swift(.type(module + ".Token")),
             in: .path(library.libraryURL)
         )
         let valueABIs: [NativeSwiftType: NativeType] = [token: try .opaque(named: token.name)]
@@ -300,10 +300,7 @@ struct SwiftFunctionInvocationTests {
         typealias EmptyArgument = ()
         let runtime = ABIRuntime()
         let symbol = try runtime.resolveAndWait(
-            .init(
-                name: "ABIBridgeTests.swiftABIAnswer() -> Swift.Int32",
-                language: .swift
-            )
+            .swift(.symbol("ABIBridgeTests.swiftABIAnswer() -> Swift.Int32"))
         )
         let empty = try await runtime.resolve(
             .swift(

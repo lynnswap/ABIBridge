@@ -92,8 +92,8 @@ private final class ProjectionPreparationGate: Sendable {
 struct SwiftRuntimeValueProjectionTests {
     @MainActor @Test
     func createsNamedEmptyEnumCasesForNativeCalls() async throws {
-        let type = try await ABIRuntime.shared.resolveSwiftType(
-            named: "ManagedSwiftFixtures.RuntimeEmptyCaseMode"
+        let type = try await ABIRuntime.shared.resolve(
+            .swift(.type("ManagedSwiftFixtures.RuntimeEmptyCaseMode"))
         )
         let copy = try await ABIRuntime.shared.resolve(
             .swift(
@@ -114,16 +114,16 @@ struct SwiftRuntimeValueProjectionTests {
     }
 
     @Test func createsZeroSizedEnumCases() async throws {
-        let type = try await ABIRuntime.shared.resolveSwiftType(
-            named: "ManagedSwiftFixtures.RuntimeEmptyCaseSingleton"
+        let type = try await ABIRuntime.shared.resolve(
+            .swift(.type("ManagedSwiftFixtures.RuntimeEmptyCaseSingleton"))
         )
         let value = try type.makeEnumCase(named: "only")
         #expect(try value.take(as: RuntimeEmptyCaseSingleton.self) == .only)
     }
 
     @Test func emptyCasesInNontrivialEnumsCanBeCopiedAndDestroyed() async throws {
-        let type = try await ABIRuntime.shared.resolveSwiftType(
-            named: "ManagedSwiftFixtures.RuntimeProjectionChoice"
+        let type = try await ABIRuntime.shared.resolve(
+            .swift(.type("ManagedSwiftFixtures.RuntimeProjectionChoice"))
         )
         var value: NativeSwiftValue? = try type.makeEnumCase(named: "empty")
         let copied = try #require(value).copy()
@@ -132,17 +132,16 @@ struct SwiftRuntimeValueProjectionTests {
             Issue.record("The constructed enum did not contain the empty case")
             return
         }
-        let optional = try await ABIRuntime.shared.resolveSwiftType(
-            named: "Swift.Optional",
-            genericArguments: [.type(ErrorLifetimeToken.self)]
+        let optional = try await ABIRuntime.shared.resolve(
+            .swift(.type("Swift.Optional", genericArguments: [.type(ErrorLifetimeToken.self)]))
         )
         let none = try optional.makeEnumCase(named: "none")
         #expect(try none.copy().take(as: ErrorLifetimeToken?.self) == nil)
     }
 
     @Test func createsEmptyCasesInNoncopyableEnums() async throws {
-        let type = try await ABIRuntime.shared.resolveSwiftType(
-            named: "ManagedSwiftFixtures.RuntimeProjectionMoveOnly"
+        let type = try await ABIRuntime.shared.resolve(
+            .swift(.type("ManagedSwiftFixtures.RuntimeProjectionMoveOnly"))
         )
         let value = try type.makeEnumCase(named: "empty")
         #expect(!value.isCopyable)
@@ -155,8 +154,8 @@ struct SwiftRuntimeValueProjectionTests {
     }
 
     @Test func enumConstructionReportsUnsupportedCases() async throws {
-        let type = try await ABIRuntime.shared.resolveSwiftType(
-            named: "ManagedSwiftFixtures.RuntimeProjectionChoice"
+        let type = try await ABIRuntime.shared.resolve(
+            .swift(.type("ManagedSwiftFixtures.RuntimeProjectionChoice"))
         )
         #expect(throws: NativeSwiftValueError.enumCaseNotFound(name: "missing")) {
             try type.makeEnumCase(named: "missing")
@@ -167,8 +166,8 @@ struct SwiftRuntimeValueProjectionTests {
         #expect(throws: NativeSwiftValueError.ambiguousEnumCase(name: "repeated")) {
             try type.makeEnumCase(named: "repeated")
         }
-        let structure = try await ABIRuntime.shared.resolveSwiftType(
-            named: "ManagedSwiftFixtures.RuntimeProjectionLarge"
+        let structure = try await ABIRuntime.shared.resolve(
+            .swift(.type("ManagedSwiftFixtures.RuntimeProjectionLarge"))
         )
         #expect(throws: ABIResolutionError.self) {
             try structure.makeEnumCase(named: "empty")
@@ -281,8 +280,8 @@ struct SwiftRuntimeValueProjectionTests {
     }
 
     @Test func copyablePayloadsCanInitializeNoncopyableEnums() async throws {
-        let type = try await ABIRuntime.shared.resolveSwiftType(
-            named: "ManagedSwiftFixtures.RuntimeProjectionMoveOnly"
+        let type = try await ABIRuntime.shared.resolve(
+            .swift(.type("ManagedSwiftFixtures.RuntimeProjectionMoveOnly"))
         )
         let make = try await ABIRuntime.shared.resolve(
             .swift(
@@ -354,8 +353,8 @@ struct SwiftRuntimeValueProjectionTests {
             )
         )
         let payload = try unsafe make.unsafeInvoke()
-        let direct = try await ABIRuntime.shared.resolveSwiftType(
-            named: "ManagedSwiftFixtures.RuntimeProjectionMoveOnly"
+        let direct = try await ABIRuntime.shared.resolve(
+            .swift(.type("ManagedSwiftFixtures.RuntimeProjectionMoveOnly"))
         )
         let value = try await direct.makeEnumCase(named: "nothing", payload: payload)
         let moved = try value.take(as: RuntimeProjectionMoveOnly.self)
@@ -374,17 +373,25 @@ struct SwiftRuntimeValueProjectionTests {
             return false
         }
         #expect(!payload.isConsumed)
-        let generic = try await ABIRuntime.shared.resolveSwiftType(
-            named: "ManagedSwiftFixtures.RuntimeProjectionGeneric",
-            genericArguments: [.type(Void.self)]
+        let generic = try await ABIRuntime.shared.resolve(
+            .swift(
+                .type(
+                    "ManagedSwiftFixtures.RuntimeProjectionGeneric",
+                    genericArguments: [.type(Void.self)]
+                )
+            )
         )
         let genericValue = try await generic.makeEnumCase(named: "value", payload: payload)
         guard case .value = try genericValue.take(as: RuntimeProjectionGeneric<Void>.self) else {
             return
         }
-        let associated = try await ABIRuntime.shared.resolveSwiftType(
-            named: "ManagedSwiftFixtures.RuntimeProjectionAssociated",
-            genericArguments: [.type(RuntimeProjectionUnit.self)]
+        let associated = try await ABIRuntime.shared.resolve(
+            .swift(
+                .type(
+                    "ManagedSwiftFixtures.RuntimeProjectionAssociated",
+                    genericArguments: [.type(RuntimeProjectionUnit.self)]
+                )
+            )
         )
         let associatedValue = try await associated.makeEnumCase(named: "value", payload: payload)
         let associatedMoved = try associatedValue.take(
@@ -756,8 +763,8 @@ struct SwiftRuntimeValueProjectionTests {
             let existential = try payload.copyTupleElement(at: 0)
             let source = try existential.copyUnderlyingValue()
             #expect(existential.type.name != source.type.name)
-            let previewType = try await ABIRuntime.shared.resolveSwiftType(
-                named: "ManagedSwiftFixtures.RuntimeProjectionPreview"
+            let previewType = try await ABIRuntime.shared.resolve(
+                .swift(.type("ManagedSwiftFixtures.RuntimeProjectionPreview"))
             )
             let body = try await source.type.resolve(
                 .swift(
@@ -770,8 +777,8 @@ struct SwiftRuntimeValueProjectionTests {
                 )
             )
             let preview = try unsafe body.unsafeInvoke(on: source)
-            let bodyType = try await ABIRuntime.shared.resolveSwiftType(
-                named: "ManagedSwiftFixtures.RuntimeProjectionBody"
+            let bodyType = try await ABIRuntime.shared.resolve(
+                .swift(.type("ManagedSwiftFixtures.RuntimeProjectionBody"))
             )
             let associated = try #require(
                 try await preview.resolveEnumPayload(
@@ -1186,8 +1193,8 @@ struct SwiftRuntimeValueProjectionTests {
         )
         defer { fixture.cleanup() }
         let runtime = ABIRuntime()
-        let type = try await runtime.resolveSwiftType(
-            named: module + ".Selection",
+        let type = try await runtime.resolve(
+            .swift(.type(module + ".Selection")),
             in: .path(fixture.libraryURL)
         )
         let count = try await runtime.resolve(

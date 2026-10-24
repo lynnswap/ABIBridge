@@ -353,8 +353,8 @@ struct SwiftGenericBindingTests {
         )
         defer { fixture.cleanup() }
         let runtime = ABIRuntime()
-        let type = try await runtime.resolveSwiftType(
-            named: module + ".View",
+        let type = try await runtime.resolve(
+            .swift(.type(module + ".View")),
             in: .path(fixture.libraryURL)
         )
         let metadata = await type.metadata
@@ -1260,9 +1260,13 @@ struct SwiftGenericBindingTests {
 
     @Test func genericClassInitializersPropertiesAndMethodsShareBinding() async throws {
         let runtime = ABIRuntime()
-        let type = try await runtime.resolveSwiftType(
-            named: "ManagedSwiftFixtures.GenericTypeClass",
-            genericArguments: [.type(String.self)]
+        let type = try await runtime.resolve(
+            .swift(
+                .type(
+                    "ManagedSwiftFixtures.GenericTypeClass",
+                    genericArguments: [.type(String.self)]
+                )
+            )
         )
         let initialize = try await type.resolve(
             .swift(
@@ -1416,13 +1420,12 @@ struct SwiftGenericBindingTests {
             ),
         ]
         for (name, arguments, expected) in cases {
-            let type = try await runtime.resolveSwiftType(named: name, genericArguments: arguments)
+            let type = try await runtime.resolve(.swift(.type(name, genericArguments: arguments)))
             let metadata = await type.metadata
             #expect(ObjectIdentifier(metadata) == ObjectIdentifier(expected), "\(name)")
-            let again = try await runtime.resolveSwiftType(
-                named: name,
-                in: type.image,
-                genericArguments: arguments
+            let again = try await runtime.resolve(
+                .swift(.type(name, genericArguments: arguments)),
+                in: type.image
             )
             #expect(type === again)
             var failure: OpaquePointer?
@@ -1456,13 +1459,11 @@ struct SwiftGenericBindingTests {
                 }
             }
         }
-        let first = try await runtime.resolveSwiftType(
-            named: "Swift.Array",
-            genericArguments: [.type(String.self)]
+        let first = try await runtime.resolve(
+            .swift(.type("Swift.Array", genericArguments: [.type(String.self)]))
         )
-        let second = try await runtime.resolveSwiftType(
-            named: "Swift.Array",
-            genericArguments: [.type(Int.self)]
+        let second = try await runtime.resolve(
+            .swift(.type("Swift.Array", genericArguments: [.type(Int.self)]))
         )
         let firstMetadata = await first.metadata
         let secondMetadata = await second.metadata
@@ -1485,7 +1486,7 @@ struct SwiftGenericBindingTests {
         ]
         for (name, arguments) in cases {
             #expect(throws: ABIResolutionError.self) {
-                _ = try runtime.resolveSwiftTypeAndWait(named: name, genericArguments: arguments)
+                _ = try runtime.resolveAndWait(.swift(.type(name, genericArguments: arguments)))
             }
         }
     }
@@ -1493,20 +1494,18 @@ struct SwiftGenericBindingTests {
     @Test func cachedNominalMetadataRetainsIncomingRuntimeTypeOwners() async throws {
         let runtime = ABIRuntime()
         let name = "ManagedSwiftFixtures.GenericTypeEnum"
-        let bare = try runtime.resolveSwiftTypeAndWait(
-            named: name,
-            genericArguments: [.type(ManagedRecord.self)]
+        let bare = try runtime.resolveAndWait(
+            .swift(.type(name, genericArguments: [.type(ManagedRecord.self)]))
         )
         var result: NativeSwiftType?
         weak var argumentOwner: NativeSwiftType?
         do {
-            let argument = try runtime.resolveSwiftTypeAndWait(
-                named: "ManagedSwiftFixtures.ManagedRecord"
+            let argument = try runtime.resolveAndWait(
+                .swift(.type("ManagedSwiftFixtures.ManagedRecord"))
             )
             argumentOwner = argument
-            result = try runtime.resolveSwiftTypeAndWait(
-                named: name,
-                genericArguments: [.type(argument)]
+            result = try runtime.resolveAndWait(
+                .swift(.type(name, genericArguments: [.type(argument)]))
             )
             let metadata = await result!.metadata
             let bareMetadata = await bare.metadata
@@ -1710,11 +1709,7 @@ struct SwiftGenericBindingTests {
     @Test func runtimeMetadataAndWitnessOperationsMatchCompilerTypes() async throws {
         let runtime = ABIRuntime.shared
         let array = try runtime.resolveAndWait(
-            .init(
-                name: "nominal type descriptor for Swift.Array",
-                language: .swift,
-                kind: .data
-            )
+            .swift(.symbol("nominal type descriptor for Swift.Array", kind: .data))
         )
         let metadata = unsafeBitCast(String.self, to: UnsafeRawPointer.self)
         let actual = unsafe array.withUnsafeAddress { descriptor in
@@ -1725,11 +1720,7 @@ struct SwiftGenericBindingTests {
         #expect(try #require(actual) == unsafeBitCast([String].self, to: UnsafeRawPointer.self))
 
         let equatable = try runtime.resolveAndWait(
-            .init(
-                name: "protocol descriptor for Swift.Equatable",
-                language: .swift,
-                kind: .data
-            )
+            .swift(.symbol("protocol descriptor for Swift.Equatable", kind: .data))
         )
         let witness = unsafe equatable.withUnsafeAddress {
             ABISwiftConformance(metadata, $0)
@@ -1738,11 +1729,7 @@ struct SwiftGenericBindingTests {
         #expect(ABISwiftConformanceDescriptor(try #require(witness)) != nil)
 
         let collection = try runtime.resolveAndWait(
-            .init(
-                name: "protocol descriptor for Swift.Collection",
-                language: .swift,
-                kind: .data
-            )
+            .swift(.symbol("protocol descriptor for Swift.Collection", kind: .data))
         )
         let element = unsafe collection.withUnsafeAddress { descriptor in
             "Element".withCString {

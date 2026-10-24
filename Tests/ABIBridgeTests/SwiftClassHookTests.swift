@@ -14,10 +14,7 @@ struct SwiftClassHookTests {
         let fixture = try CompiledSwiftReplacementFixture()
         defer { fixture.cleanup() }
         let name = fixture.module + ".ReplacementRenderer"
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: name,
-            in: fixture.providerScope
-        )
+        let type = try await fixture.runtime.resolve(.swift(.type(name)), in: fixture.providerScope)
         let memberName = imported ? "finalScalar" : "scalar"
         let callerName = imported ? "classFinal" : "classScalar"
         let originalResult: Int64 = imported ? 43 : 42
@@ -111,8 +108,8 @@ struct SwiftClassHookTests {
                 """
         )
         defer { fixture.cleanup() }
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: fixture.module + ".HookThrower",
+        let type = try await fixture.runtime.resolve(
+            .swift(.type(fixture.module + ".HookThrower")),
             in: fixture.providerScope
         )
         let method = try await type.resolve(
@@ -166,9 +163,8 @@ struct SwiftClassHookTests {
     }
     @Test @MainActor func sendableImportedMemberHooksKeepTheMainActorContract() async throws {
         let fixture = try CompiledSwiftReplacementFixture(); defer { fixture.cleanup() }
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: fixture.module + ".ReplacementValue",
-            as: Int64.self,
+        let type = try await fixture.runtime.resolve(
+            .swift(.type(fixture.module + ".ReplacementValue", as: Int64.self)),
             in: fixture.providerScope
         )
         let method = try await type.resolve(
@@ -232,8 +228,8 @@ struct SwiftClassHookTests {
         for (index, name) in ["ReplacementRenderer", "InheritedRenderer", "OverridingRenderer"]
             .enumerated()
         {
-            let type = try await fixture.runtime.resolveSwiftType(
-                named: fixture.module + "." + name,
+            let type = try await fixture.runtime.resolve(
+                .swift(.type(fixture.module + "." + name)),
                 in: fixture.providerScope
             )
             let method = try await type.resolve(
@@ -315,8 +311,8 @@ struct SwiftClassHookTests {
         for (index, name) in ["ReplacementRenderer", "InheritedRenderer", "OverridingRenderer"]
             .enumerated()
         {
-            let type = try await fixture.runtime.resolveSwiftType(
-                named: fixture.module + "." + name,
+            let type = try await fixture.runtime.resolve(
+                .swift(.type(fixture.module + "." + name)),
                 in: fixture.providerScope
             )
             let kind = try await type.resolve(
@@ -376,8 +372,8 @@ struct SwiftClassHookTests {
         }
 
         // A static member has no class slot, nor does a free function.
-        let base = try await fixture.runtime.resolveSwiftType(
-            named: baseName,
+        let base = try await fixture.runtime.resolve(
+            .swift(.type(baseName)),
             in: fixture.providerScope
         )
         let staticKind = try await base.resolve(
@@ -440,14 +436,15 @@ struct SwiftClassHookTests {
                 """
         )
         defer { fixture.cleanup() }
-        let firstType = try await fixture.runtime.resolveSwiftType(
-            named: fixture.module + ".HookFirst",
+        let firstType = try await fixture.runtime.resolve(
+            .swift(.type(fixture.module + ".HookFirst")),
             in: fixture.providerScope
         )
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: fixture.module + ".HookGenericBase",
-            in: fixture.providerScope,
-            genericArguments: [.type(firstType)]
+        let type = try await fixture.runtime.resolve(
+            .swift(
+                .type(fixture.module + ".HookGenericBase", genericArguments: [.type(firstType)])
+            ),
+            in: fixture.providerScope
         )
         let member = "(extension in \(fixture.module)):\(fixture.module).HookProtocolSelf."
         let signature =
@@ -521,10 +518,7 @@ struct SwiftClassHookTests {
         let fixture = try CompiledSwiftReplacementFixture(writable: false);
         defer { fixture.cleanup() }
         let name = fixture.module + ".ReplacementRenderer"
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: name,
-            in: fixture.providerScope
-        )
+        let type = try await fixture.runtime.resolve(.swift(.type(name)), in: fixture.providerScope)
         let make = try await fixture.runtime.resolve(
             .swift(
                 .function(
@@ -602,10 +596,7 @@ struct SwiftClassHookTests {
                 """
         ); defer { fixture.cleanup() }
         let name = fixture.module + ".Editable"
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: name,
-            in: fixture.providerScope
-        )
+        let type = try await fixture.runtime.resolve(.swift(.type(name)), in: fixture.providerScope)
         let make = try await fixture.runtime.resolve(
             .swift(
                 .function(
@@ -665,10 +656,7 @@ struct SwiftClassHookTests {
                 """
         ); defer { fixture.cleanup() }
         let name = fixture.module + ".TextReceiver"
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: name,
-            in: fixture.providerScope
-        )
+        let type = try await fixture.runtime.resolve(.swift(.type(name)), in: fixture.providerScope)
         let make = try await fixture.runtime.resolve(
             .swift(
                 .function(
@@ -716,10 +704,7 @@ struct SwiftClassHookTests {
         let fixture = try CompiledSwiftReplacementFixture(writable: false);
         defer { fixture.cleanup() }
         let name = fixture.module + ".CallbackRenderer"
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: name,
-            in: fixture.providerScope
-        )
+        let type = try await fixture.runtime.resolve(.swift(.type(name)), in: fixture.providerScope)
         let make = try await fixture.runtime.resolve(
             .swift(
                 .function(
@@ -776,10 +761,7 @@ struct SwiftClassHookTests {
         let fixture = try CompiledSwiftReplacementFixture(writable: false);
         defer { fixture.cleanup() }
         let name = fixture.module + ".ReplacementRenderer"
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: name,
-            in: fixture.providerScope
-        )
+        let type = try await fixture.runtime.resolve(.swift(.type(name)), in: fixture.providerScope)
         let make = try await fixture.runtime.resolve(
             .swift(
                 .function(
@@ -846,10 +828,7 @@ struct SwiftClassHookTests {
                 """
         ); defer { fixture.cleanup() }
         let name = fixture.module + ".Escaped"
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: name,
-            in: fixture.providerScope
-        )
+        let type = try await fixture.runtime.resolve(.swift(.type(name)), in: fixture.providerScope)
         let make = try await fixture.runtime.resolve(
             .swift(
                 .function(
@@ -922,7 +901,7 @@ struct SwiftClassHookTests {
         let fixture = try CompiledSwiftReplacementFixture(); defer { fixture.cleanup() }
         let name = fixture.callerModule + ".CallerOverridingRenderer"
         let baseName = fixture.module + ".ReplacementRenderer"
-        let type = try await fixture.runtime.resolveSwiftType(named: name, in: fixture.callerScope)
+        let type = try await fixture.runtime.resolve(.swift(.type(name)), in: fixture.callerScope)
         let make = try await fixture.runtime.resolve(
             .swift(
                 .function(
@@ -965,8 +944,8 @@ struct SwiftClassHookTests {
         imported.invalidate()
         #expect(try unsafe oracle.unsafeInvoke(object, "x") == "method:x")
 
-        let base = try await fixture.runtime.resolveSwiftType(
-            named: baseName,
+        let base = try await fixture.runtime.resolve(
+            .swift(.type(baseName)),
             in: fixture.providerScope
         )
         do {
@@ -983,10 +962,7 @@ struct SwiftClassHookTests {
         let fixture = try CompiledSwiftReplacementFixture(writable: false);
         defer { fixture.cleanup() }
         let name = fixture.module + ".ReplacementRenderer"
-        let type = try await fixture.runtime.resolveSwiftType(
-            named: name,
-            in: fixture.providerScope
-        )
+        let type = try await fixture.runtime.resolve(.swift(.type(name)), in: fixture.providerScope)
         let make = try await fixture.runtime.resolve(
             .swift(
                 .function(

@@ -31,7 +31,7 @@ import ABIBridge
 
 let runtime = ABIRuntime.shared
 let symbol = try runtime.resolveAndWait(
-    NativeDeclaration(name: "Example::Math::add(int, int)", language: .cxx)
+    .cxx(.symbol("Example::Math::add(int, int)"))
 )
 ```
 
@@ -85,7 +85,7 @@ Resolve a native type, then select its initializers, methods, or properties. For
 ```swift
 @MainActor
 func readTitle(from renderer: AnyObject) async throws -> String {
-    let type = try await ABIRuntime.shared.resolveSwiftType(named: "Example.Renderer")
+    let type = try await ABIRuntime.shared.resolve(.swift(.type("Example.Renderer")))
     let title = try await type.resolve(.swift(.method("title()", as: (() -> String).self)))
     return try unsafe title.unsafeInvoke(on: renderer)
 }

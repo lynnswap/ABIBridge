@@ -983,9 +983,8 @@ struct SwiftInferredValueTests {
             as: (() -> InferredAdapterPoint).self,
             naming: adapter
         )
-        let point = try await runtime.resolveSwiftType(
-            named: module + ".Point",
-            as: InferredAdapterPoint.self,
+        let point = try await runtime.resolve(
+            .swift(.type(module + ".Point", as: InferredAdapterPoint.self)),
             in: .path(library.libraryURL)
         )
         for member in [
@@ -1021,7 +1020,7 @@ struct SwiftInferredValueTests {
             """
         )
         defer { library.cleanup() }
-        let host = try await runtime.resolveSwiftType(named: "ABIBridgeTests.InferredAdapterPoint")
+        let host = try await runtime.resolve(.swift(.type("ABIBridgeTests.InferredAdapterPoint")))
         let valueABIs: [NativeSwiftType: NativeType] = [
             host: try .structure(named: "Pair", fields: [.double, .double])
         ]
@@ -1083,11 +1082,11 @@ struct SwiftInferredValueTests {
             """
         )
         defer { library.cleanup() }
-        let native = try await runtime.resolveSwiftType(
-            named: module + ".Record",
+        let native = try await runtime.resolve(
+            .swift(.type(module + ".Record")),
             in: .path(library.libraryURL)
         )
-        let host = try await runtime.resolveSwiftType(named: "ABIBridgeTests.InferredAdapterRecord")
+        let host = try await runtime.resolve(.swift(.type("ABIBridgeTests.InferredAdapterRecord")))
         let abi = try NativeType.structure(named: "Record", fields: [.uint64, .uint64, .int64])
         let pair = try await runtime.resolve(
             .swift(
@@ -1137,8 +1136,8 @@ struct SwiftInferredValueTests {
             return message.contains("Cannot infer the Swift calling convention of \(module).Point")
                 && message.contains("valueABIs entry for \(String(reflecting: CGPoint.self))")
         }
-        let point = try await runtime.resolveSwiftType(
-            named: module + ".Point",
+        let point = try await runtime.resolve(
+            .swift(.type(module + ".Point")),
             in: .path(library.libraryURL)
         )
         let sum = try await runtime.resolve(
@@ -1186,8 +1185,8 @@ struct SwiftInferredValueTests {
             arguments: ["-enable-library-evolution"]
         )
         defer { library.cleanup() }
-        let label = try await runtime.resolveSwiftType(
-            named: module + ".Label",
+        let label = try await runtime.resolve(
+            .swift(.type(module + ".Label")),
             in: .path(library.libraryURL)
         )
         await #expect {
@@ -1548,9 +1547,10 @@ struct SwiftInferredValueTests {
             // Code's static value witnesses leave the addressable bit clear,
             // which decides it alone, while Coded needs HoldsCoded.
             let scope = ImageSelector.path(library.libraryURL)
-            let code = try await runtime.resolveSwiftType(named: base + ".Code", in: scope).metadata
+            let code = try await runtime.resolve(.swift(.type(base + ".Code")), in: scope).metadata
             _ = try SwiftInferredValue.layout(of: code, position: .nested)
-            let coded = try await runtime.resolveSwiftType(named: base + ".Coded", in: scope).metadata
+            let coded = try await runtime.resolve(.swift(.type(base + ".Coded")), in: scope)
+                .metadata
             #expect(throws: ABIResolutionError.self) {
                 _ = try SwiftInferredValue.layout(of: coded, position: .nested)
             }
@@ -1580,7 +1580,7 @@ struct SwiftInferredValueTests {
         )
         defer { library.cleanup() }
         let scope = ImageSelector.path(library.libraryURL)
-        let number = try await runtime.resolveSwiftType(named: module + ".Number", in: scope)
+        let number = try await runtime.resolve(.swift(.type(module + ".Number")), in: scope)
         let valueABIs: [NativeSwiftType: NativeType] = [
             number: try .structure(named: "Number", fields: [.int64])
         ]
@@ -2026,8 +2026,8 @@ struct SwiftInferredValueTests {
             .swift(.function(module + ".classBoundOwner()", as: (() -> NativeSwiftValue).self)),
             in: scope
         )
-        let ownerType = try await runtime.resolveSwiftType(
-            named: module + ".ClassBoundOwner",
+        let ownerType = try await runtime.resolve(
+            .swift(.type(module + ".ClassBoundOwner")),
             in: scope
         )
         let classBound = try await runtime.resolve(
@@ -2128,7 +2128,7 @@ struct SwiftInferredValueTests {
                 withResult: { try unsafe readNumber.unsafeInvoke($0) }
             ) == 456
         )
-        let viewType = try await runtime.resolveSwiftType(named: module + ".View", in: scope)
+        let viewType = try await runtime.resolve(.swift(.type(module + ".View")), in: scope)
         let makeView = try await viewType.resolve(
             .swift(
                 .initializer(
@@ -2145,7 +2145,7 @@ struct SwiftInferredValueTests {
                 withResult: { try unsafe read.unsafeInvoke($0) }
             ) == 123
         )
-        let string = try await runtime.resolveSwiftType(named: "Swift.String")
+        let string = try await runtime.resolve(.swift(.type("Swift.String")))
         let method = try await string.resolve(
             .swift(
                 .method(
@@ -2163,9 +2163,8 @@ struct SwiftInferredValueTests {
                 withResult: { try unsafe read.unsafeInvoke($0) }
             ) == 789
         )
-        let optionalString = try await runtime.resolveSwiftType(
-            named: "Swift.Optional",
-            genericArguments: [.type(String.self)]
+        let optionalString = try await runtime.resolve(
+            .swift(.type("Swift.Optional", genericArguments: [.type(String.self)]))
         )
         let optionalABI = try NativeType.structure(
             named: "OptionalString",
@@ -2376,7 +2375,7 @@ struct SwiftInferredValueTests {
             try await describeMade(module + ".makeLabel()", module + ".describeLabel(_:)", in: library)
                 == "label,4"
         )
-        let label = try await runtime.resolveSwiftType(named: module + ".Label", in: scope)
+        let label = try await runtime.resolve(.swift(.type(module + ".Label")), in: scope)
         let labelSets = "the static value witnesses of `\(module).Label` set it"
         await expectUndecided("argument 0 of type \(module).Label", naming: labelSets) {
             _ = try await runtime.resolve(
@@ -2463,7 +2462,7 @@ struct SwiftInferredValueTests {
             )
         }
         await expectUndecided("self of type Swift.String", naming: stringSets) {
-            _ = try await runtime.resolveSwiftType(named: "Swift.String")
+            _ = try await runtime.resolve(.swift(.type("Swift.String")))
                 .resolve(
                     .swift(.method("scopedCount()", as: (() -> NativeSwiftBorrowedValue).self))
                 )
@@ -2563,7 +2562,7 @@ struct SwiftInferredValueTests {
             try unsafe borrowWide.unsafeInvoke(makeWide.unsafeInvoke(), withResult: { try unsafe read.unsafeInvoke($0) })
                 == 57
         )
-        let scoped = try await runtime.resolveSwiftType(named: module + ".Plain", in: scope)
+        let scoped = try await runtime.resolve(.swift(.type(module + ".Plain")), in: scope)
             .resolve(.swift(.method("scoped()", as: (() -> NativeSwiftBorrowedValue).self)))
         #expect(try unsafe scoped.unsafeInvoke(on: plain, withResult: { try unsafe read.unsafeInvoke($0) }) == 23)
         // Swift rejects a borrow dependency on a consuming String, and passes

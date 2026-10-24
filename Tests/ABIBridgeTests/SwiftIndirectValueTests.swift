@@ -111,9 +111,9 @@ struct SwiftIndirectValueTests {
     }
 
     @Test func resilientInitializersAndMethodsUseMetadataAndValueStorage() async throws {
-        let type = try await ABIRuntime.shared.resolveSwiftType(
-            named: "ManagedSwiftFixtures.IndirectRecord",
-                                                         as: IndirectRecord.self)
+        let type = try await ABIRuntime.shared.resolve(
+            .swift(.type("ManagedSwiftFixtures.IndirectRecord", as: IndirectRecord.self))
+        )
         let initialize = try await type.resolve(
             .swift(
                 .initializer(

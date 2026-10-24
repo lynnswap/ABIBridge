@@ -705,7 +705,7 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
             "libffi authenticated virtual call"
         )
         let adapter = try runtime.resolveAndWait(
-            .init(name: "ABIValidationCounterAdapter", language: .c)
+            .c(.symbol("ABIValidationCounterAdapter"))
         )
         let adapted = try object.resolveAndWait(
             .cxx(

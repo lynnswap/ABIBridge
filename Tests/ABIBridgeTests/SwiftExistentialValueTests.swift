@@ -12,8 +12,8 @@ import Testing
 struct SwiftExistentialValueTests {
     @Test func erasedProtocolGetterResultsResolveFromTheirDescriptors() async throws {
         let runtime = ABIRuntime()
-        let type = try await runtime.resolveSwiftType(
-            named: "ManagedSwiftFixtures.ExistentialGetterOwner"
+        let type = try await runtime.resolve(
+            .swift(.type("ManagedSwiftFixtures.ExistentialGetterOwner"))
         )
         let receiver = ExistentialGetterOwner(42)
         let typed = try await type.resolve(

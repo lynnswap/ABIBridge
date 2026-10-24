@@ -132,7 +132,7 @@ func validateAsyncMethodHooks(runtime: ABIRuntime, provider: ImageSelector, call
     }
     let failures = Mutex(0)
     let name = "SwiftImportProvider.AsyncHookRenderer"
-    let type = try await runtime.resolveSwiftType(named: name, in: provider)
+    let type = try await runtime.resolve(.swift(.type(name)), in: provider)
     let method = try await type.resolve(
         .swift(
             .method(

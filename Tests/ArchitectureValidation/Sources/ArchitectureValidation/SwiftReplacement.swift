@@ -8,11 +8,7 @@ import SwiftReplacementFixtures
     let runtime = ABIRuntime(), receiver = ReplacementRenderer()
     let module = "SwiftReplacementFixtures"
     let descriptor = try runtime.resolveAndWait(
-        .init(
-            name: "nominal type descriptor for \(module).ReplacementRenderer",
-            language: .swift,
-            kind: .data
-        )
+        .swift(.symbol("nominal type descriptor for \(module).ReplacementRenderer", kind: .data))
     )
     var checks: [String] = []
     func check(_ value: Bool, _ message: String) throws {
@@ -24,10 +20,10 @@ import SwiftReplacementFixtures
         _ body: @MainActor () throws -> Void
     ) async throws {
         let target = try runtime.resolveAndWait(
-            .init(name: "\(module).ReplacementRenderer." + name, language: .swift)
+            .swift(.symbol("\(module).ReplacementRenderer." + name))
         )
         let replacement = try runtime.resolveAndWait(
-            .init(name: "\(module).ReplacementRenderer." + replacement, language: .swift)
+            .swift(.symbol("\(module).ReplacementRenderer." + replacement))
         )
         let report = try unsafe descriptor.withUnsafeAddress { descriptor in
             let flags = descriptor.load(as: UInt32.self)
@@ -193,7 +189,7 @@ struct VirtualPayload: ABIBridgeValue {
 
 @MainActor private func validateSwiftVirtualReplacement() async throws -> [String] {
     let runtime = ABIRuntime(), module = "SwiftReplacementFixtures"
-    let base = try await runtime.resolveSwiftType(named: module + ".ReplacementRenderer")
+    let base = try await runtime.resolve(.swift(.type(module + ".ReplacementRenderer")))
     let replacement = try await base.resolve(
         .swift(
             .method(
@@ -228,7 +224,7 @@ struct VirtualPayload: ABIBridgeValue {
         try result.get()
     }
     for (index, name) in names.enumerated() {
-        let type = try await runtime.resolveSwiftType(named: module + "." + name)
+        let type = try await runtime.resolve(.swift(.type(module + "." + name)))
         let method = try await type.resolve(
             .swift(.method("scalar(_:)", as: ((Int64) -> Int64).self))
         )
@@ -277,7 +273,7 @@ struct VirtualPayload: ABIBridgeValue {
         )
     )
     for (index, name) in names.enumerated() {
-        let type = try await runtime.resolveSwiftType(named: module + "." + name)
+        let type = try await runtime.resolve(.swift(.type(module + "." + name)))
         let kind = try unsafe await type.resolve(
             .swift(
                 .staticMethod(
@@ -377,7 +373,7 @@ struct VirtualPayload: ABIBridgeValue {
         )
     }
     let child = CoalescedChild()
-    let childType = try await runtime.resolveSwiftType(named: module + ".CoalescedChild")
+    let childType = try await runtime.resolve(.swift(.type(module + ".CoalescedChild")))
     let valueMethod = try await childType.resolve(
         .swift(.method("value()", as: (() -> Int64).self))
     )
@@ -413,8 +409,8 @@ struct VirtualPayload: ABIBridgeValue {
         )
     }
     let externalReceiver = CallerOverridingRenderer()
-    let externalType = try await runtime.resolveSwiftType(
-        named: "SwiftReplacementCaller.CallerOverridingRenderer"
+    let externalType = try await runtime.resolve(
+        .swift(.type("SwiftReplacementCaller.CallerOverridingRenderer"))
     )
     let externalMethod = try await externalType.resolve(
         .swift(

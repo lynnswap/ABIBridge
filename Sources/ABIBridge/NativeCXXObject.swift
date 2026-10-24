@@ -187,9 +187,9 @@ public final class NativeCXXObject {
         let symbol: ResolvedSymbol
         switch scope {
         case .selector(let selector):
-            symbol = try runtime.resolveAndWait(declaration, in: selector, loading: loading)
+            symbol = try runtime.resolver.resolve(declaration, in: selector, loading: loading)
         case .image(let image):
-            symbol = try runtime.resolveAndWait(declaration, in: image, loading: loading)
+            symbol = try runtime.resolver.resolve(declaration, in: image, loading: loading)
         }
         let method = try NativeCXXMethod<Result, repeat each Argument>(
             target: .symbol(symbol),
@@ -215,9 +215,9 @@ public final class NativeCXXObject {
             let symbol: ResolvedSymbol
             switch scope {
             case .selector(let selector):
-                symbol = try runtime.resolveAndWait(declaration, in: selector, loading: loading)
+                symbol = try runtime.resolver.resolve(declaration, in: selector, loading: loading)
             case .image(let image):
-                symbol = try runtime.resolveAndWait(declaration, in: image, loading: loading)
+                symbol = try runtime.resolver.resolve(declaration, in: image, loading: loading)
             }
             let call: CFunctionCall<Result, repeat each Argument> = try prepareCXXCall(
                 adapter: member.adapter

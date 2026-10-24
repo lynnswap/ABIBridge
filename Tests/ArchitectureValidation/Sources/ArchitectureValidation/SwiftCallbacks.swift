@@ -179,14 +179,14 @@ private final class CallbackValidationType {
 
 @MainActor func validateSwiftCallbacks() async throws -> [String] {
     let runtime = ABIRuntime(), receiver = ReplacementRenderer()
-    let type = try await runtime.resolveSwiftType(
-        named: "SwiftReplacementFixtures.ReplacementRenderer"
+    let type = try await runtime.resolve(
+        .swift(.type("SwiftReplacementFixtures.ReplacementRenderer"))
     )
     let integer = try CallbackValidationType(ABIValueInt64)
     var checks: [String] = []
     func flags(_ declaration: NativeDeclaration) async throws -> UInt32 {
         let descriptor = try runtime.resolveAndWait(
-            .init(name: "method descriptor for " + declaration.name, language: .swift, kind: .data)
+            .swift(.symbol("method descriptor for " + declaration.name, kind: .data))
         )
         return unsafe descriptor.withUnsafeAddress { $0.load(as: UInt32.self) }
     }

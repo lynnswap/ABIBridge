@@ -27,7 +27,7 @@ A complete declaration, such as `Example.decorate(Swift.String) -> Swift.String`
 The check needs the declared type's convention: a built-in representation, an ``ABIBridgeSwiftValue`` conformance, a `valueABIs:` entry for the declared type, or a convention inferred from its metadata (see <doc:SwiftFunctionInvocation#Infer-struct-and-enum-conventions>). A C function pointer or block passes as one pointer, so `UnsafeRawPointer` or `AnyObject` can stand for one. When the declared convention is not established, lookup throws the error that names the missing evidence, such as an undecided inference or metadata that lookup cannot find. Describe the declared type with `valueABIs:` to have the requested type compared with it. When the declared type cannot be named, as for a C type that an image imports without exporting its type descriptor, or a function-local type in an optimized image, a `valueABIs:` entry for the requested type states the convention instead, as does the requested type's own ``ABIBridgeValue`` or ``ABIBridgeSwiftValue`` conformance, and lookup passes the value without the comparison:
 
 ```swift
-let uint32 = try runtime.resolveSwiftTypeAndWait(named: "Swift.UInt32")
+let uint32 = try runtime.resolveAndWait(.swift(.type("Swift.UInt32")))
 let target = try screenType.resolveAndWait(.swift(.getter(
     "target.getter : __C.HIDTarget",
     as: (() -> UInt32).self,

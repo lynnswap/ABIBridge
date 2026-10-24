@@ -124,7 +124,7 @@ struct ImportedFunctionHookTests {
             }
         }
         let slot = try runtime.resolveAndWait(
-            .init(name: "ABIHookSlot", language: .c, kind: .data),
+            .c(.symbol("ABIHookSlot", kind: .data)),
             in: fixture.scope
         )
         let saved = unsafe slot.withUnsafeAddress {
@@ -179,7 +179,7 @@ struct ImportedFunctionHookTests {
         let fixture = try ImportHookFixture(); defer { fixture.cleanup() }
         let runtime = ABIRuntime(), call = try await fixture.call(ABIRuntime())
         let slot = try runtime.resolveAndWait(
-            .init(name: "ABIHookSlot", language: .c, kind: .data),
+            .c(.symbol("ABIHookSlot", kind: .data)),
             in: fixture.scope
         )
         let original = unsafe slot.withUnsafeAddress { $0.load(as: UInt.self) }

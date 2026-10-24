@@ -27,7 +27,7 @@ struct VirtualEntryTests {
         let runtime = ABIRuntime()
         let name = "NullVirtual::target(int)"
         let sparse = try runtime.resolveAndWait(
-            .init(name: "sparse", language: .c, kind: .data),
+            .c(.symbol("sparse", kind: .data)),
             in: .path(library.libraryURL),
             loading: .loadedOnly
         )
@@ -50,7 +50,7 @@ struct VirtualEntryTests {
         }
         #expect(try changed.resolveEntryAndWait(named: name, using: ABIRuntime()).index == 0)
         let repeated = try runtime.resolveAndWait(
-            .init(name: "repeated", language: .c, kind: .data),
+            .c(.symbol("repeated", kind: .data)),
             in: .path(library.libraryURL),
             loading: .loadedOnly
         )
@@ -62,7 +62,7 @@ struct VirtualEntryTests {
             Issue.record("Null slots hid duplicate original entries")
         } catch ABIResolutionError.ambiguousDeclaration {}
         let unknown = try runtime.resolveAndWait(
-            .init(name: "unidentified", language: .c, kind: .data),
+            .c(.symbol("unidentified", kind: .data)),
             in: .path(library.libraryURL),
             loading: .loadedOnly
         )
@@ -81,7 +81,7 @@ struct VirtualEntryTests {
             Issue.record("A live zero replaced unavailable original identity")
         } catch ABIResolutionError.metadataUnavailable {}
         let zeros = try runtime.resolveAndWait(
-            .init(name: "zeros", language: .c, kind: .data),
+            .c(.symbol("zeros", kind: .data)),
             in: .path(library.libraryURL),
             loading: .loadedOnly
         )

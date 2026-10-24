@@ -371,9 +371,15 @@ private final class RuntimeHookOwnershipState: @unchecked Sendable {
 }
 private struct RuntimeHookProbeError: Error {}
 
-@MainActor private func validateRuntimeHookOwnership(runtime: ABIRuntime, provider: ImageSelector,
-    caller: ImageSelector) async throws -> [String] {
-    let type = try await runtime.resolveSwiftType(named: "SwiftImportProvider.HookTicket", in: provider)
+@MainActor private func validateRuntimeHookOwnership(
+    runtime: ABIRuntime,
+    provider: ImageSelector,
+    caller: ImageSelector
+) async throws -> [String] {
+    let type = try await runtime.resolve(
+        .swift(.type("SwiftImportProvider.HookTicket")),
+        in: provider
+    )
     let consume = try await runtime.resolve(
         .swift(
             .function(
@@ -472,8 +478,8 @@ private struct RuntimeHookProbeError: Error {}
     }
     checks.append("Failure before continuation forwards the original noncopyable input exactly once")
     fourth.invalidate()
-    let renderer = try await runtime.resolveSwiftType(
-        named: "SwiftImportProvider.HookTicketRenderer",
+    let renderer = try await runtime.resolve(
+        .swift(.type("SwiftImportProvider.HookTicketRenderer")),
         in: provider
     )
     let virtualMove = try await renderer.resolve(

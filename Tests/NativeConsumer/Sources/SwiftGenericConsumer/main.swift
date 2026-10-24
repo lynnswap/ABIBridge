@@ -34,9 +34,13 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
     )
     let packValues = try unsafe closurePack.unsafeInvoke(TextBody { "pack" }, NumberBody { 42 })
     precondition(packValues == ("pack", 42))
-    let packOwnerType = try await runtime.resolveSwiftType(
-        named: "ManagedSwiftFixtures.GenericClosurePackOwner",
-        genericArguments: [.pack([.type(String.self), .type(Int64.self)])]
+    let packOwnerType = try await runtime.resolve(
+        .swift(
+            .type(
+                "ManagedSwiftFixtures.GenericClosurePackOwner",
+                genericArguments: [.pack([.type(String.self), .type(Int64.self)])]
+            )
+        )
     )
     let makePackOwner = try await packOwnerType.resolve(
         .swift(
@@ -60,9 +64,13 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
     )
     let ownedPackValues = try unsafe callPackOwner.unsafeInvoke()
     precondition(ownedPackValues == ("owned pack", 43))
-    let callbackType = try await runtime.resolveSwiftType(
-        named: "ManagedSwiftFixtures.GenericCallbackConventions",
-        genericArguments: [.type(Int64.self)]
+    let callbackType = try await runtime.resolve(
+        .swift(
+            .type(
+                "ManagedSwiftFixtures.GenericCallbackConventions",
+                genericArguments: [.type(Int64.self)]
+            )
+        )
     )
     let makeCallbackOwner = try await callbackType.resolve(
         .swift(
@@ -108,9 +116,10 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
     let originalObject = NSObject()
     let returnedObject = try unsafe objectIdentity.unsafeInvoke(originalObject)
     precondition(returnedObject === originalObject)
-    let type = try await runtime.resolveSwiftType(
-        named: "ManagedSwiftFixtures.GenericTypeClass",
-        genericArguments: [.type(String.self)]
+    let type = try await runtime.resolve(
+        .swift(
+            .type("ManagedSwiftFixtures.GenericTypeClass", genericArguments: [.type(String.self)])
+        )
     )
     let initialize = try await type.resolve(
         .swift(
@@ -150,9 +159,13 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
     let comparison = try unsafe compare.unsafeInvoke(42)
     precondition(comparison == ("updated", 42, true))
 
-    let closureType = try await runtime.resolveSwiftType(
-        named: "ManagedSwiftFixtures.GenericClosureOwner",
-        genericArguments: [.type(String.self)]
+    let closureType = try await runtime.resolve(
+        .swift(
+            .type(
+                "ManagedSwiftFixtures.GenericClosureOwner",
+                genericArguments: [.type(String.self)]
+            )
+        )
     )
     let makeClosureOwner = try await closureType.resolve(
         .swift(
@@ -187,12 +200,11 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
     let replaced = try unsafe invokeStored.unsafeInvoke()
     precondition(replaced == "replaced")
 
-    let argument = try await runtime.resolveSwiftType(
-        named: "ManagedSwiftFixtures.GenericSourceValue"
+    let argument = try await runtime.resolve(
+        .swift(.type("ManagedSwiftFixtures.GenericSourceValue"))
     )
-    _ = try await runtime.resolveSwiftType(
-        named: "ManagedSwiftFixtures.GenericSourceBox",
-        genericArguments: [.type(argument)]
+    _ = try await runtime.resolve(
+        .swift(.type("ManagedSwiftFixtures.GenericSourceBox", genericArguments: [.type(argument)]))
     )
     let pack = try await runtime.resolve(
         .swift(
@@ -243,9 +255,13 @@ func exerciseGenericBindings(_ adapterPath: String) async throws {
     let resumed = try unsafe await suspended.unsafeInvoke("resumed")
     precondition(resumed == "resumed")
 
-    let getterType = try await runtime.resolveSwiftType(
-        named: "ManagedSwiftFixtures.GenericEffectfulGetter",
-        genericArguments: [.type(String.self), .type(GenericConsumerFailure.self)]
+    let getterType = try await runtime.resolve(
+        .swift(
+            .type(
+                "ManagedSwiftFixtures.GenericEffectfulGetter",
+                genericArguments: [.type(String.self), .type(GenericConsumerFailure.self)]
+            )
+        )
     )
     let makeGetter = try await getterType.resolve(
         .swift(

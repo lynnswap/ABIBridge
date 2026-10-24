@@ -118,8 +118,8 @@ struct ResolutionErrorDescriptionTests {
             linkArguments: ["-parse-as-library", "-import-objc-header", header.path]
         )
         defer { library.cleanup() }
-        let screen = try await ABIRuntime().resolveSwiftType(
-            named: module + ".Screen",
+        let screen = try await ABIRuntime().resolve(
+            .swift(.type(module + ".Screen")),
             in: .path(library.libraryURL)
         )
         let getter = "target.getter : __C.DescribedTarget"

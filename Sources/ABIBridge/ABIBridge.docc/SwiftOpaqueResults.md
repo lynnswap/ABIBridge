@@ -102,7 +102,7 @@ A `some P` result contains the actual hidden value. Class constraints select an 
 Use a concrete ``NativeSwiftType`` to construct a case without associated values:
 
 ```swift
-let modeType = try await runtime.resolveSwiftType(named: "Example.DisplayMode")
+let modeType = try await runtime.resolve(.swift(.type("Example.DisplayMode")))
 let compact = try modeType.makeEnumCase(named: "compact")
 ```
 

@@ -89,7 +89,7 @@ import Foundation
         for pass in ["cold", "warm"] {
             try await measure("\(label) \(pass)", repetitions: pass == "warm" ? 100 : 1) {
                 do {
-                    _ = try runtime.resolveAndWait(declaration)
+                    _ = try runtime.resolveAndWait(NativeSymbolRequest(declaration))
                     throw ArchitectureValidationFailure(
                         description: "The absent fixture unexpectedly resolved"
                     )
@@ -105,7 +105,7 @@ import Foundation
 
 @MainActor private func validateImageMetadata(using runtime: ABIRuntime) async throws -> [String] {
     var checks: [String] = []
-    let function = try runtime.resolveAndWait(.init(name: "ABIValidationAdd", language: .c))
+    let function = try runtime.resolveAndWait(.c(.symbol("ABIValidationAdd")))
     let metadata = try await runtime.resolveImageMetadata(in: function.image)
     guard metadata.image == function.image,
         UInt32(bitPattern: metadata.architecture.cpuType) == ABIValidationCPUType(),
@@ -168,7 +168,7 @@ import Foundation
         "Image C string section contains the independently located literal and its readable bytes"
     )
 
-    let systemFunction = try runtime.resolveAndWait(.init(name: "getpid", language: .c))
+    let systemFunction = try runtime.resolveAndWait(.c(.symbol("getpid")))
     let systemMetadata = try await runtime.resolveImageMetadata(in: systemFunction.image)
     try unsafe systemFunction.withUnsafeAddress {
         let systemAddress = UInt64(UInt(bitPattern: $0))

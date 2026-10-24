@@ -116,7 +116,7 @@ struct SwiftGenericMetadataTests {
     // Each module of this bundle that uses CGRect defines its descriptor.
     @Test func importedTypesThatSeveralModulesDescribeResolve() async throws {
         let runtime = ABIRuntime()
-        let rect = try await runtime.resolveSwiftType(named: "__C.CGRect")
+        let rect = try await runtime.resolve(.swift(.type("__C.CGRect")))
         let copy = try await runtime.resolve(
             .swift(
                 .function(

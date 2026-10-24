@@ -150,13 +150,9 @@ struct SwiftAsyncABITests {
         ] {
             let declaration = "ManagedSwiftFixtures." + name + signature
             let descriptor = try runtime.resolveAndWait(
-                .init(
-                    name: "async function pointer to " + declaration,
-                    language: .swift,
-                    kind: .data
-                )
+                .swift(.symbol("async function pointer to " + declaration, kind: .data))
             )
-            let function = try runtime.resolveAndWait(.init(name: declaration, language: .swift))
+            let function = try runtime.resolveAndWait(.swift(.symbol(declaration)))
             let fields = unsafe descriptor.withUnsafeAddress { address in
                 (
                     UInt(bitPattern: address), address.load(as: Int32.self),

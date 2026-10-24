@@ -36,7 +36,7 @@ Ordinary Swift values supply an independently encoded copy, so the original valu
 For a native initializer `init(_ title: borrowing String, _ content: consuming String)`:
 
 ```swift
-let type = try ABIRuntime.shared.resolveSwiftTypeAndWait(named: "Example.Document")
+let type = try ABIRuntime.shared.resolveAndWait(.swift(.type("Example.Document")))
 let initialize = try type.resolveAndWait(.swift(.initializer(
     "init(_:_:)",
     as: ((NativeSwiftBorrowing<String>, NativeSwiftConsuming<String>) -> AnyObject).self

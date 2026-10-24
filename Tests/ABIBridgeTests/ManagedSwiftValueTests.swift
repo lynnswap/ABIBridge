@@ -214,7 +214,7 @@ struct ManagedSwiftValueTests {
             .c(.function("ABIResilientRecordNumber", as: ((UnsafeRawPointer) -> Int64).self))
         )
         let destructor = try runtime.resolveAndWait(
-            .init(name: "ABIResilientRecordDestroy", language: .c)
+            .c(.symbol("ABIResilientRecordDestroy"))
         )
         typealias Destroy = @convention(c) (UnsafeMutableRawPointer) -> Void
         let destroy = unsafe destructor.withUnsafeAddress { unsafeBitCast($0, to: Destroy.self) }

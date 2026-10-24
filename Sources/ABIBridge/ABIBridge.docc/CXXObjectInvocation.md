@@ -157,7 +157,7 @@ Nontrivial C++ parameters and results can require copy constructors, destructors
 
 ```swift
 let adapter = try ABIRuntime.shared.resolveAndWait(
-    NativeDeclaration(name: "ExampleInvokeTransform", language: .c)
+    .c(.symbol("ExampleInvokeTransform"))
 )
 let transform = try counter.resolveAndWait(.cxx(.method(
     "transform(Example::Token) const",

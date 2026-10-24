@@ -149,7 +149,7 @@ struct SwiftGenericCallTests {
 
     @Test func labelOnlyValueABIsUseTheProviderTypes() async throws {
         let runtime = ABIRuntime.shared
-        let type = try await runtime.resolveSwiftType(named: "ManagedSwiftFixtures.RuntimeFixedPair")
+        let type = try await runtime.resolve(.swift(.type("ManagedSwiftFixtures.RuntimeFixedPair")))
         let abi = try NativeType.structure(named: type.name, fields: [.int64, .int64])
         let make = try await runtime.resolve(
             .swift(
@@ -170,8 +170,12 @@ struct SwiftGenericCallTests {
             ),
             in: type.image
         )
-        for value in [try unsafe make.unsafeInvoke(35, 7), try unsafe retainedImage.unsafeInvoke(35, 7)] {
-            #expect(try value.take(as: RuntimeFixedPair.self).sum() == makeRuntimeFixedPair(35, 7).sum())
+        for value in [
+            try unsafe make.unsafeInvoke(35, 7), try unsafe retainedImage.unsafeInvoke(35, 7),
+        ] {
+            #expect(
+                try value.take(as: RuntimeFixedPair.self).sum() == makeRuntimeFixedPair(35, 7).sum()
+            )
         }
     }
 
@@ -272,9 +276,14 @@ struct SwiftGenericCallTests {
     @MainActor @Test func ownedPackClosuresKeepIndependentNativeCaptures() async throws {
         typealias Owner = GenericClosurePackOwner<String, Int64>
         let runtime = ABIRuntime()
-        let type = try await runtime.resolveSwiftType(
-            named: "ManagedSwiftFixtures.GenericClosurePackOwner",
-            genericArguments: [.pack([.type(String.self), .type(Int64.self)])])
+        let type = try await runtime.resolve(
+            .swift(
+                .type(
+                    "ManagedSwiftFixtures.GenericClosurePackOwner",
+                    genericArguments: [.pack([.type(String.self), .type(Int64.self)])]
+                )
+            )
+        )
         let initialize = try await type.resolve(
             .swift(
                 .initializer(
@@ -499,9 +508,14 @@ struct SwiftGenericCallTests {
     }
 
     @Test func genericClosureInitializersAndSettersTransferIndependentCaptures() async throws {
-        let type = try await ABIRuntime().resolveSwiftType(
-            named: "ManagedSwiftFixtures.GenericClosureOwner",
-            genericArguments: [.type(String.self)])
+        let type = try await ABIRuntime().resolve(
+            .swift(
+                .type(
+                    "ManagedSwiftFixtures.GenericClosureOwner",
+                    genericArguments: [.type(String.self)]
+                )
+            )
+        )
         let initialize = try await type.resolve(
             .swift(
                 .initializer(
@@ -1279,8 +1293,10 @@ struct SwiftGenericCallTests {
         let object = NSObject()
         #expect(try unsafe associated.unsafeInvoke(GenericObjectCarrier.self, object) === object)
         let value = GenericObjCValue()
-        for name in ["objcConstraintGeneric<A where A: ManagedSwiftFixtures.GenericObjCConstraint>",
-                     "superclassConstraintGeneric<A where A: ManagedSwiftFixtures.GenericObjCValue>"] {
+        for name in [
+            "objcConstraintGeneric<A where A: ManagedSwiftFixtures.GenericObjCConstraint>",
+            "superclassConstraintGeneric<A where A: ManagedSwiftFixtures.GenericObjCValue>",
+        ] {
             let function = try await runtime.resolve(
                 .swift(
                     .function(
@@ -2035,7 +2051,7 @@ struct SwiftGenericCallTests {
             let callback = try NativeSwiftClosure { value }
             #expect(try unsafe boolean.unsafeInvoke(callback) == referenceGenericBool(value))
         }
-        let stringType = try await runtime.resolveSwiftType(named: "Swift.String")
+        let stringType = try await runtime.resolve(.swift(.type("Swift.String")))
         let string = try await runtime.resolve(
             .swift(
                 .function(
@@ -2214,9 +2230,11 @@ struct SwiftGenericCallTests {
                 )
             )
         }
-        for declaration in ["Example.run<A, B>(A) -> A", "Example.run<A where A: Swift.Equatable>(A) -> A",
-                            "Example.run<A>(Swift.Array<A>) -> A", "Example.run<A>(A) async -> A",
-                            "Example.run<A>((A) -> A) -> A"] {
+        for declaration in [
+            "Example.run<A, B>(A) -> A", "Example.run<A where A: Swift.Equatable>(A) -> A",
+            "Example.run<A>(Swift.Array<A>) -> A", "Example.run<A>(A) async -> A",
+            "Example.run<A>((A) -> A) -> A",
+        ] {
             #expect(throws: ABIResolutionError.self) {
                 try runtime.resolveAndWait(
                     .swift(

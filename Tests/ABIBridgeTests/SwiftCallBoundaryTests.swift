@@ -73,10 +73,10 @@ struct SwiftCallBoundaryTests {
 
     @Test func coalescedComponentsRespectGuardedArgumentAndResultExtents() async throws {
         let symbol = try ABIRuntime.shared.resolveAndWait(
-            .init(
-                name:
-                    "ABIBridgeTests.swiftABIBytes(ABIBridgeTests.SwiftABIBytes3) -> ABIBridgeTests.SwiftABIBytes3",
-                language: .swift
+            .swift(
+                .symbol(
+                    "ABIBridgeTests.swiftABIBytes(ABIBridgeTests.SwiftABIBytes3) -> ABIBridgeTests.SwiftABIBytes3"
+                )
             )
         )
         var failure: OpaquePointer?

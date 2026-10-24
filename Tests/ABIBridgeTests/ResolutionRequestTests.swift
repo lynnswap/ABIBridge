@@ -44,7 +44,7 @@ struct ResolutionRequestTests {
     @MainActor @Test func oneRequestResolvesOnATypeAndOnAnObject() async throws {
         let runtime = ABIRuntime()
         let renderer = SwiftMemberRenderer(text: "four")
-        let type = try await runtime.resolveSwiftType(named: "ABIBridgeTests.SwiftMemberRenderer")
+        let type = try await runtime.resolve(.swift(.type("ABIBridgeTests.SwiftMemberRenderer")))
         let object = runtime.object(renderer)
         let render = NativeRequest.swift(.method("render(_:)", as: ((Int) -> Int).self))
         let text = NativeRequest.swift(.getter("text", as: (() -> String).self))
@@ -120,11 +120,11 @@ struct ResolutionRequestTests {
         )
         defer { library.cleanup() }
         let runtime = ABIRuntime()
-        let screen = try await runtime.resolveSwiftType(
-            named: module + ".Screen",
+        let screen = try await runtime.resolve(
+            .swift(.type(module + ".Screen")),
             in: .path(library.libraryURL)
         )
-        let uint32 = try await runtime.resolveSwiftType(named: "Swift.UInt32")
+        let uint32 = try await runtime.resolve(.swift(.type("Swift.UInt32")))
         let make = try await screen.resolve(
             .swift(.initializer("init()", as: (() -> AnyObject).self))
         )
@@ -202,9 +202,8 @@ struct ResolutionRequestTests {
         #expect(try unsafe described.unsafeInvoke(7) == 70)
 
         // The index and value types select among Array's subscripts.
-        let array = try await runtime.resolveSwiftType(
-            named: "Swift.Array",
-            genericArguments: [.type(Int.self)]
+        let array = try await runtime.resolve(
+            .swift(.type("Swift.Array", genericArguments: [.type(Int.self)]))
         )
         let element = try await array.resolve(.swift(.getter("subscript", as: ((Int) -> Int).self)))
         #expect(try unsafe element.unsafeInvoke(on: [10, 20, 30], 1) == 20)
@@ -219,8 +218,8 @@ struct ResolutionRequestTests {
 
     @MainActor @Test func typesNestedInExtensionsResolveTheirMembers() async throws {
         let runtime = ABIRuntime()
-        let type = try await runtime.resolveSwiftType(
-            named: "(extension in ManagedSwiftFixtures):Swift.Int.RuntimeNestedCounter"
+        let type = try await runtime.resolve(
+            .swift(.type("(extension in ManagedSwiftFixtures):Swift.Int.RuntimeNestedCounter"))
         )
         let make = try await type.resolve(
             .swift(.initializer("init()", as: (() -> Int.RuntimeNestedCounter).self))
@@ -278,12 +277,12 @@ struct ResolutionRequestTests {
         )
         defer { library.cleanup() }
         let runtime = ABIRuntime()
-        let left = try runtime.resolveSwiftTypeAndWait(
-            named: "(extension in " + first + "):Swift.Int.Nested",
+        let left = try runtime.resolveAndWait(
+            .swift(.type("(extension in " + first + "):Swift.Int.Nested")),
             in: .path(library.libraryURL)
         )
-        let right = try runtime.resolveSwiftTypeAndWait(
-            named: "(extension in " + second + "):Swift.Int.Nested",
+        let right = try runtime.resolveAndWait(
+            .swift(.type("(extension in " + second + "):Swift.Int.Nested")),
             in: .path(library.libraryURL)
         )
         let request = NativeRequest.swift(.method("foreignOnly()", as: (() -> Int).self))
@@ -294,10 +293,10 @@ struct ResolutionRequestTests {
             guard case ABIResolutionError.declarationNotFound = error else { return false }
             return true
         }
-        let string = try runtime.resolveSwiftTypeAndWait(named: "Swift.String")
-        _ = try right.resolveWritableKeyPathAndWait(named: "foreignText", valueType: string)
+        let string = try runtime.resolveAndWait(.swift(.type("Swift.String")))
+        _ = try right.resolveAndWait(.swift(.writableKeyPath("foreignText", valueType: string)))
         #expect {
-            _ = try left.resolveWritableKeyPathAndWait(named: "foreignText", valueType: string)
+            _ = try left.resolveAndWait(.swift(.writableKeyPath("foreignText", valueType: string)))
         } throws: { error in
             guard case ABIResolutionError.declarationNotFound = error else { return false }
             return true
@@ -308,8 +307,8 @@ struct ResolutionRequestTests {
 
     @MainActor @Test func methodsNamedLikeAllocatorsKeepTheirNames() async throws {
         let runtime = ABIRuntime()
-        let type = try await runtime.resolveSwiftType(
-            named: "ManagedSwiftFixtures.RuntimeAllocatorNamedMethod"
+        let type = try await runtime.resolve(
+            .swift(.type("ManagedSwiftFixtures.RuntimeAllocatorNamedMethod"))
         )
         await #expect(throws: ABIResolutionError.self) {
             try await type.resolve(.swift(.method("init(_:)", as: ((Int64) -> Int64).self)))
@@ -331,7 +330,7 @@ struct ResolutionRequestTests {
 
     @MainActor @Test func receiverConventionsSelectHowSelfPasses() async throws {
         let runtime = ABIRuntime()
-        let type = try await runtime.resolveSwiftType(named: "ABIBridgeTests.SwiftRequestToggle")
+        let type = try await runtime.resolve(.swift(.type("ABIBridgeTests.SwiftRequestToggle")))
         let toggle = SwiftRequestToggle(offset: 2)
         let nonmutating = try await type.resolve(
             .swift(.setter("value", as: ((Int64) -> Void).self, receiver: .borrowing))
@@ -345,7 +344,7 @@ struct ResolutionRequestTests {
         try unsafe adjust.unsafeInvoke(on: &adjustable, 5)
         #expect(adjustable.offset == 5)
 
-        let pointType = try await runtime.resolveSwiftType(named: "ABIBridgeTests.SwiftMemberPoint")
+        let pointType = try await runtime.resolve(.swift(.type("ABIBridgeTests.SwiftMemberPoint")))
         let change = try await pointType.resolve(
             .swift(.method("change(_:)", as: ((Int64) -> Void).self, receiver: .mutating))
         )

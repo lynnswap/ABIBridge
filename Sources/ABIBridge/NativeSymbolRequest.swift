@@ -39,3 +39,84 @@ public struct NativeSymbolRequest: Sendable, Hashable {
         self.loading = loading
     }
 }
+
+/// A single native symbol's name form and storage requirement.
+///
+/// Wrap with `NativeRequest.c`, `cxx`, `swift`, or `objc` and resolve with an
+/// `ABIRuntime`. Resolution returns a retained `ResolvedSymbol`, without
+/// establishing a callable signature, value layout or ownership convention.
+/// Use `NativeSymbolRequest` for aliases, ordered fallbacks or multiple scopes.
+public struct NativeSymbolLookupRequest: Sendable {
+    let declaration: NativeDeclaration
+
+    /// Describes a source-level symbol without requiring its mangled name.
+    /// - Parameters:
+    ///   - name: The source declaration, or a C name without the Mach-O underscore.
+    ///   - kind: The required symbol storage.
+    public static func symbol(_ name: String, kind: NativeSymbolKind = .function) -> Self {
+        Self(declaration: .init(name: name, language: .c, kind: kind))
+    }
+
+    /// Describes an exact linker spelling, bypassing demangling and normalization.
+    ///
+    /// Mach-O's leading underscore is added exactly once; an existing underscore
+    /// is preserved. The language factory supplies metadata, not name matching.
+    public static func symbol(linkerName: String, kind: NativeSymbolKind = .function) -> Self {
+        Self(declaration: .init(linkerName: linkerName, language: .c, kind: kind))
+    }
+
+    /// Describes an exact Mach-O symbol-table spelling, including its underscore.
+    ///
+    /// No prefix is added or removed, and no name normalization is performed.
+    public static func symbol(machOName: String, kind: NativeSymbolKind = .function) -> Self {
+        Self(declaration: .init(machOName: machOName, language: .c, kind: kind))
+    }
+
+    /// Describes a C++ vtable using its qualified source-level type name.
+    ///
+    /// Use `NativeRequest.cxx`. The resolved address names the table symbol,
+    /// not an inferred address point or first function slot.
+    public static func symbol(vtableFor typeName: String) -> Self {
+        Self(declaration: .init(vtableFor: typeName))
+    }
+
+    func inLanguage(_ language: NativeLanguage) -> Self {
+        Self(
+            declaration: .init(
+                name: declaration.name,
+                language: language,
+                kind: declaration.kind,
+                nameForm: declaration.nameForm
+            )
+        )
+    }
+}
+
+extension NativeRequest {
+    /// Describes a C symbol to inspect without preparing a call.
+    public static func c(_ declaration: NativeSymbolLookupRequest) -> Self
+    where Declaration == NativeSymbolLookupRequest {
+        Self(declaration: declaration.inLanguage(.c))
+    }
+
+    /// Describes a C++ symbol to inspect without preparing a call.
+    public static func cxx(_ declaration: NativeSymbolLookupRequest) -> Self
+    where Declaration == NativeSymbolLookupRequest {
+        Self(declaration: declaration.inLanguage(.cxx))
+    }
+
+    /// Describes a Swift symbol to inspect without preparing a call.
+    public static func swift(_ declaration: NativeSymbolLookupRequest) -> Self
+    where Declaration == NativeSymbolLookupRequest {
+        Self(declaration: declaration.inLanguage(.swift))
+    }
+
+    /// Describes an exact Objective-C linker or Mach-O symbol to inspect.
+    ///
+    /// A source selector is resolved using `.objc(.method(...))`, not raw
+    /// symbol lookup. Exact inspection does not prepare message dispatch.
+    public static func objc(_ declaration: NativeSymbolLookupRequest) -> Self
+    where Declaration == NativeSymbolLookupRequest {
+        Self(declaration: declaration.inLanguage(.objectiveC))
+    }
+}
