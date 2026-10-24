@@ -273,3 +273,9 @@ All 12 checks passed in a Release arm64e build on iPhone Air (iOS 27, build 24A4
 The `swift` mode includes file-private receiver methods, inherited private owners, complete relative declarations, getter/setter calls, cache removal, and final receiver release. Compiler calls keep the fixture entries live under optimization and provide independent controls; lookup does not reconstruct methods removed by dead-code elimination. All 15 mode checks passed in a Release arm64e build on iPhone Air / iOS 27 with pointer authentication enabled.
 
 The package regression suite additionally distinguishes same-named private classes in different files and verifies short member labels. `SwiftMemberConsumer` obtains a private object from a separately loaded library without importing its module and invokes the retained method after its loader reference and resolver cache have been released.
+
+## Protocol witness dispatch
+
+`swift-method-hooks` also runs `SwiftWitnessHooks.swift` against the separately compiled provider/caller frameworks. It covers conformance isolation, repeated lookup after publication, predecessor capture and compiled replacement, value accessors, static/initializer requirements, async descriptor publication, and generic/conditional Self filtering. Build with `scripts/build-device-validation.sh arm64e`, then run `--probe swift-method-hooks`; the completed report must record `pacCompiled: true` to establish arm64e runtime authentication evidence.
+
+`python3 scripts/check-swift-witness-codegen.py` checks compiler-emitted slots, requirement flags/discriminators, sync code versus async descriptor authentication, associated-type entries, and generic/conditional instantiation for macOS arm64, iOS arm64e, and watchOS arm64_32, with library evolution enabled and disabled. `scripts/test-codegen.sh` includes it for each selected Xcode. Compiler checks and cross-compilation do not establish device execution.

@@ -149,6 +149,55 @@ package struct OriginalImageMetadata {
         return result
     }
 
+    /// An original local pointer target, independent of mutable loaded slots.
+    package func pointerTargets() throws -> [UInt64: UInt64] {
+        guard let preferred = file.preferredLoadAddress else {
+            throw unavailable("preferred load address is unavailable")
+        }
+        var targets: [UInt64: UInt64] = [:]
+        for entry in try chainedPointers() {
+            guard let rebase = entry.pointer.fixupInfo.rebase else { continue }
+            let format = entry.pointer.fixupInfo.pointerFormat
+            let absolute = !rebase.isAuth
+                && (format == ._32 || format == ._64 || format == .arm64e || format == .arm64e_firmware)
+            let target = absolute
+                ? (rebase.unpackedTarget, false)
+                : preferred.addingReportingOverflow(rebase.unpackedTarget)
+            guard !target.1 else { throw unavailable("original target overflow") }
+            let slid = Int64(bitPattern: target.0).addingReportingOverflow(image.identity.slide)
+            guard !slid.overflow else { throw unavailable("original target slide overflow") }
+            targets[entry.address] = UInt64(bitPattern: slid.partialValue)
+        }
+        return targets
+    }
+
+    /// Resolves an original relative field, including async function pointers.
+    package func relativeTarget(at address: UInt64) throws -> UInt64 {
+        let unslid = Int64(bitPattern: address).subtractingReportingOverflow(image.identity.slide)
+        guard !unslid.overflow else { throw unavailable("original relative address overflow") }
+        let location = UInt64(bitPattern: unslid.partialValue)
+        guard let segment = file.segments.first(where: {
+            location >= UInt64($0.virtualMemoryAddress)
+                && location - UInt64($0.virtualMemoryAddress) < UInt64($0.fileSize)
+        }) else { throw unavailable("relative field is not file-backed") }
+        let offset = location - UInt64(segment.virtualMemoryAddress)
+        guard UInt64(segment.fileSize) - offset >= 4 else {
+            throw unavailable("relative field exceeds its file-backed range")
+        }
+        let position = UInt64(segment.fileOffset).addingReportingOverflow(offset)
+        guard !position.overflow, let position = Int(exactly: position.partialValue) else {
+            throw unavailable("relative field file offset overflow")
+        }
+        let final = file.headerStartOffset.addingReportingOverflow(position)
+        guard !final.overflow else { throw unavailable("relative field header offset overflow") }
+        let handle = try openReadHandle()
+        defer { try? handle.close() }
+        let value = try Self.read(Int32.self, from: handle, at: final.partialValue)
+        let target = Int64(bitPattern: address).addingReportingOverflow(Int64(value))
+        guard value != 0, !target.overflow else { throw unavailable("invalid relative target") }
+        return UInt64(bitPattern: target.partialValue)
+    }
+
     package static func authentication(
         _ bind: any DyldChainedPointerContentBind
     ) throws -> RuntimePointerAuthentication {
