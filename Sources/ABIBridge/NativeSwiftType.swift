@@ -769,7 +769,8 @@ public actor NativeSwiftType: Hashable {
                             excluding: query,
                             match: match,
                             displayed: declaration,
-                            isAsync: description.isAsync,
+                            extensionMember: entry.declaration,
+                            signature: description,
                             considered: considered,
                             conformances: conformances
                         ) { witness in

@@ -1,0 +1,7 @@
+Name: Legacy
+Protocols:
+- Name: LGStore
+  Methods:
+  - Selector: "maybe"
+    MethodKind: Instance
+    SwiftName: "perhaps()"
