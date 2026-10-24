@@ -16,7 +16,15 @@ Use `resolve` for async lookup or `resolveAndWait` for synchronous lookup. Keep 
 
 ### Resolve a C++ function without writing its mangled name
 
-Find `int Example::Math::add(int, int)` in a loaded library by its source-level name:
+A C++ function declared as `int Example::Math::add(int, int)` has a compiler-generated symbol such as `_ZN7Example4Math3addEii`. A direct lookup requires that mangled name:
+
+```swift
+import Darwin
+
+let address = dlsym(libraryHandle, "_ZN7Example4Math3addEii")
+```
+
+With ABIBridge, use the declaration name from the source:
 
 ```swift
 import ABIBridge
@@ -27,7 +35,7 @@ let symbol = try runtime.resolveAndWait(
 )
 ```
 
-Indexes are prepared automatically. See [symbol lookup](https://lynnswap.github.io/ABIBridge/documentation/abibridge/symbollookup) for scopes and optional preparation.
+See [symbol lookup](https://lynnswap.github.io/ABIBridge/documentation/abibridge/symbollookup) for scopes and optional preparation.
 
 ### Call C++ by its declaration
 
