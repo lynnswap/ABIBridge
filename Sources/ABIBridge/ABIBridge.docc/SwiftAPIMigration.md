@@ -129,7 +129,7 @@ What changes besides the spelling:
 - ``NativeSwiftReceiverConvention`` replaces the `mutating:` and `consuming:` flags, whose combination was invalid. Without a convention, methods and getters borrow `self` and setters follow their declaration.
 - Throwing Objective-C messages and implementations also accept a `Selector`.
 
-C++ instance and virtual members, Swift types, images, and value conversions keep their `resolve…` names.
+Swift types, images, and value conversions keep their `resolve…` names.
 
 ## Choose synchronous or async lookup
 
