@@ -951,6 +951,16 @@ struct SwiftGenericBindingTests {
             )
         )
         #expect(singleton.count == 1 && singleton[0] == Int64.self)
+        let addressability = try SwiftBorrowedInputs.addressability(
+            of: .tuple([
+                .nominal("Swift.Int64", []), .pack(element, shape: element),
+                .nominal("Swift.Int64", []),
+            ]),
+            native: (Int64, Int64).self,
+            binding: empty
+        )
+        // Empty packs retain the declaration's generic tuple abstraction.
+        #expect(addressability.isSet)
     }
 
     @Test func explicitNominalSourcesRemoveOnlyFulfilledMetadataWords() throws {

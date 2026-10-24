@@ -202,7 +202,7 @@ enum SwiftBorrowedInputs {
             let values = try fields.map { field in
                 try addressability(
                     of: field,
-                    native: try? binding.types(field)[0],
+                    native: try? binding.types(field).first,
                     binding: binding
                 )
             }
