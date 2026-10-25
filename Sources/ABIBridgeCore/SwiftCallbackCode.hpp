@@ -1,7 +1,7 @@
 #ifndef ABIBRIDGE_SWIFT_CALLBACK_CODE_HPP
 #define ABIBRIDGE_SWIFT_CALLBACK_CODE_HPP
 
-#include <ABIBridge/Invocation.h>
+#include <ABIBridge/Backend/Invocation.h>
 #include <memory>
 
 namespace abibridge {

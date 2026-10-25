@@ -3,6 +3,7 @@ import ABIBridgeTestSupport
 #if DEBUG && os(macOS)
 @testable import ABIBridge
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 import Foundation
 import Darwin
 import Testing

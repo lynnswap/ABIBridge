@@ -1,5 +1,6 @@
 import ABIBridgeRuntime
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 import ObjectiveC
 import Synchronization
 

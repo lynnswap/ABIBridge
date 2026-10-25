@@ -1,6 +1,6 @@
 #ifndef ABIBRIDGE_SWIFT_CALLBACKS_H
 #define ABIBRIDGE_SWIFT_CALLBACKS_H
-#include <ABIBridge/SwiftInvocation.h>
+#include <ABIBridge/Backend/SwiftInvocation.h>
 #ifdef __cplusplus
 extern "C" {
 #endif

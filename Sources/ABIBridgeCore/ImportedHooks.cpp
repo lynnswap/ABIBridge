@@ -1,3 +1,5 @@
+#include <ABIBridge/Backend/ImportedHooks.h>
+#include <ABIBridge/Backend/PointerSlot.h>
 #include <ABIBridge/ImportedHooks.h>
 #include <ABIBridge/Memory.h>
 #include "NativeValueType.hpp"

@@ -49,4 +49,4 @@ auto otherBound = add.bind(other);
 
 The copied method retains its code image and preserves the original signature and direct dispatch. Releasing the original binding can release its receiver while the copied method stays alive.
 
-Framework-specific layout shims, callback interfaces, and value ownership adapters remain in the consuming code. These headers do not publish the internal `InvocationRuntime` or every backend invocation facility.
+Framework-specific layout shims, callback interfaces, and value ownership adapters remain in the consuming code.

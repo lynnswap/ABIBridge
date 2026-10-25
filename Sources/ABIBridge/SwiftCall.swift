@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 
 final class SwiftCall: Sendable {
     let interface: SwiftCallInterface

@@ -7,4 +7,15 @@ module ABIBridgeCore {
         header "ABIBridge/ABIBridge.hpp"
         export *
     }
+
+    explicit module Backend {
+        header "ABIBridge/Backend.h"
+        export *
+
+        module CXX {
+            requires cplusplus
+            header "ABIBridge/Backend/Runtime.hpp"
+            export *
+        }
+    }
 }

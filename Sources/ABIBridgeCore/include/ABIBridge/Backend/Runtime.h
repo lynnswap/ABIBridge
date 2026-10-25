@@ -8,7 +8,6 @@
 extern "C" {
 #endif
 
-typedef struct ABIValueType ABIValueType;
 /// Generic C entry point used by the internal call interfaces.
 typedef void (*ABIUnmanagedFunction)(void);
 

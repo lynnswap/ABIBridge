@@ -3,6 +3,7 @@ import ABIBridgeTestSupport
 #if DEBUG
 @testable import ABIBridge
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 import Foundation
 import ManagedSwiftFixtures
 import Testing

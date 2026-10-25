@@ -1,7 +1,7 @@
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
-#include <ABIBridge/PointerSlot.h>
+#include <ABIBridge/Backend/PointerSlot.h>
 #ifdef __OBJC__
 #import <Foundation/Foundation.h>
 @interface ABIValidationOwnershipFixture : NSObject

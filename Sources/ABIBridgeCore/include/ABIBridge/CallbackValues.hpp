@@ -1,5 +1,5 @@
 #pragma once
-#include <ABIBridge/Invocation.h>
+#include <ABIBridge/ValueTypes.h>
 #include <ABIBridge/Inspection.hpp>
 #include <type_traits>
 

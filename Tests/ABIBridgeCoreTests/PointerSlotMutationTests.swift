@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 import Darwin
 import ObjectiveCFixtures
 import Testing

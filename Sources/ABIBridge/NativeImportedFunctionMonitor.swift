@@ -1,5 +1,6 @@
 import ABIBridgeRuntime
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 import Foundation
 
 /// One image's asynchronous import-hook outcome. Identity and path do not retain the image; successful or partially published hooks retain their own leases.

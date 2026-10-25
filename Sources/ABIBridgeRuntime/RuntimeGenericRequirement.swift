@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 
 package struct RuntimeGenericRequirement {
     package let address: UnsafeRawPointer

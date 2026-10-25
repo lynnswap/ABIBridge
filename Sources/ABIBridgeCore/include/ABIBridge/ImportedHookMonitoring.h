@@ -34,13 +34,6 @@ size_t ABIImportedImageListGetCount(const ABIImportedImageList *);
 ABIImportedImageUpdate ABIImportedImageListGetImage(const ABIImportedImageList *, size_t index);
 void ABIReleaseImportedImageList(ABIImportedImageList *);
 
-// Internal request bridge. Query ownership transfers into create, including failure.
-typedef struct ABIImportedQuery ABIImportedQuery;
-void ABIReleaseImportedQuery(ABIImportedQuery *);
-ABIImportSelection *ABICopyImportedSelectionForImage(const ABIImportedQuery *, ABIImageInfo, ABIResolutionFailure **);
-ABIImportedHookMonitor *ABICreateImportedHookMonitor(ABIImportedQuery *, const ABIValueType *,
-    const ABIValueType *const *, size_t, void *, ABIImportedCallback, ABIImportedFailureHandler,
-    ABIImportedImageHandler, ABIImportedContextRelease, ABIResolutionFailure **);
 #ifdef __cplusplus
 }
 #endif

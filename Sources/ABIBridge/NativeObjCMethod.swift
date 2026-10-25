@@ -1,4 +1,5 @@
 import ABIBridgeObjCXX
+import ABIBridgeObjCXX.Backend
 import Foundation
 
 /// A prepared Objective-C message whose receiver is supplied at call time.

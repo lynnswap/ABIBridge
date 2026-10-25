@@ -1,5 +1,6 @@
 import ABIBridgeRuntime
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 
 /// How an argument passes: its value's conversion, and how native code
 /// receives it.

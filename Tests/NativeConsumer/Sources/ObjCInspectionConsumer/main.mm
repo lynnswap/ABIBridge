@@ -1,3 +1,4 @@
+extern "C" void ABIValidateObjCConsumerHeaders(void);
 #include <ABIBridge/Inspection.h>
 #import <Foundation/Foundation.h>
 #include <cassert>
@@ -22,6 +23,7 @@
 @end
 
 int main(int argc, char **argv) {
+    ABIValidateObjCConsumerHeaders();
     assert(argc == 2);
     @autoreleasepool {
         void *library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);

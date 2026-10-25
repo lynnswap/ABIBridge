@@ -1,4 +1,5 @@
 import ABIBridgeObjCXX
+import ABIBridgeObjCXX.Backend
 import ABIBridgeCore
 import Foundation
 import ObjectiveC

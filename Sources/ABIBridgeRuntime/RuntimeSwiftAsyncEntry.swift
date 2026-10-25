@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 
 @_silgen_name("ABIInvokeSwiftAsync")
 nonisolated(nonsending) package func invokeSwiftAsync(_ invocation: OpaquePointer) async

@@ -1,6 +1,6 @@
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
-#include <ABIBridgeObjCXX/Replacement.h>
+#include <ABIBridgeObjCXX/Backend/Replacement.h>
 #include "ArchitectureFixtures.h"
 #include <memory>
 

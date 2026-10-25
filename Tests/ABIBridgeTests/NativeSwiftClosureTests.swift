@@ -6,6 +6,7 @@ import ABIBridgeTestSupport
 import ABIBridge
 #endif
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 import CoreGraphics
 import Foundation
 import ManagedSwiftFixtures

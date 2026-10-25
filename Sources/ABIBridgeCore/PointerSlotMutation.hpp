@@ -1,5 +1,5 @@
 #pragma once
-#include <ABIBridge/PointerSlot.h>
+#include <ABIBridge/Backend/PointerSlot.h>
 #include <mach/mach.h>
 
 namespace abibridge {

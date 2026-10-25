@@ -1,5 +1,6 @@
 import ABIBridgeRuntime
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 import Synchronization
 
 /// Owns an authenticated code pointer and its containing image, when available.

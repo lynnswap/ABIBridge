@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 
 /// A direct C++ member declaration and its C-compatible call adapter.
 ///

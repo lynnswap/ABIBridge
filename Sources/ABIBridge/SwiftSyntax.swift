@@ -1,5 +1,6 @@
 import ABIBridgeRuntime
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 
 /// The upstream Swift parser owns the immutable tree and copied identifier bytes. A node retains that tree, including when it outlives its parent view.
 final class SwiftSyntax: @unchecked Sendable {

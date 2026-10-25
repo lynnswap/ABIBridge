@@ -1,6 +1,8 @@
 #ifndef ABIBRIDGE_SWIFT_DEMANGLING_H
 #define ABIBRIDGE_SWIFT_DEMANGLING_H
 
+#include <ABIBridge/Backend/Demangling.h>
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>

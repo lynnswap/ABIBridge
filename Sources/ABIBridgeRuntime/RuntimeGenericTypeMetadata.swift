@@ -4,6 +4,7 @@ package enum RuntimeGenericArgument: Sendable {
 }
 
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 import Darwin
 
 package func runtimeImplementationImage(

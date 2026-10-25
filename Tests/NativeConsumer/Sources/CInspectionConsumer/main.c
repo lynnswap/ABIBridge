@@ -1,5 +1,4 @@
-#include <ABIBridge/Inspection.h>
-#include <ABIBridge/VirtualEntries.h>
+#include <ABIBridge/ABIBridge.h>
 #include <assert.h>
 #include <dlfcn.h>
 #include <stdio.h>

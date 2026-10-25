@@ -1,21 +1,14 @@
 #ifndef ABIBRIDGE_NATIVE_DISPATCH_H
 #define ABIBRIDGE_NATIVE_DISPATCH_H
 
-#include <ABIBridge/Invocation.h>
+#include <ABIBridge/Backend/Invocation.h>
+#include <ABIBridge/PointerAuthentication.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 typedef struct ABIVirtualCallTarget ABIVirtualCallTarget;
-enum {
-    ABIAuthenticationUnsigned = -1,
-    ABIAuthenticationInstructionA = 0,
-    ABIAuthenticationInstructionB = 1,
-    ABIAuthenticationDataA = 2,
-    ABIAuthenticationDataB = 3
-};
-
 /// True when this build uses the pointer-authenticated call ABI.
 bool ABIUsesPointerAuthentication(void);
 

@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 
 /// A C-compatible function whose value layouts are described at runtime.
 ///

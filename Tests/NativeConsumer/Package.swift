@@ -81,6 +81,7 @@ let package = Package(
         .executableTarget(
             name: "ObjCInspectionConsumer",
             dependencies: [.product(name: "ABIBridge", package: "ABIBridge")],
+            cSettings: [.unsafeFlags(["-fobjc-arc"])],
             cxxSettings: [.unsafeFlags(["-fobjc-arc"])],
             linkerSettings: [.linkedFramework("Foundation")]
         ),
@@ -131,6 +132,7 @@ let package = Package(
         .executableTarget(
             name: "MRCConsumer",
             dependencies: [.product(name: "ABIBridge", package: "ABIBridge")],
+            cSettings: [.unsafeFlags(["-fno-objc-arc"])],
             cxxSettings: [.unsafeFlags(["-fno-objc-arc"])],
             linkerSettings: [.linkedFramework("Foundation")]
         )

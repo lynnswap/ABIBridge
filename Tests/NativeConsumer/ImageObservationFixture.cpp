@@ -1,4 +1,4 @@
-#include <ABIBridge/ImageObservation.h>
+#include <ABIBridge/Backend/ImageObservation.h>
 #include <dlfcn.h>
 #include <cassert>
 #include <chrono>

@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 
 package final class RuntimeSwiftClosureCallbackOwner: @unchecked Sendable {
     package let handle: OpaquePointer

@@ -1,6 +1,7 @@
 #if DEBUG && os(macOS)
 @testable import ABIBridge
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 import Foundation
 import Synchronization
 import Testing

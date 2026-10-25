@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 
 package final class RuntimeValueType: @unchecked Sendable {
     package let handle: OpaquePointer

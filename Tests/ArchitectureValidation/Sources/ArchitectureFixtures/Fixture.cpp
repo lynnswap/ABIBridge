@@ -1,7 +1,7 @@
 #include "ArchitectureFixtures.h"
 #include <ABIBridge/Inspection.hpp>
 #include <ABIBridge/NativeInvocation.hpp>
-#include <ABIBridge/NativeDispatch.h>
+#include <ABIBridge/Backend/NativeDispatch.h>
 #include <mach-o/loader.h>
 #include <dlfcn.h>
 #include <ptrauth.h>

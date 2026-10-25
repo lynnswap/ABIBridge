@@ -1,8 +1,8 @@
 #ifndef ABIBRIDGE_SWIFT_INVOCATION_H
 #define ABIBRIDGE_SWIFT_INVOCATION_H
 
-#include <ABIBridge/Invocation.h>
-#include <ABIBridge/SwiftDemangling.h>
+#include <ABIBridge/Backend/Invocation.h>
+#include <ABIBridge/Backend/SwiftDemangling.h>
 
 #ifdef __cplusplus
 extern "C" {

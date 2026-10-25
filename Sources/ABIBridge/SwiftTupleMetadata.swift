@@ -1,5 +1,6 @@
 import ABIBridgeRuntime
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 
 typealias SwiftResultInitializer =
     @Sendable (Int, Int, UnsafeMutableRawPointer, UnsafeMutableRawPointer) -> Void

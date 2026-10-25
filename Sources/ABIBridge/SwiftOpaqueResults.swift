@@ -1,5 +1,6 @@
 import ABIBridgeRuntime
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 
 final class SwiftOpaqueResultPlan: Sendable {
     let type: CValueType

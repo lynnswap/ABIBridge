@@ -1,5 +1,6 @@
 import ABIBridgeRuntime
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 
 // The backend owns all types and permits concurrent use of a prepared interface.
 // Each invocation supplies independent argument and result storage.

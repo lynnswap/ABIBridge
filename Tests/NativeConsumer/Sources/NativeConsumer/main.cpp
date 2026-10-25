@@ -1,4 +1,5 @@
 #include <ABIBridge/ABIBridge.hpp>
+#include <ABIBridge/Backend/Runtime.hpp>
 #include <cassert>
 #include <chrono>
 #include <condition_variable>

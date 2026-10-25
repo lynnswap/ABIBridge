@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 import Darwin
 
 /// A kind of record that every module using it defines for itself, and that

@@ -1,5 +1,6 @@
 import ABIBridgeRuntime
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 
 /// The function metadata's formal types and effects, before declaration-level lowering. https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/ABI/Metadata.h
 struct SwiftFunctionMetadata: Sendable {

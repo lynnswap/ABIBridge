@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 
 /// Compares how a host type passes with how a declaration passes the type it
 /// names at the same position.

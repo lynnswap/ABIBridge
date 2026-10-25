@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 
 /// Maps source-level parameters to the original declaration's SIL parameters. A variadic pack is one native address vector even after substitution makes its elements separate parameters in the caller's function type.
 struct SwiftGenericParameters: Sendable {

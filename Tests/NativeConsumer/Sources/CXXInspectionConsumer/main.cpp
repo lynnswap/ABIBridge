@@ -1,4 +1,4 @@
-#include <ABIBridge/Inspection.hpp>
+#include <ABIBridge/ABIBridge.hpp>
 #include "../../MemoryFixture.hpp"
 #include "../../CallbackConstraintsFixture.hpp"
 #include "../../PointerSearchFixture.hpp"

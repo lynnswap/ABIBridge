@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 import ABIBridgeRuntime
 
 /// An explicit pointer-authentication schema supplied by a native adapter.

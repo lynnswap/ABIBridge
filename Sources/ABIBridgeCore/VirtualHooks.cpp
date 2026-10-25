@@ -1,5 +1,5 @@
 #include <ABIBridge/VirtualHooks.h>
-#include <ABIBridge/ManagedVirtualEntry.h>
+#include <ABIBridge/Backend/ManagedVirtualEntry.h>
 #include "ManagedFunctionHooks.hpp"
 #include <climits>
 

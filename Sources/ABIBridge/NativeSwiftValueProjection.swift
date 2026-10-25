@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 import ABIBridgeRuntime
 
 extension RuntimeEnumMetadata {

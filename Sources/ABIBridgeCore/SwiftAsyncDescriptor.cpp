@@ -1,5 +1,5 @@
-#include <ABIBridge/SwiftInvocation.h>
-#include <ABIBridge/NativeDispatch.h>
+#include <ABIBridge/Backend/SwiftInvocation.h>
+#include <ABIBridge/Backend/NativeDispatch.h>
 #include <ABIBridge/Memory.h>
 #include "ImageOwner.hpp"
 #include <ptrauth.h>

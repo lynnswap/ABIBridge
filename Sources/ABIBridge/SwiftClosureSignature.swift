@@ -1,5 +1,6 @@
 import ABIBridgeRuntime
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 import Synchronization
 
 // The SIL discriminator hashes formal value types, not their register widths.
