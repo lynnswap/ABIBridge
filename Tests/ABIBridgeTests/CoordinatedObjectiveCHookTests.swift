@@ -26,24 +26,54 @@ private final class BatchCapture: @unchecked Sendable {}
 @Suite(.serialized)
 struct CoordinatedObjectiveCHookTests {
     let runtime = ABIRuntime()
-    private func adding(_ amount: Int32, on type: AnyClass = CoordinatedFixture.self) -> NativeObjCHookRequest {
-        unsafe .method(on: type, selector: "add:to:", as: ((Int32, Int32) -> Int32).self,
-            onFailure: { Issue.record($0) }) { call, a, b in try call.proceed(a,b) + amount }
+    private func adding(
+        _ amount: Int32,
+        on type: AnyClass = CoordinatedFixture.self
+    ) -> NativeObjCHookRequest {
+        unsafe .method(
+            .objc(.method("add:to:", as: ((Int32, Int32) -> Int32).self)),
+            on: type,
+            onFailure: { Issue.record($0) }
+        ) { call, a, b in try call.proceed(a, b) + amount }
     }
 
     @Test func preparationFailurePublishesNothing() throws {
-        let method = try #require(class_getInstanceMethod(CoordinatedFixture.self, NSSelectorFromString("add:to:")))
+        let method = try #require(
+            class_getInstanceMethod(CoordinatedFixture.self, NSSelectorFromString("add:to:"))
+        )
         let original = method_getImplementation(method)
-        let requests = [adding(1), unsafe NativeObjCHookRequest.method(on: CoordinatedFixture.self, selector: "number",
-            as: ((Int32) -> Int32).self, onFailure: { Issue.record($0) }) { call, x in try call.proceed(x) }]
-        do { _ = try unsafe runtime.installHooks(requests); Issue.record("Expected signature failure") }
-        catch let error as NativeObjCHookInstallationError {
+        let requests = [
+            adding(1),
+            unsafe NativeObjCHookRequest.method(
+                .objc(.method("number", as: ((Int32) -> Int32).self)),
+                on: CoordinatedFixture.self,
+                onFailure: { Issue.record($0) }
+            ) { call, x in try call.proceed(x) },
+        ]
+        do {
+            _ = try unsafe runtime.installHooks(requests);
+            Issue.record("Expected signature failure")
+        } catch let error as NativeObjCHookInstallationError {
             #expect(error.failedIndex == 1 && error.phase == .preparation)
             #expect(error.invalidatedHooks.isEmpty)
             #expect(error.underlyingError is ABIResolutionError)
         }
         #expect(method_getImplementation(method) == original)
         #expect(CoordinatedFixture().add(20, to: 22) == 42)
+        let adapted = unsafe NativeObjCHookRequest.method(
+            .objc(.method("add:to:", as: ((Int32) throws -> Int32).self)),
+            on: CoordinatedFixture.self,
+            onFailure: { Issue.record($0) }
+        ) { call, value in try call.proceed(value) }
+        do {
+            _ = try unsafe runtime.installHooks([adding(1), adapted])
+            Issue.record("Expected deferred rejection of outgoing error adaptation")
+        } catch let error as NativeObjCHookInstallationError {
+            #expect(error.failedIndex == 1 && error.phase == .preparation)
+            #expect(error.invalidatedHooks.isEmpty)
+            #expect(error.underlyingError is ABIResolutionError)
+        }
+        #expect(method_getImplementation(method) == original)
         #expect(try unsafe runtime.installHooks([]).isEmpty)
     }
 
@@ -67,11 +97,17 @@ struct CoordinatedObjectiveCHookTests {
     }
 
     @Test func inheritedRequestsWorkInEitherOrder() throws {
-        let parent = unsafe NativeObjCHookRequest.method(on: CoordinatedParent.self, selector: "value",
-            as: (() -> Int32).self, onFailure: { Issue.record($0) }) { call in try call.proceed() + 10 }
-        let child = unsafe NativeObjCHookRequest.method(on: CoordinatedChild.self, selector: "value",
-            as: (() -> Int32).self, onFailure: { Issue.record($0) }) { call in try call.proceed() + 12 }
-        for requests in [[parent,child],[child,parent]] {
+        let parent = unsafe NativeObjCHookRequest.method(
+            .objc(.method("value", as: (() -> Int32).self)),
+            on: CoordinatedParent.self,
+            onFailure: { Issue.record($0) }
+        ) { call in try call.proceed() + 10 }
+        let child = unsafe NativeObjCHookRequest.method(
+            .objc(.method("value", as: (() -> Int32).self)),
+            on: CoordinatedChild.self,
+            onFailure: { Issue.record($0) }
+        ) { call in try call.proceed() + 12 }
+        for requests in [[parent, child], [child, parent]] {
             let hooks = try unsafe runtime.installHooks(requests)
             #expect(CoordinatedParent().value() == 30 && CoordinatedChild().value() == 42)
             hooks.forEach { $0.invalidate() }
@@ -80,15 +116,31 @@ struct CoordinatedObjectiveCHookTests {
     }
 
     @Test func ownershipMismatchWithinBatchFailsBeforePublication() throws {
-        let method = try #require(class_getInstanceMethod(CoordinatedFixture.self, NSSelectorFromString("object")))
+        let method = try #require(
+            class_getInstanceMethod(CoordinatedFixture.self, NSSelectorFromString("object"))
+        )
         let original = method_getImplementation(method)
         func request(_ retained: Bool) -> NativeObjCHookRequest {
-            unsafe .method(on: CoordinatedFixture.self, selector: "object", as: (() -> NSObject).self,
-                options: .init(returnsRetainedObject: retained), onFailure: { Issue.record($0) }) { call in try call.proceed() }
+            unsafe .method(
+                .objc(
+                    .method(
+                        "object",
+                        as: (() -> NSObject).self,
+                        options: .init(returnsRetainedObject: retained)
+                    )
+                ),
+                on: CoordinatedFixture.self,
+                onFailure: { Issue.record($0) }
+            ) { call in try call.proceed() }
         }
-        do { _ = try unsafe runtime.installHooks([request(false),request(true)]); Issue.record("Expected contract failure") }
-        catch let error as NativeObjCHookInstallationError {
-            #expect(error.failedIndex == 1 && error.phase == .preparation && error.invalidatedHooks.isEmpty)
+        do {
+            _ = try unsafe runtime.installHooks([request(false), request(true)]);
+            Issue.record("Expected contract failure")
+        } catch let error as NativeObjCHookInstallationError {
+            #expect(
+                error.failedIndex == 1 && error.phase == .preparation
+                    && error.invalidatedHooks.isEmpty
+            )
             #expect(error.underlyingError as? NativeObjCMethodHookError == .incompatibleContract)
         }
         #expect(method_getImplementation(method) == original)
@@ -100,8 +152,11 @@ struct CoordinatedObjectiveCHookTests {
         let name = "ABIBatch_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
         let type = try #require(objc_allocateClassPair(CoordinatedFixture.self, name, 0))
         objc_registerClassPair(type)
-        let existing = try unsafe runtime.hookMethod(on: type, selector: "number", as: (() -> Int32).self,
-            onFailure: { Issue.record($0) }) { call in try call.proceed() + 1 }
+        let existing = try unsafe runtime.hookCalls(
+            .objc(.method("number", as: (() -> Int32).self)),
+            on: type,
+            onFailure: { Issue.record($0) }
+        ) { call in try call.proceed() + 1 }
         defer { existing.invalidate() }
         let number = try #require(class_getInstanceMethod(type, NSSelectorFromString("number")))
         let original = method_getImplementation(number)
@@ -109,13 +164,22 @@ struct CoordinatedObjectiveCHookTests {
         let external = imp_implementationWithBlock(replacement)
         defer { method_setImplementation(number, original); imp_removeBlock(external) }
         let owner = ABICoordinationOwner()
-        let first = unsafe NativeObjCHookRequest.method(on: type, selector: "add:to:",
-            as: ((Int32, Int32) -> Int32).self, retaining: owner, onFailure: { Issue.record($0) }) { call,a,b in try call.proceed(a,b) + 1 }
-        let second = unsafe NativeObjCHookRequest.method(on: type, selector: "number", as: (() -> Int32).self,
-            onFailure: { Issue.record($0) }) { call in try call.proceed() + 2 }
+        let first = unsafe NativeObjCHookRequest.method(
+            .objc(.method("add:to:", as: ((Int32, Int32) -> Int32).self)),
+            on: type,
+            retaining: owner,
+            onFailure: { Issue.record($0) }
+        ) { call, a, b in try call.proceed(a, b) + 1 }
+        let second = unsafe NativeObjCHookRequest.method(
+            .objc(.method("number", as: (() -> Int32).self)),
+            on: type,
+            onFailure: { Issue.record($0) }
+        ) { call in try call.proceed() + 2 }
         owner.onRetain = { method_setImplementation(number, external) }
-        do { _ = try unsafe runtime.installHooks([first,second]); Issue.record("Expected activation displacement") }
-        catch let error as NativeObjCHookInstallationError {
+        do {
+            _ = try unsafe runtime.installHooks([first, second]);
+            Issue.record("Expected activation displacement")
+        } catch let error as NativeObjCHookInstallationError {
             #expect(error.failedIndex == 1 && error.phase == .activation)
             #expect(error.invalidatedHooks.count == 1 && error.invalidatedHooks[0].status == .invalidated)
             #expect(error.underlyingError as? NativeObjCMethodHookError == .displaced)
@@ -130,12 +194,18 @@ struct CoordinatedObjectiveCHookTests {
     @Test func requestsAndInFlightSnapshotsHaveSeparateCaptureLifetimes() throws {
         var capture: BatchCapture? = BatchCapture()
         weak var observed = capture
-        let entered = DispatchSemaphore(value: 0), resume = DispatchSemaphore(value: 0), done = DispatchGroup()
-        var requests: [NativeObjCHookRequest] = [unsafe .method(on: CoordinatedFixture.self, selector: "add:to:",
-            as: ((Int32,Int32) -> Int32).self, onFailure: { Issue.record($0) }) { [capture] call,a,b in
+        let entered = DispatchSemaphore(value: 0), resume = DispatchSemaphore(value: 0),
+            done = DispatchGroup()
+        var requests: [NativeObjCHookRequest] = [
+            unsafe .method(
+                .objc(.method("add:to:", as: ((Int32, Int32) -> Int32).self)),
+                on: CoordinatedFixture.self,
+                onFailure: { Issue.record($0) }
+            ) { [capture] call, a, b in
                 entered.signal(); resume.wait()
-                return try withExtendedLifetime(capture) { try call.proceed(a,b) + 1 }
-            }]
+                return try withExtendedLifetime(capture) { try call.proceed(a, b) + 1 }
+            }
+        ]
         capture = nil
         var hooks = try unsafe runtime.installHooks(requests)
         requests.removeAll()
@@ -154,26 +224,46 @@ struct CoordinatedObjectiveCHookTests {
     @MainActor @Test func mainActorAndObjectRequestsKeepTheirScope() throws {
         let object = CoordinatedFixture()
         let hooks = try unsafe runtime.installHooks([
-            unsafe .mainActorMethod(on: CoordinatedFixture.self, selector: "number", as: (() -> Int32).self,
-                onFailure: { Issue.record($0) }) { call in MainActor.assertIsolated(); return try call.proceed() + 1 },
-            unsafe .objectMethod(on: object, selector: "add:to:", as: ((Int32,Int32) -> Int32).self,
-                onFailure: { Issue.record($0) }) { call,a,b in try call.proceed(a,b) + 1 },
-            unsafe .method(on: CoordinatedFixture.self, selector: "answer", as: (() -> Int32).self, classMethod: true,
-                onFailure: { Issue.record($0) }) { call in try call.proceed() + 1 }
+            unsafe .mainActorMethod(
+                .objc(.method("number", as: (() -> Int32).self)),
+                on: CoordinatedFixture.self,
+                onFailure: { Issue.record($0) }
+            ) { call in
+                MainActor.assertIsolated(); return try call.proceed() + 1
+            },
+            unsafe .objectMethod(
+                .objc(.method("add:to:", as: ((Int32, Int32) -> Int32).self)),
+                on: object,
+                onFailure: { Issue.record($0) }
+            ) { call, a, b in try call.proceed(a, b) + 1 },
+            unsafe .method(
+                .objc(.method("answer", as: (() -> Int32).self)),
+                on: CoordinatedFixture.self,
+                classMethod: true,
+                onFailure: { Issue.record($0) }
+            ) { call in try call.proceed() + 1 },
         ])
         defer { hooks.forEach { $0.invalidate() } }
-        #expect(object.number() == 21 && object.add(20,to:21) == 42)
-        #expect(CoordinatedFixture().add(20,to:21) == 41 && CoordinatedFixture.answer() == 43)
+        #expect(object.number() == 21 && object.add(20, to: 21) == 42)
+        #expect(CoordinatedFixture().add(20, to: 21) == 41 && CoordinatedFixture.answer() == 43)
     }
 
     @MainActor @Test func mixedOrdinaryAndMainActorInitializerRequests() throws {
-        let first = unsafe NativeObjCHookRequest.initializer(on: ABIBatchInitializerFixture.self,
-            selector: "initWithBatchValue:", as: ((Int) -> ABIBatchInitializerFixture).self,
-            onFailure: { Issue.record($0) }, transformingArguments: { $0 + 1 })
-        let second = unsafe NativeObjCHookRequest.mainActorInitializer(on: ABIBatchInitializerFixture.self,
-            selector: "initWithBatchValue:", as: ((Int) -> ABIBatchInitializerFixture).self,
-            onFailure: { Issue.record($0) }, after: { value in MainActor.assertIsolated(); value.value += 1 })
-        let hooks = try unsafe runtime.installHooks([first,second])
+        let first = unsafe NativeObjCHookRequest.initializer(
+            .objc(.method("initWithBatchValue:", as: ((Int) -> ABIBatchInitializerFixture).self)),
+            on: ABIBatchInitializerFixture.self,
+            onFailure: { Issue.record($0) },
+            transformingArguments: { $0 + 1 }
+        )
+        let second = unsafe NativeObjCHookRequest.mainActorInitializer(
+            .objc(.method("initWithBatchValue:", as: ((Int) -> ABIBatchInitializerFixture).self)),
+            on: ABIBatchInitializerFixture.self,
+            onFailure: { Issue.record($0) },
+            after: { value in
+                MainActor.assertIsolated(); value.value += 1
+            }
+        )
+        let hooks = try unsafe runtime.installHooks([first, second])
         defer { hooks.forEach { $0.invalidate() } }
         #expect(ABIBatchInitializerFixture(batchValue: 40).value == 42)
         hooks[0].invalidate()
@@ -184,8 +274,11 @@ struct CoordinatedObjectiveCHookTests {
         var capture: BatchCapture? = BatchCapture()
         weak var observed = capture
         var hooks: [NativeObjCMethodHook]? = try unsafe runtime.installHooks([
-            unsafe .method(on: CoordinatedFixture.self, selector: "number", as: (() -> Int32).self,
-                onFailure: { Issue.record($0) }) { [capture] call in try withExtendedLifetime(capture) { try call.proceed() + 1 } }
+            unsafe .method(
+                .objc(.method("number", as: (() -> Int32).self)),
+                on: CoordinatedFixture.self,
+                onFailure: { Issue.record($0) }
+            ) { [capture] call in try withExtendedLifetime(capture) { try call.proceed() + 1 } }
         ])
         capture = nil
         #expect(hooks?.count == 1 && observed != nil)

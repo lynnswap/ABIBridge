@@ -4,7 +4,7 @@ Intercept concrete synchronous methods with ordinary Swift argument and result t
 
 ## Install and retain a hook
 
-Use ``ABIRuntime/hookMethod(on:selector:as:classMethod:options:retaining:onFailure:body:)-(_,String,_,_,_,_,_,_)`` to install an instance-method hook. Keep its ``NativeObjCMethodHook`` token for as long as the callback should run.
+Use `ABIRuntime.hookCalls` to install an instance-method hook. Keep its ``NativeObjCMethodHook`` token for as long as the callback should run.
 
 ```swift
 import ABIBridge
@@ -15,10 +15,9 @@ class Renderer: NSObject {
     @objc dynamic func sizeThatFits(_ proposal: CGSize) -> CGSize { proposal }
 }
 
-let hook = try unsafe ABIRuntime.shared.hookMethod(
+let hook = try unsafe ABIRuntime.shared.hookCalls(
+    .objc(.method("sizeThatFits:", as: ((CGSize) -> CGSize).self)),
     on: Renderer.self,
-    selector: "sizeThatFits:",
-    as: ((CGSize) -> CGSize).self,
     onFailure: { print("Hook failed:", $0) }
 ) { call, proposal in
     let adjusted = CGSize(width: max(proposal.width, 100), height: proposal.height)
@@ -66,9 +65,8 @@ Use a ``NativeObject`` wrapper to filter a registration to one object's identity
 
 ```swift
 let renderer = Renderer()
-let hook = try unsafe ABIRuntime.shared.object(renderer).hookMethod(
-    selector: "sizeThatFits:",
-    as: ((CGSize) -> CGSize).self,
+let hook = try unsafe ABIRuntime.shared.object(renderer).hookCalls(
+    .objc(.method("sizeThatFits:", as: ((CGSize) -> CGSize).self)),
     onFailure: { print($0) }
 ) { call, size in
     try call.proceed(CGSize(width: size.width + 20, height: size.height))
@@ -79,7 +77,7 @@ The token filters weakly by identity on the object's current class, leaving isa 
 
 ## MainActor methods
 
-Use `hookMainActorMethod` on `ABIRuntime` or `NativeObject` only when the native method has a known MainActor calling contract. The body is MainActor-isolated and executes synchronously without an actor hop. Background entry reports ``NativeObjCMethodHookError/wrongThread`` and continues to the next hook before decoding Swift arguments. Its `onFailure` closure therefore remains Sendable and must handle background calls.
+Use `hookMainActorCalls` on `ABIRuntime` or `NativeObject` only when the native method has a known MainActor calling contract. The body is MainActor-isolated and executes synchronously without an actor hop. Background entry reports ``NativeObjCMethodHookError/wrongThread`` and continues to the next hook before decoding Swift arguments. Its `onFailure` closure therefore remains Sendable and must handle background calls.
 
 Installing an ordinary hook from MainActor does not give its future callbacks MainActor isolation. General synchronous dispatch onto an arbitrary actor is not provided.
 
@@ -98,3 +96,5 @@ See <doc:NativeObjectiveCHooks> for C, C++, and Objective-C++ registration on th
 ## Invocation cost
 
 Registration prepares signatures and argument codecs. Calls reuse them without symbol or image searches. Even an empty dispatcher pays for a call boundary and snapshot; each active callback adds conversion and a continuation frame. Object filtering uses the same class-wide dispatcher. See <doc:Architectures> for execution evidence.
+
+Use the same `.objc(.method(...))` request for resolution, direct hooks, and coordinated hooks. Hook requests require a fixed nonthrowing signature containing all explicit native parameters; outgoing variadic and `NSError **` adaptations are not hook signatures. Hook preparation stays on the caller's thread so receiver and lifetime owners remain on their existing executor.

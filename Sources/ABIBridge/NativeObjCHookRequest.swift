@@ -62,106 +62,235 @@ public struct NativeObjCHookRequest {
     ///
     /// - Parameters:
     ///   - type: The requested class.
-    ///   - selector: The Objective-C selector, including colons.
-    ///   - signature: Explicit argument and result types.
+    ///   - request: The selector, explicit arguments, result, and ownership. Hooks require a fixed nonthrowing signature.
     ///   - classMethod: Whether this describes a metaclass method.
-    ///   - options: Declaration ownership overrides.
     ///   - owner: Optional lifetime owner for the first published fallback.
     ///   - onFailure: Synchronous callback/conversion error handler.
     ///   - body: The typed callback and scoped continuation.
     @unsafe public static func method<Result, each Argument>(
-        on type: AnyClass, selector: String, as signature: ((repeat each Argument) -> Result).Type,
+        _ request: NativeRequest<NativeObjCMethodRequest<Result, repeat each Argument>>,
+        on type: AnyClass,
         classMethod: Bool = false,
-        options: NativeObjCMethodOptions = .init(),
         retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
-        body: @escaping @Sendable (NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+        body:
+            @escaping @Sendable (
+                NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument
+            ) throws -> Result
     ) -> Self {
-        Self(validate: {
-            try NativeObjCMethodHook.validation(type: type, selector: selector, signature: signature,
-                classMethod: classMethod, options: options, initializer: false)
-        }, install: { runtime in
-            try unsafe runtime.hookMethod(on: type, selector: selector, as: signature,
-                classMethod: classMethod, options: options, retaining: owner, onFailure: onFailure, body: body)
-        })
+        let query = request.declaration.query
+        let selector = query.selector
+        let options = query.options
+        let signature = ((repeat each Argument) -> Result).self
+        return Self(
+            validate: {
+                try query.validateHook()
+                return try NativeObjCMethodHook.validation(
+                    type: type,
+                    selector: selector,
+                    signature: signature,
+                    classMethod: classMethod,
+                    options: options,
+                    initializer: false
+                )
+            },
+            install: { runtime in
+                try unsafe runtime.hookCalls(
+                    request,
+                    on: type,
+                    classMethod: classMethod,
+                    retaining: owner,
+                    onFailure: onFailure,
+                    body: body
+                )
+            }
+        )
     }
 
     /// Describes dedicated initializer preparation and postprocessing. Parameters and unsafe requirements match `ABIRuntime.hookInitializer`.
     @unsafe public static func initializer<Result, each Argument>(
-        on type: AnyClass, selector: String, as signature: ((repeat each Argument) -> Result).Type,
-        options: NativeObjCMethodOptions = .init(),
+        _ request: NativeRequest<NativeObjCMethodRequest<Result, repeat each Argument>>,
+        on type: AnyClass,
         retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
-        transformingArguments: (@Sendable (repeat each Argument) throws -> (repeat each Argument))? = nil,
+        transformingArguments: (
+            @Sendable (repeat each Argument) throws -> (repeat each Argument)
+        )? = nil,
         before: (@Sendable (repeat each Argument) throws -> Void)? = nil,
         after: @escaping @Sendable (Result) throws -> Void = { _ in }
     ) -> Self {
-        Self(validate: {
-            try NativeObjCMethodHook.validation(type: type, selector: selector, signature: signature,
-                classMethod: false, options: options, initializer: true)
-        }, install: { runtime in
-            try unsafe runtime.hookInitializer(on: type, selector: selector, as: signature,
-                options: options, retaining: owner, onFailure: onFailure,
-                transformingArguments: transformingArguments, before: before, after: after)
-        })
+        let query = request.declaration.query
+        let selector = query.selector
+        let options = query.options
+        let signature = ((repeat each Argument) -> Result).self
+        return Self(
+            validate: {
+                try query.validateHook()
+                return try NativeObjCMethodHook.validation(
+                    type: type,
+                    selector: selector,
+                    signature: signature,
+                    classMethod: false,
+                    options: options,
+                    initializer: true
+                )
+            },
+            install: { runtime in
+                try unsafe runtime.hookInitializer(
+                    request,
+                    on: type,
+                    retaining: owner,
+                    onFailure: onFailure,
+                    transformingArguments: transformingArguments,
+                    before: before,
+                    after: after
+                )
+            }
+        )
     }
-    /// Describes a weak identity-filtered ordinary instance hook. The request retains its object until the request is released; the installed registration itself uses weak identity, just like `NativeObject.hookMethod`.
+    /// Describes a weak identity-filtered ordinary instance hook. The request retains its object until the request is released; the installed registration itself uses weak identity, just like `NativeObject.hookCalls`.
     @unsafe public static func objectMethod<Result, each Argument>(
-        on object: AnyObject, selector: String, as signature: ((repeat each Argument) -> Result).Type,
-        options: NativeObjCMethodOptions = .init(),
+        _ request: NativeRequest<NativeObjCMethodRequest<Result, repeat each Argument>>,
+        on object: AnyObject,
         retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
-        body: @escaping @Sendable (NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+        body:
+            @escaping @Sendable (
+                NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument
+            ) throws -> Result
     ) -> Self {
-        Self(validate: {
-            try NativeObjCMethodHook.validation(type: object_getClass(object)!, selector: selector, signature: signature,
-                classMethod: false, options: options, initializer: false)
-        }, install: { runtime in
-            try unsafe runtime.object(object).hookMethod(selector: selector, as: signature,
-                options: options, retaining: owner, onFailure: onFailure, body: body)
-        })
+        let query = request.declaration.query
+        let selector = query.selector
+        let options = query.options
+        let signature = ((repeat each Argument) -> Result).self
+        return Self(
+            validate: {
+                try query.validateHook()
+                return try NativeObjCMethodHook.validation(
+                    type: object_getClass(object)!,
+                    selector: selector,
+                    signature: signature,
+                    classMethod: false,
+                    options: options,
+                    initializer: false
+                )
+            },
+            install: { runtime in
+                try unsafe runtime.object(object).hookCalls(
+                    request,
+                    retaining: owner,
+                    onFailure: onFailure,
+                    body: body
+                )
+            }
+        )
     }
 
     /// Describes a method callback with the direct MainActor-hook contract. Preparation itself does not execute the callback or infer future isolation.
     @unsafe @MainActor public static func mainActorMethod<Result, each Argument>(
-        on type: AnyClass, selector: String, as signature: ((repeat each Argument) -> Result).Type,
+        _ request: NativeRequest<NativeObjCMethodRequest<Result, repeat each Argument>>,
+        on type: AnyClass,
         classMethod: Bool = false,
-        options: NativeObjCMethodOptions = .init(),
         retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
-        body: @escaping @MainActor @Sendable (NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+        body:
+            @escaping @MainActor @Sendable (
+                NativeObjCMethodInvocation<Result, repeat each Argument>, repeat each Argument
+            ) throws -> Result
     ) -> Self {
-        Self(validate: {
-            try NativeObjCMethodHook.validation(type: type, selector: selector, signature: signature,
-                classMethod: classMethod, options: options, initializer: false)
-        }, install: { _ in
-            try NativeObjCMethodHook.prepare(on: type, selector: selector, as: signature,
-                classMethod: classMethod, options: options, object: nil, owner: owner, initializer: false) { signature in
-                    ObjCReplacement<Result, repeat each Argument>.mainActorCallback(signature, declaration: objcMethodDeclaration(on: type, selector: selector, classMethod: classMethod), onFailure: onFailure, body: body)
+        let query = request.declaration.query
+        let selector = query.selector
+        let options = query.options
+        let signature = ((repeat each Argument) -> Result).self
+        return Self(
+            validate: {
+                try query.validateHook()
+                return try NativeObjCMethodHook.validation(
+                    type: type,
+                    selector: selector,
+                    signature: signature,
+                    classMethod: classMethod,
+                    options: options,
+                    initializer: false
+                )
+            },
+            install: { _ in
+                try query.validateHook()
+                return try NativeObjCMethodHook.prepare(
+                    on: type,
+                    selector: selector,
+                    as: signature,
+                    classMethod: classMethod,
+                    options: options,
+                    object: nil,
+                    owner: owner,
+                    initializer: false
+                ) { signature in
+                    ObjCReplacement<Result, repeat each Argument>.mainActorCallback(
+                        signature,
+                        declaration: objcMethodDeclaration(
+                            on: type,
+                            selector: selector,
+                            classMethod: classMethod
+                        ),
+                        onFailure: onFailure,
+                        body: body
+                    )
                 }
-        })
+            }
+        )
     }
 
     /// Describes initializer phases with the direct MainActor-initializer contract.
     @unsafe @MainActor public static func mainActorInitializer<Result, each Argument>(
-        on type: AnyClass, selector: String, as signature: ((repeat each Argument) -> Result).Type,
-        options: NativeObjCMethodOptions = .init(),
+        _ request: NativeRequest<NativeObjCMethodRequest<Result, repeat each Argument>>,
+        on type: AnyClass,
         retaining owner: Any? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
-        transformingArguments: (@MainActor @Sendable (repeat each Argument) throws -> (repeat each Argument))? = nil,
+        transformingArguments: (
+            @MainActor @Sendable (repeat each Argument) throws -> (repeat each Argument)
+        )? = nil,
         before: (@MainActor @Sendable (repeat each Argument) throws -> Void)? = nil,
         after: @escaping @MainActor @Sendable (Result) throws -> Void = { _ in }
     ) -> Self {
-        Self(validate: {
-            try NativeObjCMethodHook.validation(type: type, selector: selector, signature: signature,
-                classMethod: false, options: options, initializer: true)
-        }, install: { _ in
-            try NativeObjCMethodHook.prepare(on: type, selector: selector, as: signature,
-                classMethod: false, options: options, object: nil, owner: owner, initializer: true) { signature in
-                    ObjCReplacement<Result, repeat each Argument>.mainActorInitializerCallback(signature,
-                        onFailure: onFailure, transformingArguments: transformingArguments, before: before, after: after)
+        let query = request.declaration.query
+        let selector = query.selector
+        let options = query.options
+        let signature = ((repeat each Argument) -> Result).self
+        return Self(
+            validate: {
+                try query.validateHook()
+                return try NativeObjCMethodHook.validation(
+                    type: type,
+                    selector: selector,
+                    signature: signature,
+                    classMethod: false,
+                    options: options,
+                    initializer: true
+                )
+            },
+            install: { _ in
+                try query.validateHook()
+                return try NativeObjCMethodHook.prepare(
+                    on: type,
+                    selector: selector,
+                    as: signature,
+                    classMethod: false,
+                    options: options,
+                    object: nil,
+                    owner: owner,
+                    initializer: true
+                ) { signature in
+                    ObjCReplacement<Result, repeat each Argument>.mainActorInitializerCallback(
+                        signature,
+                        onFailure: onFailure,
+                        transformingArguments: transformingArguments,
+                        before: before,
+                        after: after
+                    )
                 }
-        })
+            }
+        )
     }
 
 }

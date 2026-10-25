@@ -93,23 +93,44 @@ public struct NativeImportedHookInstallationError: Error {
 func prepareImportedCallback<Result, each Argument>(
     declaration: NativeDeclaration, as signature: ((repeat each Argument) -> Result).Type,
     onFailure: @escaping @Sendable (any Error) -> Void,
-    body: @escaping @Sendable (NativeImportedFunctionInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+    body:
+        @escaping @Sendable (
+            NativeImportedFunctionInvocation<Result, repeat each Argument>, repeat each Argument
+        ) throws -> Result
 ) throws -> FunctionCallbackBox {
-    let prepared = try FunctionCallbackSignature<Result, repeat each Argument>()
-    let description = hookDescription(declaration: declaration, signature: signature, unnamed: "<imported function>")
+    let prepared = try FunctionCallbackSignature<Result, repeat each Argument>(
+        declaration: declaration
+    )
+    let description = hookDescription(
+        declaration: declaration,
+        signature: signature,
+        unnamed: "<imported function>"
+    )
     var types: [CValueType] = []
     for codec in repeat each prepared.arguments { types.append(codec.type) }
-    return FunctionCallbackBox(result: prepared.result.type, parameters: types, invoke: { pointer in
-        let frame = FunctionCallbackFrame(pointer); defer { frame.expire() }
-        let values = try prepared.decodeArguments(pointer)
-        let output = try body(.init(frame: frame, callSignature: prepared, declaration: declaration, description: description),repeat each values)
-        var error: OpaquePointer?
-        if Result.self == Void.self {
+    return FunctionCallbackBox(
+        result: prepared.result.type,
+        parameters: types,
+        declaration: declaration,
+        invoke: { pointer in
+            let frame = FunctionCallbackFrame(pointer); defer { frame.expire() }
+            let values = try prepared.decodeArguments(pointer)
+            let output = try body(
+                .init(
+                    frame: frame,
+                    callSignature: prepared,
+                    declaration: declaration,
+                    description: description
+                ),
+                repeat each values
+            )
+            var error: OpaquePointer?
+            if Result.self == Void.self {
                 guard ABIImportedInvocationSetResult(pointer, nil, 0, &error) else {
-                    throw consumeNativeCallFailure(error)
+                    throw consumeImportedHookFailure(error, declaration: declaration)
                 }
             } else {
-            let storage = try prepared.result.encode(output)
+                let storage = try prepared.result.encode(output)
                 guard
                     ABIImportedInvocationSetResult(
                         pointer,
@@ -117,14 +138,50 @@ func prepareImportedCallback<Result, each Argument>(
                         prepared.result.type.size,
                         &error
                     )
-                else { throw consumeNativeCallFailure(error) }
+                else { throw consumeImportedHookFailure(error, declaration: declaration) }
             }
-    }, failure: onFailure)
+        },
+        failure: onFailure
+    )
 }
 
-func importedHookFailure(_ error: OpaquePointer) -> NSError {
-    NSError(domain: "ABIBridge.ImportedHook", code: Int(ABIResolutionFailureGetCode(error)),
-        userInfo: [NSLocalizedDescriptionKey: String(cString: ABIResolutionFailureGetMessage(error))])
+func importedHookFailure(_ failure: OpaquePointer, declaration: NativeDeclaration) -> any Error {
+    let code = Int(ABIResolutionFailureGetCode(failure))
+    let message = String(cString: ABIResolutionFailureGetMessage(failure))
+    switch code {
+    case Int(ABIFailureImageUnavailable): return ABIResolutionError.imageUnavailable
+    case Int(ABIFailureImageNotLoaded): return ABIResolutionError.imageNotLoaded
+    case Int(ABIFailureDeclarationNotFound):
+        return ABIResolutionError.declarationNotFound(declaration)
+    case Int(ABIFailureSignatureMismatch):
+        return ABIResolutionError.signatureMismatch(
+            .init(
+                declaration: declaration,
+                expected: "A compatible fixed C ABI signature",
+                found: [message]
+            )
+        )
+    case Int(ABIFailureUnsupportedDeclaration), Int(ABIFailureInvalidRequest):
+        return ABIResolutionError.unsupportedDeclaration(message)
+    case Int(ABIFailureMetadataUnavailable): return ABIResolutionError.metadataUnavailable(message)
+    case Int(ABIFailureImageChanged): return ABIResolutionError.imageChanged
+    case Int(ABIFailureInvalidAddress): return ABIResolutionError.invalidAddress
+    default:
+        return NSError(
+            domain: "ABIBridge.ImportedHook",
+            code: code,
+            userInfo: [NSLocalizedDescriptionKey: message]
+        )
+    }
+}
+
+func consumeImportedHookFailure(
+    _ failure: OpaquePointer?,
+    declaration: NativeDeclaration?
+) -> any Error {
+    guard let failure, let declaration else { return consumeNativeCallFailure(failure) }
+    defer { ABIReleaseResolutionFailure(failure) }
+    return importedHookFailure(failure, declaration: declaration)
 }
 
 extension ABIRuntime {
@@ -136,34 +193,97 @@ extension ABIRuntime {
     /// - Returns: An owner for this callback across the matched import slots.
     /// - Throws: Resolution/signature errors or `NativeImportedHookInstallationError`
     ///   preserving partial publication and rollback failures.
-    @unsafe public func hookImportedFunction<Result, each Argument>(
-        _ declaration: NativeDeclaration, as signature: ((repeat each Argument) -> Result).Type,
-        in importer: ImageSelector, from provider: ImageSelector? = nil,
+    ///
+    /// Registration preparation runs on a worker without blocking the caller's executor. The request must describe a fixed signature.
+    @unsafe public nonisolated func hookImportedCalls<Result, each Argument>(
+        _ request: NativeRequest<NativeFunctionRequest<Result, repeat each Argument>>,
+        in importer: ImageSelector,
+        from provider: ImageSelector? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
-        body: @escaping @Sendable (NativeImportedFunctionInvocation<Result, repeat each Argument>, repeat each Argument) throws -> Result
+        body:
+            @escaping @Sendable (
+                NativeImportedFunctionInvocation<Result, repeat each Argument>, repeat each Argument
+            ) throws -> Result
+    ) async throws -> NativeImportedFunctionHook {
+        try await NativePreparation.run {
+            try unsafe self.hookImportedCallsAndWait(
+                request,
+                in: importer,
+                from: provider,
+                onFailure: onFailure,
+                body: body
+            )
+        }
+    }
+
+    /// Prepares an imported-call registration synchronously on the caller's thread.
+    ///
+    /// Image selection, incoming-thread callbacks, lifetime, and failures follow
+    /// `hookImportedCalls`. The provider filters import records without being loaded or resolved.
+    @unsafe public nonisolated func hookImportedCallsAndWait<Result, each Argument>(
+        _ request: NativeRequest<NativeFunctionRequest<Result, repeat each Argument>>,
+        in importer: ImageSelector,
+        from provider: ImageSelector? = nil,
+        onFailure: @escaping @Sendable (any Error) -> Void,
+        body:
+            @escaping @Sendable (
+                NativeImportedFunctionInvocation<Result, repeat each Argument>, repeat each Argument
+            ) throws -> Result
     ) throws -> NativeImportedFunctionHook {
-        let selection = try ImportedFunctionSelection(resolver: resolver, declaration: declaration, importer: importer, provider: provider)
-        let box = try prepareImportedCallback(declaration: declaration, as: signature, onFailure: onFailure, body: body)
+        let declaration = request.declaration.nativeDeclaration
+        let signature = ((repeat each Argument) -> Result).self
+        guard request.declaration.variadicFrom == nil else {
+            throw ABIResolutionError.unsupportedDeclaration(
+                "Imported-call hooks require a fixed C ABI signature."
+            )
+        }
+        let selection = try ImportedFunctionSelection(
+            resolver: resolver,
+            declaration: declaration,
+            importer: importer,
+            provider: provider
+        )
+        let box = try prepareImportedCallback(
+            declaration: declaration,
+            as: signature,
+            onFailure: onFailure,
+            body: body
+        )
         let types = box.parameters
         let context = Unmanaged.passRetained(box).toOpaque()
         let selected = selection.retainedHandle(); defer { ABIReleaseImportSelection(selected) }
         let handles: [OpaquePointer?] = types.map(\.handle)
         let handle = withExtendedLifetime(box) {
             handles.withUnsafeBufferPointer { parameters in
-                ABICreateImportedHook(selected,box.result.handle,parameters.baseAddress,parameters.count,context,
+                ABICreateImportedHook(
+                    selected,
+                    box.result.handle,
+                    parameters.baseAddress,
+                    parameters.count,
+                    context,
                     { context, call, error in
-                        invokeFunctionCallback(Unmanaged<FunctionCallbackBox>.fromOpaque(context!).takeUnretainedValue(), call!)
-                    }, { context, error in
-                        Unmanaged<FunctionCallbackBox>.fromOpaque(context!).takeUnretainedValue().failure(importedHookFailure(error!))
-                    }, { context in Unmanaged<FunctionCallbackBox>.fromOpaque(context!).release() })!
+                        invokeFunctionCallback(
+                            Unmanaged<FunctionCallbackBox>.fromOpaque(context!)
+                                .takeUnretainedValue(),
+                            call!
+                        )
+                    },
+                    { context, error in
+                        Unmanaged<FunctionCallbackBox>.fromOpaque(context!).takeUnretainedValue()
+                            .reportNativeFailure(error!)
+                    },
+                    { context in Unmanaged<FunctionCallbackBox>.fromOpaque(context!).release() }
+                )!
             }
         }
         let hook = NativeImportedFunctionHook(handle)
         if let error = ABIImportedHookGetFailure(handle) {
             let index = ABIImportedHookGetFailedIndex(handle)
-            throw NativeImportedHookInstallationError(underlyingError: NSError(domain: "ABIBridge.ImportedHook",code: Int(ABIResolutionFailureGetCode(error)),
-                userInfo: [NSLocalizedDescriptionKey: String(cString: ABIResolutionFailureGetMessage(error))]),
-                failedIndex: index < 0 ? nil : index, registration: hook)
+            throw NativeImportedHookInstallationError(
+                underlyingError: importedHookFailure(error, declaration: declaration),
+                failedIndex: index < 0 ? nil : index,
+                registration: hook
+            )
         }
         return hook
     }

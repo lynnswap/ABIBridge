@@ -71,6 +71,22 @@ private final class MonitorCapture: Sendable {
 @Suite(.serialized, .timeLimit(.minutes(1)))
 struct ImportedFunctionMonitorTests {
     private enum CallbackFailure: Error { case expected }
+    @Test func acceptsUnloadedImporterAndProviderWithoutResolvingEither() throws {
+        let suffix = UUID().uuidString
+        let runtime = ABIRuntime()
+        let importer = ImageSelector.installName("/unloaded/Importer-" + suffix + ".dylib")
+        let provider = ImageSelector.installName("/unloaded/Provider-" + suffix + ".dylib")
+        let monitor = try unsafe runtime.monitorImportedCallsAndWait(
+            .c(.function(linkerName: "UnloadedFunction-" + suffix, as: (() -> Int32).self)),
+            in: importer,
+            from: provider,
+            onFailure: { Issue.record($0) },
+            onImageUpdate: { _ in Issue.record("No importer is loaded") }
+        ) { call in try call.proceed() }
+        defer { monitor.invalidate() }
+        #expect(monitor.images.isEmpty)
+    }
+
     @Test func initializationReadinessDoesNotBecomeAPermanentInstallationFailure() async throws {
         let fixture = try ImportMonitorFixture(); defer { fixture.cleanup() }
         let url = try fixture.makeConsumer(
@@ -80,9 +96,8 @@ struct ImportedFunctionMonitorTests {
                 """
         )
         let installed = Mutex(false), failed = Mutex(false)
-        let monitor = try await unsafe ABIRuntime().monitorImportedFunction(
-            fixture.declaration,
-            as: ((Int32) -> Int32).self,
+        let monitor = try unsafe ABIRuntime().monitorImportedCallsAndWait(
+            .c(.function(fixture.declaration.name, as: ((Int32) -> Int32).self)),
             in: fixture.scope,
             onFailure: { Issue.record($0) },
             onImageUpdate: { update in
@@ -112,9 +127,8 @@ struct ImportedFunctionMonitorTests {
         let runtime = ABIRuntime()
         let applied = Mutex<[String]>([])
         let expectedDeclaration = fixture.declaration
-        let monitor = try await unsafe runtime.monitorImportedFunction(
-            fixture.declaration,
-            as: ((Int32) -> Int32).self,
+        let monitor = try await unsafe runtime.monitorImportedCalls(
+            .c(.function(fixture.declaration.name, as: ((Int32) -> Int32).self)),
             in: fixture.scope,
             onFailure: { Issue.record($0) },
             onImageUpdate: { update in
@@ -153,9 +167,8 @@ struct ImportedFunctionMonitorTests {
         let fixture = try ImportMonitorFixture(); defer { fixture.cleanup() }
         let bad = try fixture.makeConsumer(addend: true), good = try fixture.makeConsumer()
         let failed = Mutex(false), installed = Mutex(false)
-        let monitor = try await unsafe ABIRuntime().monitorImportedFunction(
-            fixture.declaration,
-            as: ((Int32) -> Int32).self,
+        let monitor = try await unsafe ABIRuntime().monitorImportedCalls(
+            .c(.function(fixture.declaration.name, as: ((Int32) -> Int32).self)),
             in: fixture.scope,
             onFailure: { Issue.record($0) },
             onImageUpdate: { update in
@@ -181,9 +194,8 @@ struct ImportedFunctionMonitorTests {
         let monitor: NativeImportedFunctionMonitor
         do {
             let capture = MonitorCapture { released.withLock { $0 = true } }
-            monitor = try await unsafe ABIRuntime().monitorImportedFunction(
-                fixture.declaration,
-                as: ((Int32) -> Int32).self,
+            monitor = try await unsafe ABIRuntime().monitorImportedCalls(
+                .c(.function(fixture.declaration.name, as: ((Int32) -> Int32).self)),
                 in: fixture.scope,
                 onFailure: { Issue.record($0) },
                 onImageUpdate: { update in
@@ -223,9 +235,8 @@ struct ImportedFunctionMonitorTests {
         let monitor: NativeImportedFunctionMonitor
         do {
             let capture = MonitorCapture { released.withLock { $0 = true } }
-            monitor = try await unsafe ABIRuntime().monitorImportedFunction(
-                fixture.declaration,
-                as: ((Int32) -> Int32).self,
+            monitor = try await unsafe ABIRuntime().monitorImportedCalls(
+                .c(.function(fixture.declaration.name, as: ((Int32) -> Int32).self)),
                 in: fixture.scope,
                 onFailure: { error in
                     #expect(error is CallbackFailure)

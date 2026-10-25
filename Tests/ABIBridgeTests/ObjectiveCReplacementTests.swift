@@ -78,10 +78,9 @@ struct ObjectiveCReplacementTests {
             }
         }
         if managed {
-            let hook = try unsafe ABIRuntime().hookMethod(
+            let hook = try unsafe ABIRuntime().hookCalls(
+                .objc(.method("newResult", as: (() -> ABIDestructorHookResult).self)),
                 on: ABIDestructorHookFixture.self,
-                selector: "newResult",
-                as: (() -> ABIDestructorHookResult).self,
                 onFailure: { Issue.record($0) },
                 body: body
             )

@@ -131,10 +131,9 @@ private final class ExtractedCounterOwner {
         "Extracted Objective-C message binds another receiver"
     )
     let failures = Mutex<[String]>([])
-    let hook = try unsafe runtime.hookMethod(
+    let hook = try unsafe runtime.hookCalls(
+        .objc(.method("adding:", as: ((Int64) -> Int64).self)),
         on: MethodExtractionObject.self,
-        selector: "adding:",
-        as: ((Int64) -> Int64).self,
         onFailure: { error in failures.withLock { $0.append(String(describing: error)) } }
     ) { call, value in try call.proceed(value) + 100 }
     defer { hook.invalidate() }

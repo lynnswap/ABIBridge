@@ -23,9 +23,8 @@ import Synchronization
     let baseline = ABIImportedUIDCall()
     let installed = Mutex(false)
     let failures = Mutex<[String]>([])
-    let monitor = try await unsafe runtime.monitorImportedFunction(
-        .init(name: "getuid", language: .c),
-        as: (() -> UInt32).self,
+    let monitor = try await unsafe runtime.monitorImportedCalls(
+        .c(.function("getuid", as: (() -> UInt32).self)),
         in: scope,
         onFailure: { error in failures.withLock { $0.append(String(describing: error)) } },
         onImageUpdate: { update in

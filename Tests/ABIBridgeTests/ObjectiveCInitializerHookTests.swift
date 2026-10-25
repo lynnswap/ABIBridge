@@ -25,9 +25,15 @@ struct ObjectiveCInitializerHookTests {
         let fixture = ABIOwnershipFixture()
         let fixtureOwner = InitBox(fixture)
         let failures = InitBox(0), observations = InitBox(0)
-        let hook = try unsafe runtime.hookInitializer(on: ABIConsumedInitializerFixture.self,
-            selector: "initConsuming:", as: ((NSObject?) -> ABIConsumedInitializerFixture).self,
-            options: .init(consumedArguments: [0]),
+        let hook = try unsafe runtime.hookInitializer(
+            .objc(
+                .method(
+                    "initConsuming:",
+                    as: ((NSObject?) -> ABIConsumedInitializerFixture).self,
+                    options: .init(consumedArguments: [0])
+                )
+            ),
+            on: ABIConsumedInitializerFixture.self,
             onFailure: { _ in failures.update { $0 += 1 } },
             transformingArguments: { _ in
                 if stage == "before" { throw InitFailure.deliberate }
@@ -49,10 +55,14 @@ struct ObjectiveCInitializerHookTests {
 
     @Test func sameNilAndReplacementResultsBalanceIncomingOwnership() throws {
         let observedValues = InitBox<[Int?]>([])
-        let hook = try unsafe runtime.hookInitializer(on: ABIManagedInitializerFixture.self, selector: selector,
-            as: Signature.self, onFailure: { Issue.record($0) }, after: { result in
+        let hook = try unsafe runtime.hookInitializer(
+            .objc(.method(selector, as: Signature.self)),
+            on: ABIManagedInitializerFixture.self,
+            onFailure: { Issue.record($0) },
+            after: { result in
                 observedValues.update { $0.append(result?.value) }
-            })
+            }
+        )
         defer { hook.invalidate() }
         for mode in 0...2 {
             let start = ABIManagedInitializerFixture.initializations
@@ -71,11 +81,21 @@ struct ObjectiveCInitializerHookTests {
     }
 
     @Test func preparesReferenceArgumentsAndTransformsValueTuples() throws {
-        let hook = try unsafe runtime.hookInitializer(on: ABIManagedInitializerFixture.self, selector: selector,
-            as: ((Int, Int, NSMutableDictionary?) -> ABIManagedInitializerFixture?).self,
-            onFailure: { Issue.record($0) }, transformingArguments: { mode, value, object in
+        let hook = try unsafe runtime.hookInitializer(
+            .objc(
+                .method(
+                    selector,
+                    as: ((Int, Int, NSMutableDictionary?) -> ABIManagedInitializerFixture?).self
+                )
+            ),
+            on: ABIManagedInitializerFixture.self,
+            onFailure: { Issue.record($0) },
+            transformingArguments: { mode, value, object in
                 (mode, value * 2, object)
-            }, before: { _, _, object in object?["prepared"] = true }, after: { result in result?.value += 2 })
+            },
+            before: { _, _, object in object?["prepared"] = true },
+            after: { result in result?.value += 2 }
+        )
         defer { hook.invalidate() }
         autoreleasepool {
             let configuration = NSMutableDictionary()
@@ -89,12 +109,21 @@ struct ObjectiveCInitializerHookTests {
 
     @Test func zeroAndSingleArgumentTransformationsCompileAndExecute() throws {
         let zeroCount = InitBox(0)
-        let zero = try unsafe runtime.hookInitializer(on: ABIManagedInitializerFixture.self, selector: "init",
-            as: (() -> ABIManagedInitializerFixture).self, onFailure: { Issue.record($0) },
-            transformingArguments: { () }, before: { zeroCount.update { $0 += 1 } }, after: { $0.value += 1 })
-        let single = try unsafe runtime.hookInitializer(on: ABIManagedInitializerFixture.self, selector: "initWithValue:",
-            as: ((Int) -> ABIManagedInitializerFixture).self, onFailure: { Issue.record($0) },
-            transformingArguments: { $0 * 2 }, after: { $0.value += 2 })
+        let zero = try unsafe runtime.hookInitializer(
+            .objc(.method("init", as: (() -> ABIManagedInitializerFixture).self)),
+            on: ABIManagedInitializerFixture.self,
+            onFailure: { Issue.record($0) },
+            transformingArguments: { () },
+            before: { zeroCount.update { $0 += 1 } },
+            after: { $0.value += 1 }
+        )
+        let single = try unsafe runtime.hookInitializer(
+            .objc(.method("initWithValue:", as: ((Int) -> ABIManagedInitializerFixture).self)),
+            on: ABIManagedInitializerFixture.self,
+            onFailure: { Issue.record($0) },
+            transformingArguments: { $0 * 2 },
+            after: { $0.value += 2 }
+        )
         defer { zero.invalidate(); single.invalidate() }
         autoreleasepool {
             #expect(ABIManagedInitializerFixture().value == 8)
@@ -108,11 +137,19 @@ struct ObjectiveCInitializerHookTests {
         for mainActor in [false, true] {
             let hook: NativeObjCMethodHook
             if mainActor {
-                hook = try unsafe runtime.hookMainActorInitializer(on: ABIManagedInitializerFixture.self, selector: selector,
-                    as: Bridged.self, onFailure: { Issue.record($0) }, before: { _, _, text in #expect(text == "original") })
+                hook = try unsafe runtime.hookMainActorInitializer(
+                    .objc(.method(selector, as: Bridged.self)),
+                    on: ABIManagedInitializerFixture.self,
+                    onFailure: { Issue.record($0) },
+                    before: { _, _, text in #expect(text == "original") }
+                )
             } else {
-                hook = try unsafe runtime.hookInitializer(on: ABIManagedInitializerFixture.self, selector: selector,
-                    as: Bridged.self, onFailure: { Issue.record($0) }, before: { _, _, text in #expect(text == "original") })
+                hook = try unsafe runtime.hookInitializer(
+                    .objc(.method(selector, as: Bridged.self)),
+                    on: ABIManagedInitializerFixture.self,
+                    onFailure: { Issue.record($0) },
+                    before: { _, _, text in #expect(text == "original") }
+                )
             }
             defer { hook.invalidate() }
             autoreleasepool {
@@ -122,8 +159,11 @@ struct ObjectiveCInitializerHookTests {
             }
             #expect(ABIManagedInitializerFixture.liveObjects == 0)
         }
-        let zero = try unsafe runtime.hookMainActorInitializer(on: ABIManagedInitializerFixture.self, selector: "init",
-            as: (() -> ABIManagedInitializerFixture).self, onFailure: { Issue.record($0) })
+        let zero = try unsafe runtime.hookMainActorInitializer(
+            .objc(.method("init", as: (() -> ABIManagedInitializerFixture).self)),
+            on: ABIManagedInitializerFixture.self,
+            onFailure: { Issue.record($0) }
+        )
         defer { zero.invalidate() }
         autoreleasepool { #expect(ABIManagedInitializerFixture().value == 7) }
     }
@@ -131,10 +171,15 @@ struct ObjectiveCInitializerHookTests {
     @Test func observersWrapOneInitializationAndCanBeRemovedIndependently() throws {
         let trace = InitBox<[Int]>([])
         func install(_ number: Int) throws -> NativeObjCMethodHook {
-            try unsafe runtime.hookInitializer(on: ABIManagedInitializerFixture.self, selector: selector,
-                as: Signature.self, onFailure: { Issue.record($0) },
+            try unsafe runtime.hookInitializer(
+                .objc(.method(selector, as: Signature.self)),
+                on: ABIManagedInitializerFixture.self,
+                onFailure: { Issue.record($0) },
                 before: { _, _, _ in trace.update { $0.append(number) } },
-                after: { result in trace.update { $0.append(-number) }; result?.value += number })
+                after: { result in
+                    trace.update { $0.append(-number) }; result?.value += number
+                }
+            )
         }
         let first = try install(1), middle = try install(2), outer = try install(3)
         defer { first.invalidate(); middle.invalidate(); outer.invalidate() }
@@ -151,13 +196,19 @@ struct ObjectiveCInitializerHookTests {
     @Test func failuresBeforeAndAfterInitializationNeverReplayIt() throws {
         for stage in 0...2 {
             let errors = InitBox(0), afters = InitBox(0)
-            let hook = try unsafe runtime.hookInitializer(on: ABIManagedInitializerFixture.self, selector: selector,
-                as: Signature.self, onFailure: { _ in errors.update { $0 += 1 } },
+            let hook = try unsafe runtime.hookInitializer(
+                .objc(.method(selector, as: Signature.self)),
+                on: ABIManagedInitializerFixture.self,
+                onFailure: { _ in errors.update { $0 += 1 } },
                 transformingArguments: { mode, value, object in
                     if stage == 1 { throw InitFailure.deliberate }
                     return (mode, value + 2, object)
-                }, before: { _, _, _ in if stage == 0 { throw InitFailure.deliberate } },
-                after: { _ in afters.update { $0 += 1 }; throw InitFailure.deliberate })
+                },
+                before: { _, _, _ in if stage == 0 { throw InitFailure.deliberate } },
+                after: { _ in
+                    afters.update { $0 += 1 }; throw InitFailure.deliberate
+                }
+            )
             defer { hook.invalidate() }
             let start = ABIManagedInitializerFixture.initializations
             autoreleasepool { #expect(ABIManagedInitializerFixture(mode: 0, value: 40, object: nil)?.value == (stage == 2 ? 42 : 40)) }
@@ -168,9 +219,13 @@ struct ObjectiveCInitializerHookTests {
 
     @Test func conversionFailuresPreserveActualNativeArgumentsAndResult() throws {
         let errors = InitBox(0), afters = InitBox(0)
-        let hook = try unsafe runtime.hookInitializer(on: ABIManagedInitializerFixture.self, selector: selector,
-            as: ((Int, Int, NSString?) -> NSString).self, onFailure: { _ in errors.update { $0 += 1 } },
-            before: { _, _, _ in }, after: { _ in afters.update { $0 += 1 } })
+        let hook = try unsafe runtime.hookInitializer(
+            .objc(.method(selector, as: ((Int, Int, NSString?) -> NSString).self)),
+            on: ABIManagedInitializerFixture.self,
+            onFailure: { _ in errors.update { $0 += 1 } },
+            before: { _, _, _ in },
+            after: { _ in afters.update { $0 += 1 } }
+        )
         defer { hook.invalidate() }
         for object: NSObject? in [NSNumber(value: 2), nil] {
             let start = ABIManagedInitializerFixture.initializations
@@ -188,18 +243,33 @@ struct ObjectiveCInitializerHookTests {
 
     @Test func superclassDelegationAndInheritedPassThroughRemainDistinctEntries() throws {
         let trace = InitBox<[String]>([])
-        let child = try unsafe runtime.hookInitializer(on: ABIManagedInitializerChild.self, selector: selector,
-            as: Signature.self, onFailure: { Issue.record($0) }, before: { _, _, _ in trace.update { $0.append("child before") } },
-            after: { _ in trace.update { $0.append("child after") } })
-        let inherited = try unsafe runtime.hookInitializer(on: ABIManagedInitializerInherited.self, selector: selector,
-            as: Signature.self, onFailure: { Issue.record($0) })
+        let child = try unsafe runtime.hookInitializer(
+            .objc(.method(selector, as: Signature.self)),
+            on: ABIManagedInitializerChild.self,
+            onFailure: { Issue.record($0) },
+            before: { _, _, _ in trace.update { $0.append("child before") } },
+            after: { _ in trace.update { $0.append("child after") } }
+        )
+        let inherited = try unsafe runtime.hookInitializer(
+            .objc(.method(selector, as: Signature.self)),
+            on: ABIManagedInitializerInherited.self,
+            onFailure: { Issue.record($0) }
+        )
         inherited.invalidate()
-        let parent = try unsafe runtime.hookInitializer(on: ABIManagedInitializerFixture.self, selector: selector,
-            as: Signature.self, onFailure: { Issue.record($0) }, before: { _, _, _ in trace.update { $0.append("parent before") } },
-            after: { result in trace.update { $0.append("parent after") }; result?.value += 1 })
+        let parent = try unsafe runtime.hookInitializer(
+            .objc(.method(selector, as: Signature.self)),
+            on: ABIManagedInitializerFixture.self,
+            onFailure: { Issue.record($0) },
+            before: { _, _, _ in trace.update { $0.append("parent before") } },
+            after: { result in
+                trace.update { $0.append("parent after") }; result?.value += 1
+            }
+        )
         defer { child.invalidate(); parent.invalidate() }
         let start = ABIManagedInitializerFixture.initializations
-        autoreleasepool { #expect(ABIManagedInitializerChild(mode: 0, value: 41, object: nil)?.value == 42) }
+        autoreleasepool {
+            #expect(ABIManagedInitializerChild(mode: 0, value: 41, object: nil)?.value == 42)
+        }
         #expect(trace.read() == ["child before", "parent before", "parent after", "child after"])
         #expect(ABIManagedInitializerFixture.initializations - start == 1)
         autoreleasepool { #expect(ABIManagedInitializerInherited(mode: 0, value: 41, object: nil)?.value == 42) }
@@ -211,12 +281,24 @@ struct ObjectiveCInitializerHookTests {
         let finished = DispatchGroup(), observedAfter = InitBox(0)
         var capture: InitCapture? = InitCapture()
         weak var observed = capture
-        let inner = try unsafe runtime.hookInitializer(on: ABIManagedInitializerFixture.self, selector: selector,
-            as: Signature.self, onFailure: { Issue.record($0) }, after: { [capture] result in
-                withExtendedLifetime(capture) { observedAfter.update { $0 += 1 }; result?.value += 1 }
-            })
-        let outer = try unsafe runtime.hookInitializer(on: ABIManagedInitializerFixture.self, selector: selector,
-            as: Signature.self, onFailure: { Issue.record($0) }, before: { _, _, _ in started.signal(); resume.wait() })
+        let inner = try unsafe runtime.hookInitializer(
+            .objc(.method(selector, as: Signature.self)),
+            on: ABIManagedInitializerFixture.self,
+            onFailure: { Issue.record($0) },
+            after: { [capture] result in
+                withExtendedLifetime(capture) {
+                    observedAfter.update { $0 += 1 }; result?.value += 1
+                }
+            }
+        )
+        let outer = try unsafe runtime.hookInitializer(
+            .objc(.method(selector, as: Signature.self)),
+            on: ABIManagedInitializerFixture.self,
+            onFailure: { Issue.record($0) },
+            before: { _, _, _ in
+                started.signal(); resume.wait()
+            }
+        )
         capture = nil
         defer { inner.invalidate(); outer.invalidate() }
         finished.enter()
@@ -236,14 +318,27 @@ struct ObjectiveCInitializerHookTests {
 
     @MainActor @Test func mainActorInitializerAndBackgroundBypass() throws {
         let errors = InitBox(0), before = InitBox(0), after = InitBox(0)
-        let hook = try unsafe runtime.hookMainActorInitializer(on: ABIManagedInitializerFixture.self, selector: selector,
-            as: Signature.self, onFailure: { error in
-                #expect(error as? NativeObjCMethodHookError == .wrongThread); errors.update { $0 += 1 }
-            }, transformingArguments: { mode, value, object in MainActor.assertIsolated(); return (mode, value + 1, object) },
-            before: { _, _, _ in MainActor.assertIsolated(); before.update { $0 += 1 } },
-            after: { _ in MainActor.assertIsolated(); after.update { $0 += 1 } })
+        let hook = try unsafe runtime.hookMainActorInitializer(
+            .objc(.method(selector, as: Signature.self)),
+            on: ABIManagedInitializerFixture.self,
+            onFailure: { error in
+                #expect(error as? NativeObjCMethodHookError == .wrongThread);
+                errors.update { $0 += 1 }
+            },
+            transformingArguments: { mode, value, object in
+                MainActor.assertIsolated(); return (mode, value + 1, object)
+            },
+            before: { _, _, _ in
+                MainActor.assertIsolated(); before.update { $0 += 1 }
+            },
+            after: { _ in
+                MainActor.assertIsolated(); after.update { $0 += 1 }
+            }
+        )
         defer { hook.invalidate() }
-        autoreleasepool { #expect(ABIManagedInitializerFixture(mode: 0, value: 41, object: nil)?.value == 42) }
+        autoreleasepool {
+            #expect(ABIManagedInitializerFixture(mode: 0, value: 41, object: nil)?.value == 42)
+        }
         let done = DispatchSemaphore(value: 0)
         let worker = Thread { defer { done.signal() }; autoreleasepool { #expect(ABIManagedInitializerFixture(mode: 0, value: 41, object: nil)?.value == 41) } }
         worker.qualityOfService = .userInitiated; worker.start(); done.wait()
@@ -253,25 +348,49 @@ struct ObjectiveCInitializerHookTests {
 
     @Test func nonstandardInitializerOwnershipCannotMixWithOrdinaryHooks() throws {
         let options = NativeObjCMethodOptions(returnsRetainedObject: true, consumesReceiver: true)
-        let hook = try unsafe runtime.hookInitializer(on: ABIManagedInitializerFixture.self, selector: "constructValue:",
-            as: ((Int) -> ABIManagedInitializerFixture).self, options: options, onFailure: { Issue.record($0) },
-            transformingArguments: { $0 + 1 })
+        let hook = try unsafe runtime.hookInitializer(
+            .objc(
+                .method(
+                    "constructValue:",
+                    as: ((Int) -> ABIManagedInitializerFixture).self,
+                    options: options
+                )
+            ),
+            on: ABIManagedInitializerFixture.self,
+            onFailure: { Issue.record($0) },
+            transformingArguments: { $0 + 1 }
+        )
         defer { hook.invalidate() }
         autoreleasepool { #expect(ABIManagedConstruct(41).value == 42) }
         #expect(throws: NativeObjCMethodHookError.incompatibleContract) {
-            try unsafe runtime.hookMethod(on: ABIManagedInitializerFixture.self, selector: "constructValue:",
-                as: ((Int) -> ABIManagedInitializerFixture).self, options: .init(returnsRetainedObject: true, consumesReceiver: false),
-                onFailure: { Issue.record($0) }) { call, value in try call.proceed(value) }
+            try unsafe runtime.hookCalls(
+                .objc(
+                    .method(
+                        "constructValue:",
+                        as: ((Int) -> ABIManagedInitializerFixture).self,
+                        options: .init(returnsRetainedObject: true, consumesReceiver: false)
+                    )
+                ),
+                on: ABIManagedInitializerFixture.self,
+                onFailure: { Issue.record($0) }
+            ) { call, value in try call.proceed(value) }
         }
         #expect(ABIManagedInitializerFixture.liveObjects == 0)
     }
 
     @Test func postprocessingCanRetainOnlyTheInitializedResult() throws {
         let result = InitBox<ABIManagedInitializerFixture?>(nil)
-        var hook: NativeObjCMethodHook? = try unsafe runtime.hookInitializer(on: ABIManagedInitializerFixture.self, selector: selector,
-            as: Signature.self, onFailure: { Issue.record($0) }, after: { value in result.update { $0 = value } })
+        var hook: NativeObjCMethodHook? = try unsafe runtime.hookInitializer(
+            .objc(.method(selector, as: Signature.self)),
+            on: ABIManagedInitializerFixture.self,
+            onFailure: { Issue.record($0) },
+            after: { value in result.update { $0 = value } }
+        )
         weak var observed: ABIManagedInitializerFixture?
-        autoreleasepool { let value = ABIManagedInitializerFixture(mode: 2, value: 32, object: nil); observed = value }
+        autoreleasepool {
+            let value = ABIManagedInitializerFixture(mode: 2, value: 32, object: nil);
+            observed = value
+        }
         #expect(observed?.value == 42 && ABIManagedInitializerFixture.liveObjects == 1)
         #expect(hook?.status == .active)
         hook = nil
@@ -280,20 +399,31 @@ struct ObjectiveCInitializerHookTests {
     }
 
     @Test func invalidContractsDoNotReplaceMethods() throws {
-        let method = try #require(class_getInstanceMethod(ABIManagedInitializerFixture.self, NSSelectorFromString(selector)))
+        let method = try #require(
+            class_getInstanceMethod(
+                ABIManagedInitializerFixture.self,
+                NSSelectorFromString(selector)
+            )
+        )
         let original = method_getImplementation(method)
         for options in [
             NativeObjCMethodOptions(returnsRetainedObject: false), .init(consumesReceiver: false),
         ] {
             #expect(throws: NativeObjCMethodHookError.unsupportedMethod) {
-                try unsafe runtime.hookInitializer(on: ABIManagedInitializerFixture.self, selector: selector,
-                    as: Signature.self, options: options, onFailure: { Issue.record($0) })
+                try unsafe runtime.hookInitializer(
+                    .objc(.method(selector, as: Signature.self, options: options)),
+                    on: ABIManagedInitializerFixture.self,
+                    onFailure: { Issue.record($0) }
+                )
             }
         }
         #expect(method_getImplementation(method) == original)
         #expect(throws: NativeObjCMethodHookError.unsupportedMethod) {
-            try unsafe runtime.hookInitializer(on: ABIManagedInitializerFixture.self, selector: "value",
-                as: (() -> Int).self, onFailure: { Issue.record($0) })
+            try unsafe runtime.hookInitializer(
+                .objc(.method("value", as: (() -> Int).self)),
+                on: ABIManagedInitializerFixture.self,
+                onFailure: { Issue.record($0) }
+            )
         }
     }
 }

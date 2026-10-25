@@ -64,7 +64,7 @@ Replace `.message(...)` with `.objc(.method(...))` for ordinary message dispatch
 
 The concrete declaration types are ``NativeObjCMethodRequest`` (renamed from `NativeObjCMessageRequest`) and ``NativeObjCImplementationRequest``. Their factories are now `method` and `imp`, respectively, and their wrapped requests resolve with either `resolve` or `resolveAndWait`. `String` and `Selector` overloads, native error conversion through a `throws` signature, ownership options, and typed variadic arguments retain their existing contracts. Keep `as:`, `variadicFrom:`, and `options:` inside the declaration; keep `on:`, `classMethod:`, and `retaining:` on runtime resolution.
 
-A method request resolves on `ABIRuntime` with a class for an explicit receiver at invocation, or on `NativeObject` for a bound receiver. An IMP request resolves on `ABIRuntime` with a class for an unbound implementation, or on `NativeObject` for a retained receiver. Both capture the implementation at that resolution. See <doc:ObjectiveCInvocation> for saved request examples, forwarding, and receiver isolation. Hook request APIs such as `NativeObjCHookRequest.method(...)` retain their own spelling.
+A method request resolves on `ABIRuntime` with a class for an explicit receiver at invocation, or on `NativeObject` for a bound receiver. An IMP request resolves on `ABIRuntime` with a class for an unbound implementation, or on `NativeObject` for a retained receiver. Both capture the implementation at that resolution. See <doc:ObjectiveCInvocation> for saved request examples, forwarding, and receiver isolation. Hooks reuse the same `.objc(.method(...))` declaration; keep callback ownership and installation scope on the hook operation. See <doc:ObjectiveCMethodHooks>.
 
 ## Qualify C and C++ function requests
 
@@ -347,3 +347,11 @@ Registrations apply to their bound types, and continuations expire at callback c
 - <doc:SwiftCalls>
 - <doc:GenericSwiftValues>
 - <doc:SwiftValues>
+
+## Reuse declarations for hooks
+
+Use the same language-qualified declaration for lookup and interception. Replace `hookImportedFunction(declaration, as: signature, ...)` with `hookImportedCalls(.c(.function(name, as: signature)), ...)`, or `.cxx(...)` for C++ declarations. Use `hookImportedCallsAndWait` when preparation must complete on the caller's thread. Likewise, `monitorImportedFunction` becomes `monitorImportedCalls` or `monitorImportedCallsAndWait`; both begin asynchronous image application, so registration return does not guarantee interception of all images. Importer/provider filters never load images or resolve the provider's callable.
+
+Replace `hookMethod(on: type, selector: selector, as: signature, options: options, ...)` with `hookCalls(.objc(.method(selector, as: signature, options: options)), on: type, ...)`. `hookMainActorMethod` becomes `hookMainActorCalls`. Object-scoped hooks use the same request without `on:`. Initializers keep the distinct `hookInitializer` and `hookMainActorInitializer` operations and their before/transformation/after phases, but take the shared method request first. Coordinated `NativeObjCHookRequest` factories take that same request followed by `on:`.
+
+Hooks require fixed signatures containing every explicit native argument. Outgoing-call requests using `variadicFrom:` or a throwing Objective-C `NSError **` adaptation cannot be installed as hooks. Native hook failures retain known `ABIResolutionError` categories, while callback errors retain their identity. See <doc:ImportedFunctionHooks>, <doc:ObjectiveCMethodHooks>, and <doc:ObjectiveCInitializerHooks> for lifetime and partial-installation contracts.

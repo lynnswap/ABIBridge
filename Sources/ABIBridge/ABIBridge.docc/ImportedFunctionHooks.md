@@ -7,9 +7,8 @@ Intercept selected Mach-O import slots with typed callbacks and scoped continuat
 For a library importing `int Example::Math::add(int, int)`, specify the importing image and the source declaration:
 
 ```swift
-let hook = try await unsafe runtime.hookImportedFunction(
-    NativeDeclaration(name: "Example::Math::add(int, int)", language: .cxx),
-    as: ((Int32, Int32) -> Int32).self,
+let hook = try await unsafe runtime.hookImportedCalls(
+    .cxx(.function("Example::Math::add(int, int)", as: ((Int32, Int32) -> Int32).self)),
     in: .framework(named: "Renderer"),
     onFailure: { print($0) }
 ) { call, a, b in
@@ -21,7 +20,9 @@ hook.invalidate()
 
 `in` selects loaded callers by framework, path, or exact install name. Optional `from` filters the recorded dependency, preserving reexport facade names. These scopes do not acquire images. Explicit `.automatic` considers all loaded importers and fails when required metadata is unavailable, including unreadable system-cache metadata.
 
-Names reuse ABIBridge's C/C++ resolution conventions. The function type supplies the C ABI contract; a mangled name cannot establish argument ownership or a complete signature. Supported values follow <doc:CFunctionInvocation>, with borrowed pointer arguments/results and no foreign exception unwinding. Native Swift functions, Objective-C ownership, variadics and nontrivial C++ values are separate contracts.
+Registration preparation runs on a worker; use `hookImportedCallsAndWait` to prepare synchronously on the caller's thread. A monitor also offers `monitorImportedCallsAndWait`, which completes registration preparation but does not wait for image application.
+
+Names reuse ABIBridge's C/C++ resolution conventions. Use `.function(linkerName:as:)` or `.function(machOName:as:)` for exact native spellings, without normalization. The same saved function request can be passed to resolution or interception. The function type supplies the C ABI contract; a mangled name cannot establish argument ownership or a complete signature. Supported values follow <doc:CFunctionInvocation>, with borrowed pointer arguments/results and no foreign exception unwinding. Native Swift functions, Objective-C ownership, variadics and nontrivial C++ values are separate contracts.
 
 Only calls that read the replaced references are intercepted. Direct/inlined calls, optimized shared-cache calls that bypass imports and function pointers captured before registration are unaffected. An unresolved lazy import still pointing to its loader helper must first be called normally by its owner; ABIBridge does not invoke functions with invented arguments to resolve them.
 
@@ -42,10 +43,13 @@ TPRO-protected pages can reject publication even when metadata and authenticatio
 ```swift
 do {
     // Store the returned hook in an owner with the required lifetime.
-    hooks.append(try await unsafe runtime.hookImportedFunction(
-        declaration, as: ((Int32, Int32) -> Int32).self,
-        in: .framework(named: "Renderer"), onFailure: reportFailure
-    ) { call, a, b in try call.proceed(a, b) })
+    hooks.append(
+        try await unsafe runtime.hookImportedCalls(
+            .cxx(.function("Example::Math::add(int, int)", as: ((Int32, Int32) -> Int32).self)),
+            in: .framework(named: "Renderer"),
+            onFailure: reportFailure
+        ) { call, a, b in try call.proceed(a, b) }
+    )
 } catch let error as NativeImportedHookInstallationError {
     print(error.failedIndex as Any, error.underlyingError)
     for slot in error.registration.slots {
@@ -83,9 +87,8 @@ The raw C installer takes ownership of the context when a release callback is pr
 Use ``NativeImportedFunctionMonitor`` when a scope should cover images loaded after registration:
 
 ```swift
-let monitor = try await unsafe runtime.monitorImportedFunction(
-    NativeDeclaration(name: "Example::Math::add(int, int)", language: .cxx),
-    as: ((Int32, Int32) -> Int32).self,
+let monitor = try await unsafe runtime.monitorImportedCalls(
+    .cxx(.function("Example::Math::add(int, int)", as: ((Int32, Int32) -> Int32).self)),
     in: .framework(named: "Renderer"),
     onFailure: { print("Callback failed:", $0) },
     onImageUpdate: { update in

@@ -14,12 +14,19 @@ private func require(_ value: @autoclosure () -> Bool, _ message: String) throws
 
 private let events = Events()
 let hook = try unsafe ABIRuntime.shared.hookInitializer(
-    on: ABISwiftInitializerFixture.self, selector: "initWithLeft:right:fail:",
-    as: ((Int, Int, Bool) -> ABISwiftInitializerFixture?).self,
+    .objc(
+        .method(
+            "initWithLeft:right:fail:",
+            as: ((Int, Int, Bool) -> ABISwiftInitializerFixture?).self
+        )
+    ),
+    on: ABISwiftInitializerFixture.self,
     onFailure: { events.append("failure: \($0)") },
     transformingArguments: { left, right, fail in (left + 1, right + 2, fail) },
     before: { _, _, _ in events.append("before") },
-    after: { result in events.append(result == nil ? "nil" : "after"); result?.total += 1 }
+    after: { result in
+        events.append(result == nil ? "nil" : "after"); result?.total += 1
+    }
 )
 try autoreleasepool {
     let object = ABISwiftInitializerFixture(left: 20, right: 18, fail: false)
