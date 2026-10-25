@@ -459,7 +459,11 @@ package final class SymbolIndex {
         let symbols: Scope
         let entry: SwiftMemberMatch.Entry
     }
-    private var swiftMembers: [SwiftMemberScope: [SwiftMemberPath: [IndexedSymbol]]] = [:]
+    private struct SwiftMemberIndex {
+        let members: [[UInt8]: [IndexedSymbol]]
+        var matches: [SwiftMemberMatch: [IndexedSymbol]] = [:]
+    }
+    private var swiftMembers: [SwiftMemberScope: SwiftMemberIndex] = [:]
     private var swiftRecords: [IndexedSymbol: RuntimeSwiftDeclaration?] = [:]
 
     package init(image: RuntimeImage) {
@@ -787,7 +791,8 @@ package final class SymbolIndex {
 
         init(_ symbols: [IndexedSymbol]) {
             var ambiguousNames: Set<String> = [], ambiguousAddresses: Set<UInt64> = []
-            for symbol in symbols where symbol.name.hasPrefix("_$s") && symbol.name.hasSuffix("Mn") {
+            for symbol in symbols where symbol.name.hasPrefix("_$s") && symbol.name.hasSuffix("Mn")
+            {
                 let name = String(symbol.name.dropFirst())
                 if let other = names.updateValue(name, forKey: symbol.address), other != name {
                     ambiguousAddresses.insert(symbol.address)
@@ -1062,8 +1067,9 @@ package final class SymbolIndex {
 
     // A dispatch thunk is keyed by the member it dispatches, so one query
     // returns a declaration's code and its thunk together. A conformance's
-    // witness is keyed by the requirement it serves. The path selects the
-    // symbols, and their records decide whether each declares the member.
+    // witness is keyed by the requirement it serves. The syntax supplies the
+    // coarse member key; only matching members need complete declaration records
+    // and demangled spellings to verify their owners and calling conventions.
     package func swiftDeclarationCandidates(
         _ match: SwiftMemberMatch,
         query: SymbolQuery,
@@ -1082,31 +1088,52 @@ package final class SymbolIndex {
                 )
             let memberScope = SwiftMemberScope(symbols: scope, entry: match.entry)
             if swiftMembers[memberScope] == nil {
-                var members: [SwiftMemberPath: [IndexedSymbol]] = [:]
+                var members: [[UInt8]: [IndexedSymbol]] = [:]
                 for symbol in self.symbols(for: query, swiftBucket: bucket) {
-                    guard let record = record(of: symbol),
-                        (record.role == .propertyDescriptor)
-                            == (match.entry == .propertyDescriptor),
-                        let name = memberName(of: symbol)
+                    guard let member = RuntimeSwiftMemberIndex(linkageName: symbol.name),
+                        member.isPropertyDescriptor == (match.entry == .propertyDescriptor)
                     else { continue }
-                    // An allocator's record also files its `__allocating_init`
-                    // with its initializer; a function or method can have
-                    // that name too.
-                    let allocates = record.kind == .allocator
-                    for name in [name, Self.operatorAlias(name)].compactMap({ $0 }) {
-                        guard let path = SwiftMemberPath(declaration: name) else { continue }
-                        members[path, default: []].append(symbol)
-                        if allocates,
-                            let initializer = SwiftMemberPath(declaration: name, allocates: true),
-                            initializer != path
-                        {
-                            members[initializer, default: []].append(symbol)
+                    let keys: [[UInt8]]
+                    if member.requiresDeclarationSpelling {
+                        guard let record = record(of: symbol), let name = memberName(of: symbol)
+                        else { continue }
+                        var spellingKeys: Set<[UInt8]> = []
+                        for name in [name, Self.operatorAlias(name)].compactMap({ $0 }) {
+                            if let path = SwiftMemberPath(declaration: name) {
+                                spellingKeys.insert(path.member)
+                            }
+                            if record.kind == .allocator,
+                                let path = SwiftMemberPath(declaration: name, allocates: true)
+                            {
+                                spellingKeys.insert(path.member)
+                            }
                         }
+                        keys = Array(spellingKeys)
+                    } else {
+                        keys = member.memberKeys
+                    }
+                    for key in keys {
+                        members[key, default: []].append(symbol)
                     }
                 }
-                swiftMembers[memberScope] = members
+                swiftMembers[memberScope] = SwiftMemberIndex(members: members)
             }
-            symbols += swiftMembers[memberScope]?[match.path] ?? []
+            if let cached = swiftMembers[memberScope]?.matches[match] {
+                symbols += cached
+            } else {
+                let candidates = swiftMembers[memberScope]?.members[match.path.member] ?? []
+                let selected = candidates.filter { symbol in
+                    guard let record = record(of: symbol), match.accepts(record) else {
+                        return false
+                    }
+                    if match.ownerIdentity != nil { return true }
+                    guard let name = memberName(of: symbol) else { return false }
+                    return (SwiftMemberLookup.owner(of: name).map(SwiftMemberLookup.ownerKey) ?? [])
+                        == match.path.owner
+                }
+                swiftMembers[memberScope]?.matches[match] = selected
+                symbols += selected
+            }
         }
         var addresses: Set<UInt64> = []
         var witnesses: Set<IndexedSymbol> = []
@@ -1114,7 +1141,6 @@ package final class SymbolIndex {
             guard symbol.source == source,
                 let record = record(of: symbol),
                 extensionsOnly == record.context.isExtension,
-                match.accepts(record),
                 let name = memberName(of: symbol),
                 let section = sections.first(where: { $0.range.contains(symbol.address) }),
                 section.accepts(query.declaration.kind),

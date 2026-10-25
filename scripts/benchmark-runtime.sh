@@ -37,6 +37,11 @@ for count in [100, 1000, 10000]:
     (root / f'Symbols{count}.cpp').write_text(cpp)
     (root / f'SwiftSymbols{count}.swift').write_text('\n'.join(
         f'@inline(never) public func f{index}() -> Int32 {{ {index} }}' for index in range(count)))
+    (root / f'SwiftMembers{count}.swift').write_text('\n'.join(
+        f'public final class Owner{owner}<Value> {{\n' + '\n'.join(
+            f'    @inline(never) public static func member{member}(_ value: Int64) -> Int64 {{ value + {owner * 10 + member} }}'
+            for member in range(10)) + '\n}'
+        for owner in range(count // 10)))
 PY
 for task_count in 100 1000 10000; do
   xcrun clang++ -O2 -std=c++20 -dynamiclib "$task_providers/Symbols$task_count.cpp" \
@@ -44,5 +49,8 @@ for task_count in 100 1000 10000; do
   xcrun swiftc -O -swift-version 6 -parse-as-library -emit-library -enable-library-evolution \
     -module-name SwiftLookupBench "$task_providers/SwiftSymbols$task_count.swift" \
     -o "$task_providers/libSwiftSymbols$task_count.dylib"
+  xcrun swiftc -O -swift-version 6 -parse-as-library -emit-library -enable-library-evolution \
+    -module-name SwiftMemberLookupBench "$task_providers/SwiftMembers$task_count.swift" \
+    -o "$task_providers/libSwiftMembers$task_count.dylib"
 done
 "$task_bin/RuntimeBenchmarks" search "$task_providers"

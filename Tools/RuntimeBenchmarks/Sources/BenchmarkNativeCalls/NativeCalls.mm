@@ -1,5 +1,6 @@
 #include "BenchmarkNativeCalls.h"
 #include <ABIBridge/ABIBridge.hpp>
+#include <ABIBridge/Backend/Runtime.hpp>
 #include <ABIBridge/ObjectiveCInvocation.hpp>
 #import <BenchmarkNativeProvider.h>
 #include <algorithm>

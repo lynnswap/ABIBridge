@@ -424,3 +424,170 @@ package struct RuntimeSwiftCandidate: Sendable {
     /// The declaration's name without the module of an extension that declares it.
     package let memberName: String
 }
+
+/// The coarse member keys of a symbol, read without preparing its declaration
+/// record or its display name. A lookup validates the owner and declaration
+/// against the candidates in the selected bucket.
+package struct RuntimeSwiftMemberIndex {
+    package let memberKeys: [[UInt8]]
+    package let isPropertyDescriptor: Bool
+    package let requiresDeclarationSpelling: Bool
+
+    package init?(linkageName: String) {
+        let name = linkageName.hasPrefix("_") ? String(linkageName.dropFirst()) : linkageName
+        guard
+            let syntax = name.utf8CString.withUnsafeBufferPointer({
+                ABICopySwiftSymbolSyntax($0.baseAddress, $0.count - 1)
+            })
+        else { return nil }
+        defer { ABIReleaseSwiftSyntax(syntax) }
+        guard var node = ABISwiftSyntaxRoot(syntax).map(Node.init) else { return nil }
+        if node.kind == "Global", let child = node.child(0) { node = child }
+        var descriptor = false
+        while true {
+            let child: Int
+            switch node.kind {
+            case "Static", "DispatchThunk", "Getter", "Setter": child = 0
+            case "PropertyDescriptor":
+                descriptor = true
+                child = 0
+            case "ProtocolWitness": child = 1
+            default:
+                guard let member = Self.memberIndex(of: node) else { return nil }
+                memberKeys = member.keys
+                requiresDeclarationSpelling = member.requiresSpelling
+                isPropertyDescriptor = descriptor
+                return
+            }
+            guard let next = node.child(child) else { return nil }
+            node = next
+        }
+    }
+
+    private static func memberIndex(of node: Node) -> (keys: [[UInt8]], requiresSpelling: Bool)? {
+        switch node.kind {
+        case "Variable":
+            guard let identifier = node.child(1).flatMap(declarationName) else { return nil }
+            return ([DeclarationKey.make(identifier)], false)
+        case "Subscript": return ([DeclarationKey.make("subscript")], false)
+        case "Destructor": return ([DeclarationKey.make("deinit")], false)
+        case "Deallocator":
+            return (
+                [
+                    DeclarationKey.make(
+                        node.child(0)?.kind == "Class" ? "__deallocating_deinit" : "deinit"
+                    )
+                ], false
+            )
+        case "Function", "Allocator", "Constructor": break
+        default: return nil
+        }
+
+        guard let type = functionType(of: node) else { return nil }
+        if node.kind == "Function", let name = node.child(1), containsPrivateName(name) {
+            return ([], true)
+        }
+        // These prefixes and private-name discriminators change the source
+        // parser's member key. Keep its spelling for only those declarations.
+        if hasPrefixAttributes(type) { return ([], true) }
+
+        let names: [String]
+        if node.kind == "Allocator", node.child(0)?.kind == "Class" {
+            names = ["__allocating_init", "init"]
+        } else if node.kind == "Allocator" || node.kind == "Constructor" {
+            names = ["init"]
+        } else {
+            guard let identifier = node.child(1), let name = declarationName(identifier) else {
+                return nil
+            }
+            switch identifier.kind {
+            case "InfixOperator", "PrefixOperator", "PostfixOperator":
+                guard let alias = identifier.text else { return nil }
+                names = [name, alias]
+            default: names = [name]
+            }
+        }
+        guard let labels = argumentLabels(of: node, functionType: type) else { return nil }
+        let parameters = "(" + labels.map { $0 + ":" }.joined() + ")"
+        return (names.map { DeclarationKey.make($0 + parameters) }, false)
+    }
+
+    private static func functionType(of node: Node) -> Node? {
+        guard var type = node.children.first(where: { $0.kind == "Type" })?.child(0) else {
+            return nil
+        }
+        while type.kind == "DependentGenericType" {
+            guard let function = type.child(1)?.child(0) else { return nil }
+            type = function
+        }
+        return type
+    }
+
+    private static func hasPrefixAttributes(_ type: Node) -> Bool {
+        guard ["FunctionType", "NoEscapeFunctionType", "UncurriedFunctionType"].contains(type.kind)
+        else { return true }
+        return type.children.contains {
+            ![
+                "ArgumentTuple", "ReturnType", "ThrowsAnnotation", "TypedThrowsAnnotation",
+                "AsyncAnnotation", "SendingResultFunctionType",
+            ].contains($0.kind)
+        }
+    }
+
+    private static func containsPrivateName(_ node: Node) -> Bool {
+        node.kind == "PrivateDeclName" || node.children.contains(where: containsPrivateName)
+    }
+
+    private static func declarationName(_ node: Node) -> String? {
+        switch node.kind {
+        case "Identifier": return node.text
+        case "InfixOperator": return node.text.map { $0 + " infix" }
+        case "PrefixOperator": return node.text.map { $0 + " prefix" }
+        case "PostfixOperator": return node.text.map { $0 + " postfix" }
+        case "PrivateDeclName":
+            guard let discriminator = node.child(0)?.text else { return nil }
+            if let name = node.child(1).flatMap(declarationName) {
+                return "(" + name + " in " + discriminator + ")"
+            }
+            return "(in " + discriminator + ")"
+        case "LocalDeclName":
+            guard let name = node.child(1).flatMap(declarationName),
+                let index = node.child(0), ABISwiftSyntaxNodeHasIndex(index.pointer)
+            else { return nil }
+            return name + " #" + String(ABISwiftSyntaxNodeIndex(index.pointer) &+ 1)
+        case "RelatedEntityDeclName":
+            guard let kind = node.child(0)?.text,
+                let name = node.child(1).flatMap(declarationName)
+            else { return nil }
+            return "related decl '" + kind + "' for " + name
+        default: return nil
+        }
+    }
+
+    private static func argumentLabels(of node: Node, functionType: Node) -> [String]? {
+        if let list = node.children.first(where: { $0.kind == "LabelList" }),
+            !list.children.isEmpty
+        {
+            var labels: [String] = []
+            for label in list.children {
+                switch label.kind {
+                case "Identifier":
+                    guard let text = label.text else { return nil }
+                    labels.append(text)
+                case "FirstElementMarker": labels.append("_")
+                default: return nil
+                }
+            }
+            return labels
+        }
+        // An empty label list also represents a function whose parameters are
+        // all unlabeled. Its argument tuple supplies their count.
+        guard let argument = functionType.children.first(where: { $0.kind == "ArgumentTuple" }),
+            let parameters = argument.child(0)?.child(0)
+        else { return nil }
+        let count = parameters.kind == "Tuple" ? parameters.children.count : 1
+        return Array(repeating: "_", count: count)
+    }
+
+    private typealias Node = RuntimeSwiftDeclaration.Node
+}
