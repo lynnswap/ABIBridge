@@ -1,3 +1,4 @@
+#include <ABIBridge/Backend/ImportedHooks.h>
 #include <ABIBridge/ImportedHooks.hpp>
 #include <ABIBridge/NativeInvocation.hpp>
 #include <cassert>

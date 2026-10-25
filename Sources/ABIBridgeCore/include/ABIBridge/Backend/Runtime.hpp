@@ -1,7 +1,7 @@
 #pragma once
 
 #include <ABIBridge/NativeInvocation.hpp>
-#include <ABIBridge/Runtime.h>
+#include <ABIBridge/Backend/Runtime.h>
 #include <memory>
 #include <ptrauth.h>
 #include <stdexcept>
@@ -10,6 +10,20 @@
 #include <utility>
 
 namespace abi_bridge {
+
+enum class ownership : std::uint8_t {
+    borrowed,
+    owned,
+    unowned,
+    custom,
+};
+
+struct call_plan final {
+    language source_language = language::cxx;
+    ownership result_ownership = ownership::borrowed;
+    bool has_receiver = false;
+    bool has_indirect_result = false;
+};
 
 /// Internal compiler-lowered invocation support for native backend fixtures. Public inspection and its ownership model live in Inspection.hpp.
 class InvocationRuntime final {

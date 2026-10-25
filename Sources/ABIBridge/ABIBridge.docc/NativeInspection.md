@@ -7,7 +7,7 @@ Resolve source-level declarations and retain their images from C, C++, or Object
 Add the `ABIBridge` product to the consumer target, then include:
 
 ```c
-#include <ABIBridge/Inspection.h>
+#include <ABIBridge/ABIBridge.h>
 #include <stdio.h>
 ```
 
@@ -20,7 +20,7 @@ For example, a target in a separate Swift package can use:
 )
 ```
 
-The product supplies the Swift implementation, native code, and dependencies, including the Swift runtime and MachOKit-backed resolver. Include the documented public headers directly. Other native headers and backend handles remain implementation details. C consumers need neither a generated Swift header nor C++ interoperability; linking the internal C++ target alone is insufficient.
+The product supplies the Swift implementation, native code, and dependencies, including the Swift runtime and MachOKit-backed resolver. Use `<ABIBridge/ABIBridge.h>` for the C interface or `<ABIBridge/ABIBridge.hpp>` for C++20. The same C interface works in Objective-C; Objective-C++ can also use the typed wrappers. See <doc:NativeInterfaces> for the feature headers.
 
 ## Use C++ ownership wrappers
 
@@ -218,7 +218,7 @@ If catalog initialization cannot retain the callback image, snapshot creation re
 | `ABIResolvedSymbolGetAddress` result | Borrowed; keep the symbol or a separate image lease alive |
 | `ABIResolvedSymbolGetImage` path | Borrowed from the symbol even if a separate lease keeps the image loaded |
 
-Opaque owners use `Release` functions; allocated string buffers use `ABIFreeString`. Property accessors use `Get` for borrowed pointers or copied scalar descriptions, and `Copy` for an independently owned result. Predicate queries use `Is` or `Equal`.
+Opaque owners use `Release` functions. Property accessors use `Get` for borrowed pointers or copied scalar descriptions, and `Copy` for an independently owned result. Predicate queries use `Is` or `Equal`.
 
 Copying a handle pointer does not acquire another reference. Each call to `ABICopySharedSymbolRuntime` does acquire one, sharing the backend with Swift's `ABIRuntime.shared`. Independent runtimes own independent caches.
 

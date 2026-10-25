@@ -2,8 +2,8 @@
 // line, one line each, for scripts/check-swift-tuple-result-codegen.py.
 // Each character is an element: R and S are resilient 8- and 24-byte values,
 // i is Int64, and v is an empty tuple.
-#include <ABIBridge/Invocation.h>
-#include <ABIBridge/SwiftInvocation.h>
+#include <ABIBridge/Backend/Invocation.h>
+#include <ABIBridge/Backend/SwiftInvocation.h>
 #include <ABIBridgeCore.h>
 #include <stdio.h>
 #include <stdlib.h>

@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 
 package enum RuntimePointerAuthentication: Sendable, Hashable {
     case unsigned

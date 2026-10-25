@@ -1,3 +1,6 @@
+#include <ABIBridge/Backend/Demangling.h>
+#include <ABIBridge/Backend/ImageObservation.h>
+#include <ABIBridge/Backend/Runtime.h>
 #include <ABIBridgeCore.h>
 #include <mach-o/dyld.h>
 #include <dlfcn.h>

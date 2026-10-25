@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 
 enum SwiftReceiverMode: Sendable { case object, address, value }
 

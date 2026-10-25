@@ -1,6 +1,8 @@
 #ifndef ABIBRIDGE_VIRTUAL_ENTRIES_H
 #define ABIBRIDGE_VIRTUAL_ENTRIES_H
-#include <ABIBridge/NativeDispatch.h>
+#include <ABIBridge/Inspection.h>
+#include <ABIBridge/PointerAuthentication.h>
+#include <stdbool.h>
 #ifdef __cplusplus
 extern "C" {
 #endif

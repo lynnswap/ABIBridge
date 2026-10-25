@@ -1,5 +1,6 @@
 import ABIBridgeCore
 import ABIBridgeObjCXX
+import ABIBridgeObjCXX.Backend
 import Darwin
 import Foundation
 

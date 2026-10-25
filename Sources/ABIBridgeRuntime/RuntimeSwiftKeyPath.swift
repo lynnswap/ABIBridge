@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 import ObjectiveC
 
 private final class RuntimeKeyPathPatternStorage {

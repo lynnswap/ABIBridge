@@ -206,7 +206,9 @@ The hidden `tamper` probe corrupts a pointer signature. Run it separately after 
 
 ## Update documentation
 
-The public interfaces are the `ABIBridge` Swift module, the native headers described in the consumer guides, and the optional `ABIBridgeSwiftUI` product. Other native headers and transitively importable modules remain implementation details.
+The public interfaces are the `ABIBridge` Swift module, the consumer headers listed in the native interface guide, and the optional `ABIBridgeSwiftUI` product. `ABIBridge/ABIBridge.h` and `ABIBridge/ABIBridge.hpp` collect the C and C++ interfaces.
+
+Package sources and ABI fixtures use explicit `ABIBridgeCore.Backend` and `ABIBridgeObjCXX.Backend` imports for loader, call-interface, Swift metadata, and replacement transports. Native fixtures include those declarations from the corresponding `Backend/` directories. Keep public value-layout, pointer-authentication schema, and hook-effect types in the consumer headers; public C++ inline wrappers must include their dependencies directly. Run `python3 scripts/check-native-header-contract.py` when changing this boundary; the native consumer script also runs it.
 
 Describe public API contracts in DocC comments and longer guides in the relevant module's DocC catalog. Keep the README focused on installation and quick-start examples. Write prose without manual line wrapping.
 

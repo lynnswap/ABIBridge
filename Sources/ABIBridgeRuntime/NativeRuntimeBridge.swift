@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 import Foundation
 
 private final class NativeSymbolBox {

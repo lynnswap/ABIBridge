@@ -1,5 +1,6 @@
 import ABIBridge
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 import Darwin
 import SwiftReplacementCaller
 import SwiftReplacementFixtures

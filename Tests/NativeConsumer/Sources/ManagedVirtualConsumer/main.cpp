@@ -1,5 +1,6 @@
+#include <ABIBridge/Backend/ImportedHooks.h>
 #include "../../../ArchitectureValidation/Sources/ArchitectureFixtures/include/ArchitectureFixtures.h"
-#include <ABIBridge/ManagedVirtualEntry.h>
+#include <ABIBridge/Backend/ManagedVirtualEntry.h>
 #include <ABIBridge/Inspection.hpp>
 #include <cassert>
 #include <cstdio>

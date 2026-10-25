@@ -1,3 +1,4 @@
+#include <ABIBridge/Backend/ImportedHooks.h>
 #pragma once
 #include <ABIBridge/ImportedHooks.h>
 #include <memory>

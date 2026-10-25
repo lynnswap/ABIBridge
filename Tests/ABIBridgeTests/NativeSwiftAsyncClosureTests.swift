@@ -5,6 +5,7 @@ import ABIBridgeRuntime
 import ABIBridge
 #endif
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 import ManagedSwiftFixtures
 import Darwin
 import Testing

@@ -31,6 +31,8 @@ if [[ "$task_mode" == swiftui ]]; then
     exit
 fi
 
+python3 "$task_root/scripts/check-native-header-contract.py"
+
 xcrun clang++ -std=c++20 -dynamiclib -mmacosx-version-min=15.4 \
     "$task_root/Tests/NativeConsumer/Fixture.cpp" \
     -o "$task_fixture/libFixture.dylib"

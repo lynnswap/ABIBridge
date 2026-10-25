@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 
 package struct RuntimeExtendedExistentialShapeLayout {
     package let shape: UnsafeRawPointer

@@ -1,7 +1,8 @@
 #ifndef ABIBRIDGE_VIRTUAL_HOOKS_H
 #define ABIBRIDGE_VIRTUAL_HOOKS_H
 #include <ABIBridge/VirtualEntries.h>
-#include <ABIBridge/PointerSlot.h>
+#include <ABIBridge/HookEffects.h>
+#include <ABIBridge/ValueTypes.h>
 #ifdef __cplusplus
 extern "C" {
 #endif

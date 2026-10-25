@@ -1,6 +1,7 @@
 import ABIBridgeTestSupport
 #if os(macOS)
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 import Darwin
 import Foundation
 import Synchronization

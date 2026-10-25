@@ -1,6 +1,6 @@
 #include "include/ArchitectureFixtures.h"
 #include "VirtualMutation.hpp"
-#include <ABIBridge/ManagedVirtualEntry.h>
+#include <ABIBridge/Backend/ManagedVirtualEntry.h>
 #include <ptrauth.h>
 #include <mach/mach.h>
 #include <atomic>

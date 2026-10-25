@@ -3,6 +3,7 @@
 // Load Core as a module before referring to its declarations. Directly
 // including Invocation.h can hide its constants from Swift batch imports.
 #include <ABIBridgeCore.h>
+#include <ABIBridge/Backend.h>
 #import <ABIBridge/ObjectiveCInvocation.h>
 
 NS_ASSUME_NONNULL_BEGIN

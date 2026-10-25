@@ -1,4 +1,4 @@
-#include <ABIBridge/ManagedVirtualEntry.h>
+#include <ABIBridge/Backend/ManagedVirtualEntry.h>
 #include "ManagedFunctionHooks.hpp"
 #include "ImageOwner.hpp"
 

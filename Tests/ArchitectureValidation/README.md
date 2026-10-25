@@ -49,7 +49,7 @@ Install the resulting host and launch it with `--probe swift-closures`, or selec
 
 ## Objective-C replacement boundary
 
-The package-private Swift `ObjCReplacement` and internal `ABIBridgeObjCXX/Replacement.h` entry points prepare a callable implementation without mutating a method table. The root package's `ObjectiveCReplacementTests` temporarily install that implementation on dedicated compiler-authored fixture classes. Managed registration, inheritance, and multiple-hook ordering are covered by `ObjectiveCMethodHookTests` and the public [method-hook guide](../../Sources/ABIBridge/ABIBridge.docc/ObjectiveCMethodHooks.md). Public initializer hooks are covered by `ObjectiveCInitializerHookTests` and the Swift initializer consumer; the native frontend consumers exercise C, C++, ARC/MRC Objective-C++, and mixed Swift/C chains.
+The package-private Swift `ObjCReplacement` and internal `ABIBridgeObjCXX/Backend/Replacement.h` entry points prepare a callable implementation without mutating a method table. The root package's `ObjectiveCReplacementTests` temporarily install that implementation on dedicated compiler-authored fixture classes. Managed registration, inheritance, and multiple-hook ordering are covered by `ObjectiveCMethodHookTests` and the public [method-hook guide](../../Sources/ABIBridge/ABIBridge.docc/ObjectiveCMethodHooks.md). Public initializer hooks are covered by `ObjectiveCInitializerHookTests` and the Swift initializer consumer; the native frontend consumers exercise C, C++, ARC/MRC Objective-C++, and mixed Swift/C chains.
 
 The boundary keeps these contracts:
 
@@ -162,7 +162,7 @@ The normal `SwiftImportCaller` keeps default protections; `SwiftImportCallerCont
 
 ## Incoming native Swift callbacks
 
-The `swift-callback` mode exercises the internal `ABIBridge/SwiftCallbacks.h` entry boundary. It reuses the outgoing Swift register/stack lowering and remaps precompiled, signed executable pages beside writable configuration pages. Callback creation writes configuration, not machine instructions. Published code owners must outlive saved native pointers; this low-level boundary does not install or permanently retain public managed hooks on its own.
+The `swift-callback` mode exercises the internal `ABIBridge/Backend/SwiftCallbacks.h` entry boundary. It reuses the outgoing Swift register/stack lowering and remaps precompiled, signed executable pages beside writable configuration pages. Callback creation writes configuration, not machine instructions. Published code owners must outlive saved native pointers; this low-level boundary does not install or permanently retain public managed hooks on its own.
 
 Each entry has independent argument and result storage. A successful `proceed` retains the latest native result until it is superseded or returned; assigning a replacement transfers independent native ownership. Lifecycle callbacks destroy discarded nontrivial results and consumed incoming values. Failure after a completed continuation preserves that result instead of invoking the original again. Logical invalidation releases callback captures after in-flight entries finish and leaves the code callable through its retained fallback owner.
 

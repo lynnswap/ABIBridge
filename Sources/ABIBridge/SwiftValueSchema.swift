@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 import ABIBridgeRuntime
 
 /// The native storage of a Swift value at one position, and the kind of

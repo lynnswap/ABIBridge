@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 import Synchronization
 
 package final class RuntimeSwiftAsyncCallInterface: @unchecked Sendable {

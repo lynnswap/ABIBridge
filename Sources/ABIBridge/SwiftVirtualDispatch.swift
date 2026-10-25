@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 import ABIBridgeRuntime
 
 /// A physical slot and the owner of its storage. Declaration identity comes

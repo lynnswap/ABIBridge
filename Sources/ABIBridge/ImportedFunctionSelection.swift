@@ -1,5 +1,6 @@
 import ABIBridgeRuntime
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 
 final class ImportedFunctionSelection: Sendable {
     let value: RuntimeImportedFunctionSelection

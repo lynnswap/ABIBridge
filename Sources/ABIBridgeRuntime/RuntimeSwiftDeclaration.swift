@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 
 /// What a Swift symbol declares, read from the structure of its mangled name.
 ///

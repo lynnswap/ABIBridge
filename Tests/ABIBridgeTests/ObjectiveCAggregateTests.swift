@@ -1,6 +1,7 @@
 import ABIBridge
 import ABIBridgeCore
 import ABIBridgeObjCXX
+import ABIBridgeObjCXX.Backend
 import CoreGraphics
 import Foundation
 import ObjectiveCFixtures

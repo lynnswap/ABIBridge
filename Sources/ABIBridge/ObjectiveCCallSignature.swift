@@ -1,4 +1,5 @@
 import ABIBridgeObjCXX
+import ABIBridgeObjCXX.Backend
 import Foundation
 
 /// An Objective-C exception raised by an invoked method.

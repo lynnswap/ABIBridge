@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 
 enum SwiftArgumentConvention: Sendable, Equatable {
     case borrowing, consuming, inoutValue

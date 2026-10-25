@@ -1,3 +1,4 @@
+extern "C" void ABIValidateObjCConsumerHeaders(void);
 #import <Foundation/Foundation.h>
 #include <Block.h>
 #include <ABIBridge/ObjectiveCInvocation.hpp>
@@ -38,6 +39,7 @@ static int liveResults = 0;
 @end
 
 int main() {
+    ABIValidateObjCConsumerHeaders();
     checkPublicObjCInvocation();
     @autoreleasepool {
         {

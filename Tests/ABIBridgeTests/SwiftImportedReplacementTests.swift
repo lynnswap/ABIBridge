@@ -2,6 +2,7 @@ import ABIBridgeTestSupport
 #if os(macOS) && DEBUG
 @testable import ABIBridge
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 import Darwin
 import Foundation
 import Synchronization

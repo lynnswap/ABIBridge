@@ -1,7 +1,7 @@
 #include "include/ArchitectureFixtures.h"
 #include "VirtualMutation.hpp"
-#include <ABIBridge/PointerSlot.h>
-#include <ABIBridge/NativeDispatch.h>
+#include <ABIBridge/Backend/PointerSlot.h>
+#include <ABIBridge/Backend/NativeDispatch.h>
 #include <mach/mach.h>
 #include <ptrauth.h>
 #include <array>

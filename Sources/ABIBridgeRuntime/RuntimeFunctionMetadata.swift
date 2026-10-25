@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 
 package struct RuntimeFunctionMetadata: Sendable {
     package let flags: UInt

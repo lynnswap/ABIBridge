@@ -1,6 +1,7 @@
 import ABIBridgeTestSupport
 import ABIBridge
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 import ManagedSwiftFixtures
 import Foundation
 import Synchronization

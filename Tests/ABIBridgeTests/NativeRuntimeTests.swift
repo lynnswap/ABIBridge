@@ -1,5 +1,6 @@
 import ABIBridge
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 import Foundation
 import Darwin
 import Testing

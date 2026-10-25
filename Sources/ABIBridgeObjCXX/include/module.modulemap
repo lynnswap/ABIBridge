@@ -1,11 +1,15 @@
 module ABIBridgeObjCXX {
     header "ABIBridge/ObjectiveCInvocation.h"
-    header "ABIBridgeObjCXX/Invocation.h"
-    header "ABIBridgeObjCXX/Replacement.h"
     export *
+
     module CXX {
         requires cplusplus, objc
         header "ABIBridge/ObjectiveCInvocation.hpp"
+        export *
+    }
+
+    explicit module Backend {
+        header "ABIBridgeObjCXX/Backend.h"
         export *
     }
 }

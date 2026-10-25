@@ -1,4 +1,5 @@
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 import ObjectiveC
 
 package enum RuntimeExistentialRepresentation {

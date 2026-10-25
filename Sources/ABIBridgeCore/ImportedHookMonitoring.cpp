@@ -1,5 +1,6 @@
+#include <ABIBridge/Backend/ImportedHookMonitoring.h>
 #include <ABIBridge/ImportedHookMonitoring.h>
-#include <ABIBridge/ImageObservation.h>
+#include <ABIBridge/Backend/ImageObservation.h>
 #include <dispatch/dispatch.h>
 #include "NativeValueType.hpp"
 #include <atomic>

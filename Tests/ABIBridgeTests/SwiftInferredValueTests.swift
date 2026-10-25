@@ -1,6 +1,7 @@
 #if DEBUG
 @testable import ABIBridge
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 #else
 import ABIBridge
 #endif
