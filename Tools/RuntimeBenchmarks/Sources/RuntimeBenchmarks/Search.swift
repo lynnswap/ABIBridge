@@ -75,6 +75,7 @@ struct SearchBenchmark {
                     "\(language) declarations=\(count) first=\(median(first)) ms repeated-path=\(median(repeated)) us retained-image=\(median(retained)) us"
                 )
             }
+            try measureMembers(count: count, in: directory)
         }
         for (language, name) in [
             ("C++ simple", "_ZN7ABIPerf3addEii"),
@@ -171,5 +172,43 @@ struct SearchBenchmark {
             }
             print("Pointer bytes=\(bytes) hint=\(median(hint)) us")
         }
+    }
+
+    private static func measureMembers(count: Int, in directory: URL) throws {
+        let path = directory.appendingPathComponent("libSwiftMembers\(count).dylib")
+        let owner = "SwiftMemberLookupBench.Owner\(count / 10 - 1)"
+        let request = NativeRequest.swift(
+            NativeSwiftTypeMemberRequest.staticMethod(
+                "member9(_:)",
+                as: ((Int64) -> Int64).self
+            )
+        )
+        var first: [Double] = []
+        var repeated: [Double] = []
+        for _ in 0..<5 {
+            let runtime = ABIRuntime()
+            let type = try runtime.resolveAndWait(
+                .swift(.type(owner, genericArguments: [.type(String.self)])),
+                in: .path(path)
+            )
+            // Metadata lookup is separate from the first member-index construction.
+            let start = ContinuousClock.now
+            let initial = try type.resolveAndWait(request)
+            first.append(seconds(start.duration(to: .now)) * 1000)
+            let initialValue = try unsafe initial.unsafeInvoke(42)
+            precondition(initialValue == Int64(count + 41))
+
+            var checksum: Int64 = 0
+            let repeatedStart = ContinuousClock.now
+            for value in 0..<1000 {
+                let method = try type.resolveAndWait(request)
+                checksum += try unsafe method.unsafeInvoke(Int64(value))
+            }
+            repeated.append(seconds(repeatedStart.duration(to: .now)) * 1e6 / 1000)
+            precondition(checksum == 499500 + 1000 * Int64(count - 1))
+        }
+        print(
+            "Swift members=\(count) generic-owners=\(count / 10) first=\(median(first)) ms repeated=\(median(repeated)) us"
+        )
     }
 }

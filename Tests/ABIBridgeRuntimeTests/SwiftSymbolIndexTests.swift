@@ -7,6 +7,76 @@ import MachOKit
 import Testing
 
 struct SwiftSymbolIndexTests {
+    @Test func memberIndexPreservesPrivateGenericAndAttributedDeclarations() async throws {
+        let module = "MemberSpellingFixture"
+        let fixture = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                private func secret<Value>(_ value: Value, flag: Bool) -> Value { value }
+                public func callSecret(_ value: Int) -> Int { secret(value, flag: true) }
+                @Sendable public func sendable(_ value: Int) -> Int { value }
+                """
+        )
+        defer { fixture.cleanup() }
+        let image = try #require(
+            try RuntimeSymbolResolver().images(matching: .path(fixture.libraryURL)).first
+        )
+        let index = SymbolIndex(image: image)
+        let names = try fixture.definedSymbols().compactMap {
+            DeclarationKey.demangle($0, language: .swift)
+        }
+        for prefix in [module + ".(secret in ", module + ".sendable@"] {
+            let name = try #require(names.first { $0.hasPrefix(prefix) })
+            let declaration = RuntimeDeclaration(name: name, language: .swift)
+            let expected = try #require(try index.resolve(declaration, source: .image))
+            let candidates = index.swiftDeclarationCandidates(
+                SymbolQuery(declaration),
+                source: .image,
+                extensionsOnly: false
+            )
+            #expect(candidates.map(\.symbol.address) == [expected.address], "\(name)")
+        }
+    }
+
+    @Test func memberIndexSeparatesOwnersAndUnlabeledTupleArguments() async throws {
+        let module = "MemberTreeFixture"
+        let fixture = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                public struct First {
+                    public static func choose(_ pair: (Int, Int)) -> Int { pair.0 }
+                    public static func choose(_ first: Int, _ second: Int) -> Int { first }
+                }
+                public struct Second {
+                    public static func choose(_ pair: (Int, Int)) -> Int { pair.1 }
+                    public static func choose(_ first: Int, _ second: Int) -> Int { second }
+                }
+                """
+        )
+        defer { fixture.cleanup() }
+        let image = try #require(
+            try RuntimeSymbolResolver().images(matching: .path(fixture.libraryURL)).first
+        )
+        let index = SymbolIndex(image: image)
+        for member in [
+            "First.choose((Swift.Int, Swift.Int)) -> Swift.Int",
+            "Second.choose(Swift.Int, Swift.Int) -> Swift.Int",
+        ] {
+            let declaration = RuntimeDeclaration(
+                name: "static " + module + "." + member,
+                language: .swift
+            )
+            let expected = try #require(try index.resolve(declaration, source: .image))
+            let candidates = index.swiftDeclarationCandidates(
+                SymbolQuery(declaration),
+                source: .image,
+                extensionsOnly: false
+            )
+            #expect(candidates.count == 1)
+            #expect(candidates.first?.symbol.address == expected.address)
+        }
+    }
+
     @Test func memberPathsKeepParameterLabelsAndUnicodeAccessorNames() throws {
         let declarations = [
             (
@@ -41,7 +111,11 @@ struct SwiftSymbolIndexTests {
         )
         #expect(allocator.initializer == .spelled(allocatingInit: true))
         #expect(
-            SwiftMemberPath(owner: "First.Box", member: "__allocating_init(value:)", allocates: true)
+            SwiftMemberPath(
+                owner: "First.Box",
+                member: "__allocating_init(value:)",
+                allocates: true
+            )
                 == SwiftMemberPath(owner: "First.Box", member: "init(value:)")
         )
     }
@@ -520,7 +594,9 @@ struct SwiftSymbolIndexTests {
             )
         })
         let candidates = try resolver.swiftDeclarationCandidates(request, in: image)
-        #expect(candidates.map(\.record.role) == [.dispatchThunk, .implementation, .implementation])
+        #expect(
+            candidates.map(\.record.role) == [.dispatchThunk, .implementation, .implementation]
+        )
         #expect(candidates.map(\.symbol.source) == [.image, .sharedCache, .sharedCache])
         #expect(Set(candidates.map(\.record.identity)) == [identity, overload])
     }
