@@ -2615,7 +2615,9 @@ struct SwiftImportedFunctionHookTests {
         #expect(try unsafe oracle.unsafeInvoke(40) == 41)
     }
 
-    @Test func failedPublicationKeepsProtectionOnlyRecoveryReachable() async throws {
+    @Test(arguments: [false, true])
+    func failedPublicationKeepsProtectionOnlyRecoveryReachable(retryRegistration: Bool) async throws
+    {
         let fixture = try CompiledSwiftReplacementFixture(); defer { fixture.cleanup() }
         let target = try await fixture.runtime.resolve(
             .swift(
@@ -2646,14 +2648,19 @@ struct SwiftImportedFunctionHookTests {
             consumingArguments: false,
             retaining: target
         )
+        let called = Mutex(false)
         let handler = SwiftHookHandler(failure: { Issue.record("Unexpected: \($0)") }) {
             frame,
             values in
-            try frame.use { try $0(values) }
+            called.withLock { $0 = true }
+            return try frame.use { try $0(values) }
         }
         let repaired = Mutex(false)
         let transport = SwiftReplacementTransport(
-            exchange: { _, before, _ in
+            exchange: { address, before, after in
+                if repaired.withLock({ $0 }) {
+                    return SwiftReplacementTransport.live.exchange(address, before, after)
+                }
                 var result = ABIPointerSlotResult()
                 result.status = Int32(ABIPointerSlotRestoreFailed)
                 result.observed = before
@@ -2672,6 +2679,7 @@ struct SwiftImportedFunctionHookTests {
             }
         )
         let registry = SwiftHookRegistry()
+        var failedRegistration: NativeSwiftImportedFunctionHook?
         do {
             _ = try await registry.register(
                 selection: selection,
@@ -2685,15 +2693,37 @@ struct SwiftImportedFunctionHookTests {
             #expect(slot.mutation?.didWrite == false)
             #expect(slot.protectionRecovery?.status == Int32(ABIPointerSlotRestoreFailed))
             #expect(try unsafe oracle.unsafeInvoke(40) == 41)
-            repaired.withLock { $0 = true }
+            if !retryRegistration { failedRegistration = error.registration }
+        }
+        if retryRegistration {
+            await #expect(throws: NativeSwiftReplacementError.self) {
+                try await registry.register(
+                    selection: selection,
+                    signature: signature,
+                    handler: handler
+                )
+            }
+        }
+        repaired.withLock { $0 = true }
+        if let failedRegistration {
             try await registry.recover(
-                node: ObjectIdentifier(error.registration.node),
-                records: error.registration.records
+                node: ObjectIdentifier(failedRegistration.node),
+                records: failedRegistration.records
             )
             #expect(
-                error.registration.slots[0].protectionRecovery?.status
+                failedRegistration.slots[0].protectionRecovery?.status
                     == Int32(ABIPointerSlotComplete)
             )
+        } else {
+            let hook = try await registry.register(
+                selection: selection,
+                signature: signature,
+                handler: handler
+            )
+            defer { hook.invalidate() }
+            #expect(hook.slots[0].status == .active)
+            #expect(try unsafe oracle.unsafeInvoke(40) == 41)
+            #expect(called.withLock { $0 })
         }
     }
 
