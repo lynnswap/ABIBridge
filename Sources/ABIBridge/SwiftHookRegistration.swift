@@ -120,7 +120,14 @@ public struct NativeSwiftHookInstallationError: Error {
 
 actor SwiftHookRegistry {
     static let shared = SwiftHookRegistry()
-    private struct Entry { let group: SwiftHookGroup; var recoveryOwner: ObjectIdentifier? }
+    private struct Recovery {
+        let node: ObjectIdentifier
+        let record: SwiftHookSlotRecord
+    }
+    private struct Entry {
+        let group: SwiftHookGroup
+        var recovery: Recovery?
+    }
     private var entries: [SwiftHookSlotKey: Entry] = [:]
 
     func register(selection: ImportedFunctionSelection, signature: SwiftHookSignature, handler: SwiftHookHandler,
@@ -142,13 +149,11 @@ actor SwiftHookRegistry {
             let authentication = reference.authentication
             let group: SwiftHookGroup
             if let entry = entries[key] {
-                guard entry.recoveryOwner == nil else {
-                    throw ABIResolutionError.unsupportedDeclaration("This slot has pending recovery from an earlier failed Swift hook installation.")
-                }
                 group = entry.group
                 guard group.authentication == authentication && group.signature.matches(signature) else {
                     throw ABIResolutionError.unsupportedDeclaration("The existing Swift hook uses a different signature, ownership or authentication contract.")
                 }
+                try recover(key)
                 let snapshot = group.storage.snapshots()[0]
                 guard let current = group.bits(), current == snapshot.after || (!snapshot.pending && !snapshot.needsRepair && current == snapshot.before) else {
                     throw ABIResolutionError.unsupportedDeclaration("Another writer displaced this Swift hook entry.")
@@ -186,7 +191,9 @@ actor SwiftHookRegistry {
                     let snapshot = previous.group.storage.snapshots()[0]
                     if snapshot.wasPublished || snapshot.needsRepair {
                         entries[previous.group.key] = Entry(group: previous.group,
-                            recoveryOwner: snapshot.pending || snapshot.needsRepair ? ObjectIdentifier(node) : nil)
+                            recovery: snapshot.pending || snapshot.needsRepair
+                                ? Recovery(node: ObjectIdentifier(node), record: previous) : nil
+                        )
                     }
                 }
                 throw NativeSwiftHookInstallationError(underlyingError: error, failedIndex: index, registration: registration)
@@ -199,15 +206,20 @@ actor SwiftHookRegistry {
         var failed: [Int] = []
         for (index, record) in records.enumerated() {
             let key = record.group.key
-            guard entries[key]?.recoveryOwner == node else { continue }
-            do { try record.group.storage.restore() } catch { failed.append(index) }
-            record.captureRollback()
-            let snapshot = record.group.storage.snapshots()[0]
-            if !snapshot.pending && !snapshot.needsRepair {
-                if snapshot.wasPublished { entries[key]?.recoveryOwner = nil }
-                else { entries.removeValue(forKey: key) }
-            }
+            guard entries[key]?.recovery?.node == node else { continue }
+            do { try recover(key) } catch { failed.append(index) }
         }
         if !failed.isEmpty { throw NativeSwiftReplacementError(operation: .restore, failedIndices: failed) }
+    }
+
+    private func recover(_ key: SwiftHookSlotKey) throws {
+        guard let entry = entries[key], let recovery = entry.recovery else { return }
+        defer { recovery.record.captureRollback() }
+        try entry.group.storage.restore()
+        if entry.group.storage.snapshots()[0].wasPublished {
+            entries[key]?.recovery = nil
+        } else {
+            entries.removeValue(forKey: key)
+        }
     }
 }
