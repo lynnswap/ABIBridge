@@ -200,7 +200,7 @@ enum SwiftInferredValue {
         guard let memo = currentMemo else {
             let result = $currentMemo.withValue(InferenceMemo()) {
                 Result { () throws(InferenceFailure) -> Classification in
-                    try classification(of: metadata)
+                    try Self.classification(of: metadata)
                 }
             }
             return try result.get()
