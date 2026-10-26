@@ -1,5 +1,6 @@
 #if DEBUG
 @testable import ABIBridge
+import ABIBridgeRuntime
 import ABIBridgeCore
 import ABIBridgeCore.Backend
 #else
@@ -39,6 +40,48 @@ extension CFStringCompareFlags: ABIBridgeSwiftValue {
 @Suite(.serialized)
 struct SwiftInferredValueTests {
     private let runtime = ABIRuntime()
+
+    #if DEBUG
+    @Test func inferenceRetriesAfterModuleImageAcquisitionBecomesAvailable() throws {
+        let (library, _) = try provider(
+            """
+            public struct Record {
+                public var text: String
+                public var count: Int64
+            }
+            @_cdecl("ABIInferenceRetryMetadata")
+            public func retryMetadata() -> UnsafeRawPointer {
+                unsafeBitCast(Record.self, to: UnsafeRawPointer.self)
+            }
+            """
+        )
+        defer { library.cleanup() }
+        let metadata = unsafeBitCast(
+            try library.symbol(named: "ABIInferenceRetryMetadata"),
+            to: (@convention(c) () -> UnsafeRawPointer).self
+        )()
+        let type = unsafeBitCast(metadata, to: Any.Type.self)
+        let target = library.libraryURL.resolvingSymlinksInPath()
+        SwiftInferredValue.$moduleImageLoader.withValue({ path in
+            if URL(fileURLWithPath: path).resolvingSymlinksInPath() == target {
+                throw RuntimeResolutionError.imageUnavailable
+            }
+            return try RuntimeImage.opening(path: path, loading: .loadedOnly)
+        }) {
+            #expect {
+                _ = try SwiftInferredValue.layout(of: type, position: .nested)
+            } throws: { error in
+                guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                    return false
+                }
+                return message.contains("cannot read the symbols of the image")
+            }
+        }
+        let layout = try SwiftInferredValue.layout(of: type, position: .nested)
+        #expect(!ABISwiftValueIsIndirect(layout.handle))
+        #expect(try SwiftInferredValue.layout(of: type, position: .nested) === layout)
+    }
+    #endif
 
     private func provider(
         _ source: String,

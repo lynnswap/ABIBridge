@@ -73,6 +73,17 @@ enum SwiftValuePosition: Sendable, Equatable {
 /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/SIL/IR/TypeLowering.cpp
 /// https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/lib/IRGen/GenValueWitness.cpp
 enum SwiftInferredValue {
+    #if DEBUG
+    @TaskLocal static var moduleImageLoader: (@Sendable (String) throws -> RuntimeImage)?
+    #endif
+
+    fileprivate static func moduleImage(at path: String) throws -> RuntimeImage {
+        #if DEBUG
+        if let loader = moduleImageLoader { return try loader(path) }
+        #endif
+        return try RuntimeImage.opening(path: path, loading: .loadedOnly)
+    }
+
     enum Convention: Sendable {
         case loadable(CValueType)
         case addressOnly
@@ -167,25 +178,25 @@ enum SwiftInferredValue {
         var masksAddressability = false
     }
 
-    private static let classifications = Mutex<
-        [ObjectIdentifier: Result<Classification, InferenceFailure>]
-    >([:])
+    private static let classifications = Mutex<[ObjectIdentifier: Classification]>([:])
 
-    /// The classification of a struct or enum, cached per metadata. Swift
+    /// Conclusive classifications are cached per metadata. Swift
     /// metadata stays valid because images with Swift metadata are not unloaded.
     private static func classification(
         of metadata: Any.Type
     ) throws(InferenceFailure) -> Classification {
         let key = ObjectIdentifier(metadata)
-        if let cached = classifications.withLock({ $0[key] }) { return try cached.get() }
+        if let cached = classifications.withLock({ $0[key] }) { return cached }
         // Fields classify recursively, so classify outside the lock.
-        let result = Result { () throws(InferenceFailure) -> Classification in
-            try classify(metadata)
+        let classification = try classify(metadata)
+        // Missing image evidence can become available after initialization.
+        guard case .undecided = classification.convention else {
+            return classifications.withLock { classifications in
+                classifications[key] = classifications[key] ?? classification
+                return classifications[key]!
+            }
         }
-        return try classifications.withLock { classifications in
-            classifications[key] = classifications[key] ?? result
-            return classifications[key]!
-        }.get()
+        return classification
     }
 
     private struct Field {
@@ -879,7 +890,7 @@ enum SwiftInferredValue {
         let parents: Set<String>
     }
 
-    private static let nonEvolutionGaps = Mutex<[StoredKey: String?]>([:])
+    private static let loadableContexts = Mutex<Set<StoredKey>>([])
 
     /// Why the records of a nongeneric struct or enum of a module built
     /// without library evolution leave it undecided where values of the
@@ -918,10 +929,10 @@ enum SwiftInferredValue {
         storedBy parents: Set<String>
     ) -> String? {
         let key = StoredKey(metadata: ObjectIdentifier(metadata), parents: parents)
-        if let cached = nonEvolutionGaps.withLock({ $0[key] }) { return cached }
-        let gap = findNonEvolutionGap(of: metadata, storedBy: parents)
-        nonEvolutionGaps.withLock { $0[key] = gap }
-        return gap
+        if loadableContexts.withLock({ $0.contains(key) }) { return nil }
+        if let gap = findNonEvolutionGap(of: metadata, storedBy: parents) { return gap }
+        loadableContexts.withLock { _ = $0.insert(key) }
+        return nil
     }
 
     private static func findNonEvolutionGap(
@@ -1048,10 +1059,7 @@ private struct ModuleContext {
         let header: UInt
         let module: String
     }
-    private struct Image: Sendable {
-        let image: RuntimeImage?
-    }
-    private static let images = Mutex<[UInt: Image]>([:])
+    private static let images = Mutex<[UInt: RuntimeImage]>([:])
     private static let addressability = Mutex<[Key: Bool]>([:])
 
     init(_ metadata: Any.Type) {
@@ -1129,15 +1137,15 @@ private struct ModuleContext {
             let path = info.dli_fname
         else { return nil }
         let header = UInt(bitPattern: base)
-        if let cached = images.withLock({ $0[header] }) { return (header, cached.image) }
-        let image = Image(
-            image: try? RuntimeImage.opening(path: String(cString: path), loading: .loadedOnly)
-        )
+        if let cached = images.withLock({ $0[header] }) { return (header, cached) }
+        guard let image = try? SwiftInferredValue.moduleImage(at: String(cString: path)) else {
+            return (header, nil)
+        }
         let cached = images.withLock { images in
             images[header] = images[header] ?? image
             return images[header]!
         }
-        return (header, cached.image)
+        return (header, cached)
     }
 
     /// The module's context as it starts the module's own symbols: `s` for
