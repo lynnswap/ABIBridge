@@ -633,10 +633,6 @@ struct SwiftCallbackValues: Sendable {
         }
     }
 
-    private static let releaseContext: @Sendable (UnsafeMutableRawPointer) -> Void = {
-        ABIReleaseSwiftClosureContext($0.load(as: ABISwiftClosureValue.self).ownedContext)
-    }
-
     /// Destroys a consumed callback input that `conversion` receives.
     private static func inputDestructor(
         _ conversion: SwiftHostConversion
@@ -655,17 +651,7 @@ struct SwiftCallbackValues: Sendable {
                 }
             }
         }
-        switch conversion.kind {
-        case .closure: return releaseContext
-        case .runtimeValue(let plan) where plan.nativeClosure != nil: return releaseContext
-        default: break
-        }
-        let metadata = conversion.runtimeValue?.valueType.metadata ?? conversion.host
-        let constants = SwiftValueConstants(metadata)
-        return {
-            constants.initialize(at: $0)
-            ABISwiftDestroyValue(unsafeBitCast(metadata, to: UnsafeRawPointer.self), $0)
-        }
+        return { conversion.destroyNative(at: $0) }
     }
 
     func makeScope(
