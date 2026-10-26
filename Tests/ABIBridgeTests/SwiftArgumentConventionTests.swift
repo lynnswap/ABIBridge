@@ -1,6 +1,26 @@
 import ABIBridge
 import ManagedSwiftFixtures
 import Testing
+#if os(macOS)
+import ABIBridgeTestSupport
+import Foundation
+import Synchronization
+
+private struct RejectedHookArgument: ABIBridgeValue {
+    static let abiType = NativeType.int64
+    init(nativeValue: NativeValue) throws { throw ArgumentEncodingFailure.expected }
+    static func nativeValue(from value: Self) throws -> NativeValue {
+        try NativeValue(copying: Int64(41), as: abiType)
+    }
+}
+
+private final class BorrowedHookPointer: ABIBridgeValue {
+    static let abiType = NativeType.pointer
+    let native: NativeValue
+    init(nativeValue: NativeValue) { native = nativeValue }
+    static func nativeValue(from value: BorrowedHookPointer) -> NativeValue { value.native }
+}
+#endif
 
 extension ArgumentCounter: ABIBridgeSwiftValue {
     public static var swiftABIType: NativeType { .int64 }
@@ -24,6 +44,82 @@ private final class ForeignTupleWord: ABIBridgeValue {
 }
 
 struct SwiftArgumentConventionTests {
+    #if os(macOS)
+    @Test func failedHookDecodingPreservesUnclaimedConsumedAdapterPointers() async throws {
+        let module = "ConsumedAdapter_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let provider = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                public struct AdapterOwner {
+                    public var value: Int64
+                    @inline(never) public init(_ value: Int64, _ pointer: UnsafeMutableRawPointer) {
+                        self.value = value + 1
+                    }
+                }
+                """,
+            linkArguments: ["-O", "-swift-version", "6", "-emit-module"]
+        )
+        defer { provider.cleanup() }
+        let caller = try FixtureLibrary(
+            swiftModule: module + "Caller",
+            swiftSource: """
+                import \(module)
+                @inline(never) public func callConsumedAdapters(_ pointer: UnsafeMutableRawPointer) -> Int64 {
+                    AdapterOwner(41, pointer).value
+                }
+                """,
+            linkArguments: [
+                "-O", "-swift-version", "6", "-I", provider.directory.path,
+                provider.libraryURL.path, "-Xlinker", "-no_data_const",
+            ]
+        )
+        defer { caller.cleanup() }
+        let runtime = ABIRuntime()
+        let type = try await runtime.resolve(
+            .swift(.type(module + ".AdapterOwner")),
+            in: .path(provider.libraryURL)
+        )
+        let target = try await type.resolve(
+            .swift(
+                .initializer(
+                    "init(Swift.Int64, Swift.UnsafeMutableRawPointer) -> \(module).AdapterOwner",
+                    as: ((RejectedHookArgument, BorrowedHookPointer) -> NativeSwiftValue).self
+                )
+            )
+        )
+        let invoke = try await runtime.resolve(
+            .swift(
+                .function(
+                    module + "Caller.callConsumedAdapters(_:)",
+                    as: ((UnsafeMutableRawPointer) -> Int64).self
+                )
+            ),
+            in: .path(caller.libraryURL)
+        )
+        let retained = Unmanaged.passRetained(ForeignTupleWord(41))
+        weak var observed = retained.takeUnretainedValue()
+        // Keep the regression safe on the broken implementation, which consumes this reference.
+        defer { if observed != nil { retained.release() } }
+        #expect(try unsafe invoke.unsafeInvoke(retained.toOpaque()) == 42)
+        let failures = Mutex(0)
+        let hook = try unsafe await target.hookImportedCalls(
+            in: .path(caller.libraryURL),
+            using: runtime,
+            onFailure: { error in
+                #expect(error is ArgumentEncodingFailure)
+                failures.withLock { $0 += 1 }
+            }
+        ) { _, _, _ in
+            Issue.record("The first adapter rejects the input before the hook body runs.")
+            throw ArgumentEncodingFailure.expected
+        }
+        defer { hook.invalidate() }
+        #expect(try unsafe invoke.unsafeInvoke(retained.toOpaque()) == 42)
+        #expect(failures.withLock { $0 } == 1)
+        #expect(observed != nil)
+    }
+    #endif
+
     @Test func tupleInoutRequiresNativeStorageButGenericTupleDataKeepsItsObjects() async throws {
         typealias Value = (ForeignTupleWord, Int64)
         let runtime = ABIRuntime.shared
