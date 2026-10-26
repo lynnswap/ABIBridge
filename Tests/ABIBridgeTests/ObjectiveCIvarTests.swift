@@ -11,33 +11,37 @@ struct ObjectiveCIvarTests {
         fixture.inheritedObject = object
         fixture.childObject = ["first", "second"] as NSArray
         let handle = ABIRuntime.shared.object(fixture)
-        #expect(try handle.value(forObjCIvar: "_inheritedObject", as: NSObject.self) === object)
         #expect(
-            try handle.value(forObjCIvar: "_childObject", as: [String].self) == ["first", "second"]
+            try unsafe handle.value(forObjCIvar: "_inheritedObject", as: NSObject.self) === object
+        )
+        #expect(
+            try unsafe handle.value(forObjCIvar: "_childObject", as: [String].self) == [
+                "first", "second",
+            ]
         )
         fixture.childObject = NSNumber(value: 42)
-        #expect(try handle.value(forObjCIvar: "_childObject", as: Int.self) == 42)
+        #expect(try unsafe handle.value(forObjCIvar: "_childObject", as: Int.self) == 42)
         #expect(throws: ABIResolutionError.ivarNotFound(name: "childObject", className: NSStringFromClass(ABIIvarChild.self))) {
-            try handle.value(forObjCIvar: "childObject", as: NSObject?.self)
+            try unsafe handle.value(forObjCIvar: "childObject", as: NSObject?.self)
         }
     }
 
     @Test func missingNilAndIncompatibleValuesRemainDistinct() throws {
         let handle = ABIRuntime.shared.object(ABIIvarFixture())
-        #expect(try handle.value(forObjCIvar: "_inheritedObject", as: NSObject?.self) == nil)
+        #expect(try unsafe handle.value(forObjCIvar: "_inheritedObject", as: NSObject?.self) == nil)
         #expect(throws: ABIInvocationError.unexpectedNilResult(expected: String(reflecting: NSObject.self))) {
-            try handle.value(forObjCIvar: "_inheritedObject", as: NSObject.self)
+            try unsafe handle.value(forObjCIvar: "_inheritedObject", as: NSObject.self)
         }
         #expect(throws: ABIResolutionError.ivarNotFound(name: "_missing", className: NSStringFromClass(ABIIvarFixture.self))) {
-            try handle.value(forObjCIvar: "_missing", as: NSObject?.self)
+            try unsafe handle.value(forObjCIvar: "_missing", as: NSObject?.self)
         }
         #expect(throws: ABIResolutionError.self) {
-            try handle.value(forObjCIvar: "_inheritedObject\0suffix", as: NSObject?.self)
+            try unsafe handle.value(forObjCIvar: "_inheritedObject\0suffix", as: NSObject?.self)
         }
         let fixture = ABIIvarFixture()
         fixture.inheritedObject = NSObject()
         #expect(throws: ABIInvocationError.self) {
-            try ABIRuntime.shared.object(fixture).value(
+            try unsafe ABIRuntime.shared.object(fixture).value(
                 forObjCIvar: "_inheritedObject",
                 as: String.self
             )
@@ -52,14 +56,14 @@ struct ObjectiveCIvarTests {
         let handle = ABIRuntime.shared.object(fixture)
         for name in ["_scalar", "_pointer", "_range"] {
             #expect(throws: ABIResolutionError.self) {
-                try handle.value(forObjCIvar: name, as: NSObject?.self)
+                try unsafe handle.value(forObjCIvar: name, as: NSObject?.self)
             }
         }
         #expect(throws: ABIResolutionError.self) {
-            try handle.value(forObjCIvar: "_scalar", as: Int.self)
+            try unsafe handle.value(forObjCIvar: "_scalar", as: Int.self)
         }
         #expect(throws: ABIResolutionError.self) {
-            try handle.value(forObjCIvar: "_pointer", as: UnsafeRawPointer.self)
+            try unsafe handle.value(forObjCIvar: "_pointer", as: UnsafeRawPointer.self)
         }
     }
 
@@ -72,7 +76,7 @@ struct ObjectiveCIvarTests {
             let value = NSObject()
             original = value
             fixture.inheritedObject = value
-            return try ABIRuntime.shared.object(fixture).value(
+            return try unsafe ABIRuntime.shared.object(fixture).value(
                 forObjCIvar: "_inheritedObject",
                 as: NSObject.self
             )
@@ -91,43 +95,48 @@ struct ObjectiveCIvarTests {
             let object = NSObject()
             observed = object
             fixture.weakObject = object
-            let value = try handle.value(forObjCIvar: "_weakObject", as: NSObject.self)
+            let value = try unsafe handle.value(forObjCIvar: "_weakObject", as: NSObject.self)
             #expect(value === object)
             return value
         }
         #expect(observed != nil && result === observed)
         result = nil
         #expect(observed == nil)
-        #expect(try handle.value(forObjCIvar: "_weakObject", as: NSObject?.self) == nil)
+        #expect(try unsafe handle.value(forObjCIvar: "_weakObject", as: NSObject?.self) == nil)
         let borrowed = NSObject()
         fixture.unretainedObject = borrowed
         try withExtendedLifetime(borrowed) {
-            let value = try handle.value(forObjCIvar: "_unretainedObject", as: NSObject.self)
+            let value = try unsafe handle.value(forObjCIvar: "_unretainedObject", as: NSObject.self)
             #expect(value === borrowed)
             fixture.unretainedObject = nil
         }
-        #expect(try handle.value(forObjCIvar: "_unretainedObject", as: NSObject?.self) == nil)
+        #expect(
+            try unsafe handle.value(forObjCIvar: "_unretainedObject", as: NSObject?.self) == nil
+        )
     }
 
     @Test func classAndBlockValuesUseTheirDeclaredRepresentations() throws {
         let fixture = ABIIvarFixture()
         let handle = ABIRuntime.shared.object(fixture)
-        #expect(try handle.value(forObjCIvar: "_classObject", as: AnyClass?.self) == nil)
+        #expect(try unsafe handle.value(forObjCIvar: "_classObject", as: AnyClass?.self) == nil)
         fixture.classObject = NSString.self
-        #expect(try handle.value(forObjCIvar: "_classObject", as: AnyClass.self) === NSString.self)
+        #expect(
+            try unsafe handle.value(forObjCIvar: "_classObject", as: AnyClass.self)
+                === NSString.self
+        )
         #expect(throws: ABIInvocationError.self) {
-            try handle.value(forObjCIvar: "_classObject", as: NSObject.self)
+            try unsafe handle.value(forObjCIvar: "_classObject", as: NSObject.self)
         }
         typealias Block = @convention(block) (Int32) -> Int32
         var amount: Int32 = 7
         fixture.block = { [amount] in $0 + amount }
         amount = 100
-        let block = try handle.value(forObjCIvar: "_block", as: Block.self)
+        let block = try unsafe handle.value(forObjCIvar: "_block", as: Block.self)
         fixture.block = nil
         #expect(block(3) == 10)
-        #expect(try handle.value(forObjCIvar: "_block", as: Block?.self) == nil)
+        #expect(try unsafe handle.value(forObjCIvar: "_block", as: Block?.self) == nil)
         #expect(throws: ABIResolutionError.self) {
-            try handle.value(forObjCIvar: "_block", as: ((Int32) -> Int32).self)
+            try unsafe handle.value(forObjCIvar: "_block", as: ((Int32) -> Int32).self)
         }
     }
 
@@ -136,9 +145,9 @@ struct ObjectiveCIvarTests {
         for receiver in receivers {
             let actual: AnyClass = try #require(object_getClass(receiver))
             let handle = ABIRuntime.shared.object(receiver)
-            let found = try handle.value(forObjCIvar: "isa", as: AnyClass.self)
+            let found = try unsafe handle.value(forObjCIvar: "isa", as: AnyClass.self)
             #expect(found === actual)
-            let optional = try handle.value(forObjCIvar: "isa", as: AnyClass?.self)
+            let optional = try unsafe handle.value(forObjCIvar: "isa", as: AnyClass?.self)
             #expect(optional === actual)
         }
     }
@@ -151,7 +160,7 @@ struct ObjectiveCIvarTests {
             observed = object
             fixture.inheritedObject = object
             #expect(throws: ABIInvocationError.self) {
-                try ABIRuntime.shared.object(fixture).value(
+                try unsafe ABIRuntime.shared.object(fixture).value(
                     forObjCIvar: "_inheritedObject",
                     as: String.self
                 )

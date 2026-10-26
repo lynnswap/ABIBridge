@@ -154,10 +154,13 @@ struct SwiftConsumer {
             let capturedAgainBlock = try unsafe capturedAgain.unsafeInvoke()
             precondition(boundCapturedBlock?(11) == 42 && capturedAgainBlock?(11) == 42)
             precondition(capturedBlock?(11) == 42)
-            let storedBlock = try object.value(forObjCIvar: "handler", as: ConsumerBlock.self)
+            let storedBlock = try unsafe object.value(
+                forObjCIvar: "handler",
+                as: ConsumerBlock.self
+            )
             try unsafe setter.unsafeInvoke(nil)
             precondition(storedBlock(11) == 42)
-            let nilIvar = try object.value(forObjCIvar: "handler", as: ConsumerBlock?.self)
+            let nilIvar = try unsafe object.value(forObjCIvar: "handler", as: ConsumerBlock?.self)
             precondition(nilIvar == nil)
             let capturedFactory = try ABIRuntime.shared.resolveAndWait(
                 .objc(

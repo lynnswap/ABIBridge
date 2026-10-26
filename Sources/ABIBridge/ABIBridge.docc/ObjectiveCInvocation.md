@@ -180,8 +180,8 @@ Use the literal runtime ivar name, including any underscore; this is not a prope
 
 ```swift
 let object = ABIRuntime.shared.object(renderer)
-let image = try object.value(forObjCIvar: "_image", as: UIImage?.self)
-let type = try object.value(forObjCIvar: "_rendererClass", as: AnyClass?.self)
+let image = try unsafe object.value(forObjCIvar: "_image", as: UIImage?.self)
+let type = try unsafe object.value(forObjCIvar: "_rendererClass", as: AnyClass?.self)
 ```
 
 Lookup searches the receiver's Objective-C class hierarchy and checks the ivar encoding before reading. The special isa field is decoded through the runtime rather than read as a raw class pointer. Object values can use ordinary Swift bridging, such as `NSString` to `String` or `NSArray` to an array. Class ivars return metatypes. Typed block ivars use `@convention(block)`; the caller must know the inner signature.
