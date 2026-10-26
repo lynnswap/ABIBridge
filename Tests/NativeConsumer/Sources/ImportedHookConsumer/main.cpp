@@ -3,7 +3,11 @@
 #include <ABIBridge/NativeInvocation.hpp>
 #include <cassert>
 #include <cstdio>
+#include <cstring>
 #include <dlfcn.h>
+#include <mach-o/dyld.h>
+#include <limits.h>
+#include <new>
 static int released=0;
 static void release(void *) { ++released; }
 static void failed(void *,const ABIResolutionFailure *) { assert(false); }
@@ -17,6 +21,70 @@ static bool callback(void *,ABIImportedInvocation *call,ABIResolutionFailure **e
     if(!ABIImportedInvocationReadResult(call,&result,sizeof(result),error)) return false;
     ++result;
     return ABIImportedInvocationSetResult(call,&result,sizeof(result),error);
+}
+static int allocationCallbacks = 0;
+static bool allocatingRecursively = false;
+// Keep this import even in Release: eliding a new/delete pair would miss the
+// executable's slot also used by the statically linked dispatcher.
+__attribute__((noinline, optnone)) static void *allocate(size_t size) { return ::operator new(size); }
+static void checkSelfImportedAllocation() {
+    char executable[PATH_MAX]; uint32_t capacity = sizeof(executable);
+    assert(_NSGetExecutablePath(executable, &capacity) == 0);
+    abi_bridge::runtime runtime;
+    auto report=[](const abi_bridge::resolution_error&) noexcept { assert(false); };
+    auto hook = abi_bridge::hook_imported_function<void*(size_t)>(runtime,
+        {"operator new(unsigned long)", abi_bridge::language::cxx},
+        abi_bridge::image_selector::path(executable),
+        [](auto& next, size_t size) {
+            ++allocationCallbacks;
+            if (!allocatingRecursively) {
+                allocatingRecursively = true;
+                ::operator delete(allocate(8));
+                allocatingRecursively = false;
+            }
+            return next.proceed(size);
+        }, report);
+    allocationCallbacks = 0;
+    void *value = allocate(16);
+    assert(value && allocationCallbacks == 2);
+    ::operator delete(value);
+    hook.invalidate();
+    allocationCallbacks = 0;
+    value = allocate(16);
+    assert(value && allocationCallbacks == 0);
+    ::operator delete(value);
+}
+static int copyCallbacks = 0;
+static bool copyingRecursively = false;
+__attribute__((noinline, optnone)) static void *copyMemory(void *destination, const void *source, size_t size) {
+    return std::memcpy(destination, source, size);
+}
+static void checkSelfImportedCopy() {
+    char executable[PATH_MAX]; uint32_t capacity = sizeof(executable);
+    assert(_NSGetExecutablePath(executable, &capacity) == 0);
+    abi_bridge::runtime runtime;
+    auto report=[](const abi_bridge::resolution_error&) noexcept { assert(false); };
+    auto hook = abi_bridge::hook_imported_function<void*(void*,const void*,size_t)>(runtime,
+        {"memcpy", abi_bridge::language::c}, abi_bridge::image_selector::path(executable),
+        [](auto& next, void *destination, const void *source, size_t size) {
+            ++copyCallbacks;
+            if (!copyingRecursively) {
+                copyingRecursively = true;
+                char nested;
+                copyMemory(&nested, source, 1);
+                copyingRecursively = false;
+                assert(nested == *static_cast<const char*>(source));
+            }
+            return next.proceed(destination, source, size);
+        }, report);
+    char source[]{1,2,3}, destination[3]{};
+    copyCallbacks = 0;
+    assert(copyMemory(destination, source, sizeof(source)) == destination);
+    assert(copyCallbacks == 2 && destination[0] == 1 && destination[2] == 3);
+    hook.invalidate();
+    copyCallbacks = 0;
+    assert(copyMemory(destination, source, sizeof(source)) == destination);
+    assert(copyCallbacks == 0);
 }
 // No other automatic resolver runs in this process, so final-release checks
 // establish ownership instead of racing another suite's valid image leases.
@@ -83,5 +151,7 @@ int main(int argc,char **argv) {
     }
     assert(savedFailure && savedFailure->code() == ABIFailureDeclarationNotFound);
     dlclose(image);
+    checkSelfImportedAllocation();
+    checkSelfImportedCopy();
     std::puts("Imported C/C++ hook consumer passed");
 }

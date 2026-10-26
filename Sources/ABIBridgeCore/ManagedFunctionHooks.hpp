@@ -27,4 +27,9 @@ ABIImportedHook *createManagedFunctionHook(std::vector<ManagedFunctionSlot> slot
     const ABIValueType *result, const ABIValueType *const *parameters, size_t count,
     void *context, ABIImportedCallback callback, ABIImportedFailureHandler failure,
     ABIImportedContextRelease release);
+// Prepared fixed arguments and libffi-sized result storage are supplied by the
+// imported dispatcher. Forward without allocations or a result-copy import
+// that could itself be hooked in the dispatcher's image.
+void invokeManagedFunctionPredecessor(ABICallInterface *, ABIUnmanagedFunction,
+    void *result, void *const *arguments);
 }
