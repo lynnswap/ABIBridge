@@ -1415,19 +1415,43 @@ package final class SymbolIndex {
         _ query: SymbolQuery,
         source: RuntimeSymbol.Source
     ) throws -> RuntimeSymbol? {
+        switch try resolveCandidate(query, source: source) {
+        case .missing: return nil
+        case .kindMismatch: throw RuntimeResolutionError.invalidAddress
+        case .symbol(let symbol): return symbol
+        }
+    }
+
+    enum Resolution {
+        case missing
+        case kindMismatch
+        case symbol(RuntimeSymbol)
+    }
+
+    func resolveCandidate(
+        _ query: SymbolQuery,
+        source: RuntimeSymbol.Source
+    ) throws -> Resolution {
         let declaration = query.declaration
         let candidates = matches(query).filter { $0.source == source }
-        guard !candidates.isEmpty else { return nil }
+        guard !candidates.isEmpty else { return .missing }
         var addresses: [UInt64: (IndexedSymbol, SymbolSection)] = [:]
+        var hasInvalidAddress = false
         for candidate in candidates {
-            if candidate.address != 0,
-                let section = sections.first(where: { $0.range.contains(candidate.address) }),
-                section.accepts(declaration.kind)
-            {
+            guard candidate.address != 0,
+                let section = sections.first(where: { $0.range.contains(candidate.address) })
+            else {
+                hasInvalidAddress = true
+                continue
+            }
+            if section.accepts(declaration.kind) {
                 addresses[candidate.address] = (candidate, section)
             }
         }
-        guard !addresses.isEmpty else { throw RuntimeResolutionError.invalidAddress }
+        guard !addresses.isEmpty else {
+            if hasInvalidAddress { throw RuntimeResolutionError.invalidAddress }
+            return .kindMismatch
+        }
         let definitions = addresses.sorted { $0.key < $1.key }.map { address, match in
             RuntimeSymbol(
                 declaration: declaration,
@@ -1438,9 +1462,9 @@ package final class SymbolIndex {
                 linkageName: match.0.name
             )
         }
-        guard definitions.count > 1 else { return definitions[0] }
+        guard definitions.count > 1 else { return .symbol(definitions[0]) }
         if let definition = try RuntimeUniquedRecord.representative(of: definitions) {
-            return definition
+            return .symbol(definition)
         }
         throw RuntimeResolutionError.ambiguousDeclaration(
             declaration,
