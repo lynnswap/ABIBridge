@@ -1,7 +1,9 @@
 #if DEBUG
 @testable import ABIBridge
+import ABIBridgeRuntime
 import ABIBridgeCore
 import ABIBridgeCore.Backend
+import Synchronization
 #else
 import ABIBridge
 #endif
@@ -39,6 +41,90 @@ extension CFStringCompareFlags: ABIBridgeSwiftValue {
 @Suite(.serialized)
 struct SwiftInferredValueTests {
     private let runtime = ABIRuntime()
+
+    #if DEBUG
+    @Test func nestedUndecidedValuesAreClassifiedOncePerInference() throws {
+        let depth = 10
+        let nested = (0..<depth).reduce("Opaque") { type, _ in "Layer<\(type)>" }
+        let (library, _) = try provider(
+            """
+            public protocol P {}
+            extension Int: P {}
+            public struct Opaque {
+                public var text: String = "opaque"
+                public var value: some P = 7
+            }
+            public enum Layer<Value> { case value(Value) }
+            @_cdecl("ABIInferenceNestedMetadata")
+            public func nestedMetadata() -> UnsafeRawPointer {
+                unsafeBitCast(\(nested).self, to: UnsafeRawPointer.self)
+            }
+            """
+        )
+        defer { library.cleanup() }
+        let metadata = unsafeBitCast(
+            try library.symbol(named: "ABIInferenceNestedMetadata"),
+            to: (@convention(c) () -> UnsafeRawPointer).self
+        )()
+        let type = unsafeBitCast(metadata, to: Any.Type.self)
+        let counts = Mutex<[ObjectIdentifier: Int]>([:])
+        SwiftInferredValue.$onClassification.withValue({ metadata in
+            counts.withLock { $0[ObjectIdentifier(metadata), default: 0] += 1 }
+        }) {
+            #expect {
+                _ = try SwiftInferredValue.layout(of: type, position: .nested)
+            } throws: { error in
+                guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                    return false
+                }
+                return message.contains("opaque (`some`) type")
+            }
+        }
+        let observed = counts.withLock { $0 }
+        #expect(observed.count == depth + 1)
+        #expect(observed.values.reduce(0, +) == observed.count)
+    }
+
+    @Test func inferenceRetriesAfterModuleImageAcquisitionBecomesAvailable() throws {
+        let (library, _) = try provider(
+            """
+            public struct Record {
+                public var text: String
+                public var count: Int64
+            }
+            @_cdecl("ABIInferenceRetryMetadata")
+            public func retryMetadata() -> UnsafeRawPointer {
+                unsafeBitCast(Record.self, to: UnsafeRawPointer.self)
+            }
+            """
+        )
+        defer { library.cleanup() }
+        let metadata = unsafeBitCast(
+            try library.symbol(named: "ABIInferenceRetryMetadata"),
+            to: (@convention(c) () -> UnsafeRawPointer).self
+        )()
+        let type = unsafeBitCast(metadata, to: Any.Type.self)
+        let target = library.libraryURL.resolvingSymlinksInPath()
+        SwiftInferredValue.$moduleImageLoader.withValue({ path in
+            if URL(fileURLWithPath: path).resolvingSymlinksInPath() == target {
+                throw RuntimeResolutionError.imageUnavailable
+            }
+            return try RuntimeImage.opening(path: path, loading: .loadedOnly)
+        }) {
+            #expect {
+                _ = try SwiftInferredValue.layout(of: type, position: .nested)
+            } throws: { error in
+                guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                    return false
+                }
+                return message.contains("cannot read the symbols of the image")
+            }
+        }
+        let layout = try SwiftInferredValue.layout(of: type, position: .nested)
+        #expect(!ABISwiftValueIsIndirect(layout.handle))
+        #expect(try SwiftInferredValue.layout(of: type, position: .nested) === layout)
+    }
+    #endif
 
     private func provider(
         _ source: String,
