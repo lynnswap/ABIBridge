@@ -83,10 +83,11 @@ ABISwiftAsyncClosureCallback *ABICreateSwiftAsyncHookCallback(ABISwiftAsyncCallI
     ABISwiftClosureValue (*createBody)(void *context, ABISwiftIncomingCall *call),
     void *context, void (*releaseContext)(void *), ABIResolutionFailure **error);
 ABIUnmanagedFunction ABISwiftAsyncHookCallbackFunction(const ABISwiftAsyncClosureCallback *callback);
+/// Reads a pointer word only during the async createBody factory. Once the factory returns, raw-frame reads fail with ABIFailureInvalidRequest; prepared argument operations remain usable in the returned body.
 bool ABISwiftAsyncIncomingReadPointer(ABISwiftIncomingCall *call, const ABISwiftAsyncCallInterface *interface,
     size_t index, uintptr_t *value, ABIResolutionFailure **error);
 
-/// Functions describing one callback and its native value ownership. None may throw a language exception through this C boundary. The borrowed invocation is usable only during invoke on its entering thread, or during an async hook body on its entering task.
+/// Functions describing one callback and its native value ownership. None may throw a language exception through this C boundary. The borrowed invocation is usable only during invoke on its entering thread, or during an async hook body on its entering task. Async raw-frame readers and preparation are limited to the createBody factory; prepared argument/result operations remain usable throughout the body.
 typedef struct ABISwiftCallbackFunctions {
     void (*invoke)(void *context, ABISwiftIncomingCall *call);
     /// Select a bound interface with IncomingPrepare before reading values. Raw metadata remains available without interpreting indirect payloads.
@@ -118,17 +119,19 @@ size_t ABISwiftIncomingArgumentCount(const ABISwiftIncomingCall *call);
 const void *ABISwiftIncomingContext(const ABISwiftIncomingCall *call);
 /// Borrows the context selected by IncomingPrepare for the active invocation.
 void *ABISwiftIncomingPreparedContext(ABISwiftIncomingCall *call);
-/// Reads a directly passed pointer word using the candidate's physical plan. It never dereferences the pointer or any unrelated argument.
+/// Reads a directly passed pointer word using the candidate's physical plan. It never dereferences the pointer or any unrelated argument. For async hooks, raw-frame reads are limited to the createBody factory and fail with ABIFailureInvalidRequest after that factory returns.
 bool ABISwiftIncomingReadPointer(ABISwiftIncomingCall *call, const ABISwiftCallInterface *interface,
     size_t index, uintptr_t *value, ABIResolutionFailure **error);
-/// Reads the incoming storage address of a formally indirect parameter, before preparing its values.
+/// Reads the incoming storage address of a formally indirect parameter, before preparing its values. For async hooks, this is available only during the createBody factory; later calls fail with ABIFailureInvalidRequest.
 bool ABISwiftIncomingReadIndirectAddress(ABISwiftIncomingCall *call, const ABISwiftCallInterface *interface,
     size_t index, uintptr_t *value, ABIResolutionFailure **error);
+/// The async indirect-address reader has the same createBody-only lifetime as the async pointer reader. Prepared argument addresses remain usable in the body through ABISwiftIncomingArgumentAddress.
 bool ABISwiftAsyncIncomingReadIndirectAddress(ABISwiftIncomingCall *call, const ABISwiftAsyncCallInterface *interface,
     size_t index, uintptr_t *value, ABIResolutionFailure **error);
-/// Selects the interface and value operations for this invocation. Success owns context through functions.releaseContext; failure consumes neither. An invocation with preparesArguments selects at most once, before reading values.
+/// Selects the interface and value operations for this invocation. Success owns context through functions.releaseContext; failure consumes neither. An invocation with preparesArguments selects at most once, before reading values. Async hooks must prepare inside createBody, before returning the body.
 bool ABISwiftIncomingPrepare(ABISwiftIncomingCall *call, const ABISwiftCallInterface *interface,
     ABISwiftCallbackFunctions functions, void *context, ABIResolutionFailure **error);
+/// Prepares borrowed native arguments during the async createBody factory. The prepared argument/result operations remain usable throughout the returned body; late preparation fails with ABIFailureInvalidRequest.
 bool ABISwiftAsyncIncomingPrepare(ABISwiftIncomingCall *call, const ABISwiftAsyncCallInterface *interface,
     ABISwiftCallbackFunctions functions, void *context, ABIResolutionFailure **error);
 /// Creates a native predecessor call in the current task. untouched selects unchanged incoming storage. CompleteAsync records the completed native outcome before conversion; its ownership stays with the hook until native return.
