@@ -90,6 +90,51 @@ private func capturedSources(
 }
 
 struct SharedCacheScanTests {
+    @Test func wrongKindImageSymbolsDoNotBlockSharedCacheDefinitions() throws {
+        let name =
+            "SharedKindCollision_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
+        let data = try FixtureLibrary(
+            cxxSource: "static int value asm(\"_\(name)\") __attribute__((used)) = 42;"
+        )
+        let function = try FixtureLibrary()
+        defer { data.cleanup(); function.cleanup() }
+        let address = try function.address(kind: 0)
+        let functionImage = try #require(
+            try RuntimeSymbolResolver().images(matching: .path(function.libraryURL)).first
+        ).identity
+        let resolver = RuntimeSymbolResolver(capturingSharedCacheSymbols: { image, _, source in
+            guard image.identity == functionImage, source == .loaded else { return nil }
+            return capturedSources(named: name, at: address)
+        })
+        let symbol = try resolver.resolve(RuntimeDeclaration(name: name, language: .c))
+        #expect(symbol.address == UInt64(address))
+        #expect(symbol.source == .sharedCache)
+    }
+
+    @Test func malformedSharedCacheAddressesStillFailCrossImageResolution() throws {
+        let name = "MalformedAddress_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
+        let malformed = try FixtureLibrary()
+        let function = try FixtureLibrary()
+        defer { malformed.cleanup(); function.cleanup() }
+        let address = try function.address(kind: 0)
+        let lookup = RuntimeSymbolResolver()
+        let malformedImage = try #require(
+            try lookup.images(matching: .path(malformed.libraryURL)).first
+        ).identity
+        let functionImage = try #require(
+            try lookup.images(matching: .path(function.libraryURL)).first
+        ).identity
+        let resolver = RuntimeSymbolResolver(capturingSharedCacheSymbols: { image, _, source in
+            guard source == .loaded else { return nil }
+            if image.identity == malformedImage { return capturedSources(named: name, at: 0) }
+            guard image.identity == functionImage else { return nil }
+            return capturedSources(named: name, at: address)
+        })
+        #expect(throws: RuntimeResolutionError.invalidAddress) {
+            try resolver.resolve(RuntimeDeclaration(name: name, language: .c))
+        }
+    }
+
     @Test func batchLookupTraversesImageSymbolsOnceAndLeavesFallbacksLazy() throws {
         let fixture = try FixtureLibrary()
         defer { fixture.cleanup() }

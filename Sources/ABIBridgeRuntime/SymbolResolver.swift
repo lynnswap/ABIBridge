@@ -65,7 +65,8 @@ package final class RuntimeSymbolResolver: Sendable {
     private final class AutomaticScope: Sendable {
         let revision: UInt64
         let images: [RuntimeImage]
-        let results = Mutex<[RuntimeDeclaration: Result<RuntimeSymbol, RuntimeResolutionError>]>([:])
+        let results = Mutex<[RuntimeDeclaration: Result<RuntimeSymbol, RuntimeResolutionError>]>([:]
+        )
         init(revision: UInt64, images: [RuntimeImage]) {
             self.revision = revision; self.images = images
         }
@@ -657,16 +658,27 @@ package final class RuntimeSymbolResolver: Sendable {
         let query = SymbolQuery(declaration)
         let candidates = state.withLock { state in images.map { state.index(for: $0) } }
         return try withExtendedLifetime(candidates) {
+            var hasKindMismatch = false
             func matches(_ source: RuntimeSymbol.Source) throws -> [RuntimeSymbol] {
                 try state.withLock { _ in
-                    try candidates.compactMap { try $0.resolve(query, source: source) }
+                    try candidates.compactMap { index in
+                        switch try index.resolveCandidate(query, source: source) {
+                        case .missing: return nil
+                        case .kindMismatch:
+                            hasKindMismatch = true
+                            return nil
+                        case .symbol(let symbol): return symbol
+                        }
+                    }
                 }
             }
             let primary = try matches(.image)
             if !primary.isEmpty { return try select(declaration, from: primary) }
 
             loadSharedCacheSymbols(for: query, into: candidates, relatedQueries: relatedQueries)
-            return try select(declaration, from: try matches(.sharedCache))
+            let fallback = try matches(.sharedCache)
+            if fallback.isEmpty && hasKindMismatch { throw RuntimeResolutionError.invalidAddress }
+            return try select(declaration, from: fallback)
         }
     }
 

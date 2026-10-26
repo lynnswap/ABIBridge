@@ -6,6 +6,30 @@ import Testing
 
 @Suite(.serialized)
 struct AutomaticLookupCacheTests {
+    @Test func wrongKindLocalSymbolsDoNotHideFunctionsInOtherImages() throws {
+        let name = "KindCollision_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
+        let data = try FixtureLibrary(
+            cxxSource: "static int value asm(\"_\(name)\") __attribute__((used)) = 42;"
+        )
+        let function = try FixtureLibrary(
+            load: false,
+            cxxSource:
+                "extern \"C\" __attribute__((visibility(\"hidden\"))) int \(name)() { return 42; }"
+        )
+        defer { data.cleanup(); function.cleanup() }
+        let resolver = RuntimeSymbolResolver()
+        let declaration = RuntimeDeclaration(name: name, language: .c)
+        #expect(throws: RuntimeResolutionError.invalidAddress) {
+            try resolver.resolve(declaration)
+        }
+        try function.load()
+        let expected = try #require(try resolver.images(matching: .path(function.libraryURL)).first)
+        #expect(try resolver.resolve(declaration).image.identity == expected.identity)
+        #expect(throws: RuntimeResolutionError.invalidAddress) {
+            try resolver.resolve(declaration, in: .path(data.libraryURL), loading: .loadedOnly)
+        }
+    }
+
     @Test(arguments: [RuntimeLanguage.c, .cxx, .swift])
     func laterLoadsReplaceNegativeAndUniqueResults(language: RuntimeLanguage) async throws {
         let module = "Catalog_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
