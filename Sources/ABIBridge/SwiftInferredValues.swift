@@ -366,7 +366,9 @@ enum SwiftInferredValue {
             classification.masksAddressability = true
             return classification
         case .loadable:
-            convention = try .loadable(layout(of: metadata, info: info, fields: fields, parts: parts))
+            convention = try .loadable(
+                layout(of: metadata, info: info, fields: fields, parts: parts)
+            )
         case .undecided(let missing):
             let frozen = try layout(of: metadata, info: info, fields: fields, parts: parts)
             if let unknownReferent {
@@ -519,7 +521,9 @@ enum SwiftInferredValue {
         case .optional:
             let wrapped = (type as! any NativeOptionalValue.Type).wrappedType
             let part = try self.part(of: wrapped, genericDependent: genericDependent)
-            guard case .fixed(let payload, let nonPOD, let masks) = part else { return .addressOnly }
+            guard case .fixed(let payload, let nonPOD, let masks) = part else {
+                return .addressOnly
+            }
             let layout = try failing {
                 try SwiftValueSchema.optionalStorage(
                     of: type,
@@ -718,7 +722,13 @@ enum SwiftInferredValue {
         // An enum without bytes, such as one with a single case and no
         // payload, passes nothing.
         if layout.size == 0 {
-            return try aggregate([], offsets: [], size: 0, alignment: layout.alignment, of: metadata)
+            return try aggregate(
+                [],
+                offsets: [],
+                size: 0,
+                alignment: layout.alignment,
+                of: metadata
+            )
         }
         // An enum with exactly one case, which has a payload, lowers as that
         // payload. Other enums pass their bytes as integer chunks.
@@ -985,7 +995,8 @@ enum SwiftInferredValue {
                 in: image
             )
         {
-            return "no trivial property descriptor of a stored `var` in its image shows that module `\(name)` is built without library evolution"
+            return
+                "no trivial property descriptor of a stored `var` in its image shows that module `\(name)` is built without library evolution"
         }
         if !info.isEnum {
             let declared =
@@ -997,10 +1008,12 @@ enum SwiftInferredValue {
                 } ?? [:]
             for field in fields {
                 guard let opaque = declared[field.name] else {
-                    return "no symbol in its image spells the declared type of its stored property `\(field.name)`, which could be opaque"
+                    return
+                        "no symbol in its image spells the declared type of its stored property `\(field.name)`, which could be opaque"
                 }
                 if opaque {
-                    return "its stored property `\(field.name)` has an opaque (`some`) type, which its field record describes by its underlying type"
+                    return
+                        "its stored property `\(field.name)` has an opaque (`some`) type, which its field record describes by its underlying type"
                 }
             }
         }
@@ -1223,7 +1236,8 @@ private struct ModuleContext {
         substitutions.append((text.count, nil))
         for (index, substitution) in substitutions.enumerated() {
             if position < substitution.start {
-                mangled += "\(substitution.start - position)"
+                mangled +=
+                    "\(substitution.start - position)"
                     + String(decoding: text[position..<substitution.start], as: UTF8.self)
                 position = substitution.start
             }

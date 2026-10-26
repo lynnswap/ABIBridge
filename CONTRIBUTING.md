@@ -67,7 +67,7 @@ bash scripts/test-package.sh api \
   -only-testing:ABIBridgeTests/ManagedSwiftValueTests
 ```
 
-For changes to value handling, ownership, or calling conventions, also run the affected suites with `-configuration Release`. The focused external consumer check below verifies native C linkage in Release.
+For changes to value handling, ownership, or calling conventions, also run the affected suites with `-configuration Release ARCHS=arm64 ONLY_ACTIVE_ARCH=YES`. The architecture settings prevent Xcode from also building unsupported x86_64 slices. The focused external consumer check below verifies native C linkage in Release.
 
 ### Conformance matrix
 
