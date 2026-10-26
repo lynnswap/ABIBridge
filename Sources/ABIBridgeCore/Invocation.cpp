@@ -1,5 +1,6 @@
 #include <ABIBridge/Backend/Invocation.h>
 #include "NativeValueType.hpp"
+#include "ManagedFunctionHooks.hpp"
 #include <ptrauth.h>
 #include <algorithm>
 #include <array>
@@ -239,6 +240,12 @@ ABIUnmanagedFunction ABIUnsafeFunctionAtAddress(const void *address) {
         ptrauth_function_pointer_type_discriminator(void(void)));
 #endif
     return reinterpret_cast<ABIUnmanagedFunction>(pointer);
+}
+
+void abibridge::invokeManagedFunctionPredecessor(ABICallInterface *interface,
+    ABIUnmanagedFunction function, void *result, void *const *arguments) {
+    ffi_call(&interface->cif, function, interface->result->size() ? result : nullptr,
+        const_cast<void **>(arguments));
 }
 
 bool ABIUnsafeInvokeCCallInterface(

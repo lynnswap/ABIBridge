@@ -14,6 +14,15 @@
 #include <vector>
 
 namespace {
+// Housekeeping may call an import patched in this same statically linked image.
+// Mark it before taking locks or allocating; client code deliberately reenters
+// the normal chain, including when it calls the hooked function recursively.
+thread_local bool internalWork = false;
+struct WorkScope {
+    bool previous;
+    explicit WorkScope(bool internal = true) : previous(internalWork) { internalWork = internal; }
+    ~WorkScope() { internalWork = previous; }
+};
 using Failure = std::unique_ptr<ABIResolutionFailure, decltype(&ABIReleaseResolutionFailure)>;
 using Target = std::unique_ptr<ABIVirtualCallTarget, decltype(&ABIReleaseVirtualCallTarget)>;
 using Interface = std::unique_ptr<ABICallInterface, decltype(&ABIReleaseCallInterface)>;
@@ -32,7 +41,7 @@ struct Callback {
     ABIImportedFailureHandler failure;
     ABIImportedContextRelease release;
     std::vector<std::shared_ptr<SlotLifetime>> lifetimes;
-    ~Callback() { release(context); }
+    ~Callback() { abibridge::releaseManagedFunctionContext(context,release); }
 };
 using Chain = std::vector<std::shared_ptr<Callback>>;
 struct Entry {
@@ -59,7 +68,7 @@ struct Registry { std::mutex mutex; std::map<std::pair<uintptr_t,uint64_t>, std:
 Registry& registry() { static auto *r = new Registry; return *r; }
 struct Bytes {
     std::vector<std::max_align_t> storage;
-    explicit Bytes(size_t count) : storage((std::max(count, sizeof(void *)) + sizeof(std::max_align_t) - 1) / sizeof(std::max_align_t)) {}
+    explicit Bytes(size_t count) : storage((std::max(count, sizeof(ffi_arg)) + sizeof(std::max_align_t) - 1) / sizeof(std::max_align_t)) {}
     void *data() { return storage.data(); }
 };
 void typeKey(const std::shared_ptr<abibridge::TypeStorage>& type, std::vector<size_t>& out) {
@@ -76,6 +85,11 @@ bool sameSchema(const Entry& entry, ABIImportSlot slot, const std::vector<size_t
 }
 }
 
+void abibridge::releaseManagedFunctionContext(void *context, ABIImportedContextRelease release) {
+    WorkScope client(false);
+    release(context);
+}
+
 struct ABIImportedInvocation {
     Entry& entry;
     const Chain& chain;
@@ -90,22 +104,24 @@ struct ABIImportedInvocation {
 };
 
 namespace {
+void invokePredecessor(Entry& entry, void *const *args, void *output) {
+    abibridge::invokeManagedFunctionPredecessor(entry.interface.get(),
+        ABIVirtualCallTargetFunction(entry.lifetime->target.get()), output, args);
+}
 void invoke(Entry& entry, const Chain& chain, size_t count, void *const *args, void *output) {
     if (!count) {
-        // Preparation establishes the full non-null call contract. No foreign
-        // exception may unwind across this C/libffi boundary.
-        ABIResolutionFailure *error = nullptr;
-        const bool ok = ABIUnsafeInvokeCCallInterface(entry.interface.get(), ABIVirtualCallTargetFunction(entry.lifetime->target.get()), output, args, &error);
-        if (!ok) std::terminate(); // Internal prepared-call invariant.
+        WorkScope client(false);
+        invokePredecessor(entry, args, output);
         return;
     }
     auto& callback = *chain[count-1];
     ABIImportedInvocation call(entry, chain, count-1, args);
     ABIResolutionFailure *error = nullptr;
-    const bool ok = callback.callback(callback.context, &call, &error);
+    bool ok;
+    { WorkScope client(false); ok = callback.callback(callback.context, &call, &error); }
     if (!ok) {
         Failure owned(error ? error : ABICreateResolutionFailure(ABIFailureOther, "The imported function callback failed."), ABIReleaseResolutionFailure);
-        callback.failure(callback.context, owned.get());
+        WorkScope client(false); callback.failure(callback.context, owned.get());
     } else if (error) ABIReleaseResolutionFailure(error);
     if (ok && call.assigned) { if (entry.resultSize) std::memcpy(output, call.candidate.data(), entry.resultSize); }
     else if (call.proceeded) { if (entry.resultSize) std::memcpy(output, call.result.data(), entry.resultSize); }
@@ -120,6 +136,7 @@ bool check(ABIImportedInvocation *call, ABIResolutionFailure **error) {
 }
 
 bool ABIImportedInvocationReadArgument(ABIImportedInvocation *call, size_t index, void *bytes, size_t size, ABIResolutionFailure **error) {
+    WorkScope internal;
     if (!check(call,error)) return false;
     if (index >= call->entry.parameterSizes.size() || size != call->entry.parameterSizes[index] || (size && !bytes))
         return fail(error, ABIFailureInvalidRequest, "Argument storage does not match the signature.");
@@ -127,6 +144,7 @@ bool ABIImportedInvocationReadArgument(ABIImportedInvocation *call, size_t index
     return true;
 }
 bool ABIImportedInvocationProceed(ABIImportedInvocation *call, const void *const *args, size_t count, ABIResolutionFailure **error) {
+    WorkScope internal;
     if (!check(call,error)) return false;
     if (count != call->entry.parameterSizes.size() || (count && !args))
         return fail(error, ABIFailureInvalidRequest, "Supply the full explicit argument list.");
@@ -138,18 +156,21 @@ bool ABIImportedInvocationProceed(ABIImportedInvocation *call, const void *const
     return true;
 }
 bool ABIImportedInvocationProceedWithOriginalArguments(ABIImportedInvocation *call, ABIResolutionFailure **error) {
+    WorkScope internal;
     if (!check(call,error)) return false;
     invoke(call->entry, call->chain, call->next, call->arguments, call->result.data());
     call->proceeded = true;
     return true;
 }
 bool ABIImportedInvocationReadResult(ABIImportedInvocation *call, void *bytes, size_t size, ABIResolutionFailure **error) {
+    WorkScope internal;
     if (!check(call,error)) return false;
     if (!call->proceeded || size != call->entry.resultSize || (size && !bytes)) return fail(error, ABIFailureInvalidRequest, "A completed continuation and matching result storage are required.");
     if (size) std::memcpy(bytes, call->result.data(), size);
     return true;
 }
 bool ABIImportedInvocationSetResult(ABIImportedInvocation *call, const void *bytes, size_t size, ABIResolutionFailure **error) {
+    WorkScope internal;
     if (!check(call,error)) return false;
     if (size != call->entry.resultSize || (size && !bytes)) return fail(error, ABIFailureInvalidRequest, "Result storage does not match.");
     if (size) std::memcpy(call->candidate.data(),bytes,size);
@@ -169,6 +190,7 @@ struct ABIImportedHook {
 };
 
 ABIImportedHook *ABICreateFailedImportedHook(ABIResolutionFailure *error) {
+    WorkScope internal;
     auto hook = std::make_unique<ABIImportedHook>(); hook->failure.reset(error); return hook.release();
 }
 
@@ -176,6 +198,7 @@ ABIImportedHook *abibridge::createManagedFunctionHook(std::vector<ManagedFunctio
     const ABIValueType *resultType, const ABIValueType *const *parameters, size_t count,
     void *context, ABIImportedCallback callback, ABIImportedFailureHandler onFailure,
     ABIImportedContextRelease release) {
+    WorkScope internal;
     if (!release) return nullptr;
     TransferredContext transferred{context, release};
     auto ownedCallback = std::unique_ptr<Callback>(new Callback{context,callback,onFailure,release});
@@ -215,6 +238,8 @@ ABIImportedHook *abibridge::createManagedFunctionHook(std::vector<ManagedFunctio
         entry->chain = std::make_shared<Chain>(Chain{behavior});
         entry->closure = ABICreateCallClosure(interface.get(), [](void *context, void *result, void *const *args) {
             auto& entry = *static_cast<Entry*>(context);
+            if (internalWork) { invokePredecessor(entry, args, result); return; }
+            WorkScope internal;
             std::shared_ptr<const Chain> snapshot;
             { std::lock_guard lock(entry.mutex); snapshot = entry.chain; }
             invoke(entry,*snapshot,snapshot->size(),args,result);
@@ -320,6 +345,7 @@ ABIImportedHook *abibridge::createManagedFunctionHook(std::vector<ManagedFunctio
 ABIImportedHook *ABICreateImportedHook(ABIImportSelection *selection, const ABIValueType *result,
     const ABIValueType *const *parameters, size_t count, void *context, ABIImportedCallback callback,
     ABIImportedFailureHandler failure, ABIImportedContextRelease release) {
+    WorkScope internal;
     if (!release) return nullptr;
     abibridge::TransferredContext transferred{context,release};
     if (!selection) return ABICreateFailedImportedHook(ABICreateResolutionFailure(ABIFailureInvalidRequest,"An import selection is required."));
@@ -333,6 +359,7 @@ ABIImportedHook *ABICreateImportedHook(ABIImportSelection *selection, const ABIV
 
 ABIImportedHook *ABIRetainImportedHook(ABIImportedHook *hook) { if(hook) ++hook->references; return hook; }
 void ABIInvalidateImportedHook(ABIImportedHook *hook) {
+    WorkScope internal;
     if(!hook) return;
     std::vector<std::shared_ptr<const Chain>> retired;
     { std::lock_guard own(hook->mutex);
@@ -347,17 +374,18 @@ void ABIInvalidateImportedHook(ABIImportedHook *hook) {
       hook->active=false;
     }
 }
-void ABIReleaseImportedHook(ABIImportedHook *hook) { if(hook && --hook->references==0) { ABIInvalidateImportedHook(hook); delete hook; } }
+void ABIReleaseImportedHook(ABIImportedHook *hook) { WorkScope internal; if(hook && --hook->references==0) { ABIInvalidateImportedHook(hook); delete hook; } }
 const ABIResolutionFailure *ABIImportedHookGetFailure(const ABIImportedHook *h) { return h->failure.get(); }
 size_t ABIImportedHookGetFailedIndex(const ABIImportedHook *h) { return h->failedIndex; }
 size_t ABIImportedHookGetSlotCount(const ABIImportedHook *h) { return h->slots.size(); }
 uintptr_t ABIImportedHookGetSlot(const ABIImportedHook *h,size_t i) { return h->slots[i].description.slot; }
 int32_t ABIImportedHookGetSlotStatus(const ABIImportedHook *h,size_t i) {
+    WorkScope internal;
     auto *hook=const_cast<ABIImportedHook*>(h); std::lock_guard lock(hook->mutex);
     if(!hook->active) return ABIImportedInactive;
     uintptr_t bits=0; auto *entry=h->slots[i].entry;
     if(!entry || !readBits(*entry,bits)) return ABIImportedUnreadable;
     return bits==entry->installed ? ABIImportedActive : ABIImportedDisplaced;
 }
-ABIPointerSlotResult ABIImportedHookGetMutation(const ABIImportedHook *h,size_t i) { return h->slots[i].mutation; }
-ABIPointerSlotResult ABIImportedHookGetRollback(const ABIImportedHook *h,size_t i) { return h->slots[i].rollback; }
+ABIPointerSlotResult ABIImportedHookGetMutation(const ABIImportedHook *h,size_t i) { WorkScope internal; return h->slots[i].mutation; }
+ABIPointerSlotResult ABIImportedHookGetRollback(const ABIImportedHook *h,size_t i) { WorkScope internal; return h->slots[i].rollback; }

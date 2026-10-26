@@ -67,6 +67,15 @@ for task_objc_consumer in ObjCImplementationConsumer MRCImplementationConsumer; 
         --scratch-path "$task_build" "$task_objc_consumer"
 done
 
+xcrun clang -dynamiclib -mmacosx-version-min=15.4 "$task_root/Tests/NativeConsumer/ImportedHookProvider.c" -o "$task_fixture/libImportedProvider.dylib"
+xcrun clang -dynamiclib -mmacosx-version-min=15.4 "$task_root/Tests/NativeConsumer/ImportedHookLibrary.c" "$task_fixture/libImportedProvider.dylib" -o "$task_fixture/libImportedCaller.dylib"
+for task_configuration in debug release; do
+    for task_hook_consumer in ImportedHookConsumer ObjCXXImportedHookConsumer; do
+        xcrun swift run --package-path "$task_root/Tests/NativeConsumer" --scratch-path "$task_build" \
+            -c "$task_configuration" "$task_hook_consumer" "$task_fixture/libImportedCaller.dylib"
+    done
+done
+
 if [[ "$task_mode" == focused ]]; then exit; fi
 
 bash "$task_root/scripts/test-codegen.sh"
@@ -158,12 +167,6 @@ xcrun clang -std=c11 -pedantic-errors -fsyntax-only \
 for task_hook_consumer in CHookConsumer CXXHookConsumer ObjCXXHookConsumer MRCXXHookConsumer MixedHookConsumer CoordinatedHookConsumer; do
     xcrun swift run --package-path "$task_root/Tests/NativeConsumer" \
         --scratch-path "$task_build" "$task_hook_consumer"
-done
-
-xcrun clang -dynamiclib -mmacosx-version-min=15.4 "$task_root/Tests/NativeConsumer/ImportedHookProvider.c" -o "$task_fixture/libImportedProvider.dylib"
-xcrun clang -dynamiclib -mmacosx-version-min=15.4 "$task_root/Tests/NativeConsumer/ImportedHookLibrary.c" "$task_fixture/libImportedProvider.dylib" -o "$task_fixture/libImportedCaller.dylib"
-for task_hook_consumer in ImportedHookConsumer ObjCXXImportedHookConsumer; do
-    xcrun swift run --package-path "$task_root/Tests/NativeConsumer" --scratch-path "$task_build" "$task_hook_consumer" "$task_fixture/libImportedCaller.dylib"
 done
 
 # Run unload/reload monitoring in isolated consumers, without resolver test caches.
