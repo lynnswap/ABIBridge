@@ -3,6 +3,7 @@
 import ABIBridgeRuntime
 import ABIBridgeCore
 import ABIBridgeCore.Backend
+import Synchronization
 #else
 import ABIBridge
 #endif
@@ -42,6 +43,48 @@ struct SwiftInferredValueTests {
     private let runtime = ABIRuntime()
 
     #if DEBUG
+    @Test func nestedUndecidedValuesAreClassifiedOncePerInference() throws {
+        let depth = 10
+        let nested = (0..<depth).reduce("Opaque") { type, _ in "Layer<\(type)>" }
+        let (library, _) = try provider(
+            """
+            public protocol P {}
+            extension Int: P {}
+            public struct Opaque {
+                public var text: String = "opaque"
+                public var value: some P = 7
+            }
+            public enum Layer<Value> { case value(Value) }
+            @_cdecl("ABIInferenceNestedMetadata")
+            public func nestedMetadata() -> UnsafeRawPointer {
+                unsafeBitCast(\(nested).self, to: UnsafeRawPointer.self)
+            }
+            """
+        )
+        defer { library.cleanup() }
+        let metadata = unsafeBitCast(
+            try library.symbol(named: "ABIInferenceNestedMetadata"),
+            to: (@convention(c) () -> UnsafeRawPointer).self
+        )()
+        let type = unsafeBitCast(metadata, to: Any.Type.self)
+        let counts = Mutex<[ObjectIdentifier: Int]>([:])
+        SwiftInferredValue.$onClassification.withValue({ metadata in
+            counts.withLock { $0[ObjectIdentifier(metadata), default: 0] += 1 }
+        }) {
+            #expect {
+                _ = try SwiftInferredValue.layout(of: type, position: .nested)
+            } throws: { error in
+                guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                    return false
+                }
+                return message.contains("opaque (`some`) type")
+            }
+        }
+        let observed = counts.withLock { $0 }
+        #expect(observed.count == depth + 1)
+        #expect(observed.values.reduce(0, +) == observed.count)
+    }
+
     @Test func inferenceRetriesAfterModuleImageAcquisitionBecomesAvailable() throws {
         let (library, _) = try provider(
             """

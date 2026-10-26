@@ -75,7 +75,9 @@ enum SwiftValuePosition: Sendable, Equatable {
 enum SwiftInferredValue {
     #if DEBUG
     @TaskLocal static var moduleImageLoader: (@Sendable (String) throws -> RuntimeImage)?
+    @TaskLocal static var onClassification: (@Sendable (Any.Type) -> Void)?
     #endif
+    @TaskLocal private static var currentMemo: InferenceMemo?
 
     fileprivate static func moduleImage(at path: String) throws -> RuntimeImage {
         #if DEBUG
@@ -180,6 +182,14 @@ enum SwiftInferredValue {
 
     private static let classifications = Mutex<[ObjectIdentifier: Classification]>([:])
 
+    // Reuse inconclusive outcomes within a traversal, while later lookups can
+    // retry them after missing image evidence becomes available.
+    private final class InferenceMemo: Sendable {
+        let classifications = Mutex<[ObjectIdentifier: Result<Classification, InferenceFailure>]>(
+            [:])
+        let nonEvolutionGaps = Mutex<[StoredKey: String]>([:])
+    }
+
     /// Conclusive classifications are cached per metadata. Swift
     /// metadata stays valid because images with Swift metadata are not unloaded.
     private static func classification(
@@ -187,8 +197,21 @@ enum SwiftInferredValue {
     ) throws(InferenceFailure) -> Classification {
         let key = ObjectIdentifier(metadata)
         if let cached = classifications.withLock({ $0[key] }) { return cached }
+        guard let memo = currentMemo else {
+            let result = $currentMemo.withValue(InferenceMemo()) {
+                Result { () throws(InferenceFailure) -> Classification in
+                    try classification(of: metadata)
+                }
+            }
+            return try result.get()
+        }
+        if let cached = memo.classifications.withLock({ $0[key] }) { return try cached.get() }
         // Fields classify recursively, so classify outside the lock.
-        let classification = try classify(metadata)
+        let result = Result { () throws(InferenceFailure) -> Classification in
+            try classify(metadata)
+        }
+        memo.classifications.withLock { $0[key] = result }
+        let classification = try result.get()
         // Missing image evidence can become available after initialization.
         guard case .undecided = classification.convention else {
             return classifications.withLock { classifications in
@@ -233,6 +256,9 @@ enum SwiftInferredValue {
     private static let addressableForDependencies: UInt32 = 0x0200_0000
 
     private static func classify(_ metadata: Any.Type) throws(InferenceFailure) -> Classification {
+        #if DEBUG
+        onClassification?(metadata)
+        #endif
         let pointer = unsafeBitCast(metadata, to: UnsafeRawPointer.self)
         var info = ABISwiftValueDescriptorInfo()
         guard ABISwiftGetValueDescriptorInfo(pointer, &info) else {
@@ -930,7 +956,11 @@ enum SwiftInferredValue {
     ) -> String? {
         let key = StoredKey(metadata: ObjectIdentifier(metadata), parents: parents)
         if loadableContexts.withLock({ $0.contains(key) }) { return nil }
-        if let gap = findNonEvolutionGap(of: metadata, storedBy: parents) { return gap }
+        if let cached = currentMemo?.nonEvolutionGaps.withLock({ $0[key] }) { return cached }
+        if let gap = findNonEvolutionGap(of: metadata, storedBy: parents) {
+            currentMemo?.nonEvolutionGaps.withLock { $0[key] = gap }
+            return gap
+        }
         loadableContexts.withLock { _ = $0.insert(key) }
         return nil
     }
