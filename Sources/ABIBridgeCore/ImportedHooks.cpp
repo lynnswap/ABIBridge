@@ -41,7 +41,7 @@ struct Callback {
     ABIImportedFailureHandler failure;
     ABIImportedContextRelease release;
     std::vector<std::shared_ptr<SlotLifetime>> lifetimes;
-    ~Callback() { WorkScope client(false); release(context); }
+    ~Callback() { abibridge::releaseManagedFunctionContext(context,release); }
 };
 using Chain = std::vector<std::shared_ptr<Callback>>;
 struct Entry {
@@ -83,6 +83,11 @@ bool sameSchema(const Entry& entry, ABIImportSlot slot, const std::vector<size_t
     return entry.slot.key == slot.key && entry.slot.discriminator == slot.discriminator
         && entry.slot.addressDiversity == slot.addressDiversity && entry.contract == contract;
 }
+}
+
+void abibridge::releaseManagedFunctionContext(void *context, ABIImportedContextRelease release) {
+    WorkScope client(false);
+    release(context);
 }
 
 struct ABIImportedInvocation {

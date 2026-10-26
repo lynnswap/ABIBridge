@@ -1,4 +1,5 @@
 #include <ABIBridge/Backend/ImportedHooks.h>
+#include <ABIBridge/Backend/ManagedVirtualEntry.h>
 #include <ABIBridge/ImportedHooks.hpp>
 #include <ABIBridge/NativeInvocation.hpp>
 #include <cassert>
@@ -21,6 +22,27 @@ static bool callback(void *,ABIImportedInvocation *call,ABIResolutionFailure **e
     if(!ABIImportedInvocationReadResult(call,&result,sizeof(result),error)) return false;
     ++result;
     return ABIImportedInvocationSetResult(call,&result,sizeof(result),error);
+}
+static void checkFailedStorageCleanup(void *image, const ABIValueType *result) {
+    struct Cleanup {
+        int32_t (*call)(int32_t,int32_t);
+        int32_t observed = 0;
+    } cleanup{reinterpret_cast<int32_t(*)(int32_t,int32_t)>(dlsym(image,"ABIImportedCall"))};
+    assert(cleanup.call);
+    ABIResolutionFailure *error=nullptr;
+    auto *receiver=ABICreateScalarType(ABIValuePointer,&error); assert(receiver && !error);
+    const ABIValueType *parameters[]{receiver};
+    uintptr_t empty=0;
+    ABIManagedVirtualEntry entry{&empty,1,0,ABIAuthenticationUnsigned,0,false};
+    auto *hook=ABICreateManagedVirtualHook(entry,&cleanup,[](void *context) {
+        auto& cleanup=*static_cast<Cleanup*>(context);
+        cleanup.observed=cleanup.call(20,21);
+    },result,parameters,1,nullptr,callback,failed,[](void*){});
+    assert(hook && ABIImportedHookGetFailure(hook)
+        && ABIResolutionFailureGetCode(ABIImportedHookGetFailure(hook))==ABIFailureInvalidAddress);
+    assert(cleanup.observed==42);
+    ABIReleaseImportedHook(hook);
+    ABIReleaseValueType(receiver);
 }
 static int allocationCallbacks = 0;
 static bool allocatingRecursively = false;
@@ -124,7 +146,7 @@ int main(int argc,char **argv) {
     const ABIDeclaration cquery{"ABIImportedAdd",ABILanguageC,ABISymbolFunction,ABINameSource};
     auto *c=ABIInstallImportedFunctionHook(runtime.native_handle(),&cquery,scope.native_selector(),nullptr,
         integer,parameters,2,nullptr,callback,failed,release);
-    assert(c && !ABIImportedHookGetFailure(c)); ABIReleaseValueType(integer);
+    assert(c && !ABIImportedHookGetFailure(c));
     auto report=[](const abi_bridge::resolution_error&) noexcept { assert(false); };
     auto cpp=abi_bridge::hook_imported_function<int32_t(int32_t,int32_t)>(runtime,query,scope,
         [](auto& next,int32_t a,int32_t b) { return next.proceed(a*2,b); },report);
@@ -133,6 +155,8 @@ int main(int argc,char **argv) {
     try { (void)cpp.slot(cpp.size()); assert(false); } catch (const std::out_of_range&) {}
     auto copy=cpp; cpp.invalidate(); assert(copy.slot(0).status==abi_bridge::imported_hook_status::inactive);
     assert(call.unsafe_invoke(20,21)==42);
+    checkFailedStorageCleanup(image,integer);
+    ABIReleaseValueType(integer);
     ABIInvalidateImportedHook(c); assert(released==1);
     ABIReleaseImportedHook(c); assert(released==1 && call.unsafe_invoke(20,22)==42);
     abi_bridge::function<void(int32_t*,int32_t)> write(runtime.resolve({"ABIImportedWrite",abi_bridge::language::c},scope));

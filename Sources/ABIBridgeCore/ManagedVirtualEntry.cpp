@@ -7,7 +7,7 @@ struct TableOwner {
     std::unique_ptr<ABIImageLease,decltype(&ABIReleaseImageLease)> image{nullptr,ABIReleaseImageLease};
     void *context = nullptr;
     ABIImportedContextRelease release = nullptr;
-    ~TableOwner() { if (release) release(context); }
+    ~TableOwner() { if (release) abibridge::releaseManagedFunctionContext(context,release); }
 };
 }
 
