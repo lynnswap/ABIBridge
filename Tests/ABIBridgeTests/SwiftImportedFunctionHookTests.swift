@@ -1,6 +1,7 @@
 #if os(macOS) && DEBUG
 @testable import ABIBridge
 import ABIBridgeCore
+import ABIBridgeCore.Backend
 @testable import ABIBridgeRuntime
 import ABIBridgeTestSupport
 import Darwin
@@ -10,6 +11,71 @@ import Testing
 
 @Suite(.serialized)
 struct SwiftImportedFunctionHookTests {
+
+    @Test func asyncRawFrameReadersExpireWhenTheBodyFactoryReturns() async throws {
+        let module = "AsyncRawFrame_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
+        let fixture = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                @inline(never) public nonisolated(nonsending) func readPointer(_ pointer: UnsafeRawPointer) async -> Int64 {
+                    await Task.yield()
+                    return pointer.load(as: Int64.self)
+                }
+                """
+        )
+        defer { fixture.cleanup() }
+        let target = try await ABIRuntime().resolve(
+            .swift(
+                .function(
+                    module + ".readPointer(_:)",
+                    as: (nonisolated(nonsending) (UnsafeRawPointer) async -> Int64).self
+                )
+            ),
+            in: .path(fixture.libraryURL)
+        )
+        guard case .asynchronous(let nativeCall, let implementation) = target.call else {
+            Issue.record("Expected an async call plan"); return
+        }
+        let signature = try SwiftHookCallbackSignature<Int64, UnsafeRawPointer>(
+            call: nativeCall,
+            contextSize: implementation.entry.contextSize
+        ).erased(consumingArguments: false, retaining: target)
+        let input = UnsafeMutablePointer<Int64>.allocate(capacity: 1)
+        input.initialize(to: 42)
+        defer { input.deinitialize(count: 1); input.deallocate() }
+        let probe = AsyncRawFrameProbe(signature: signature, expected: UInt(bitPattern: input))
+        let context = Unmanaged.passRetained(probe)
+        var failure: OpaquePointer?
+        guard
+            let callback = ABICreateSwiftAsyncHookCallback(
+                nativeCall.interface.handle,
+                implementation.entry.function,
+                implementation.entry.contextSize,
+                { context, call in
+                    Unmanaged<AsyncRawFrameProbe>.fromOpaque(context!).takeUnretainedValue()
+                        .makeBody(call!)
+                },
+                context.toOpaque(),
+                { Unmanaged<AsyncRawFrameProbe>.fromOpaque($0!).release() },
+                &failure
+            )
+        else {
+            context.release(); throw consumeNativeCallFailure(failure)
+        }
+        defer { ABIReleaseSwiftAsyncClosureCallback(callback) }
+        let entry = try SwiftAsyncEntry(
+            descriptor: #require(
+                ABISwiftAsyncClosureCallbackDescriptor(callback)
+            )
+        )
+        let result: Int64 = try await unsafe nativeCall.invoke(
+            entry: entry,
+            retaining: target,
+            UnsafeRawPointer(input),
+            processingResult: { value, _, _ in value.address.load(as: Int64.self) }
+        )
+        #expect(result == 43)
+    }
 
     @MainActor @Test(arguments: [false, true])
     func hookPreparationRunsAwayFromMainActorWhileCallbacksKeepTheirIsolation(
@@ -2969,6 +3035,74 @@ private final class SwiftHookCapture: Sendable {
     deinit { release() }
 }
 private struct RuntimeHookBodyFailure: Error {}
+
+private final class AsyncRawFrameProbe: @unchecked Sendable {
+    let signature: SwiftHookSignature
+    let expected: UInt
+    private var call: OpaquePointer?
+    init(signature: SwiftHookSignature, expected: UInt) {
+        self.signature = signature; self.expected = expected
+    }
+    func makeBody(_ call: OpaquePointer) -> ABISwiftClosureValue {
+        do {
+            var value: UInt = 0, failure: OpaquePointer?
+            guard
+                ABISwiftAsyncIncomingReadPointer(
+                    call,
+                    signature.asyncInterface!.handle,
+                    0,
+                    &value,
+                    &failure
+                )
+            else { throw consumeNativeCallFailure(failure) }
+            #expect(value == expected)
+            try signature.prepareIncoming(call)
+            self.call = call
+            let body: nonisolated(nonsending) @Sendable () async -> Void = { [self] in
+                await run()
+            }
+            return retainedValue(body)
+        } catch {
+            Issue.record(error); return ABISwiftClosureValue()
+        }
+    }
+    nonisolated(nonsending) func run() async {
+        do {
+            let call = try #require(call)
+            await Task.yield()
+            var value: UInt = 0, failure: OpaquePointer?
+            let read = ABISwiftAsyncIncomingReadPointer(
+                call,
+                signature.asyncInterface!.handle,
+                0,
+                &value,
+                &failure
+            )
+            let expired =
+                failure.map {
+                    ABIResolutionFailureGetCode($0) == ABIFailureInvalidRequest
+                } ?? false
+            #expect(!read && expired)
+            if let failure { ABIReleaseResolutionFailure(failure) }
+            let arguments = try signature.readArguments(call)
+            let result = try await signature.proceedAsync(call, arguments: arguments, recovery: nil)
+            var adjusted = result.address.load(as: Int64.self) + 1
+            failure = nil
+            guard
+                ABISwiftIncomingSetResult(
+                    call,
+                    &adjusted,
+                    signature.result.size,
+                    &failure
+                )
+            else { throw consumeNativeCallFailure(failure) }
+        } catch {
+            Issue.record(error)
+            var result: Int64 = 0
+            _ = ABISwiftIncomingSetResult(call, &result, MemoryLayout<Int64>.size, nil)
+        }
+    }
+}
 
 private struct OptionalHookPointer: ABIBridgeValue {
     static let abiType = NativeType.pointer

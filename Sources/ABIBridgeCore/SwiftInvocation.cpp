@@ -60,6 +60,7 @@ struct CallFrame {
     uint64_t stackSize = 0;
     uint64_t error = 0;
 };
+static_assert(sizeof(CallFrame) == 232);
 static_assert(offsetof(CallFrame, integerResults) == 128);
 static_assert(offsetof(CallFrame, floatingResults) == 160);
 static_assert(offsetof(CallFrame, indirectResult) == 192);
@@ -780,6 +781,7 @@ struct SwiftAsyncTransfer {
     uint64_t asyncContext = 0;
     uint64_t discriminator = 0;
 };
+static_assert(sizeof(SwiftAsyncTransfer) == 256);
 static_assert(offsetof(SwiftAsyncTransfer, function) == 232);
 static_assert(offsetof(SwiftAsyncTransfer, asyncContext) == 240);
 static_assert(offsetof(SwiftAsyncTransfer, discriminator) == 248);
@@ -1048,7 +1050,7 @@ void *ABICopySwiftClosureCallbackBodyOwner(ABIUnmanagedFunction function, void *
 
 struct ABISwiftIncomingCall {
     ABIUnmanagedFunction fallback;
-    CallFrame &frame;
+    CallFrame *frame;
     std::optional<ABISwiftAsyncCallInterface> asynchronous;
     uint32_t contextSize = 0;
     const void *task = nullptr;
@@ -1071,11 +1073,11 @@ struct ABISwiftIncomingCall {
 
     ABISwiftIncomingCall(ABISwiftCallback &callback, std::shared_ptr<SwiftHandler> handler,
                         CallFrame &frame)
-        : fallback(callback.fallback), frame(frame), interface(callback.interface), handler(std::move(handler)),
+        : fallback(callback.fallback), frame(&frame), interface(callback.interface), handler(std::move(handler)),
           receiver(reinterpret_cast<const void *>(frame.context)) {}
     ABISwiftIncomingCall(const ABISwiftAsyncCallInterface &interface, ABIUnmanagedFunction fallback,
                         uint32_t contextSize, CallFrame &frame)
-        : fallback(fallback), frame(frame), asynchronous(interface), contextSize(contextSize), task(swift_task_getCurrent()),
+        : fallback(fallback), frame(&frame), asynchronous(interface), contextSize(contextSize), task(swift_task_getCurrent()),
           interface(*interface.completion), receiver(reinterpret_cast<const void *>(frame.context)) {}
     ~ABISwiftIncomingCall() {
         if (prepared && !untouchedFallback && handler->functions.destroyConsumedArguments)
@@ -1126,6 +1128,14 @@ bool checkIncoming(ABISwiftIncomingCall *call, ABIResolutionFailure **error) {
         fail(error, ABIFailureInvalidRequest, "An asynchronous Swift hook stays on its entering task."); return false;
     }
     if (!call->active) { fail(error, ABIFailureInvalidRequest, "The Swift callback invocation has expired."); return false; }
+    return true;
+}
+bool checkIncomingFrame(ABISwiftIncomingCall *call, ABIResolutionFailure **error) {
+    if (!checkIncoming(call, error)) return false;
+    if (!call->frame) {
+        fail(error, ABIFailureInvalidRequest, "The incoming Swift frame is available only during callback preparation.");
+        return false;
+    }
     return true;
 }
 
@@ -1373,6 +1383,9 @@ extern "C" SwiftAsyncTransfer *ABIPrepareSwiftAsyncCallback(
         invocation->hook = std::make_unique<ABISwiftIncomingCall>(callback->interface,
             callback->fallback, callback->contextSize, *incoming);
         invocation->body = callback->createHookBody(callback->context, invocation->hook.get());
+        // The async trampoline restores its stack before entering this body.
+        // Prepared argument storage remains owned by the invocation.
+        invocation->hook->frame = nullptr;
         if (!invocation->body.function) {
             invocation->hook->untouchedFallback = true;
             delete invocation;
@@ -1512,7 +1525,7 @@ void *ABISwiftIncomingPreparedContext(ABISwiftIncomingCall *call) {
 }
 bool ABISwiftIncomingReadPointer(ABISwiftIncomingCall *call, const ABISwiftCallInterface *interface,
     size_t index, uintptr_t *value, ABIResolutionFailure **error) {
-    if (!checkIncoming(call, error)) return false;
+    if (!checkIncomingFrame(call, error)) return false;
     if (!interface || !value || index >= interface->parameters.size()
         || interface->parameters[index]->size() != sizeof(void *)) {
         fail(error, ABIFailureInvalidRequest, "A pointer argument and its physical Swift interface are required."); return false;
@@ -1520,7 +1533,7 @@ bool ABISwiftIncomingReadPointer(ABISwiftIncomingCall *call, const ABISwiftCallI
     for (const auto &move : interface->moves) {
         if (move.source != ArgumentSource::parameter || move.argument != index) continue;
         if (move.indirect || move.component.offset != 0 || move.component.size != sizeof(void *)) break;
-        std::memcpy(value, slot(call->frame, move), sizeof(void *));
+        std::memcpy(value, slot(*call->frame, move), sizeof(void *));
         return true;
     }
     fail(error, ABIFailureInvalidRequest, "The selected Swift argument is not a directly passed pointer word.");
@@ -1528,14 +1541,14 @@ bool ABISwiftIncomingReadPointer(ABISwiftIncomingCall *call, const ABISwiftCallI
 }
 bool ABISwiftIncomingReadIndirectAddress(ABISwiftIncomingCall *call, const ABISwiftCallInterface *interface,
     size_t index, uintptr_t *value, ABIResolutionFailure **error) {
-    if (!checkIncoming(call, error)) return false;
+    if (!checkIncomingFrame(call, error)) return false;
     if (!interface || !value || index >= interface->parameters.size()) {
         fail(error, ABIFailureInvalidRequest, "An indirect argument and its physical Swift interface are required."); return false;
     }
     for (const auto &move : interface->moves) {
         if (move.source != ArgumentSource::parameter || move.argument != index) continue;
         if (!move.indirect) break;
-        std::memcpy(value, slot(call->frame, move), sizeof(void *));
+        std::memcpy(value, slot(*call->frame, move), sizeof(void *));
         return true;
     }
     fail(error, ABIFailureInvalidRequest, "The selected Swift argument is not passed indirectly.");
@@ -1555,7 +1568,7 @@ bool ABISwiftAsyncIncomingReadPointer(ABISwiftIncomingCall *call, const ABISwift
 }
 bool ABISwiftAsyncIncomingPrepare(ABISwiftIncomingCall *call, const ABISwiftAsyncCallInterface *interface,
     ABISwiftCallbackFunctions functions, void *context, ABIResolutionFailure **error) {
-    if (!checkIncoming(call, error)) return false;
+    if (!checkIncomingFrame(call, error)) return false;
     if (!interface || call->prepared || !call->asynchronous) {
         fail(error, ABIFailureInvalidRequest, "An unprepared async hook and its bound interface are required."); return false;
     }
@@ -1563,7 +1576,7 @@ bool ABISwiftAsyncIncomingPrepare(ABISwiftIncomingCall *call, const ABISwiftAsyn
     handler->functions = functions; handler->context = context;
     call->handler = std::move(handler);
     call->asynchronous = *interface; call->interface = *interface->completion;
-    unpackArguments(*interface->entry, call->frame, call->storage, call->arguments, nullptr, true);
+    unpackArguments(*interface->entry, *call->frame, call->storage, call->arguments, nullptr, true);
     size_t prefix = 0;
     auto pointer = [&]() { uintptr_t value; std::memcpy(&value, call->arguments[prefix++], sizeof(value)); return value; };
     if (call->interface.resultLayout.indirect) call->indirectResult = reinterpret_cast<void *>(pointer());
@@ -1604,7 +1617,7 @@ void ABISwiftIncomingCompleteAsyncProceed(ABISwiftIncomingCall *call, ABISwiftAs
 
 bool ABISwiftIncomingPrepare(ABISwiftIncomingCall *call, const ABISwiftCallInterface *interface,
     ABISwiftCallbackFunctions functions, void *context, ABIResolutionFailure **error) {
-    if (!checkIncoming(call, error)) return false;
+    if (!checkIncomingFrame(call, error)) return false;
     if (!interface || call->prepared) {
         fail(error, ABIFailureInvalidRequest, "An unprepared Swift invocation and its bound interface are required."); return false;
     }
@@ -1613,7 +1626,7 @@ bool ABISwiftIncomingPrepare(ABISwiftIncomingCall *call, const ABISwiftCallInter
     handler->context = context;
     call->interface = *interface;
     call->handler = std::move(handler);
-    unpackArguments(call->interface, call->frame, call->storage, call->arguments, &call->indirectError, true);
+    unpackArguments(call->interface, *call->frame, call->storage, call->arguments, &call->indirectError, true);
     call->prepared = true;
     return true;
 }
