@@ -97,7 +97,10 @@ public final class NativeObject {
     ///   - valueType: The desired Swift object, bridgeable value, class, or block type.
     /// - Returns: The converted value, or nil for an optional result with a nil ivar.
     /// - Throws: A missing-ivar, unsupported-storage, metadata, or conversion error.
-    public func value<Value>(forObjCIvar name: String, as valueType: Value.Type) throws -> Value {
+    @unsafe public func value<Value>(
+        forObjCIvar name: String,
+        as valueType: Value.Type
+    ) throws -> Value {
         let object = receiver!
         let type: AnyClass = object_getClass(object)!
         guard !name.utf8.contains(0) else {
