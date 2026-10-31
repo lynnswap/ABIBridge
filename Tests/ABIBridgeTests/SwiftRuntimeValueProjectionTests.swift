@@ -1090,12 +1090,15 @@ struct SwiftRuntimeValueProjectionTests {
             .swift(
                 .function(
                     "ManagedSwiftFixtures.makeRuntimeConsumer<A where A: ~Swift.Copyable>(A.Type) -> (__owned A) -> Swift.Int64",
-                    as: ((RuntimeTicket.Type) -> NativeSwiftValue).self,
+                    as: ((NativeSwiftValue) -> NativeSwiftValue).self,
                     genericArguments: [.type(ticket.type)]
                 )
             )
         )
-        let consumerValue = try unsafe makeConsumer.unsafeInvoke(RuntimeTicket.self)
+        let metatype = try ticket.type.makeMetatypeValue()
+        #expect(metatype.isCopyable)
+        let consumerValue = try unsafe makeConsumer.unsafeInvoke(metatype.copy())
+        #expect(!metatype.isConsumed)
         #expect(throws: ABIResolutionError.self) {
             try consumerValue.copyClosureAndWait(as: ((NativeSwiftValue) -> Int64).self)
         }

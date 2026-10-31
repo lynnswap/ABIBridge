@@ -2727,16 +2727,24 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
     }
 
     @Test func runtimeResultsRestoreElidedSingletonMetatypes() async throws {
-        let function = try await ABIRuntime.shared.resolve(
+        let type = try await ABIRuntime.shared.resolve(
             .swift(
-                .function(
-                    "ManagedSwiftFixtures.valueMetatypeGeneric<A>(ManagedSwiftFixtures.GenericMetatypeValue<A>.Type, Swift.Int64) -> (ManagedSwiftFixtures.GenericMetatypeValue<A>.Type, Swift.Int64)",
-                    as: ((GenericMetatypeValue<String>.Type, Int64) -> NativeSwiftValue).self,
+                .type(
+                    "ManagedSwiftFixtures.GenericMetatypeValue",
                     genericArguments: [.type(String.self)]
                 )
             )
         )
-        let result = try unsafe function.unsafeInvoke(GenericMetatypeValue<String>.self, Int64(40))
+        let function = try await ABIRuntime.shared.resolve(
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.valueMetatypeGeneric<A>(ManagedSwiftFixtures.GenericMetatypeValue<A>.Type, Swift.Int64) -> (ManagedSwiftFixtures.GenericMetatypeValue<A>.Type, Swift.Int64)",
+                    as: ((NativeSwiftValue, Int64) -> NativeSwiftValue).self,
+                    genericArguments: [.type(String.self)]
+                )
+            )
+        )
+        let result = try unsafe function.unsafeInvoke(type.makeMetatypeValue(), Int64(40))
         let value = try result.take(as: (GenericMetatypeValue<String>.Type, Int64).self)
         #expect(
             unsafeBitCast(value.0, to: UInt.self)
@@ -3166,6 +3174,46 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         }
         #expect(moved.isConsumed && counts.destructions == 1)
     }
+    #if os(macOS)
+    @Test func runtimeMetatypeValuesSupplyExplicitGenericTypeArguments() async throws {
+        let module = "RuntimeMetatype_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let library = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                import Foundation
+                public struct Record: Decodable { public let number: Int64 }
+                public func decode<Value: Decodable>(
+                    _ type: Value.Type, from data: NSData
+                ) throws -> (Value, String) {
+                    (try JSONDecoder().decode(type, from: data as Data), String(reflecting: type))
+                }
+                """,
+            linkArguments: ["-swift-version", "6", "-enable-library-evolution"]
+        )
+        defer { library.cleanup() }
+        let runtime = ABIRuntime()
+        let type = try await runtime.resolve(
+            .swift(.type(module + ".Record")),
+            in: .path(library.libraryURL)
+        )
+        let decode = try await runtime.resolve(
+            .swift(
+                .function(
+                    module + ".decode(_:from:)",
+                    as: ((NativeSwiftValue, NSData) throws -> (NativeSwiftValue, String)).self,
+                    genericArguments: [.type(type)]
+                )
+            ),
+            in: .path(library.libraryURL)
+        )
+        let data = Data(#"{"number":42}"#.utf8) as NSData
+        let (value, typeName) = try unsafe decode.unsafeInvoke(type.makeMetatypeValue(), data)
+        #expect(typeName == type.name)
+        let number = try await value.type.resolve(.swift(.getter("number", as: (() -> Int64).self)))
+        #expect(try unsafe number.unsafeInvoke(on: value) == 42)
+    }
+
+    #endif
     #if DEBUG && os(macOS)
     @Test func anOpaqueFactoryKeepsItsOwnCodeAndUsesTheUnderlyingTypeImage() async throws {
         let module = "OpaqueType_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
