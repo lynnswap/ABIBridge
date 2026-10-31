@@ -1,3 +1,5 @@
+import Foundation
+
 public enum RuntimeEmptyCaseMode: Int64 {
     case `default` = 7
     case `static` = 42
@@ -15,6 +17,15 @@ public enum RuntimeProjectionChoice {
     indirect case indirect(RuntimeProjectionChoice)
     case repeated(number: Int64)
     case repeated(text: String)
+    case send(Data, RuntimeProjectionIdentifier)
+}
+
+public struct RuntimeProjectionIdentifier {
+    public let token: ErrorLifetimeToken
+    public let id: UInt64
+    public init(_ token: ErrorLifetimeToken, id: UInt64) {
+        self.token = token; self.id = id
+    }
 }
 
 public struct RuntimeProjectionLarge {
@@ -43,6 +54,18 @@ public struct RuntimeProjectionLarge {
     case 7: RuntimeProjectionChoice.repeated(number: 42)
     default: RuntimeProjectionChoice.repeated(text: "overloaded")
     }
+}
+
+@inline(never) public func makeRuntimeProjectionIdentifier(
+    _ id: UInt64,
+    _ token: ErrorLifetimeToken
+) -> some Any {
+    RuntimeProjectionIdentifier(token, id: id)
+}
+
+@inline(never) public func readRuntimeProjectionSend(_ choice: RuntimeProjectionChoice) -> String? {
+    guard case .send(let report, let identifier) = choice else { return nil }
+    return "\(Array(report)) \(identifier.id)"
 }
 
 public enum RuntimeProjectionGeneric<Value> { case value(Value) }
