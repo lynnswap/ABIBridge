@@ -124,6 +124,19 @@ Function values in the payload are adapted to the case's native convention. As w
 
 A case without associated values, a mismatched payload type, or unavailable field metadata throws before an enum value is returned.
 
+To create a case from separate associated values, pass them in declaration order. For a hidden `enum Request { case send(Data, Identifier) }` whose `Identifier` value comes from a native call:
+
+```swift
+let request = try await requestType.makeEnumCase(
+    named: "send",
+    associatedValues: report, identifier
+)
+```
+
+`makeEnumCase(named:associatedValues:_:valueABIs:)` copies each value into the case's native payload without modifying or consuming it. Pass each value as a ``NativeSwiftValue`` whose runtime type is the associated value's type, or as a Swift value whose static type is exactly that type, such as `Data`. For an existential associated value, such as `Any` or `any P`, a Swift value can also have any type that Swift's `as?` cast converts to that existential. The case's runtime metadata supplies the labels, order, and layout of the payload tuple, so a single labeled associated value, such as the one in `case item(value: Int)`, is also passed by itself. A single value of the complete payload type supplies the whole payload, as with `payload:`.
+
+Function values and `valueABIs` follow the payload rules above, and `makeEnumCaseAndWait(named:associatedValues:_:valueABIs:)` performs the same operation synchronously. A mismatched value, or a different number of values, throws ``ABIInvocationError/incompatibleValue(expected:actual:)`` before any value is copied.
+
 ## Copy contained runtime values
 
 An enum, tuple, or existential can contain a value whose type is unavailable to the consumer. Copy that value into another ``NativeSwiftValue`` and use its retained type for member lookup:

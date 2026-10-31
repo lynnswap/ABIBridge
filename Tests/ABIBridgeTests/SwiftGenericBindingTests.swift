@@ -76,15 +76,23 @@ struct SwiftGenericBindingTests {
         let declaration = SwiftGenericDeclaration(
             parameters: [.init(name: "A", isPack: false)],
             requirements: [.invertedProtocols(.named("A", []), 2)],
-            arguments: [], result: .named("A", []), failure: nil,
-            isAsync: false, consumesArguments: false
+            arguments: [],
+            result: .named("A", []),
+            failure: nil,
+            isAsync: false,
+            consumesArguments: false
         )
-        let binding = try SwiftGenericBinding(declaration: declaration, arguments: [.type(Int64.self)],
-            signature: SwiftFunctionSignature((() -> Int64).self), resolver: .shared)
+        let binding = try SwiftGenericBinding(
+            declaration: declaration,
+            arguments: [.type(Int64.self)],
+            signature: SwiftFunctionSignature((() -> Int64).self),
+            resolver: .shared
+        )
         func plan(_ attribute: String) throws -> SwiftGenericClosurePlan {
             try SwiftGenericCallPlan.closure(
                 SwiftDeclaredSignature(attribute + " (_ text: Swift.String) -> A").function,
-                signature: SwiftFunctionSignature(((String) -> Int64).self), binding: binding
+                signature: SwiftFunctionSignature(((String) -> Int64).self),
+                binding: binding
             )
         }
         let borrowed = try plan("@_lifetime(borrow text)")
@@ -99,23 +107,31 @@ struct SwiftGenericBindingTests {
     func declaredClosureLifetimesPreserveNestedTypeIdentities(genericParent: Bool) throws {
         let function = try SwiftFormalType("(Swift.String) -> Swift.Int64")
         let parent = SwiftFormalType.nominal("Provider.Outer", genericParent ? [function] : [])
-        let known = SwiftFormalType.nested(parent, "Inner", [function], extensionModule: "Extensions")
+        let known = SwiftFormalType.nested(
+            parent,
+            "Inner",
+            [function],
+            extensionModule: "Extensions"
+        )
         let source = try SwiftFormalType(
-            "Provider.Outer" + (genericParent ? "<@_lifetime(immortal) (Swift.String) -> Swift.Int64>" : "")
+            "Provider.Outer"
+                + (genericParent ? "<@_lifetime(immortal) (Swift.String) -> Swift.Int64>" : "")
                 + ".Inner<@_lifetime(borrow value) (_ value: Swift.String) -> Swift.Int64>"
         )
         let overlaid = try known.overlayingLifetimeEvidence(from: source)
         guard case .nested(let outer, let name, let values, let module) = overlaid,
-              case .function(_, _, _, let innerAttributes) = try #require(values.first)
+            case .function(_, _, _, let innerAttributes) = try #require(values.first)
         else { Issue.record("Expected the verified nested type and its closure argument."); return }
         #expect(name == "Inner" && module == "Extensions")
         #expect(innerAttributes.borrowedInputs == [.argument(0)])
         if genericParent {
             guard case .nominal(let owner, let arguments) = outer,
-                  case .function(_, _, _, let attributes) = try #require(arguments.first)
+                case .function(_, _, _, let attributes) = try #require(arguments.first)
             else { Issue.record("Expected the verified generic parent."); return }
             #expect(owner == "Provider.Outer" && attributes.borrowedInputs == [])
-        } else { #expect(outer == parent) }
+        } else {
+            #expect(outer == parent)
+        }
     }
 
     @Test func conditionalResultEscapabilityUsesTheDeclaredArguments() throws {
@@ -425,7 +441,7 @@ struct SwiftGenericBindingTests {
         case calleeMutation, throwingCalleeMutation, borrowedCallback, callbackMutation,
             asyncCallbackMutation
         case hostCallbackMutation, hostAsyncCallbackMutation, storedHostCallbackMutation,
-            scopedCopyMutation
+            scopedCopyMutation, scopedCopyEnumCase
     }
 
     @Test(.serialized, arguments: RuntimeDependencyOperation.allCases)
@@ -834,6 +850,13 @@ struct SwiftGenericBindingTests {
                 // native handles must still release the image leases.
                 try unsafe update.unsafeInvoke(argument, binding)
                 return alias
+            case .scopedCopyEnumCase:
+                let optional = try runtime.resolveAndWait(
+                    .swift(.type("Swift.Optional", genericArguments: [.type(Any.self)]))
+                )
+                return try argument.withCopy {
+                    try optional.makeEnumCaseAndWait(named: "some", associatedValues: $0)
+                }
             case .copiedResult, .asyncMovedResult:
                 let copy = try runtime.resolveAndWait(
                     .swift(
@@ -857,11 +880,16 @@ struct SwiftGenericBindingTests {
             return
         }
         func inspect() throws {
+            let receiver =
+                operation == .scopedCopyEnumCase
+                ? try #require(try result!.copyEnumPayloadAndWait(forCase: "some"))
+                    .copyUnderlyingValue()
+                : result!
             let receiverABI: NativeType? =
                 operation == .addressReceiverResult || operation == .asyncAddressReceiverResult
                     || operation == .borrowedCallback
-                ? try .opaque(named: result!.type.name) : nil
-            let read = try result!.type.resolveAndWait(
+                ? try .opaque(named: receiver.type.name) : nil
+            let read = try receiver.type.resolveAndWait(
                 .swift(
                     .method(
                         "read()",
@@ -870,7 +898,7 @@ struct SwiftGenericBindingTests {
                     )
                 )
             )
-            #expect(try unsafe read.unsafeInvoke(on: result!) == 42)
+            #expect(try unsafe read.unsafeInvoke(on: receiver) == 42)
         }
         try inspect()
         result = nil
@@ -1525,11 +1553,17 @@ struct SwiftGenericBindingTests {
     /// scripts/check-swift-closure-codegen.py checks.
     @Test func largeOptionalExistentialsHashAsPassedByAddress() throws {
         typealias M3 = any (AuthenticationP1 & AuthenticationP2 & AuthenticationP3).Type
-        typealias M4 = any (AuthenticationP1 & AuthenticationP2 & AuthenticationP3 & AuthenticationP4).Type
-        typealias M5 = any (AuthenticationP1 & AuthenticationP2 & AuthenticationP3 & AuthenticationP4
-            & AuthenticationP5).Type
-        typealias C4 = any AuthenticationObject & AuthenticationP1 & AuthenticationP2 & AuthenticationP3
-        typealias C5 = any AuthenticationObject & AuthenticationP1 & AuthenticationP2 & AuthenticationP3
+        typealias M4 = any (
+            AuthenticationP1 & AuthenticationP2 & AuthenticationP3 & AuthenticationP4
+        ).Type
+        typealias M5 = any (
+            AuthenticationP1 & AuthenticationP2 & AuthenticationP3 & AuthenticationP4
+                & AuthenticationP5
+        ).Type
+        typealias C4 = any AuthenticationObject & AuthenticationP1 & AuthenticationP2
+            & AuthenticationP3
+        typealias C5 = any AuthenticationObject & AuthenticationP1 & AuthenticationP2
+            & AuthenticationP3
             & AuthenticationP4
         let signatures: [(Any.Type, UInt16)] = [
             (((M3?) -> Int).self, 37764),
@@ -1572,7 +1606,10 @@ struct SwiftGenericBindingTests {
             let auth = try swiftClosureAuthType(type, position: .parameter)
             #expect(swiftClosureDiscriminator(parameters: [auth], results: [auth]) == 30738)
         }
-        let optional = try swiftClosureAuthType((any CustomStringConvertible.Type)?.self, position: .parameter)
+        let optional = try swiftClosureAuthType(
+            (any CustomStringConvertible.Type)?.self,
+            position: .parameter
+        )
         #expect(swiftClosureDiscriminator(parameters: [optional], results: [optional]) == 53055)
         #expect(try hashedDiscriminator(((LargeManagedValue) -> LargeManagedValue).self) == 55683)
         #expect(try hashedDiscriminator((([String: Int64]) -> Set<Int64>).self) == 63592)

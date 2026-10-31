@@ -181,14 +181,63 @@ public actor NativeSwiftType: Hashable {
         return try initializeEnumCase(payload: payload, prepared: prepared, valueABIs: valueABIs)
     }
 
+    /// Creates an owned enum value by copying each of the case's associated values.
+    ///
+    /// Pass the associated values in declaration order, as Swift source passes them to the case: `makeEnumCase(named: "send", associatedValues: data, identifier)` creates `.send(data, identifier)`. Each value is a ``NativeSwiftValue`` whose runtime type is that associated value's type, or a Swift value whose static type is exactly that type. A Swift value for an existential associated value, such as `Any` or `any P`, can also have any type that Swift's `as?` cast converts to that existential. A single value of the case's complete payload type supplies the whole payload, as in `makeEnumCase(named:payload:valueABIs:)`. The case's runtime payload metadata supplies the labels, order, and layout of the native tuple that holds multiple associated values or one labeled associated value.
+    ///
+    /// The values are neither modified nor consumed. A value that does not match its associated value fails before any value is copied. Runtime values must be Copyable, and the enum must be Escapable; the enum need not be Copyable. Direct and indirect cases retain independent ownership of the copies and their implementation images.
+    ///
+    /// Required closure ABI preparation runs away from the caller's executor. Copying and binding captured contexts run on the caller's executor. Function values are adapted from owned runtime storage to the case's native convention. Supply `valueABIs` for closed nominal types in their parameters or results whose ABI cannot be inferred from runtime metadata.
+    ///
+    /// - Parameters:
+    ///   - caseName: The unique unqualified case name, without argument labels or backticks.
+    ///   - first: The first associated value, or the complete payload.
+    ///   - rest: The remaining associated values.
+    ///   - valueABIs: Explicit calling conventions for closed nominal types used by payload closures.
+    /// - Throws: `NativeSwiftValueError` for an unknown or ambiguous case name, a consumed or inaccessible runtime value, or a noncopyable runtime value; `ABIInvocationError` for values that do not match the case's associated values; `ABIResolutionError` for a case without a payload or unsupported metadata.
+    public nonisolated(nonsending) func makeEnumCase<First, each Rest>(
+        named caseName: String,
+        associatedValues first: First,
+        _ rest: repeat each Rest,
+        valueABIs: [NativeSwiftType: NativeType] = [:]
+    ) async throws -> NativeSwiftValue {
+        let prepared = try await NativePreparation.run {
+            try self.prepareEnumCase(named: caseName, payloadType: nil, valueABIs: valueABIs)
+        }
+        return try initializeEnumCase(
+            associatedValues: SwiftEnumAssociatedValue.values(first, repeat each rest),
+            prepared: prepared,
+            valueABIs: valueABIs
+        )
+    }
+
+    /// Creates an owned enum value from its associated values synchronously on the caller's thread.
+    ///
+    /// This has the same value and ownership contract as `makeEnumCase(named:associatedValues:_:valueABIs:)`. It performs or joins required ABI preparation before returning, which can block the caller's thread.
+    public nonisolated func makeEnumCaseAndWait<First, each Rest>(
+        named caseName: String,
+        associatedValues first: First,
+        _ rest: repeat each Rest,
+        valueABIs: [NativeSwiftType: NativeType] = [:]
+    ) throws -> NativeSwiftValue {
+        let prepared = try prepareEnumCase(named: caseName, payloadType: nil, valueABIs: valueABIs)
+        return try initializeEnumCase(
+            associatedValues: SwiftEnumAssociatedValue.values(first, repeat each rest),
+            prepared: prepared,
+            valueABIs: valueABIs
+        )
+    }
+
+    /// - Parameter payloadType: The type of a value supplying the whole
+    ///   payload, or nil when associated values supply it.
     private nonisolated func prepareEnumCase(
         named caseName: String,
-        payloadType: NativeSwiftType,
+        payloadType: NativeSwiftType?,
         valueABIs: [NativeSwiftType: NativeType]
-    ) throws -> (Int, SwiftRuntimeValueProjectionPlan) {
+    ) throws -> (Int, Any.Type, SwiftRuntimeValueProjectionPlan) {
         let enumeration = try withRuntimeErrors { try RuntimeEnumMetadata(metadata) }
         let index = try enumeration.caseIndex(named: caseName)
-        guard SwiftCopyability.accepts(payloadType.metadata) else {
+        if let payloadType, !SwiftCopyability.accepts(payloadType.metadata) {
             throw NativeSwiftValueError.noncopyableType
         }
         guard let expected = try withRuntimeErrors({ try enumeration.payloadType(at: index) })
@@ -197,7 +246,7 @@ public actor NativeSwiftType: Hashable {
                 "The enum case '\(caseName)' has no associated payload."
             )
         }
-        guard expected == payloadType.metadata else {
+        if let payloadType, expected != payloadType.metadata {
             throw ABIInvocationError.incompatibleValue(
                 expected: String(reflecting: expected),
                 actual: payloadType.name
@@ -212,6 +261,7 @@ public actor NativeSwiftType: Hashable {
         try validateSwiftRuntimeValueStorage(expected)
         return (
             index,
+            expected,
             try SwiftRuntimeValueProjectionPlan(
                 enumType: self,
                 caseIndex: index,
@@ -223,7 +273,7 @@ public actor NativeSwiftType: Hashable {
 
     private nonisolated func initializeEnumCase(
         payload: NativeSwiftValue,
-        prepared: (Int, SwiftRuntimeValueProjectionPlan),
+        prepared: (Int, Any.Type, SwiftRuntimeValueProjectionPlan),
         valueABIs: [NativeSwiftType: NativeType]
     ) throws -> NativeSwiftValue {
         let source = try payload.access(.borrowing)
@@ -233,7 +283,6 @@ public actor NativeSwiftType: Hashable {
                 + (source.codeLifetime.map { [$0] } ?? []),
             retaining: []
         )!
-        let nativeMetadata = unsafeBitCast(metadata, to: UnsafeRawPointer.self)
         let payloadMetadata = unsafeBitCast(payload.type.metadata, to: UnsafeRawPointer.self)
         let payloadLayout = ABISwiftGetValueLayout(payloadMetadata)
         let scratch = NativeValueStorage(
@@ -246,21 +295,116 @@ public actor NativeSwiftType: Hashable {
             ABISwiftCopyValue(payloadMetadata, scratch.address, source.address)
         }
         scratch.assumeInitialized { ABISwiftDestroyValue(payloadMetadata, $0) }
-        prepared.1.apply(to: scratch, native: true)
+        return try initializeEnumCase(
+            at: prepared.0,
+            taking: scratch,
+            payloadType: prepared.1,
+            plan: prepared.2
+        )
+    }
+
+    private nonisolated func initializeEnumCase(
+        associatedValues values: [SwiftEnumAssociatedValue],
+        prepared: (Int, Any.Type, SwiftRuntimeValueProjectionPlan),
+        valueABIs: [NativeSwiftType: NativeType]
+    ) throws -> NativeSwiftValue {
+        let (index, payloadType, plan) = prepared
+        // A single value of the payload type supplies the whole payload. Other
+        // values are the elements of the payload's tuple, including the
+        // one-element tuple of a single labeled value.
+        var fields = [RuntimeTupleMetadata.Element(type: payloadType, offset: 0)]
+        if let tuple = RuntimeTupleMetadata(payloadType), tuple.elements.count == values.count,
+            values.count != 1 || !values[0].supplies(payloadType)
+        {
+            fields = tuple.elements
+        }
+        func mismatch() -> ABIInvocationError {
+            let actual = values.map { $0.handle?.type.name ?? String(reflecting: $0.type) }
+            return .incompatibleValue(
+                expected: String(reflecting: payloadType),
+                actual: actual.count == 1 ? actual[0] : "(" + actual.joined(separator: ", ") + ")"
+            )
+        }
+        guard fields.count == values.count else { throw mismatch() }
+        // Validate every value before copying, so a failure leaves no partial payload.
+        let matched = try zip(values, fields).map {
+            value,
+            field -> (SwiftEnumAssociatedValue, NativeSwiftValue?) in
+            // A field whose type is the handle type itself stores the handle.
+            if value.type == field.type { return (value, nil) }
+            if let handle = value.handle {
+                guard handle.isCopyable else { throw NativeSwiftValueError.noncopyableType }
+                guard handle.type.metadata == field.type else { throw mismatch() }
+                return (value, handle)
+            }
+            // Box a Swift value in an existential field's container, as Swift
+            // converts an argument. This also restores an existential first
+            // value, which Swift 6 passes as its opened concrete type.
+            guard let converted = value.converted(to: field.type) else { throw mismatch() }
+            return (converted, nil)
+        }
+        let handles = matched.map(\.1)
+        let sources = try handles.map { try $0?.access(.borrowing) }
+        // A Swift value carries no image lifetime, so retain the images of the
+        // scope that supplied it, such as a withCopy body.
+        let lifetime = SwiftValueCodeLifetime.connect(
+            [codeLifetime] + handles.compactMap { $0?.type.codeLifetime }
+                + valueABIs.keys.map(\.codeLifetime) + sources.compactMap { $0?.codeLifetime }
+                + [SwiftValueCodeLifetime.current].compactMap { $0 },
+            retaining: []
+        )!
+        let payloadMetadata = unsafeBitCast(payloadType, to: UnsafeRawPointer.self)
+        let payloadLayout = ABISwiftGetValueLayout(payloadMetadata)
+        let scratch = NativeValueStorage(
+            size: payloadLayout.stride,
+            alignment: payloadLayout.alignment,
+            owner: self,
+            codeLifetime: lifetime
+        )
+        withExtendedLifetime(sources) {
+            for (field, (value, source)) in zip(fields, zip(matched.map(\.0), sources)) {
+                let fieldMetadata = unsafeBitCast(field.type, to: UnsafeRawPointer.self)
+                let destination = scratch.address.advanced(by: field.offset)
+                if let source {
+                    ABISwiftCopyValue(fieldMetadata, destination, source.address)
+                } else {
+                    value.copy(destination, fieldMetadata)
+                }
+            }
+        }
+        scratch.assumeInitialized { ABISwiftDestroyValue(payloadMetadata, $0) }
+        return try initializeEnumCase(
+            at: index,
+            taking: scratch,
+            payloadType: payloadType,
+            plan: plan
+        )
+    }
+
+    /// Initializes the case at `index` with the payload in `scratch`, which
+    /// holds owned runtime values, and returns the enum value.
+    private nonisolated func initializeEnumCase(
+        at index: Int,
+        taking scratch: NativeValueStorage,
+        payloadType: Any.Type,
+        plan: SwiftRuntimeValueProjectionPlan
+    ) throws -> NativeSwiftValue {
+        plan.apply(to: scratch, native: true)
+        let nativeMetadata = unsafeBitCast(metadata, to: UnsafeRawPointer.self)
         let layout = ABISwiftGetValueLayout(nativeMetadata)
         let storage = NativeValueStorage(
             size: layout.stride,
             alignment: layout.alignment,
             owner: self,
-            codeLifetime: lifetime
+            codeLifetime: scratch.codeLifetime
         )
         let enumeration = try withRuntimeErrors { try RuntimeEnumMetadata(metadata) }
         try withRuntimeErrors {
             try enumeration.initializeCase(
-                at: prepared.0,
+                at: index,
                 in: storage.address,
                 taking: scratch.address,
-                payloadType: payload.type.metadata
+                payloadType: payloadType
             )
         }
         scratch.relinquishValue()
@@ -597,7 +741,8 @@ public actor NativeSwiftType: Hashable {
         let inherited = query.role != .initializer
         // The representation this type was resolved with stands for it.
         let representations =
-            representation.flatMap { $0 == metadata ? nil : [ObjectIdentifier($0): metadata] } ?? [:]
+            representation.flatMap { $0 == metadata ? nil : [ObjectIdentifier($0): metadata] }
+            ?? [:]
         var originalRequest: NativeDeclaration?
         var ownerClass: AnyClass? = metadata as? AnyClass
         var ownerImage = image
@@ -1225,5 +1370,49 @@ extension NativeSwiftType {
                 )
             )
         }
+    }
+}
+
+/// A value that supplies an enum case's payload or one element of its tuple:
+/// a runtime value handle, a Swift value of the element's static type, or a
+/// Swift value converted to an existential element.
+private struct SwiftEnumAssociatedValue {
+    /// The value's static type.
+    let type: Any.Type
+    let handle: NativeSwiftValue?
+    /// Copies the value to the destination with the value witnesses of its
+    /// type's metadata.
+    let copy: (UnsafeMutableRawPointer, UnsafeRawPointer) -> Void
+    private let cast: (Any.Type) -> Self?
+
+    init<Value>(_ value: Value) {
+        type = Value.self
+        handle = Value.self == NativeSwiftValue.self ? (value as! NativeSwiftValue) : nil
+        copy = { destination, metadata in
+            withUnsafePointer(to: value) { ABISwiftCopyValue(metadata, destination, $0) }
+        }
+        cast = { target in
+            func cast<Target>(_: Target.Type) -> Self? { (value as? Target).map(Self.init) }
+            return _openExistential(target, do: cast)
+        }
+    }
+
+    /// The value in a container of an existential type, converted by Swift's
+    /// `as?` cast, or nil when the type is not existential or the cast fails.
+    func converted(to existential: Any.Type) -> Self? {
+        switch runtimeMetadataKind(existential) {
+        case .existential, .extendedExistential, .existentialMetatype: cast(existential)
+        default: nil
+        }
+    }
+
+    static func values<First, each Rest>(_ first: First, _ rest: repeat each Rest) -> [Self] {
+        var values = [Self(first)]
+        for value in repeat each rest { values.append(Self(value)) }
+        return values
+    }
+
+    func supplies(_ metadata: Any.Type) -> Bool {
+        type == metadata || handle?.type.metadata == metadata
     }
 }

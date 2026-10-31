@@ -343,6 +343,95 @@ struct SwiftRuntimeValueProjectionTests {
         #expect(tuple.0 + tuple.1 == 42)
     }
 
+    @Test func associatedValuesBuildTheCasePayloadFromSeparateValues() async throws {
+        let runtime = ABIRuntime.shared
+        let type = try await runtime.resolve(
+            .swift(.type("ManagedSwiftFixtures.RuntimeProjectionChoice"))
+        )
+        let makeIdentifier = try await runtime.resolve(
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.makeRuntimeProjectionIdentifier(_:_:)",
+                    as: ((UInt64, ErrorLifetimeToken) -> NativeSwiftValue).self
+                )
+            )
+        )
+        let readSend = try await runtime.resolve(
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.readRuntimeProjectionSend(_:)",
+                    as: ((NativeSwiftValue) -> String?).self,
+                    valueABIs: [type: .opaque(named: type.name)]
+                )
+            )
+        )
+        let report = Data((0..<32).map { UInt8($0) })
+        let counts = ArgumentCounts()
+        var constructed: NativeSwiftValue?
+        do {
+            let identifier = try unsafe makeIdentifier.unsafeInvoke(
+                42,
+                ErrorLifetimeToken { counts.destroyed() }
+            )
+            #expect(throws: ABIInvocationError.self) {
+                try type.makeEnumCaseAndWait(named: "send", associatedValues: identifier, report)
+            }
+            constructed = try await type.makeEnumCase(
+                named: "send",
+                associatedValues: report,
+                identifier
+            )
+            #expect(!identifier.isConsumed)
+        }
+        #expect(counts.destructions == 0)
+        #expect(try unsafe readSend.unsafeInvoke(#require(constructed)) == "\(Array(report)) 42")
+        constructed = nil
+        #expect(counts.destructions == 1)
+
+        let labeled = try type.makeEnumCaseAndWait(
+            named: "labeled",
+            associatedValues: (Int64(7), "single")
+        )
+        guard case .labeled(let value) = try labeled.take(as: RuntimeProjectionChoice.self) else {
+            Issue.record("The single labeled value did not initialize its one-element tuple")
+            return
+        }
+        #expect(value.0 == 7 && value.1 == "single")
+    }
+
+    @Test func existentialAssociatedValuesKeepTheirContainers() async throws {
+        let optional = try await ABIRuntime.shared.resolve(
+            .swift(.type("Swift.Optional", genericArguments: [.type(Any.self)]))
+        )
+        let pair = try await ABIRuntime.shared.resolve(
+            .swift(.type("Swift.Optional", genericArguments: [.type((Any, any Error).self)]))
+        )
+        let counts = ArgumentCounts()
+        var constructed: [NativeSwiftValue] = []
+        do {
+            // Swift 6 opens an existential passed as the first value.
+            let token: Any = ErrorLifetimeToken { counts.destroyed() }
+            constructed.append(
+                try optional.makeEnumCaseAndWait(named: "some", associatedValues: token)
+            )
+            constructed.append(
+                try await pair.makeEnumCase(
+                    named: "some",
+                    associatedValues: token,
+                    ScalarFailure(7)
+                )
+            )
+        }
+        do {
+            #expect(try constructed[0].copy().take(as: Any?.self) is ErrorLifetimeToken)
+            let element = try #require(try constructed[1].copy().take(as: (Any, any Error)?.self))
+            #expect(element.0 is ErrorLifetimeToken && (element.1 as? ScalarFailure)?.code == 7)
+        }
+        #expect(counts.destructions == 0)
+        constructed = []
+        #expect(counts.destructions == 1)
+    }
+
     @Test func voidPayloadsAreDistinctFromHiddenNoncopyableMetadata() async throws {
         let make = try await ABIRuntime.shared.resolve(
             .swift(
