@@ -307,16 +307,19 @@ package struct RuntimeClassDispatch {
 package func runtimeClassImage(
     _ type: AnyClass,
     named name: String,
-    resolver: RuntimeSymbolResolver
+    resolver: RuntimeSymbolResolver,
+    retaining owner: RuntimeImage? = nil
 ) throws -> RuntimeImage {
-    // A live class has one defining image. Retaining that image also prevents
-    // class-address reuse; this does not cache user-supplied filesystem selectors.
-    try resolver.image(forSwiftClass: type) {
-        guard let path = class_getImageName(type) else {
-            throw RuntimeResolutionError.declarationNotFound(
-                .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data)
-            )
-        }
+    // Dynamically allocated classes have no defining image. A projected value
+    // already owns its implementation context; do not cache that context as
+    // the class's defining image.
+    guard let path = class_getImageName(type) else {
+        if let owner { return owner }
+        throw RuntimeResolutionError.declarationNotFound(
+            .init(name: "nominal type descriptor for " + name, language: .swift, kind: .data)
+        )
+    }
+    return try resolver.image(forSwiftClass: type) {
         let images = try resolver.images(
             matching: .path(URL(fileURLWithPath: String(cString: path)))
         )

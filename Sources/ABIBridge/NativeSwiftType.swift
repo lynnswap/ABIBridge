@@ -856,7 +856,16 @@ public actor NativeSwiftType: Hashable {
                 let selection = SwiftCandidateSelection(
                     tier.candidates,
                     namesDeclaration: isComplete,
-                    dispatch: { try self.dispatchedEntry($0, asynchronous: description.isAsync) }
+                    dispatch: { candidate in
+                        guard
+                            candidate.record.role == .dispatchThunk
+                                || tier.runtimeWitnesses.contains(candidate.record.identity)
+                        else { return nil }
+                        return try self.dispatchedEntry(
+                            candidate,
+                            asynchronous: description.isAsync
+                        )
+                    }
                 ) { candidate, entry -> SwiftGenericCallPlan? in
                     if isProtocolMember {
                         switch candidate.record.context {
@@ -1136,10 +1145,18 @@ public actor NativeSwiftType: Hashable {
 func swiftClassImage(
     _ type: AnyClass,
     named name: String,
-    resolver: SymbolResolver
+    resolver: SymbolResolver,
+    retaining owner: NativeImage? = nil
 ) throws -> NativeImage {
     try withRuntimeErrors {
-        NativeImage(try runtimeClassImage(type, named: name, resolver: resolver.runtime))
+        NativeImage(
+            try runtimeClassImage(
+                type,
+                named: name,
+                resolver: resolver.runtime,
+                retaining: owner?.runtimeValue
+            )
+        )
     }
 }
 

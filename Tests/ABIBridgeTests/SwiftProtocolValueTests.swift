@@ -237,9 +237,25 @@ extension SwiftProtocolValueTests {
             )
             try unsafe setter.unsafeInvoke(try value.copy())
             #expect(!value.isConsumed)
-            #expect(try unsafe getter.unsafeInvoke() != nil)
+            let received = try #require(try unsafe getter.unsafeInvoke())
+            let originalObject = try value.copyUnderlyingValue()
+            let receivedObject = try received.copyUnderlyingValue()
+            #expect(originalObject.type == receivedObject.type)
+            let identities = try [value, originalObject, receivedObject].map { value in
+                try value.withCopy { ObjectIdentifier($0 as AnyObject) }
+            }
+            #expect(Set(identities).count == 1)
+            let forward = try receivedObject.type.resolveAndWait(
+                .swift(
+                    .method(
+                        "ManagedSwiftFixtures.HostDelegate.receive(_:)",
+                        as: ((String) -> Void).self
+                    )
+                )
+            )
+            try unsafe forward.unsafeInvoke(on: receivedObject, "forwarded")
             #expect(invokeWeakHostDelegate(receiver, "weak"))
-            #expect(state.messages.withLock { $0 } == ["weak"])
+            #expect(state.messages.withLock { $0 } == ["forwarded", "weak"])
         }
         #expect(try unsafe getter.unsafeInvoke() == nil)
         #expect(!invokeWeakHostDelegate(receiver, "released"))
@@ -486,3 +502,52 @@ extension SwiftProtocolValueTests {
         #expect(state.destroyed.withLock { $0 } == 1)
     }
 }
+
+#if os(macOS)
+import ABIBridgeTestSupport
+
+extension SwiftProtocolValueTests {
+    @Test func nonresilientProtocolRequirementCanInvokeProjectedProxy() throws {
+        let module =
+            "ProjectedProtocol_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let fixture = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: """
+                public protocol Delegate: AnyObject { func receive(_ value: String) }
+                public final class CompiledDelegate: Delegate {
+                    public init() {}
+                    public func receive(_ value: String) {}
+                }
+                public final class OtherCompiledDelegate: Delegate {
+                    public init() {}
+                    public func receive(_ value: String) {}
+                }
+                """,
+            linkArguments: ["-swift-version", "6"]
+        )
+        defer { fixture.cleanup() }
+        let runtime = ABIRuntime()
+        let state = ProtocolTestState()
+        let value = try runtime.makeSwiftProtocolValueAndWait(
+            module + ".Delegate",
+            methods: [
+                try NativeSwiftProtocolMethod("receive(_:)") { (value: String) in
+                    state.messages.withLock { $0.append(value) }
+                }
+            ],
+            in: .path(fixture.libraryURL)
+        )
+        let concrete = try value.copyUnderlyingValue()
+        let method = try concrete.type.resolveAndWait(
+            .swift(
+                .method(
+                    module + ".Delegate.receive(_:)",
+                    as: ((String) -> Void).self
+                )
+            )
+        )
+        try unsafe method.unsafeInvoke(on: concrete, "forwarded")
+        #expect(state.messages.withLock { $0 } == ["forwarded"])
+    }
+}
+#endif

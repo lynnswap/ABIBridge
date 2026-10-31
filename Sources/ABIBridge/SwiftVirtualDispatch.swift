@@ -36,26 +36,37 @@ struct SwiftVirtualDispatch: Sendable {
             let protocolSymbol = try type.protocolDescriptor(named: protocolName)
         else { throw unavailable("The protocol requirement's descriptor identity is unavailable.") }
         let selected = try unsafe protocolSymbol.withUnsafeAddress { protocolAddress in
-            guard let conformance = try type.conformance(to: protocolAddress),
-                let image = conformance.image
-            else { throw unavailable("The lookup type has no retained Swift conformance.") }
+            guard let conformance = try type.conformance(to: protocolAddress) else {
+                throw unavailable("The lookup type has no Swift conformance.")
+            }
+            // Registered conformances can own process-allocated records instead
+            // of Mach-O storage. The lookup type retains their code context.
+            let image = conformance.image ?? type.image
             let requirements = RuntimeProtocolLayout(protocolAddress).witnessRequirements
             var matches: [Int] = []
             var unnamed: [Int] = []
-            for (index, requirement) in requirements.enumerated() {
-                let identities = type.resolver.swiftMethodDescriptorRequirements(
-                    at: requirement.address,
-                    in: protocolSymbol.image
-                )
-                if identities.contains(identity) {
-                    guard identities.count == 1 else {
-                        throw unavailable(
-                            "Several declarations name the same requirement descriptor."
-                        )
+            if let registered = RuntimeSwiftProtocolClass.requirement(
+                for: type.metadata,
+                protocolAddress: protocolAddress,
+                identity: identity
+            ) {
+                matches = [registered.slot - 1]
+            } else {
+                for (index, requirement) in requirements.enumerated() {
+                    let identities = type.resolver.swiftMethodDescriptorRequirements(
+                        at: requirement.address,
+                        in: protocolSymbol.image
+                    )
+                    if identities.contains(identity) {
+                        guard identities.count == 1 else {
+                            throw unavailable(
+                                "Several declarations name the same requirement descriptor."
+                            )
+                        }
+                        matches.append(index)
+                    } else if identities.isEmpty && (1...4).contains(requirement.kind) {
+                        unnamed.append(index)
                     }
-                    matches.append(index)
-                } else if identities.isEmpty && (1...4).contains(requirement.kind) {
-                    unnamed.append(index)
                 }
             }
             // Nonresilient protocols need not export Tq aliases. Associate
