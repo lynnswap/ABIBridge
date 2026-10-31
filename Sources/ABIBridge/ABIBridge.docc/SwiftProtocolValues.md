@@ -39,6 +39,18 @@ let install = try await runtime.resolve(.swift(.function(
 try unsafe install.unsafeInvoke(delegate)
 ```
 
+To invoke a requirement through the existing member API, open the existential and qualify the method with its protocol:
+
+```swift
+let concrete = try delegate.copyUnderlyingValue()
+let receive = try await concrete.type.resolve(.swift(.method(
+    "Example.EventDelegate.receive(_:)", as: ((String) -> Void).self
+)))
+try unsafe receive.unsafeInvoke(on: concrete, "hello")
+```
+
+The concrete copy retains the same native instance and its code owners. For object identity alone, `delegate.withCopy { $0 as AnyObject }` is sufficient; opening the existential is needed for concrete member lookup.
+
 Method names include argument labels. Use the complete declaration name when labels and host parameter types cannot distinguish overloaded requirements. Implement every requirement exactly once. A missing or duplicate implementation, unsupported requirement or incompatible callback signature throws before a value is returned.
 
 ## Supported requirements

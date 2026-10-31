@@ -18,7 +18,12 @@ func swiftRuntimeValueType(
     {
         image = definingImage
     } else if let objectType = metadata as? AnyClass {
-        image = try swiftClassImage(objectType, named: name, resolver: resolver)
+        image = try swiftClassImage(
+            objectType,
+            named: name,
+            resolver: resolver,
+            retaining: types.first?.image
+        )
     } else if let owner = generic.images.first {
         image = owner
     } else {

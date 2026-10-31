@@ -14,8 +14,9 @@ struct SwiftCandidateSelection<Value> {
     private(set) var unavailable: (any Error)?
 
     /// - Parameters:
-    ///   - dispatch: Captures the implementation selected by a member's
-    ///     dispatch thunk. Without it, class dispatch thunks are rejected.
+    ///   - dispatch: Selects code independently of the declaration's symbol,
+    ///     for dispatch thunks or registered witnesses. Nil uses the symbol's
+    ///     own code; class dispatch thunks require a selected implementation.
     ///   - namesDeclaration: Whether the request spells the complete
     ///     declaration of every candidate that `accept` does not skip. A
     ///     mismatch of such a candidate at any position is then reported.
@@ -25,7 +26,7 @@ struct SwiftCandidateSelection<Value> {
     init(
         _ candidates: [SwiftCandidate],
         namesDeclaration: Bool = false,
-        dispatch: ((SwiftCandidate) throws -> SwiftEntry)? = nil,
+        dispatch: ((SwiftCandidate) throws -> SwiftEntry?)? = nil,
         accept: (SwiftCandidate, SwiftEntry) throws -> Value?
     ) {
         for candidate in Self.distinct(candidates) {
@@ -51,8 +52,8 @@ struct SwiftCandidateSelection<Value> {
             }
             do {
                 let entry: SwiftEntry
-                if let dispatch, case .dispatchThunk = candidate.record.role {
-                    entry = try dispatch(candidate)
+                if let selected = try dispatch?(candidate) {
+                    entry = selected
                 } else if candidate.record.runsOwnCode {
                     entry = candidate.entry
                 } else {

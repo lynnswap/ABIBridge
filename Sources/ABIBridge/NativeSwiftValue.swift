@@ -330,7 +330,12 @@ struct SwiftRuntimeValuePlan: Sendable {
            let definingImage = try swiftImplementationImage(containing: descriptor) {
             image = definingImage
         } else if let objectType = metadata as? AnyClass {
-            image = try swiftClassImage(objectType, named: name, resolver: resolver)
+            image = try swiftClassImage(
+                objectType,
+                named: name,
+                resolver: resolver,
+                retaining: images.first
+            )
         } else if let owner = images.first {
             image = owner
         } else {

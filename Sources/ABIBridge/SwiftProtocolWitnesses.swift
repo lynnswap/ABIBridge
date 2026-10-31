@@ -10,7 +10,7 @@ struct SwiftConformance {
     let table: UnsafeRawPointer
     /// The conformance descriptor of that witness table.
     let descriptor: UnsafeRawPointer
-    /// The image that holds the descriptor and the conformance's witnesses.
+    /// The image holding the descriptor and witnesses, nil for process-allocated records.
     let image: NativeImage?
     /// The declaration name of the conforming type: the type itself, or the
     /// ancestor class whose conformance it inherits.
@@ -23,6 +23,8 @@ struct SwiftRequirementCandidates {
     /// The witnesses kept only to show which requirements the protocol
     /// declares: each serves another conformance than the lookup type's.
     var others: Set<String> = []
+    /// Declaration prototypes whose code comes from the registered witness table.
+    var runtimeWitnesses: Set<String> = []
     /// The conformance descriptors of the witnesses considered, with their
     /// images, whose witnesses can name the protocol's requirements.
     var conformances: [UnsafeRawPointer: NativeImage] = [:]
@@ -188,12 +190,26 @@ extension NativeSwiftType {
                     }
                 conformances[protocolDescriptor] = .some(conformance)
                 guard let conformance else { return nil }
-                return conformance == address
+                // A registered class's own witness has no symbol. This
+                // candidate supplies declaration syntax; virtual dispatch
+                // selects the registered conformance's actual code.
+                if conformance == address { return true }
+                guard
+                    RuntimeSwiftProtocolClass.requirement(
+                        for: metadata,
+                        protocolAddress: protocolDescriptor,
+                        identity: requirement
+                    ) != nil
+                else { return false }
+                result.runtimeWitnesses.insert(candidate.record.identity)
+                return true
             }(descriptor)
             switch applies {
             case true?:
-                served.insert(requirement)
-                result.candidates.append(candidate)
+                let first = served.insert(requirement).inserted
+                if first || !result.runtimeWitnesses.contains(candidate.record.identity) {
+                    result.candidates.append(candidate)
+                }
             case false?:
                 others.append((requirement, candidate))
             case nil:

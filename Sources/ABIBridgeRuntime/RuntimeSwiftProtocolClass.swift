@@ -43,6 +43,21 @@ package final class RuntimeSwiftProtocolClass: @unchecked Sendable {
         }
     }
 
+    /// Registration already established these identities from the provider's
+    /// descriptors or original file fixups; generated witnesses have no symbols.
+    package static func requirement(
+        for metadata: Any.Type,
+        protocolAddress: UnsafeRawPointer,
+        identity: String
+    ) -> RuntimeSwiftProtocolDescriptor.Requirement? {
+        classes.withLock { classes in
+            guard let type = classes[UInt64(UInt(bitPattern: protocolAddress))],
+                type.metadata == metadata
+            else { return nil }
+            return type.descriptor.requirements.first { $0.identity == identity }
+        }
+    }
+
     package func register(
         witnesses: [RuntimeSwiftProtocolWitness],
         retaining images: [RuntimeImage]
