@@ -39,3 +39,28 @@ extension Conditional: Probe where Element: Equatable {
     @inline(never) public func asynchronous(_ input: Int64) async -> Int64 { value + input + 60 }
     @inline(never) public func echo(_ input: Element) -> Element { input }
 }
+
+public final class DelegateToken {
+    public init() {}
+}
+
+public protocol Delegate: AnyObject {
+    func receive(_ text: String, token: DelegateToken, value: Int64)
+    func consume(_ text: consuming String, token: consuming DelegateToken)
+    func accept(_ other: Self)
+    func fail(_ text: String) throws
+    func typedFail(_ text: String) throws(DelegateFailure)
+}
+
+public enum DelegateFailure: Error { case expected, code(Int64) }
+
+public final class DelegateObject: Delegate {
+    public init() {}
+    @inline(never) public func receive(_ text: String, token: DelegateToken, value: Int64) {}
+    @inline(never) public func consume(_ text: consuming String, token: consuming DelegateToken) {}
+    @inline(never) public func accept(_ other: DelegateObject) {}
+    @inline(never) public func fail(_ text: String) throws { throw DelegateFailure.expected }
+    @inline(never) public func typedFail(_ text: String) throws(DelegateFailure) {
+        throw DelegateFailure.code(1)
+    }
+}

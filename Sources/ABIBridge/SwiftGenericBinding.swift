@@ -1938,6 +1938,7 @@ struct SwiftGenericBinding: Sendable {
             type: type,
             resolver: resolver,
             retaining: images + typeOwners.flatMap(\.codeImages),
+            knownTypes: typeOwners,
             nativeTuple: nativeTuple,
             nativeClosure: nativeClosure
         )

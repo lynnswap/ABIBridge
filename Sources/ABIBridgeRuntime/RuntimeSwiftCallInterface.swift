@@ -4,7 +4,12 @@ import Synchronization
 
 package final class RuntimeSwiftCallInterface: @unchecked Sendable {
     package let handle: OpaquePointer
+    private let key: RuntimeCallInterfaceKey
     private let callback = Mutex<RuntimeSwiftClosureCallbackOwner?>(nil)
+
+    package func hasSameABI(as other: RuntimeSwiftCallInterface) -> Bool {
+        key == other.key
+    }
 
     package func closureEntry(
         functions: ABISwiftThrowingClosureCallbackFunctions
@@ -27,6 +32,12 @@ package final class RuntimeSwiftCallInterface: @unchecked Sendable {
         parameters: [RuntimeValueType],
         errorPlan: RuntimeErrorConvention? = nil
     ) throws {
+        key = RuntimeCallInterfaceKey(
+            result: result,
+            parameters: parameters,
+            error: errorPlan?.type,
+            typedError: errorPlan?.isTyped ?? false
+        )
         let handles: [OpaquePointer?] = parameters.map(\.handle)
         var failure: OpaquePointer?
         let handle = withExtendedLifetime((result, parameters, errorPlan)) {

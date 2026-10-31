@@ -2,6 +2,7 @@
 #include "NativeValueType.hpp"
 #include "SwiftCallbackCode.hpp"
 #include <ABIBridge/Backend/SwiftCallbacks.h>
+#include <ABIBridge/Backend/SwiftProtocolConformance.h>
 #include <mutex>
 #include <pthread.h>
 #include <cstdlib>
@@ -948,6 +949,7 @@ struct SwiftHandler {
 struct SwiftClosureHandler {
     bool usesNativeContext = false;
     void (*invoke)(void *, void *const *, void *) = nullptr;
+    std::optional<size_t> protocolSlot;
     bool (*invokeThrowing)(void *, void *const *, void *, void *) = nullptr;
     void *(*copyCodeOwner)(void *) = nullptr;
     void *(*copyBodyOwner)(void *) = nullptr;
@@ -1029,6 +1031,22 @@ ABISwiftClosureCallback *ABICreateSwiftClosureCallback(ABISwiftCallInterface *in
 ABISwiftClosureCallback *ABICreateSwiftThrowingClosureCallback(ABISwiftCallInterface *interface,
     ABISwiftThrowingClosureCallbackFunctions functions, void *context, ABIResolutionFailure **error) {
     return createSwiftClosureCallback(interface, {}, functions, context, error);
+}
+ABISwiftClosureCallback *ABICreateSwiftProtocolWitnessCallback(ABISwiftCallInterface *interface,
+    size_t slot, ABIResolutionFailure **error) {
+    if (error) *error = nullptr;
+    if (!interface || interface->result->size() != 0) {
+        fail(error, ABIFailureUnsupportedDeclaration,
+             "A protocol witness requires a synchronous Void interface.");
+        return nullptr;
+    }
+    auto callback = std::make_unique<ABISwiftClosureCallback>(*interface);
+    auto &entry = callback->entry;
+    entry.code = std::make_unique<abibridge::SwiftCallbackCode>(&entry, error);
+    if (!entry.code->function()) return nullptr;
+    entry.closure = std::make_unique<SwiftClosureHandler>();
+    entry.closure->protocolSlot = slot;
+    return callback.release();
 }
 ABIUnmanagedFunction ABISwiftClosureCallbackFunction(const ABISwiftClosureCallback *callback) {
     return callback ? callback->entry.code->function() : nullptr;
@@ -1770,11 +1788,15 @@ extern "C" __attribute__((visibility("hidden"))) void ABIDispatchSwiftCallback(A
         if (interface.errorResult) frame->error = 0;
         auto *context = callback->closure->usesNativeContext
             ? reinterpret_cast<void *>(frame->context) : callback->closure->context;
-        if (callback->closure->invokeThrowing) {
+        if (callback->closure->invokeThrowing || callback->closure->protocolSlot) {
             AlignedValue error(interface.errorResult ? interface.errorResult->size() : 0,
                                interface.errorResult ? interface.errorResult->native()->alignment : 1);
-            const bool threw = callback->closure->invokeThrowing(context, arguments.data(),
-                result.data(), interface.errorResult ? error.data() : nullptr);
+            const bool threw = callback->closure->protocolSlot
+                ? ABIInvokeSwiftProtocolInstance(reinterpret_cast<const void *>(frame->context),
+                    *callback->closure->protocolSlot, arguments.data(), result.data(),
+                    interface.errorResult ? error.data() : nullptr)
+                : callback->closure->invokeThrowing(context, arguments.data(),
+                    result.data(), interface.errorResult ? error.data() : nullptr);
             if (threw) {
                 packError(interface, *frame, error.data(), indirectError);
                 return;

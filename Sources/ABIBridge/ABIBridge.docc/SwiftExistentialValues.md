@@ -61,7 +61,7 @@ Authentication follows the formal Swift signature. Opaque containers are formall
 
 ## Scope and compiler limitations
 
-The bridge uses existing metadata and conformances for simple and extended existentials; it does not synthesize witness tables. Ordinary protocol metatypes such as `(any P).Type` keep the protocol type's identity, while existential metatypes preserve runtime type and witness components. Noncopyable containers require their own ownership contract. Opaque `some P` results follow <doc:SwiftOpaqueResults>.
+Existential conversion uses existing metadata and conformances for simple and extended existentials. To create a class-bound protocol implementation backed by host callbacks, use the factory in <doc:SwiftProtocolValues>, which registers its own native conformance and witness entries. Ordinary protocol metatypes such as `(any P).Type` keep the protocol type's identity, while existential metatypes preserve runtime type and witness components. Noncopyable containers require their own ownership contract. Opaque `some P` results follow <doc:SwiftOpaqueResults>.
 
 Swift compiler/runtime discrepancies can make native container storage disagree with value witnesses. Preparation rejects such layouts before invocation. Use a compiled adapter for these combinations; [issue #302](https://github.com/lynnswap/ABIBridge/issues/302) records the discrepancies and workarounds:
 

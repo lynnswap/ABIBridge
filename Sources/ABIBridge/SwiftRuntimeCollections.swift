@@ -124,8 +124,16 @@ struct SwiftRuntimeCollectionPlan: @unchecked Sendable {
             }
         }
 
-        init(native: Any.Type, host type: Any.Type, collection: NativeSwiftType) throws {
-            self.native = try swiftRuntimeValueType(metadata: native, retaining: [collection])
+        init(
+            native: Any.Type,
+            host type: Any.Type,
+            collection: NativeSwiftType,
+            retaining types: [NativeSwiftType]
+        ) throws {
+            self.native = try swiftRuntimeValueType(
+                metadata: native,
+                retaining: [collection] + types
+            )
             host = SwiftHostElement(type)
             switch host {
             case .handle:
@@ -139,7 +147,8 @@ struct SwiftRuntimeCollectionPlan: @unchecked Sendable {
                     )
                 }
                 payload = try swiftRuntimeValueType(metadata: unsafeBitCast(wrapped, to: Any.Type.self),
-                                                    retaining: [self.native])
+                    retaining: [self.native] + types
+                )
             case .value(let type):
                 guard type == native else {
                     throw ABIResolutionError.signatureMismatch(
@@ -227,7 +236,11 @@ struct SwiftRuntimeCollectionPlan: @unchecked Sendable {
     /// The host Dictionary key's Hashable conformance.
     private let hostHashable: UnsafeRawPointer?
 
-    init(native collection: NativeSwiftType, host: SwiftHostCollection) throws {
+    init(
+        native collection: NativeSwiftType,
+        host: SwiftHostCollection,
+        retaining types: [NativeSwiftType] = []
+    ) throws {
         let metadata = unsafeBitCast(collection.metadata, to: UnsafeRawPointer.self)
         let descriptor = ABISwiftTypeDescriptor(metadata)
         let arguments = try SwiftGenericTypeMetadata(metadata: collection.metadata).arguments.compactMap {
@@ -240,17 +253,37 @@ struct SwiftRuntimeCollectionPlan: @unchecked Sendable {
         switch (descriptor, host.shape) {
         case (Self.descriptor([Int].self), .array(let element)):
             kind = .array
-            self.element = try Position(native: arguments[0], host: element, collection: collection)
+            self.element = try Position(
+                native: arguments[0],
+                host: element,
+                collection: collection,
+                retaining: types
+            )
             key = nil
         case (Self.descriptor(Set<Int>.self), .array(let element)):
             kind = .set
-            self.element = try Position(native: arguments[0], host: element, collection: collection)
+            self.element = try Position(
+                native: arguments[0],
+                host: element,
+                collection: collection,
+                retaining: types
+            )
             key = nil
         case (Self.descriptor([Int: Int].self), .dictionary(let hostKey, let value)),
              (Self.descriptor([Int: Int].self), .pairs(_, let hostKey, let value, _)):
             kind = .dictionary
-            key = try Position(native: arguments[0], host: hostKey, collection: collection)
-            element = try Position(native: arguments[1], host: value, collection: collection)
+            key = try Position(
+                native: arguments[0],
+                host: hostKey,
+                collection: collection,
+                retaining: types
+            )
+            element = try Position(
+                native: arguments[1],
+                host: value,
+                collection: collection,
+                retaining: types
+            )
         default:
             throw mismatch()
         }

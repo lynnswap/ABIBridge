@@ -20,6 +20,11 @@ Use the native declaration's calling convention to select a representation. Buil
 - <doc:SwiftClosureValues>
 - ``NativeSwiftClosure``
 
+### Protocol implementations
+
+- <doc:SwiftProtocolValues>
+- ``NativeSwiftProtocolMethod``
+
 ### Custom and generic values
 
 - <doc:ExplicitSwiftValues>

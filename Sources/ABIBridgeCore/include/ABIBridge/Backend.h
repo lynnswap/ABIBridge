@@ -14,3 +14,4 @@
 #include <ABIBridge/Backend/SwiftDemangling.h>
 #include <ABIBridge/Backend/SwiftInvocation.h>
 #include <ABIBridge/Backend/SwiftCallbacks.h>
+#include <ABIBridge/Backend/SwiftProtocolConformance.h>

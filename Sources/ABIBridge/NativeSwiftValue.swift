@@ -298,11 +298,16 @@ struct SwiftRuntimeValuePlan: Sendable {
     private let size: Int
     private let alignment: Int
     private let constants: SwiftValueConstants
+    private let knownTypes: [NativeSwiftType]
 
     init(metadata: Any.Type, type: CValueType, resolver: SymbolResolver, retaining images: [NativeImage],
-         nativeTuple: SwiftTupleValuePlan? = nil, nativeClosure: SwiftGenericClosurePlan? = nil) throws {
+        knownTypes: [NativeSwiftType] = [],
+        nativeTuple: SwiftTupleValuePlan? = nil,
+        nativeClosure: SwiftGenericClosurePlan? = nil
+    ) throws {
         try validateSwiftRuntimeValueStorage(metadata)
         self.type = type
+        self.knownTypes = knownTypes
         self.nativeTuple = nativeTuple
         self.nativeClosure = nativeClosure
         closureConversions = try SwiftRuntimeClosureConversions(metadata: metadata, tuple: nativeTuple, closure: nativeClosure)
@@ -311,6 +316,12 @@ struct SwiftRuntimeValuePlan: Sendable {
         let layout = ABISwiftGetValueLayout(pointer)
         size = layout.stride
         alignment = layout.alignment
+        // Bound runtime types may have metadata without a nominal descriptor,
+        // such as a generated Objective-C class. Reuse their established owner.
+        if let knownType = knownTypes.first(where: { $0.metadata == metadata }) {
+            valueType = knownType
+            return
+        }
         let name = try swiftNativeTypeName(metadata)
         let image: NativeImage
         if let descriptor = ABISwiftTypeDescriptor(pointer),
@@ -350,14 +361,21 @@ struct SwiftRuntimeValuePlan: Sendable {
         // A value passed to native code is copied into the Optional.
         guard SwiftCopyability.accepts(payloadType) else { throw NativeSwiftValueError.noncopyableType }
         var plan = self
-        plan.projection = .optional(payload: try swiftRuntimeValueType(metadata: payloadType, retaining: [valueType]))
+        plan.projection = .optional(
+            payload: try swiftRuntimeValueType(
+                metadata: payloadType,
+                retaining: [valueType] + knownTypes
+            )
+        )
         return plan
     }
 
     /// This plan with the host passing the collection as `host`.
     func projectingCollection(_ host: SwiftHostCollection) throws -> SwiftRuntimeValuePlan {
         var plan = self
-        plan.projection = .collection(try SwiftRuntimeCollectionPlan(native: valueType, host: host))
+        plan.projection = .collection(
+            try SwiftRuntimeCollectionPlan(native: valueType, host: host, retaining: knownTypes)
+        )
         return plan
     }
 
