@@ -25,6 +25,24 @@ Use `.type(String.self)` for a linked Swift type or `.type(retainedType)` for a 
 
 The declaration determines the physical convention before substitution. An unconstrained `T` parameter or result remains indirect when bound to `Bool` or `String`; a class constraint can establish a reference convention. Concrete tuple fields, collections, metatypes, optional values, and dependent nominal fields retain their declaration-level lowering. Metadata size alone does not establish that convention.
 
+## Pass an explicit metatype
+
+Binding `T` does not supply a declaration's explicit `T.Type` argument. Use ``NativeSwiftType/makeMetatypeValue()`` to create that value when the type is available only at runtime.
+
+For `func decode<T: Decodable>(_ type: T.Type, from data: NSData) throws -> T`:
+
+```swift
+let resultType = try await runtime.resolve(.swift(.type("Example.Record")))
+let decode = try await runtime.resolve(.swift(.function(
+    "Example.decode(_:from:)",
+    as: ((NativeSwiftValue, NSData) throws -> NativeSwiftValue).self,
+    genericArguments: [.type(resultType)]
+)))
+let result = try unsafe decode.unsafeInvoke(resultType.makeMetatypeValue(), data)
+```
+
+The metatype value contains `T.self` and has native type `T.Type`. It and its copies retain the type's implementation images, independently of the original type handle. The instance type need not be Copyable; its metatype is Copyable. Calls retain their declaration's metatype convention, including thick generic metatypes and elided concrete struct or enum metatypes.
+
 ## Constraints and multiple parameters
 
 Existing protocol conformances, including conditional conformances, supply the required witness tables. Same-type requirements and associated types are resolved against the supplied arguments. For example, given `func select<T, Values: Collection>(_ fallback: T, _ values: Values) -> T where Values.Element == T`:

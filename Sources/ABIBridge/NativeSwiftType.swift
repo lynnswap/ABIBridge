@@ -104,6 +104,29 @@ public actor NativeSwiftType: Hashable {
         hasher.combine(ObjectIdentifier(metadata))
     }
 
+    /// Creates an owned value containing this type's metatype.
+    ///
+    /// When this handle represents `T`, the result contains `T.self` and has
+    /// native type `T.Type`. For an existential `any P`, this is
+    /// `(any P).Type`, not `any P.Type`. It does not create an instance of `T`.
+    /// The value and its copies retain the type's metadata and implementation images.
+    /// Metatype values are Copyable even when their instance type is not.
+    ///
+    /// Use this value for an explicit metatype parameter, independently of
+    /// binding a generic parameter with `genericArguments`. Creation runs on
+    /// the caller's thread without symbol lookup or call preparation.
+    public nonisolated func makeMetatypeValue() throws -> NativeSwiftValue {
+        let value = unsafeBitCast(metadata, to: UnsafeRawPointer.self)
+        let metatype = ABISwiftMetatypeMetadata(value)!
+        let valueType = try swiftRuntimeValueType(
+            metadata: unsafeBitCast(metatype, to: Any.Type.self),
+            retaining: [self]
+        )
+        return try withUnsafePointer(to: value) {
+            try NativeSwiftValue.copy(from: UnsafeRawPointer($0), type: valueType)
+        }
+    }
+
     /// Creates an owned value for a case without associated values.
     ///
     /// Case names must match one entry in this enum's runtime field metadata. The enum must be Escapable; it need not be Copyable. Construction uses the enum's value witnesses on the caller's thread without symbol lookup or call preparation. The returned value retains this type and its implementation images through destruction.
