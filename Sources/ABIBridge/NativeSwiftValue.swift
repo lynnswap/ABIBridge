@@ -319,7 +319,9 @@ struct SwiftRuntimeValuePlan: Sendable {
         // Bound runtime types may have metadata without a nominal descriptor,
         // such as a generated Objective-C class. Reuse their established owner.
         if let knownType = knownTypes.first(where: { $0.metadata == metadata }) {
-            valueType = knownType
+            valueType = knownType.retainingCode(
+                SwiftValueCodeLifetime(images + knownType.codeImages)
+            )
             return
         }
         let name = try swiftNativeTypeName(metadata)
