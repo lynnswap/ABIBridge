@@ -447,3 +447,42 @@ extension SwiftProtocolValueTests {
     }
 }
 #endif
+
+extension SwiftProtocolValueTests {
+    @Test(arguments: [false, true])
+    func consumingReceiverReleasesCapturesOnReturnAndThrow(fail: Bool) throws {
+        let runtime = ABIRuntime()
+        let state = ProtocolTestState()
+        let finish = try runtime.resolveAndWait(
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.finishHostDelegate(_:_:)",
+                    as: ((NativeSwiftConsuming<NativeSwiftValue>, Bool) throws -> Void).self
+                )
+            )
+        )
+        do {
+            let capture = ProtocolCapture(state)
+            let value = try runtime.makeSwiftProtocolValueAndWait(
+                "ManagedSwiftFixtures.HostConsumingDelegate",
+                methods: [
+                    try NativeSwiftProtocolMethod("finish(_:)", receiver: .consuming) {
+                        (fail: Bool) throws in
+                        capture.receive("finish")
+                        if fail { throw URLError(.cancelled) }
+                    }
+                ]
+            )
+            do {
+                try unsafe finish.unsafeInvoke(NativeSwiftConsuming(value), fail)
+                #expect(!fail)
+            } catch let error as NativeSwiftError {
+                #expect(fail)
+                error.withUnderlyingError { #expect(($0 as? URLError)?.code == .cancelled) }
+            }
+            #expect(value.isConsumed)
+        }
+        #expect(state.messages.withLock { $0 } == ["finish"])
+        #expect(state.destroyed.withLock { $0 } == 1)
+    }
+}

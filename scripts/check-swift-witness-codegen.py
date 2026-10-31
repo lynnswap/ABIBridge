@@ -69,17 +69,19 @@ def check_delegate(provider, caller, sil, registration, pac, narrow, evolution):
                 'consume': ['i32', 'i32', 'i32', 'ptr'] if narrow else ['i64', 'ptr', 'ptr'],
                 'accept': ['ptr'],
                 'fail': ['i32', 'i32', 'i32'] if narrow else ['i64', 'ptr'],
-                'typedFail': ['i32', 'i32', 'i32'] if narrow else ['i64', 'ptr']}
+                'typedFail': ['i32', 'i32', 'i32'] if narrow else ['i64', 'ptr'],
+                'finish': ['i1']}
     ownership = {'receive': '(@guaranteed String, @guaranteed DelegateToken, Int64, @guaranteed DelegateObject)',
                  'consume': '(@owned String, @owned DelegateToken, @guaranteed DelegateObject)',
                  'accept': '(@guaranteed DelegateObject, @guaranteed DelegateObject)',
                  'fail': '(@guaranteed String, @guaranteed DelegateObject) -> @error any Error',
-                 'typedFail': '(@guaranteed String, @guaranteed DelegateObject) -> @error DelegateFailure'}
+                 'typedFail': '(@guaranteed String, @guaranteed DelegateObject) -> @error DelegateFailure',
+                 'finish': '(Bool, @owned DelegateObject) -> @error any Error'}
     if evolution:
         ownership['typedFail'] = ownership['typedFail'].replace('@error ', '@error_indirect ')
     callers = {'receive': '12callDelegate', 'consume': '19callConsumeDelegate',
                'accept': '16callSelfDelegate', 'fail': '20callThrowingDelegate',
-               'typedFail': '25callTypedThrowingDelegate'}
+               'typedFail': '25callTypedThrowingDelegate', 'finish': '18callFinishDelegate'}
     protocol = next(line for line in provider.splitlines() if line.startswith('@"$s12WitnessProbe8DelegateMp" ='))
     flags = [int(value) & 0xffffffff for value in re.findall(r'%swift.protocol_requirement \{ i32 (-?\d+), i32 0 \}', protocol)]
     require(len(flags) == len(expected) and all(value & 0x3f == 17 for value in flags),
@@ -93,7 +95,7 @@ def check_delegate(provider, caller, sil, registration, pac, narrow, evolution):
         require(parameters and [part.split()[0] for part in parameters[1].split(', ')] == expected[method],
                 f'{method}: class-bound witness must pass direct Self separately from arguments and trailing metadata')
         extras = parameters[2].split(', ')[1:]
-        throws = method in ['fail', 'typedFail']
+        throws = method in ['fail', 'typedFail', 'finish']
         require(any('swifterror' in part for part in extras) == throws,
                 f'{method}: witness throwing convention must use the Swift error register')
         require(len(extras) == int(throws) + int(method == 'typedFail' and evolution),

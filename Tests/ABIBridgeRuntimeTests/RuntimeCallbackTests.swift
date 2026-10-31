@@ -85,7 +85,7 @@ struct RuntimeCallbackTests {
         )
         let type = try RuntimeSwiftProtocolClass.prepare(descriptor: descriptor)
         #expect(throws: RuntimeResolutionError.self) {
-            try type.register(interfaces: [], retaining: [])
+            try type.register(witnesses: [], retaining: [])
         }
         let metadata = unsafeBitCast(type.metadata, to: UnsafeRawPointer.self)
         #expect(unsafe symbol.withUnsafeAddress { ABISwiftConformance(metadata, $0) } == nil)
@@ -102,6 +102,7 @@ struct RuntimeCallbackTests {
         let rejected = ABICreateSwiftProtocolWitnessCallback(
             invalid.handle,
             0,
+            false,
             &failure
         )
         #expect(rejected == nil)
@@ -112,6 +113,7 @@ struct RuntimeCallbackTests {
             let callback = ABICreateSwiftProtocolWitnessCallback(
                 valid.handle,
                 0,
+                false,
                 &failure
             )
         else {
@@ -131,6 +133,7 @@ struct RuntimeCallbackTests {
             ABICreateSwiftProtocolWitnessCallback(
                 throwing.handle,
                 0,
+                false,
                 &failure
             )
         )
@@ -153,18 +156,29 @@ struct RuntimeCallbackTests {
             result: RuntimeValueType(scalar: ABIValueVoid),
             parameters: [word]
         )
-        let registered = try type.register(interfaces: [interface], retaining: [symbol.image])
+        let registered = try type.register(
+            witnesses: [.init(interface: interface)],
+            retaining: [symbol.image]
+        )
         let sameABI = try RuntimeSwiftCallInterface(
             result: RuntimeValueType(scalar: ABIValueVoid),
             parameters: [RuntimeValueType(scalar: ABIValueInt64)]
         )
-        #expect(try type.register(interfaces: [sameABI], retaining: []) === registered)
+        #expect(
+            try type.register(witnesses: [.init(interface: sameABI)], retaining: []) === registered
+        )
+        #expect(throws: RuntimeResolutionError.self) {
+            try type.register(
+                witnesses: [.init(interface: sameABI, consumesReceiver: true)],
+                retaining: []
+            )
+        }
         let differentABI = try RuntimeSwiftCallInterface(
             result: RuntimeValueType(scalar: ABIValueVoid),
             parameters: [word, word]
         )
         #expect(throws: RuntimeResolutionError.self) {
-            try type.register(interfaces: [differentABI], retaining: [])
+            try type.register(witnesses: [.init(interface: differentABI)], retaining: [])
         }
         weak var observed: CallbackValue?
         do {

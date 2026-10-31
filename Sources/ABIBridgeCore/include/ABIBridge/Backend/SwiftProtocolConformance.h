@@ -35,15 +35,16 @@ void *ABICreateSwiftProtocolInstance(const ABISwiftProtocolConformance *conforma
     void *context,
     bool (*invoke)(void *context, size_t slot, void *const *arguments, void *result, void *errorResult),
     void (*releaseContext)(void *), ABIResolutionFailure **error);
-/// Dispatches from a witness trampoline using its borrowed, live native Self.
-bool ABIInvokeSwiftProtocolInstance(const void *object, size_t slot,
+/// Dispatches from a witness trampoline. A consuming requirement transfers one
+/// owned Self reference, which is released after the invocation on both outcomes.
+bool ABIInvokeSwiftProtocolInstance(const void *object, size_t slot, bool consumesReceiver,
     void *const *arguments, void *result, void *errorResult);
 
 /// Prepares a synchronous Void witness entry for a validated requirement slot.
-/// Owns only its native interface and slot; the native instance owns callbacks.
+/// Owns only its native interface, slot and receiver convention; the native instance owns callbacks.
 /// Its code is a witness entry, not a standalone Swift closure entry.
 ABISwiftClosureCallback *ABICreateSwiftProtocolWitnessCallback(
-    ABISwiftCallInterface *interface, size_t slot, ABIResolutionFailure **error);
+    ABISwiftCallInterface *interface, size_t slot, bool consumesReceiver, ABIResolutionFailure **error);
 
 #ifdef __cplusplus
 }

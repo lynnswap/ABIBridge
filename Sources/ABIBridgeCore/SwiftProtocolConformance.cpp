@@ -17,6 +17,7 @@
 // https://github.com/swiftlang/swift/blob/swift-6.3-RELEASE/include/swift/Runtime/Config.h
 extern "C" void swift_registerProtocolConformances(const void *, const void *);
 extern "C" const void *swift_getObjCClassMetadata(const void *);
+extern "C" void objc_release(id);
 
 namespace {
 constexpr const char *payloadIvar = "_abiSwiftProtocolContext";
@@ -180,8 +181,10 @@ void *ABICreateSwiftProtocolInstance(const ABISwiftProtocolConformance *conforma
     std::memcpy(reinterpret_cast<char *>(object) + payloadOffset.load(std::memory_order_relaxed), &value, sizeof(value));
     return object;
 }
-bool ABIInvokeSwiftProtocolInstance(const void *object, size_t slot,
+bool ABIInvokeSwiftProtocolInstance(const void *object, size_t slot, bool consumesReceiver,
     void *const *arguments, void *result, void *errorResult) {
     auto *context = instanceContext(object);
-    return context->invoke(context->value, slot, arguments, result, errorResult);
+    const bool threw = context->invoke(context->value, slot, arguments, result, errorResult);
+    if (consumesReceiver) objc_release(reinterpret_cast<id>(const_cast<void *>(object)));
+    return threw;
 }

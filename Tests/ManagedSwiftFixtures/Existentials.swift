@@ -315,3 +315,13 @@ public protocol HostTypedThrowingDelegate: AnyObject {
 ) throws(ManagedFailure) {
     try delegate.receive(fail)
 }
+
+public protocol HostConsumingDelegate: AnyObject {
+    consuming func finish(_ fail: Bool) throws
+}
+@inline(never) public func finishHostDelegate(
+    _ delegate: consuming any HostConsumingDelegate,
+    _ fail: Bool
+) throws {
+    try delegate.finish(fail)
+}

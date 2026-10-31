@@ -14,14 +14,26 @@ import Foundation
 /// its captures until final release, including callbacks already in progress.
 public struct NativeSwiftProtocolMethod {
     let name: String
+    let consumesReceiver: Bool
     let factory: SwiftClosureBodyFactory
     let errorErasedFactory: SwiftClosureBodyFactory
 
     /// Implements a Void-returning requirement with a typed host callback.
+    ///
+    /// Receiver ownership must match the native declaration. Ordinary methods
+    /// borrow self; pass receiver: .consuming for a consuming requirement.
+    /// Swift symbols and protocol descriptors do not encode that convention.
     public init<Failure: Error, each Argument>(
         _ name: String,
+        receiver convention: NativeSwiftReceiverConvention = .borrowing,
         _ body: @escaping @Sendable (repeat each Argument) throws(Failure) -> Void
     ) throws {
+        guard convention != .mutating else {
+            throw ABIResolutionError.unsupportedDeclaration(
+                "A class-bound protocol method cannot have an inout receiver."
+            )
+        }
+        consumesReceiver = convention == .consuming
         let callback = try NativeSwiftClosure<(repeat each Argument) throws(Failure) -> Void>(body)
         guard case .host(let host) = callback.call else {
             preconditionFailure("A newly created host callback has a body factory.")
@@ -329,15 +341,20 @@ private struct SwiftProtocolValuePreparation: Sendable {
                 plan.errorPlan?.isTyped == false ? method.errorErasedFactory : method.factory
             return try factory.synchronous(plan: plan, retainingCode: codeLifetime)
         }
-        let interfaces = plans.map { plan -> RuntimeSwiftCallInterface in
+        let witnesses = zip(plans, methodIndices).map {
+            plan,
+            index -> RuntimeSwiftProtocolWitness in
             guard case .synchronous(let interface) = plan.transport else {
                 preconditionFailure("A synchronous protocol method has a synchronous plan.")
             }
-            return interface.runtime
+            return RuntimeSwiftProtocolWitness(
+                interface: interface.runtime,
+                consumesReceiver: methods[index].consumesReceiver
+            )
         }
         let registration = try withRuntimeErrors {
             try nativeClass.register(
-                interfaces: interfaces,
+                witnesses: witnesses,
                 retaining: codeLifetime.images.map(\.runtimeValue)
             )
         }

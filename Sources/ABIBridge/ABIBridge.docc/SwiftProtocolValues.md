@@ -49,6 +49,8 @@ A nonthrowing body can implement a throwing requirement. A requirement declared 
 
 Requirement identities must be recoverable from the provider's method descriptors or an existing conformance's original witness symbols. When stripped nonresilient code supplies neither, preparation reports unavailable metadata.
 
+Receiver ownership follows the native declaration. Ordinary methods borrow self. For a requirement declared `consuming func finish()`, use `NativeSwiftProtocolMethod("finish()", receiver: .consuming) { ... }`. Swift symbols and protocol requirement descriptors do not encode receiver ownership, so the supplied convention must match the declaration. A consuming witness releases its owned native reference after the callback on both return and throw.
+
 Parameters use the same formal value conversions as Swift callbacks. Ordinary Swift values describe importable types. Use ``NativeSwiftValue`` or ``NativeSwiftBorrowedValue`` for runtime-only types, and the ownership wrappers described in <doc:SwiftArgumentConventions> when a requirement consumes or modifies an argument. Supply `valueABIs` for closed nominal types whose calling convention cannot be inferred. Borrowed callback inputs and nested closure values keep the contracts in <doc:SwiftClosureValues>.
 
 ## Retain and release delegates

@@ -950,6 +950,7 @@ struct SwiftClosureHandler {
     bool usesNativeContext = false;
     void (*invoke)(void *, void *const *, void *) = nullptr;
     std::optional<size_t> protocolSlot;
+    bool consumesProtocolReceiver = false;
     bool (*invokeThrowing)(void *, void *const *, void *, void *) = nullptr;
     void *(*copyCodeOwner)(void *) = nullptr;
     void *(*copyBodyOwner)(void *) = nullptr;
@@ -1033,7 +1034,7 @@ ABISwiftClosureCallback *ABICreateSwiftThrowingClosureCallback(ABISwiftCallInter
     return createSwiftClosureCallback(interface, {}, functions, context, error);
 }
 ABISwiftClosureCallback *ABICreateSwiftProtocolWitnessCallback(ABISwiftCallInterface *interface,
-    size_t slot, ABIResolutionFailure **error) {
+    size_t slot, bool consumesReceiver, ABIResolutionFailure **error) {
     if (error) *error = nullptr;
     if (!interface || interface->result->size() != 0) {
         fail(error, ABIFailureUnsupportedDeclaration,
@@ -1046,6 +1047,7 @@ ABISwiftClosureCallback *ABICreateSwiftProtocolWitnessCallback(ABISwiftCallInter
     if (!entry.code->function()) return nullptr;
     entry.closure = std::make_unique<SwiftClosureHandler>();
     entry.closure->protocolSlot = slot;
+    entry.closure->consumesProtocolReceiver = consumesReceiver;
     return callback.release();
 }
 ABIUnmanagedFunction ABISwiftClosureCallbackFunction(const ABISwiftClosureCallback *callback) {
@@ -1793,7 +1795,8 @@ extern "C" __attribute__((visibility("hidden"))) void ABIDispatchSwiftCallback(A
                                interface.errorResult ? interface.errorResult->native()->alignment : 1);
             const bool threw = callback->closure->protocolSlot
                 ? ABIInvokeSwiftProtocolInstance(reinterpret_cast<const void *>(frame->context),
-                    *callback->closure->protocolSlot, arguments.data(), result.data(),
+                    *callback->closure->protocolSlot, callback->closure->consumesProtocolReceiver,
+                    arguments.data(), result.data(),
                     interface.errorResult ? error.data() : nullptr)
                 : callback->closure->invokeThrowing(context, arguments.data(),
                     result.data(), interface.errorResult ? error.data() : nullptr);

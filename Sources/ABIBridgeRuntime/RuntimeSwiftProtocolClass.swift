@@ -2,6 +2,17 @@ import ABIBridgeCore
 import ABIBridgeCore.Backend
 import Synchronization
 
+/// One requirement's physical arguments, result channel and receiver ownership.
+package struct RuntimeSwiftProtocolWitness: Sendable {
+    package let interface: RuntimeSwiftCallInterface
+    package let consumesReceiver: Bool
+
+    package init(interface: RuntimeSwiftCallInterface, consumesReceiver: Bool = false) {
+        self.interface = interface
+        self.consumesReceiver = consumesReceiver
+    }
+}
+
 /// The process-lifetime runtime identity of one generated conforming class.
 /// No callback bodies, public adapters or symbol resolvers belong to this owner.
 package final class RuntimeSwiftProtocolClass: @unchecked Sendable {
@@ -33,20 +44,20 @@ package final class RuntimeSwiftProtocolClass: @unchecked Sendable {
     }
 
     package func register(
-        interfaces: [RuntimeSwiftCallInterface],
+        witnesses: [RuntimeSwiftProtocolWitness],
         retaining images: [RuntimeImage]
     ) throws -> RuntimeSwiftProtocolConformance {
-        guard interfaces.count == descriptor.requirements.count else {
+        guard witnesses.count == descriptor.requirements.count else {
             throw RuntimeResolutionError.unsupportedDeclaration(
                 descriptor.protocolName + ": every protocol requirement needs a witness interface."
             )
         }
         let cached: RuntimeSwiftProtocolConformance? = try registration.withLock { registration in
             if let existing = registration {
-                guard existing.hasSameABI(as: interfaces) else {
+                guard existing.hasSameABI(as: witnesses) else {
                     throw RuntimeResolutionError.unsupportedDeclaration(
                         descriptor.protocolName
-                            + ": these argument ABIs conflict with the protocol's existing runtime registration."
+                            + ": these method ABIs or receiver conventions conflict with the protocol's existing runtime registration."
                     )
                 }
                 return existing
@@ -57,16 +68,16 @@ package final class RuntimeSwiftProtocolClass: @unchecked Sendable {
             cached.retain(images: images)
             return cached
         }
-        let entries = try RuntimeSwiftProtocolConformance.prepareEntries(interfaces: interfaces)
+        let entries = try RuntimeSwiftProtocolConformance.prepareEntries(witnesses: witnesses)
         // Entries own executable pages and code leases. A concurrent winner or
         // failed registration releases these candidates after the lock ends.
         let conformance = try withExtendedLifetime(entries) {
             try registration.withLock { registration in
                 if let existing = registration {
-                    guard existing.hasSameABI(as: interfaces) else {
+                    guard existing.hasSameABI(as: witnesses) else {
                         throw RuntimeResolutionError.unsupportedDeclaration(
                             descriptor.protocolName
-                                + ": these argument ABIs conflict with the protocol's existing runtime registration."
+                                + ": these method ABIs or receiver conventions conflict with the protocol's existing runtime registration."
                         )
                     }
                     return existing
@@ -74,7 +85,7 @@ package final class RuntimeSwiftProtocolClass: @unchecked Sendable {
                 let prepared = try RuntimeSwiftProtocolConformance(
                     nativeClass: handle,
                     descriptor: descriptor,
-                    interfaces: interfaces,
+                    witnesses: witnesses,
                     entries: entries
                 )
                 registration = prepared
@@ -91,17 +102,17 @@ package final class RuntimeSwiftProtocolClass: @unchecked Sendable {
 package final class RuntimeSwiftProtocolConformance: @unchecked Sendable {
     package let handle: OpaquePointer
     package let metadata: Any.Type
-    private let interfaces: [RuntimeSwiftCallInterface]
+    private let witnesses: [RuntimeSwiftProtocolWitness]
     private let entries: [RuntimeSwiftClosureCallbackOwner]
     private let images = Mutex<[RuntimeImageIdentity: RuntimeImage]>([:])
 
     fileprivate init(
         nativeClass: UnsafeRawPointer,
         descriptor: RuntimeSwiftProtocolDescriptor,
-        interfaces: [RuntimeSwiftCallInterface],
+        witnesses: [RuntimeSwiftProtocolWitness],
         entries: [RuntimeSwiftClosureCallbackOwner]
     ) throws {
-        self.interfaces = interfaces
+        self.witnesses = witnesses
         self.entries = entries
         let functions = entries.map { Optional($0.function) }
         let discriminators = descriptor.requirements.map {
@@ -136,14 +147,15 @@ package final class RuntimeSwiftProtocolConformance: @unchecked Sendable {
     }
 
     fileprivate static func prepareEntries(
-        interfaces: [RuntimeSwiftCallInterface]
+        witnesses: [RuntimeSwiftProtocolWitness]
     ) throws -> [RuntimeSwiftClosureCallbackOwner] {
-        try interfaces.enumerated().map { slot, interface in
+        try witnesses.enumerated().map { slot, witness in
             var failure: OpaquePointer?
             guard
                 let callback = ABICreateSwiftProtocolWitnessCallback(
-                    interface.handle,
+                    witness.interface.handle,
                     slot,
+                    witness.consumesReceiver,
                     &failure
                 )
             else {
@@ -153,9 +165,12 @@ package final class RuntimeSwiftProtocolConformance: @unchecked Sendable {
         }
     }
 
-    fileprivate func hasSameABI(as other: [RuntimeSwiftCallInterface]) -> Bool {
-        interfaces.count == other.count
-            && zip(interfaces, other).allSatisfy { $0.hasSameABI(as: $1) }
+    fileprivate func hasSameABI(as other: [RuntimeSwiftProtocolWitness]) -> Bool {
+        witnesses.count == other.count
+            && zip(witnesses, other).allSatisfy {
+                $0.consumesReceiver == $1.consumesReceiver
+                    && $0.interface.hasSameABI(as: $1.interface)
+            }
     }
 
     fileprivate func retain(images incoming: [RuntimeImage]) {

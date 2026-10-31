@@ -57,3 +57,7 @@ import WitnessProbe
 ) throws(DelegateFailure) {
     try object.typedFail(text)
 }
+
+@inline(never) public func callFinishDelegate(_ object: consuming any Delegate, fail: Bool) throws {
+    try object.finish(fail)
+}

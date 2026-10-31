@@ -50,6 +50,7 @@ public protocol Delegate: AnyObject {
     func accept(_ other: Self)
     func fail(_ text: String) throws
     func typedFail(_ text: String) throws(DelegateFailure)
+    consuming func finish(_ fail: Bool) throws
 }
 
 public enum DelegateFailure: Error { case expected, code(Int64) }
@@ -60,6 +61,9 @@ public final class DelegateObject: Delegate {
     @inline(never) public func consume(_ text: consuming String, token: consuming DelegateToken) {}
     @inline(never) public func accept(_ other: DelegateObject) {}
     @inline(never) public func fail(_ text: String) throws { throw DelegateFailure.expected }
+    @inline(never) public consuming func finish(_ fail: Bool) throws {
+        if fail { throw DelegateFailure.expected }
+    }
     @inline(never) public func typedFail(_ text: String) throws(DelegateFailure) {
         throw DelegateFailure.code(1)
     }
