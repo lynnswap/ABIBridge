@@ -221,3 +221,107 @@ public final class FreshCollectionSuperclassValue<Values: Collection>: Existenti
 @inline(never) public func makeGenericSuperclassClosure<Element>(
     _ value: Element
 ) -> () -> any ExistentialSuperclass<Element> & ExistentialSource<Element> { { ExistentialSuperclassValue(value) } }
+
+public protocol HostDelegate: AnyObject {
+    func receive(_ value: String)
+}
+
+public final class HostDelegateReceiver {
+    public var delegate: (any HostDelegate)?
+    public weak var observedDelegate: (any HostDelegate)?
+    public init() {}
+}
+
+@inline(never) public func makeHostDelegateReceiver() -> AnyObject { HostDelegateReceiver() }
+@inline(never) public func installHostDelegate(_ receiver: AnyObject, _ delegate: any HostDelegate)
+{
+    let receiver = receiver as! HostDelegateReceiver
+    receiver.delegate = delegate
+    receiver.observedDelegate = delegate
+}
+@inline(never) public func invokeHostDelegate(_ receiver: AnyObject, _ message: String) -> Int {
+    guard let delegate = (receiver as! HostDelegateReceiver).delegate else { return 0 }
+    delegate.receive(message)
+    let erased: Any = delegate
+    guard let reboxed = erased as? any HostDelegate else { return 1 }
+    reboxed.receive(message + ":any")
+    let object: AnyObject = delegate
+    guard let cast = object as? any HostDelegate else { return 2 }
+    cast.receive(message + ":object")
+    return 3
+}
+@inline(never) public func clearHostDelegate(_ receiver: AnyObject) -> Bool {
+    let receiver = receiver as! HostDelegateReceiver
+    receiver.delegate = nil
+    return receiver.observedDelegate == nil
+}
+
+public protocol HostOwnershipDelegate: AnyObject {
+    func borrow(_ token: borrowing ErrorLifetimeToken)
+    func consume(_ token: consuming ErrorLifetimeToken)
+}
+@inline(never) public func exerciseHostOwnership(
+    _ delegate: any HostOwnershipDelegate,
+    _ token: consuming ErrorLifetimeToken
+) {
+    delegate.borrow(token)
+    delegate.consume(token)
+}
+public protocol HostAssociatedDelegate: AnyObject {
+    associatedtype Value
+    func receive(_ value: Value)
+}
+public protocol HostReturningDelegate: AnyObject {
+    func receive(_ value: String) -> Int
+}
+
+@inline(never) public func invokeWeakHostDelegate(_ receiver: AnyObject, _ message: String) -> Bool
+{
+    guard let delegate = (receiver as! HostDelegateReceiver).observedDelegate else { return false }
+    delegate.receive(message)
+    return true
+}
+
+public protocol HostThrowingDelegate: AnyObject {
+    func receive(_ fail: Bool) throws
+}
+@inline(never) public func invokeHostThrowingDelegate(
+    _ delegate: any HostThrowingDelegate,
+    _ fail: Bool
+) throws {
+    try delegate.receive(fail)
+}
+
+public protocol HostSelfDelegate: AnyObject {
+    func accept(_ other: Self)
+    func acceptOptional(_ other: Self?)
+    func acceptMany(_ others: [Self])
+}
+@inline(never) private func invokeHostSelf<Value: HostSelfDelegate>(_ value: Value) {
+    value.accept(value)
+    value.acceptOptional(value)
+    value.acceptMany([value])
+}
+@inline(never) public func invokeHostSelfDelegate(_ delegate: any HostSelfDelegate) {
+    invokeHostSelf(delegate)
+}
+
+public protocol HostTypedThrowingDelegate: AnyObject {
+    func receive(_ fail: Bool) throws(ManagedFailure)
+}
+@inline(never) public func invokeHostTypedThrowingDelegate(
+    _ delegate: any HostTypedThrowingDelegate,
+    _ fail: Bool
+) throws(ManagedFailure) {
+    try delegate.receive(fail)
+}
+
+public protocol HostConsumingDelegate: AnyObject {
+    consuming func finish(_ fail: Bool) throws
+}
+@inline(never) public func finishHostDelegate(
+    _ delegate: consuming any HostConsumingDelegate,
+    _ fail: Bool
+) throws {
+    try delegate.finish(fail)
+}

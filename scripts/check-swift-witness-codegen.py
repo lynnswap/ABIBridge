@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Verify requirement slots and sync/async witness authentication in compiler IR."""
+"""Verify witness ABI, ownership and dynamic registration authentication in compiler IR."""
+import argparse
 import json
 import re
 import subprocess
@@ -14,9 +15,16 @@ def run(*arguments):
 
 version = run('xcrun', 'swiftc', '--version').strip()
 report = {'toolchain': version, 'runs': []}
-for target, sdk_name in [('arm64-apple-macos15.4', 'macosx'),
-                         ('arm64e-apple-ios18.4', 'iphoneos'),
-                         ('arm64_32-apple-watchos11.4', 'watchos')]:
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--include-arm64e-x1', action='store_true',
+                    help='Also check the Xcode 27 arm64e.x1 ABI')
+arguments = parser.parse_args()
+targets = [('arm64-apple-macos15.4', 'macosx'),
+           ('arm64e-apple-ios18.4', 'iphoneos'),
+           ('arm64_32-apple-watchos11.4', 'watchos')]
+if arguments.include_arm64e_x1:
+    targets.append(('arm64e.x1-apple-ios18.4', 'iphoneos'))
+for target, sdk_name in targets:
     sdk = run('xcrun', '--sdk', sdk_name, '--show-sdk-path').strip()
     for evolution in [False, True]:
         directory = ROOT / target / ('evolution' if evolution else 'non-evolution')
@@ -29,8 +37,13 @@ for target, sdk_name in [('arm64-apple-macos15.4', 'macosx'),
             '-module-name', 'WitnessProbe', str(SOURCE / 'Provider.swift')]
         run(*provider, '-emit-module', '-emit-module-path', str(directory / 'WitnessProbe.swiftmodule'))
         run(*provider, '-emit-ir', '-o', str(directory / 'provider.ll'))
+        run(*provider, '-emit-silgen', '-o', str(directory / 'provider.sil'))
         run(*common, '-module-name', 'WitnessCaller', '-I', str(directory),
             str(SOURCE / 'Caller.swift'), '-emit-ir', '-o', str(directory / 'caller.ll'))
+        run('xcrun', 'clang++', '-std=c++20', '-O0', '-target', target,
+            '-isysroot', sdk, '-I', str(REPO / 'Sources/ABIBridgeCore/include'),
+            '-emit-llvm', '-S', str(REPO / 'Sources/ABIBridgeCore/SwiftProtocolConformance.cpp'),
+            '-o', str(directory / 'registration.ll'))
         report['runs'].append({'xcode': version, 'target': target, 'library_evolution': evolution,
                                'directory': str(directory.relative_to(ROOT))})
 (ROOT / 'run-report.json').write_text(json.dumps(report, indent=2) + '\n')
@@ -50,17 +63,83 @@ def function(ir, marker):
     require(found, f'Missing function: {marker}')
     return found[0]
 
+def check_delegate(provider, caller, sil, registration, pac, narrow, evolution):
+    """Compare native class witnesses and the actual dynamic registration code."""
+    expected = {'receive': ['i32', 'i32', 'i32', 'ptr', 'i64'] if narrow else ['i64', 'ptr', 'ptr', 'i64'],
+                'consume': ['i32', 'i32', 'i32', 'ptr'] if narrow else ['i64', 'ptr', 'ptr'],
+                'accept': ['ptr'],
+                'fail': ['i32', 'i32', 'i32'] if narrow else ['i64', 'ptr'],
+                'typedFail': ['i32', 'i32', 'i32'] if narrow else ['i64', 'ptr'],
+                'finish': ['i1']}
+    ownership = {'receive': '(@guaranteed String, @guaranteed DelegateToken, Int64, @guaranteed DelegateObject)',
+                 'consume': '(@owned String, @owned DelegateToken, @guaranteed DelegateObject)',
+                 'accept': '(@guaranteed DelegateObject, @guaranteed DelegateObject)',
+                 'fail': '(@guaranteed String, @guaranteed DelegateObject) -> @error any Error',
+                 'typedFail': '(@guaranteed String, @guaranteed DelegateObject) -> @error DelegateFailure',
+                 'finish': '(Bool, @owned DelegateObject) -> @error any Error'}
+    if evolution:
+        ownership['typedFail'] = ownership['typedFail'].replace('@error ', '@error_indirect ')
+    callers = {'receive': '12callDelegate', 'consume': '19callConsumeDelegate',
+               'accept': '16callSelfDelegate', 'fail': '20callThrowingDelegate',
+               'typedFail': '25callTypedThrowingDelegate', 'finish': '18callFinishDelegate'}
+    protocol = next(line for line in provider.splitlines() if line.startswith('@"$s12WitnessProbe8DelegateMp" ='))
+    flags = [int(value) & 0xffffffff for value in re.findall(r'%swift.protocol_requirement \{ i32 (-?\d+), i32 0 \}', protocol)]
+    require(len(flags) == len(expected) and all(value & 0x3f == 17 for value in flags),
+            'Class-bound callbacks must be synchronous instance methods')
+    results = {}
+    for index, method in enumerate(expected):
+        identifier = str(len(method)) + method
+        witness = function(provider, r'14DelegateObjectC[^\"]*' + identifier + r'[^\"]*TW"\(')
+        header = witness.splitlines()[0]
+        parameters = re.search(r'"\((.*), ptr swiftself %\w+(.*), ptr %Self, ptr %SelfWitnessTable\)', header)
+        require(parameters and [part.split()[0] for part in parameters[1].split(', ')] == expected[method],
+                f'{method}: class-bound witness must pass direct Self separately from arguments and trailing metadata')
+        extras = parameters[2].split(', ')[1:]
+        throws = method in ['fail', 'typedFail', 'finish']
+        require(any('swifterror' in part for part in extras) == throws,
+                f'{method}: witness throwing convention must use the Swift error register')
+        require(len(extras) == int(throws) + int(method == 'typedFail' and evolution),
+                f'{method}: resilient typed errors require one ordinary output pointer before witness metadata')
+        entry = next(line for line in sil.splitlines() if line.startswith('sil ') and identifier in line and 'FTW :' in line)
+        require('@convention(witness_method: Delegate)' in entry and ownership[method] in entry,
+                f'{method}: formal witness argument ownership changed')
+        call = function(caller, callers[method])
+        require(re.search(r'call swiftcc .*ptr swiftself %0, .*ptr %[^,]+, ptr %[^,]+\)', call),
+                f'{method}: provider must receive direct object Self plus metadata and witness table')
+        if pac:
+            name = re.search(r'@"([^\"]+)"\(', header)[1]
+            auth = next(line for line in provider.splitlines() if line.startswith('@"'+name+'.ptrauth" ='))
+            require(f'i32 0, i64 ptrtoint (ptr getelementptr inbounds ([{len(expected)+1} x ptr]' in auth
+                    and f'i32 0, i32 {index+1}) to i64), i64 {flags[index] >> 16}' in auth,
+                    f'{method}: native witness signing must use the actual slot and requirement discriminator')
+        results[method] = {'signature': header, 'ownership': entry, 'discriminator': flags[index] >> 16}
+    core = function(registration, 'ABICreateSwiftProtocolConformance')
+    if pac:
+        for discriminator in [0xae86, 0xc6eb]:
+            blend = re.search(r'(%[\w.]+) = call i64 @llvm.ptrauth.blend\(i64 %[^,]+, i64 '+str(discriminator)+r'\)', core)
+            require(blend and re.search(r'@llvm.ptrauth.sign\(i64 %[^,]+, i32 2, i64 '+re.escape(blend[1])+r'\)', core),
+                    f'Dynamic registration must sign its protocol/descriptor storage with {discriminator:#x}')
+        loaded = re.search(r'(%[\w.]+) = load i16, ptr %[^,]+', core)
+        require(loaded, 'Dynamic registration must use the prepared 16-bit requirement discriminator')
+        widened = re.search(r'(%[\w.]+) = zext i16 '+re.escape(loaded[1])+r' to i64', core)
+        blend = re.search(r'(%[\w.]+) = call i64 @llvm.ptrauth.blend\(i64 %[^,]+, i64 '+re.escape(widened[1])+r'\)', core) if widened else None
+        require(blend and re.search(r'@llvm.ptrauth.resign\(i64 %[^,]+, i32 0, i64 0, i32 0, i64 '+re.escape(blend[1])+r'\)', core),
+                'Dynamic registration must re-sign generic code pointers for their witness slots')
+    else:
+        require('llvm.ptrauth.' not in core, 'Unsigned dynamic registration unexpectedly signs pointers')
+    return results
+
 reports = []
 for run in json.loads((ROOT/'run-report.json').read_text())['runs']:
     directory = ROOT / run['directory']
     provider, caller = [(directory/name).read_text() for name in ['provider.ll', 'caller.ll']]
-    pac = run['target'].startswith('arm64e-')
+    pac = run['target'].startswith(('arm64e-', 'arm64e.x1-'))
     word = 4 if run['target'].startswith('arm64_32-') else 8
     proto = next(line for line in provider.splitlines() if line.startswith('@"$s12WitnessProbe0B0Mp" ='))
     flags = [int(value) & 0xffffffff for value in re.findall(r'%swift.protocol_requirement \{ i32 (-?\d+), i32 0 \}', proto)]
     require([value & 0x3f for value in flags] == FLAGS, 'Requirement kinds, instance and async flags changed')
     require([value >> 16 for value in flags] == (EXPECTED_DISC if pac else [0]*9), 'Unexpected declaration discriminator')
-    aliases = [line for line in provider.splitlines() if 'Tq" = alias %swift.protocol_requirement' in line]
+    aliases = [line for line in provider.splitlines() if line.startswith('@"$s12WitnessProbe0B0P') and 'Tq" = alias %swift.protocol_requirement' in line]
     require(len(aliases) == (8 if run['library_evolution'] else 0), 'Tq evidence does not match library evolution mode')
     if aliases:
         require([int(re.search(r'i32 (\d+)\)$', line)[1]) for line in aliases] == list(range(7,15)), 'Tq array aliases changed')
@@ -125,8 +204,12 @@ for run in json.loads((ROOT/'run-report.json').read_text())['runs']:
     conditional = function(caller,'getConditionalTable')
     require('@swift_getWitnessTable(' in conditional,'Conditional conformance must obtain its instantiated table through runtime')
     result = {key:run[key] for key in ['xcode','target','library_evolution','directory']}
+    result['delegate'] = check_delegate(provider, caller, (directory/'provider.sil').read_text(),
+                                        (directory/'registration.ll').read_text(), pac, word == 4,
+                                        run['library_evolution'])
     result.update({'word_size':word,'pointer_authentication':pac,'requirements':[{'slot':i+1,'name':name,'flags':flags[i],'kind':flags[i]&15,'discriminator':flags[i]>>16} for i,name in enumerate(NAMES)],'tables':table_rows,'calls':calls,'generic_conformances':conformances})
     reports.append(result)
     print(f"PASS check {run['xcode']} {run['target']} evolution={run['library_evolution']}")
 (ROOT/'evidence.json').write_text(json.dumps(reports,indent=2)+'\n')
-print(f'Checked {len(reports)} compiler variants, {len(reports)*len(CALLERS)} dispatch paths, {len(reports)*3} tables/patterns.')
+print(f'Checked {len(reports)} compiler variants, {len(reports)*len(CALLERS)} dispatch paths, '
+      f'{len(reports)*3} tables/patterns and {sum(len(item["delegate"]) for item in reports)} class-bound witness paths.')

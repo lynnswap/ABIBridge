@@ -4,9 +4,15 @@ import WitnessProbe
     object.sync(value)
 }
 @inline(never) public func callGet<P: Probe>(_ object: P) -> Int64 { object.value }
-@inline(never) public func callSet<P: Probe>(_ object: inout P, _ value: Int64) { object.value = value }
-@inline(never) public func callCode<P: Probe>(_ type: P.Type, _ value: Int64) -> Int64 { P.code(value) }
-@inline(never) public func callInit<P: Probe>(_ type: P.Type, _ value: Int64) -> P { P(seed: value) }
+@inline(never) public func callSet<P: Probe>(_ object: inout P, _ value: Int64) {
+    object.value = value
+}
+@inline(never) public func callCode<P: Probe>(_ type: P.Type, _ value: Int64) -> Int64 {
+    P.code(value)
+}
+@inline(never) public func callInit<P: Probe>(_ type: P.Type, _ value: Int64) -> P {
+    P(seed: value)
+}
 @inline(never) public func callAsync<P: Probe>(_ object: P, _ value: Int64) async -> Int64 {
     await object.asynchronous(value)
 }
@@ -18,4 +24,40 @@ import WitnessProbe
 }
 @inline(never) public func getConditionalTable<P: Equatable>(_ type: P.Type) -> any Probe {
     Conditional<P>(seed: 7)
+}
+
+@inline(never) public func callDelegate(
+    _ object: any Delegate,
+    text: String,
+    token: DelegateToken,
+    value: Int64
+) {
+    object.receive(text, token: token, value: value)
+}
+
+@inline(never) public func callConsumeDelegate(
+    _ object: any Delegate,
+    text: consuming String,
+    token: consuming DelegateToken
+) {
+    object.consume(text, token: token)
+}
+
+@inline(never) public func callSelfDelegate<D: Delegate>(_ object: D, other: D) {
+    object.accept(other)
+}
+
+@inline(never) public func callThrowingDelegate(_ object: any Delegate, text: String) throws {
+    try object.fail(text)
+}
+
+@inline(never) public func callTypedThrowingDelegate(
+    _ object: any Delegate,
+    text: String
+) throws(DelegateFailure) {
+    try object.typedFail(text)
+}
+
+@inline(never) public func callFinishDelegate(_ object: consuming any Delegate, fail: Bool) throws {
+    try object.finish(fail)
 }
