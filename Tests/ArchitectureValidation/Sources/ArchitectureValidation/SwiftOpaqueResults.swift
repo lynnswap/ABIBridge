@@ -536,6 +536,7 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
         "Consuming opaque closure inputs transfer every managed tuple field")
     checks += try await validateRuntimeValueArguments()
     checks += try await validateRuntimeClassArguments()
+    checks += try await validateRuntimeValueConstruction()
     return checks
 }
 
@@ -1069,4 +1070,129 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
         "Inout runtime classes require the declared storage type before replacement",
         "Consuming a runtime subclass transfers the same object to its base type",
     ]
+}
+
+@MainActor private func validateRuntimeValueConstruction() async throws -> [String] {
+    let runtime = ABIRuntime()
+    var checks: [String] = []
+    func check(_ condition: Bool, _ message: String) throws {
+        guard condition else { throw ArchitectureValidationFailure(description: message) }
+        checks.append(message)
+    }
+    let choice = try await runtime.resolve(
+        .swift(.type("SwiftValueFixtures.RuntimeConstructedChoice"))
+    )
+    let makeIdentifier = try await runtime.resolve(
+        .swift(
+            .function(
+                "SwiftValueFixtures.makeRuntimeCaseIdentifier(_:)",
+                as: ((ErrorToken) -> NativeSwiftValue).self
+            )
+        )
+    )
+    let read = try await runtime.resolve(
+        .swift(
+            .function(
+                "SwiftValueFixtures.readRuntimeConstructedChoice(_:)",
+                as: ((NativeSwiftValue) -> String).self
+            )
+        )
+    )
+    let counts = ArgumentCounts()
+    let data = Data([1, 2, 3])
+    var constructed: NativeSwiftValue?
+    do {
+        let identifier = try unsafe makeIdentifier.unsafeInvoke(ErrorToken { counts.destroyed() })
+        constructed = try await choice.makeEnumCase(
+            named: "send",
+            associatedValues: data,
+            identifier
+        )
+        try check(
+            !identifier.isConsumed,
+            "Separate enum associated values copy their runtime-owned inputs"
+        )
+    }
+    guard let value = constructed else {
+        throw ArchitectureValidationFailure(description: "The runtime enum was not constructed")
+    }
+    try check(
+        try unsafe read.unsafeInvoke(value) == "[1, 2, 3]:42" && counts.destructions == 0,
+        "A native enum consumer reads the constructed Data and reference-bearing associated values"
+    )
+    _ = try value.take(as: RuntimeConstructedChoice.self)
+    constructed = nil
+    try check(
+        counts.destructions == 1,
+        "Constructed enum destruction releases its associated owner exactly once"
+    )
+
+    let pair = try await runtime.resolve(
+        .swift(.type("Swift.Optional", genericArguments: [.type((Any, any Error).self)]))
+    )
+    let existentialCounts = ArgumentCounts()
+    var optional: NativeSwiftValue?
+    do {
+        let token: Any = ErrorToken { existentialCounts.destroyed() }
+        optional = try pair.makeEnumCaseAndWait(
+            named: "some",
+            associatedValues: token,
+            SmallError(7)
+        )
+    }
+    do {
+        guard let elements = try optional?.take(as: (Any, any Error)?.self) else {
+            throw ArchitectureValidationFailure(
+                description: "The constructed Optional lost its existential payloads"
+            )
+        }
+        try check(
+            elements.0 is ErrorToken && (elements.1 as? SmallError)?.code == 7,
+            "Separate Any and Error associated values retain their existential containers"
+        )
+    }
+    optional = nil
+    try check(
+        existentialCounts.destructions == 1,
+        "Constructed existential associated values release their final reference payload"
+    )
+
+    let record = try await runtime.resolve(.swift(.type("SwiftValueFixtures.RuntimeDecodedRecord")))
+    let metatype = try record.makeMetatypeValue()
+    let decode = try await runtime.resolve(
+        .swift(
+            .function(
+                "SwiftValueFixtures.decodeRuntimeRecord(_:from:)",
+                as: ((NativeSwiftValue, NSData) throws -> (NativeSwiftValue, String)).self,
+                genericArguments: [.type(record)]
+            )
+        )
+    )
+    let (decoded, name) = try unsafe decode.unsafeInvoke(
+        metatype.copy(),
+        Data(#"{"number":42}"#.utf8) as NSData
+    )
+    let number = try await decoded.type.resolve(.swift(.getter("number", as: (() -> Int64).self)))
+    try check(
+        metatype.isCopyable && !metatype.isConsumed && name == record.name
+            && (try unsafe number.unsafeInvoke(on: decoded)) == 42,
+        "An owned runtime metatype supplies a Decodable generic argument and preserves the original value"
+    )
+    let echo = try await runtime.resolve(
+        .swift(
+            .function(
+                "SwiftValueFixtures.runtimeValueMetatype<A>(A.Type, Swift.Int64) -> (A.Type, Swift.Int64)",
+                as: ((NativeSwiftValue, Int64) -> NativeSwiftValue).self,
+                genericArguments: [.type(record)]
+            )
+        )
+    )
+    let result = try unsafe echo.unsafeInvoke(metatype, 42).take(
+        as: (RuntimeDecodedRecord.Type, Int64).self
+    )
+    try check(
+        result.0 == RuntimeDecodedRecord.self && result.1 == 42,
+        "Runtime metatype inputs and tuple results preserve elided singleton metatype storage"
+    )
+    return checks
 }

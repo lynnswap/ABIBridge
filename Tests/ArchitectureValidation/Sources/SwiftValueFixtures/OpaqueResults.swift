@@ -4,6 +4,38 @@ import Foundation
 @inline(never) public func moveRuntimeValue<T: ~Copyable>(_ value: consuming T) -> T { value }
 @inline(never) public func copyRuntimeValue<T>(_ value: T) -> T { value }
 @inline(never) public func runtimeValueMetatype<T>(_ value: T) -> (Int64.Type, T) { (Int64.self, value) }
+@inline(never) public func runtimeValueMetatype<T>(
+    _ type: T.Type,
+    _ number: Int64
+) -> (T.Type, Int64) { (type, number) }
+
+public struct RuntimeCaseIdentifier {
+    public let number: Int64
+    private let token: ErrorToken
+    public init(_ number: Int64, _ token: ErrorToken) { self.number = number; self.token = token }
+}
+public enum RuntimeConstructedChoice {
+    case send(Data, RuntimeCaseIdentifier)
+    case empty
+}
+@inline(never) public func makeRuntimeCaseIdentifier(_ token: ErrorToken) -> RuntimeCaseIdentifier {
+    RuntimeCaseIdentifier(42, token)
+}
+@inline(never) public func readRuntimeConstructedChoice(_ value: RuntimeConstructedChoice) -> String
+{
+    switch value {
+    case .send(let data, let identifier): "\(Array(data)):\(identifier.number)"
+    case .empty: "empty"
+    }
+}
+
+public struct RuntimeDecodedRecord: Decodable { public let number: Int64 }
+@inline(never) public func decodeRuntimeRecord<Value: Decodable>(
+    _ type: Value.Type,
+    from data: NSData
+) throws -> (Value, String) {
+    (try JSONDecoder().decode(type, from: data as Data), String(reflecting: type))
+}
 @inline(never) public func replaceRuntimeValue<T: ~Copyable>(_ target: inout T, _ value: consuming T) {
     target = consume value
 }

@@ -17,6 +17,14 @@ The added modes cover:
 
 The native mode also covers C++ `bound_method::method()` extraction and rebinding after the original owner is released. Device reports are observations of this configuration, not minimum OS/toolchain requirements. arm64e.x1 and other unexecuted configurations still need their own runtime evidence.
 
+## Runtime-created Swift values
+
+The `swift-existentials` mode constructs protocol values from host callbacks, passes them into a native delegate property, and checks native witness calls after wrapper release and reboxing through `Any` and `AnyObject`. It also projects a weak delegate to its concrete runtime type, calls its protocol requirement, verifies final capture release, and exercises a typed throwing witness with a reference-bearing error.
+
+The `swift-opaque` mode constructs an enum case from separate `Data` and runtime-owned associated values and checks the result through a compiled native consumer. It covers existential associated-value containers and final payload destruction. Runtime-created metatype values supply explicit arguments to a generic `Decodable` function and preserve singleton metatype storage in tuple results.
+
+On November 1, 2026, all 39 normal modes passed on iPhone Air / iOS 27.0.1 (24A446), using Xcode 27.2 (27B48) / Swift 6.4.2 and Release arm64e. The 775 checks include 38 in `swift-existentials` and 94 in `swift-opaque`. Every mode ran in a separate launch and produced a newly written completed report with `pacCompiled: true` and CPU subtype `0x80000002`. The deliberate `tamper` mode was not part of this run. The architecture package also passed its 30 parameterized macOS cases in Debug arm64 with the same toolchain.
+
 ## Generic declaration bindings
 
 The `swift-generic-bindings` mode covers:
