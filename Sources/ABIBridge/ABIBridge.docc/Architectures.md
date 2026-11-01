@@ -32,14 +32,17 @@ The tagged-allocation fixture records the allocation's top byte and original poi
 
 ## Imported-function replacement evidence
 
-The experimental `import-replacement` fixture observed these outcomes:
+The `import-replacement` fixture recorded the earlier VM-only behavior and the current thread-scoped TPRO implementation:
 
 | Configuration | Import page | Control storage |
 | --- | --- | --- |
 | M5 Pro / macOS 26.6.2, normal chained `getppid` import | TPRO refused writes with `KERN_PROTECTION_FAILURE`; pointer, behavior, and protections stayed unchanged. | Legacy-binding and allocated read-only controls passed replacement, predecessor calls, and restoration. |
 | iPhone Air / iOS 27.0, arm64e Enhanced Security host | TPRO refused mutation; pointer and protections stayed unchanged. | The allocated read-only control passed authenticated replacement, predecessor calls, and restoration. |
+| iPhone Air / iOS 27.0.1, Xcode 27.2, Release arm64e, TPRO validation entitlements (November 2, 2026) | Authenticated chained import replacement, predecessor calls, conflict detection, and restoration passed with the TPRO flag present. Current/maximum protections stayed `1/3`; the full thread register state was preserved from both read-only and writable entry states. | Unsigned and IA/IB/DA/DB address-diversified controls passed. Primary, secondary, and covariant virtual entries also passed replacement and restoration on TPRO pages. |
 
 The iPhone import used `DYLD_CHAINED_PTR_ARM64E_USERLAND24` with instruction key A, discriminator zero, and address diversity. Its captured original function authenticated correctly. Writable control storage does not establish writability of a protected import, even when maximum protections include WRITE. The macOS arm64 run also supplies no pointer-authentication evidence. See the [import-rebinding workstream](https://github.com/lynnswap/ABIBridge/issues/121) for mutation support and failure reporting. Symbol inspection and existing invocation APIs do not require disabling process security.
+
+The November 2 run also passed the `code-references` probe and the public Swift/C/C++ virtual-hook probe. See the [validation instructions](https://github.com/lynnswap/ABIBridge/blob/main/Tests/ArchitectureValidation/README.md#imported-function-replacement-probe) for the explicit TPRO host configuration. These observations do not establish runtime support on every ARM64 CPU or on arm64_32.
 
 ## arm64e.x1 remains unverified at runtime
 

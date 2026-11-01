@@ -114,7 +114,7 @@ const char *ABIValidateManagedVirtualHooks(bool requireWritable, bool *published
             require(ABIImportedHookGetSlotCount(firstHook.get())==1,"Virtual installation failed before slot selection");
             const auto write=ABIImportedHookGetMutation(firstHook.get(),0);
             require(!requireWritable && !write.didWrite && write.status==ABIPointerSlotProtectFailed
-                && write.systemErrorCode==KERN_PROTECTION_FAILURE && (write.regionFlags & VM_REGION_FLAG_TPRO_ENABLED),"Unexpected managed virtual publication failure");
+                && write.systemErrorCode==KERN_NOT_SUPPORTED && (write.regionFlags & VM_REGION_FLAG_TPRO_ENABLED),"Unexpected managed virtual publication failure");
             require(primaryOracle(primary,2)==42 && stats->released==1,"Failed virtual install changed dispatch or retained callback");
             return nullptr;
         }

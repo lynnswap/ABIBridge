@@ -38,7 +38,7 @@ External writers must coordinate with registration and memory protection changes
 
 ## Partial installation failures
 
-TPRO-protected pages can reject publication even when metadata and authentication are valid. ``NativeImportedHookInstallationError`` preserves the native error, failed slot index and an invalidated registration with per-slot publication/rollback results:
+On ARM64 systems exposing the supported Darwin TPRO controls, publication temporarily enables this thread's TPRO writes only for the atomic slot exchange, then restores its exact previous register state. The mapping's VM protections remain unchanged. This also applies when the caller already has TPRO writes enabled. TPRO storage without supported controls reports a protection failure with `KERN_NOT_SUPPORTED` before writing, even when its VM permissions include WRITE. Other storage uses the VM protection path. ``NativeImportedHookInstallationError`` preserves the native error, failed slot index and an invalidated registration with per-slot publication/rollback results:
 
 ```swift
 do {

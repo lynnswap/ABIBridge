@@ -11,6 +11,8 @@ struct Memory {
     std::vector<kern_return_t> protectionResults;
     std::vector<std::pair<bool, vm_prot_t>> requests;
     bool displaced = false;
+    bool threadProtectionAvailable = false;
+    bool usedThreadProtection = false;
     int exchanges = 0;
     kern_return_t query(uintptr_t, abibridge::SlotRegion& output) { output = region; return queryError; }
     kern_return_t read(uintptr_t, uintptr_t& output) { output = value; return readError; }
@@ -19,7 +21,9 @@ struct Memory {
         requests.emplace_back(maximum, permissions);
         return index < protectionResults.size() ? protectionResults[index] : KERN_SUCCESS;
     }
-    bool exchange(uintptr_t, uintptr_t& expected, uintptr_t replacement) {
+    bool supportsThreadProtection() { return threadProtectionAvailable; }
+    bool exchange(uintptr_t, uintptr_t& expected, uintptr_t replacement, bool threadProtected) {
+        usedThreadProtection = threadProtected;
         ++exchanges;
         if (displaced) value = 99;
         if (value != expected) { expected = value; return false; }
@@ -62,16 +66,25 @@ const char *ABITestPointerSlotRecovery() {
             return "Read-only mutation must restore its original protection";
     }
     {
-        Memory m; m.region.flags = VM_REGION_FLAG_TPRO_ENABLED; m.protectionResults = {KERN_PROTECTION_FAILURE};
+        Memory m; m.region.flags = VM_REGION_FLAG_TPRO_ENABLED; m.region.protection |= VM_PROT_WRITE;
         const auto r = m.run();
-        if (r.status != ABIPointerSlotProtectFailed || r.systemErrorCode != KERN_PROTECTION_FAILURE || r.didWrite || m.exchanges != 0 || m.requests.size() != 1)
-            return "Rejected write permission must not publish a pointer";
+        if (r.status != ABIPointerSlotProtectFailed || r.systemErrorCode != KERN_NOT_SUPPORTED || r.didWrite || m.exchanges != 0 || !m.requests.empty())
+            return "Unavailable TPRO controls must not publish even when VM permissions report WRITE";
     }
     {
         Memory m; m.region.maximum = VM_PROT_READ;
         const auto r = m.run();
         if (r.status != ABIPointerSlotComplete || !r.didWrite || m.requests != std::vector<std::pair<bool, vm_prot_t>>{{false, 3 | VM_PROT_COPY}, {false, 1}, {true, 1}})
             return "Copy-on-write must restore current and maximum protections";
+    }
+    for (bool displaced : {false, true}) {
+        Memory m; m.region.flags = VM_REGION_FLAG_TPRO_ENABLED;
+        m.threadProtectionAvailable = true; m.displaced = displaced;
+        const auto r = m.run();
+        if (r.status != (displaced ? ABIPointerSlotDisplaced : ABIPointerSlotComplete)
+            || r.didWrite == displaced || !m.usedThreadProtection || !m.requests.empty()
+            || m.value != (displaced ? 99u : 42u))
+            return "TPRO exchange must preserve compare-exchange behavior without changing VM protections";
     }
     for (bool displaced : {false, true}) {
         Memory m; m.region.maximum = VM_PROT_READ; m.displaced = displaced;

@@ -69,10 +69,10 @@ private struct ImportPayload: ABIBridgeValue {
             guard caller == "SwiftImportCaller", !slots.isEmpty, slots.allSatisfy({ slot in
                 guard let mutation = slot.mutation else { return false }
                 return !mutation.didWrite && mutation.status == ABIPointerSlotProtectFailed
-                    && mutation.systemErrorCode == KERN_PROTECTION_FAILURE
+                    && mutation.systemErrorCode == KERN_NOT_SUPPORTED
                     && mutation.regionFlags & UInt32(VM_REGION_FLAG_TPRO_ENABLED) != 0
             }) else { throw error }
-            try check(try unsafe oracle.unsafeInvoke(40) == 41, "Normal Swift imports: TPRO refusal without mutation")
+            try check(try unsafe oracle.unsafeInvoke(40) == 41, "Normal Swift imports: unavailable TPRO controls without mutation")
             continue
         }
         try finish(plan, "\(caller): compiled scalar replacement and captured predecessor") {

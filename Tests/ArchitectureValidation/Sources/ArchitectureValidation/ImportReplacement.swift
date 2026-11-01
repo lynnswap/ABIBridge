@@ -71,8 +71,11 @@ private struct ImportProbeSlot {
     if let error = ABIValidateImportSlot(slot.address, slot.key, slot.extra, slot.diverse, &result) {
         throw failure("Imported slot (\(slot.format)): " + String(cString: error))
     }
-    let outcome = result.changed ? "replacement and captured predecessor passed" : "kernel refused TPRO mutation (\(result.protectionResult)); no slot changed"
+    let outcome = result.changed ? "replacement and captured predecessor passed" : "TPRO controls unavailable (\(result.protectionResult)); no slot changed"
     var checks = ["Imported getppid: \(outcome); \(slot.format), key=\(slot.key), discriminator=\(slot.extra), addressDiversity=\(slot.diverse), regionFlags=\(result.regionFlags), protection=\(result.protectionBefore)->\(result.protectionAfter), maximum=\(result.maximumBefore)->\(result.maximumAfter)"]
+    if result.threadStateVerified {
+        checks.append("TPRO publication and restoration preserve the caller's full register state, including preexisting writable state")
+    }
     if let error = ABIValidateReadOnlySignedSlot(&result) { throw failure("Read-only control: " + String(cString: error)) }
     guard result.changed else { throw failure("Read-only control was not replaced") }
     checks.append("Pointer-slot backend read-only control replacement/predecessor/restoration: PAC=\(ABIValidationPACCompiled()), unsigned and IA/IB/DA/DB with address diversity, protection=\(result.protectionBefore)->\(result.protectionAfter), maximum=\(result.maximumBefore)->\(result.maximumAfter)")

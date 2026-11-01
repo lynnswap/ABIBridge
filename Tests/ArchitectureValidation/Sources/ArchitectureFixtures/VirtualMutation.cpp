@@ -117,9 +117,9 @@ const char *ABIValidateVirtualEntry(uint32_t kind, ABIVirtualMutationProbeResult
         report->restoration = ABICompareExchangePointerSlot(slot,encoded,original);
         if (report->restoration.status!=ABIPointerSlotComplete) { state.unrecovered=true; return "Virtual-entry physical restoration failed"; }
     } else if (report->publication.status!=ABIPointerSlotProtectFailed
-        || report->publication.systemErrorCode!=KERN_PROTECTION_FAILURE
+        || report->publication.systemErrorCode!=KERN_NOT_SUPPORTED
         || !(report->publication.regionFlags & VM_REGION_FLAG_TPRO_ENABLED)) {
-        return "Unexpected virtual-entry publication failure (not a TPRO protection refusal)";
+        return "Unexpected virtual-entry publication failure (not a unavailable TPRO controls)";
     }
     if (!callsMatch || !headersMatch || !callbackCount) return "Virtual replacement changed dispatch, receiver, return or header behavior";
     if (*slot != original || primaryOracle(&first,2)!=42 || secondaryOracle(&first,2)!=62 || covariantOracle(&first)!=secondary)

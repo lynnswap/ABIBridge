@@ -13,7 +13,7 @@ struct ContentView: View {
 
     private var modes: [String] {
         let standard = [
-        "native", "swift", "ffi", "memory", "replacement", "hooks",
+        "native", "swift", "ffi", "memory", "code-references", "replacement", "hooks",
         "initializers", "native-hooks", "coordinated-hooks",
         "import-replacement", "import-hooks", "virtual-replacement",
         "virtual-hooks", "virtual-entries", "virtual-public",

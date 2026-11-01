@@ -72,7 +72,7 @@ hook.invalidate()
 
 The slot snapshot reports active, invalidated, displaced, or unreadable state without synchronizing with external writers. Publication and rollback records include writes, original Mach failures, protection-restoration failures, and observed region information.
 
-Installation can throw ``NativeVirtualHookInstallationError``. Its invalidated `registration` preserves the selected slot and partial effects; a nil slot means preparation failed before selection. Read-only or TPRO-protected pages can refuse installation. Inspect the outcome before relying on interception.
+Installation can throw ``NativeVirtualHookInstallationError``. Its invalidated `registration` preserves the selected slot and partial effects; a nil slot means preparation failed before selection. Supported ARM64 TPRO storage uses the same thread-scoped write and exact state restoration as <doc:ImportedFunctionHooks>. Storage whose protection mechanism is unavailable can refuse installation. Inspect the outcome before relying on interception.
 
 When a Swift body throws before proceeding, the original arguments pass through. If a continuation already completed, its latest result is preserved. The original error is delivered to `onFailure`. C++ callback exceptions are caught by the wrapper and reported similarly. A C callback returns `false` and supplies an owned `ABIResolutionFailure` to report failure.
 

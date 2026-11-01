@@ -11,6 +11,7 @@ extern "C" {
 /// Compares and exchanges the pointer representation in aligned data storage. Calls through this transport serialize protection changes, including changes on a shared page. The caller keeps the storage mapped, coordinates all other writers/protection changes, and keeps both old/new code and pointees alive. An atomic pointer change does not make a multi-slot update atomic.
 ///
 /// Observed holds the original/read or competing pointer bits when available. On any result, didWrite identifies whether this operation published the new value. Failed protection restoration does not automatically roll it back. Both restoration errors are preserved, including with a displaced result. Executable pages are rejected; this operation never patches instructions.
+/// On supported ARM64 systems, TPRO storage is exchanged while temporarily enabling this thread's TPRO writes. The leaf operation restores the caller's full register state before returning and does not change the mapping's VM protections. Other storage uses the VM protection transport.
 ABIPointerSlotResult ABICompareExchangePointerSlot(void *storage, uintptr_t expected, uintptr_t replacement);
 
 // Internal retry of failed protection restoration. Does not write a pointer.

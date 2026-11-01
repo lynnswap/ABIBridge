@@ -1,6 +1,31 @@
-# Discovering referenced objects
+# Discovering native references
 
-Find pointer slots in a bounded region whose pointees have a matching vtable address point.
+Find addresses referenced by ARM64 instructions, or pointer slots whose pointees have a matching vtable address point.
+
+## Inspect ARM64 code references
+
+Read an explicitly bounded code region with ``NativeMemoryRegion/arm64References()``:
+
+```swift
+let code = try NativeMemoryRegion(
+    address: functionAddress, byteCount: functionByteCount, retaining: provider
+)
+let result = try code.arm64References()
+for reference in result.references {
+    print(reference.instructionAddress, reference.targetAddress, reference.kind)
+}
+if !result.memory.isComplete {
+    print(result.memory.status, result.memory.systemErrorCode)
+}
+```
+
+The reader copies the supplied region and examines complete, little-endian instructions at four-byte boundaries. It tracks addresses formed by ADR, ADRP, and 64-bit ADD-immediate instructions. A 32-bit or 64-bit LDR with an unsigned offset reports the address being loaded, without reading that address or assuming that the loaded value is a pointer. BL reports the direct call target. Results preserve instruction order and repeated references to the same address.
+
+NOP preserves tracked registers. A call or an unrecognized instruction discards them, preventing a later load from using a register value that an unmodeled instruction might have replaced. This is straight-line analysis of the supplied bytes: it does not follow branches, inspect callees, or prove that an instruction executes. Unknown instructions may hide additional references. ADRP's page base is used for subsequent instructions and is not itself reported as a data reference.
+
+``NativeARM64ReferenceResult/memory`` preserves the memory reader's complete, partial, or failed outcome. ``NativeARM64ReferenceResult/instructionByteCount`` excludes any trailing incomplete instruction. Partial results describe only the copied prefix. The region must begin at an address divisible by four; an unaligned start throws ``NativeARM64ReferenceError`` before reading.
+
+Use ``NativeARM64Instruction/init(encoding:at:)`` to decode an individual instruction from already-copied or offline bytes. Addresses use wrapping 64-bit AArch64 arithmetic. Neither decoding nor scanning authenticates a pointer, establishes target readability, or acquires its lifetime.
 
 ## Describe the storage and target
 

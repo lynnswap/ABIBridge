@@ -2,9 +2,35 @@
 #include <mutex>
 #include <ptrauth.h>
 #include <cstring>
+#include <ABIBridge/Memory.h>
+
+#if defined(__arm64__) && defined(__LP64__)
+extern "C" bool ABIExchangeThreadProtectedSlot(void *, uintptr_t *, uintptr_t, uint64_t, uint64_t);
+#endif
 
 namespace {
 std::mutex slotWriter;
+struct ThreadProtectionControls {
+    uint64_t writable = 0;
+    uint64_t mask = 0;
+};
+const ThreadProtectionControls& threadProtectionControls() {
+    static const auto controls = [] {
+        ThreadProtectionControls result;
+#if defined(__arm64__) && defined(__LP64__)
+        // Darwin's ARM64 comm-page publishes the two supported TPRO states.
+        // Only accept the register layout implemented by our leaf exchange.
+        uint64_t states[2]{};
+        const auto read = ABIReadMemory(UINT64_C(0x0000000fffffc0d0), sizeof(states), states);
+        if (read.status == ABIMemoryReadComplete && states[0] && states[1]
+            && (states[0] ^ states[1]) == (UINT64_C(1) << 36)) {
+            result = {states[0], states[0] ^ states[1]};
+        }
+#endif
+        return result;
+    }();
+    return controls;
+}
 uintptr_t vmAddress(uintptr_t pointer) {
 #if defined(__arm64__) && defined(__LP64__)
     // Mach region/protection queries take virtual addresses, while an
@@ -42,7 +68,15 @@ struct Memory {
         address = vmAddress(address);
         return vm_protect(mach_task_self(), address - address % vm_page_size, vm_page_size, maximum, protection);
     }
-    bool exchange(uintptr_t address, uintptr_t& expected, uintptr_t replacement) {
+    bool supportsThreadProtection() { return threadProtectionControls().mask != 0; }
+    bool exchange(uintptr_t address, uintptr_t& expected, uintptr_t replacement, bool threadProtected) {
+#if defined(__arm64__) && defined(__LP64__)
+        if (threadProtected) {
+            const auto& controls = threadProtectionControls();
+            return ABIExchangeThreadProtectedSlot(reinterpret_cast<void *>(address), &expected, replacement,
+                controls.writable, controls.mask);
+        }
+#endif
         // Keep the original logical tag for the actual memory access.
         return __atomic_compare_exchange_n(reinterpret_cast<uintptr_t *>(address), &expected, replacement,
             false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
