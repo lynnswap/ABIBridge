@@ -135,3 +135,47 @@ extension ExistentialPackBase: ExistentialPackMarker {}
     _ body: (any ExistentialPackBase<repeat each Value> & ExistentialPackMarker) throws -> any ExistentialPackBase<repeat each Value> & ExistentialPackMarker
 ) rethrows -> any ExistentialPackBase<repeat each Value> & ExistentialPackMarker { try body(value) }
 @inline(never) public func echoNSObjectCopying<Value>(_ value: any NSObject & NSCopying, _ tag: Value) -> any NSObject & NSCopying { value }
+
+public protocol HostDelegate: AnyObject {
+    func receive(_ value: String)
+}
+
+public final class HostDelegateReceiver {
+    public var delegate: (any HostDelegate)?
+    public weak var observedDelegate: (any HostDelegate)?
+    public init() {}
+}
+
+@inline(never) public func installHostDelegate(
+    _ receiver: HostDelegateReceiver,
+    _ delegate: any HostDelegate
+) {
+    receiver.delegate = delegate
+    receiver.observedDelegate = delegate
+}
+
+@inline(never) public func invokeHostDelegate(
+    _ receiver: HostDelegateReceiver,
+    _ message: String
+) -> Int {
+    guard let delegate = receiver.delegate else { return 0 }
+    delegate.receive(message)
+    let erased: Any = delegate
+    guard let reboxed = erased as? any HostDelegate else { return 1 }
+    reboxed.receive(message + ":any")
+    let object: AnyObject = delegate
+    guard let cast = object as? any HostDelegate else { return 2 }
+    cast.receive(message + ":object")
+    return 3
+}
+
+public protocol HostThrowingDelegate: AnyObject {
+    func receive(_ fail: Bool) throws(IndirectError)
+}
+
+@inline(never) public func invokeHostThrowingDelegate(
+    _ delegate: any HostThrowingDelegate,
+    _ fail: Bool
+) throws(IndirectError) {
+    try delegate.receive(fail)
+}

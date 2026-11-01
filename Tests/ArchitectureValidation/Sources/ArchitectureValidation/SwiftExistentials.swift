@@ -1,6 +1,7 @@
 import Foundation
 import ABIBridge
 import SwiftValueFixtures
+import Synchronization
 
 @MainActor func validateSwiftExistentials() async throws -> [String] {
     let runtime = ABIRuntime()
@@ -365,5 +366,127 @@ import SwiftValueFixtures
     let string = "copying" as NSString
     try check(try unsafe copying.unsafeInvoke(string, 42) === string,
         "Ordinary superclass existential resolves tagged Objective-C protocol references")
+    checks += try await validateHostProtocolValues()
+    return checks
+}
+
+@MainActor private func validateHostProtocolValues() async throws -> [String] {
+    let runtime = ABIRuntime()
+    var checks: [String] = []
+    func check(_ condition: Bool, _ message: String) throws {
+        guard condition else { throw ArchitectureValidationFailure(description: message) }
+        checks.append(message)
+    }
+    let receiver = HostDelegateReceiver()
+    let messages = Mutex<[String]>([])
+    let captures = ArgumentCounts()
+    let install = try await runtime.resolve(
+        .swift(
+            .function(
+                "SwiftValueFixtures.installHostDelegate(_:_:)",
+                as: ((HostDelegateReceiver, NativeSwiftValue) -> Void).self
+            )
+        )
+    )
+    let invoke = try await runtime.resolve(
+        .swift(
+            .function(
+                "SwiftValueFixtures.invokeHostDelegate(_:_:)",
+                as: ((HostDelegateReceiver, String) -> Int).self
+            )
+        )
+    )
+    do {
+        let capture = ErrorToken { captures.destroyed() }
+        let value = try await runtime.makeSwiftProtocolValue(
+            "SwiftValueFixtures.HostDelegate",
+            methods: [
+                try NativeSwiftProtocolMethod("receive(_:)") { (message: String) in
+                    withExtendedLifetime(capture) { messages.withLock { $0.append(message) } }
+                }
+            ]
+        )
+        try unsafe install.unsafeInvoke(receiver, value)
+    }
+    try check(
+        captures.destructions == 0,
+        "A native delegate retains its runtime-created protocol callback after wrapper release"
+    )
+    try check(
+        try unsafe invoke.unsafeInvoke(receiver, "native") == 3
+            && messages.withLock { $0 } == ["native", "native:any", "native:object"],
+        "Native witness calls and Any/AnyObject reboxing authenticate the generated conformance"
+    )
+    do {
+        let getter = try await runtime.object(receiver).resolve(
+            .swift(.getter("observedDelegate", as: (() -> NativeSwiftValue?).self))
+        )
+        guard let value = try unsafe getter.unsafeInvoke() else {
+            throw ArchitectureValidationFailure(
+                description: "The weak delegate lost its native owner"
+            )
+        }
+        let projected = try value.copyUnderlyingValue()
+        let method = try await projected.type.resolve(
+            .swift(
+                .method("SwiftValueFixtures.HostDelegate.receive(_:)", as: ((String) -> Void).self)
+            )
+        )
+        try unsafe method.unsafeInvoke(on: projected, "projected")
+        try check(
+            try value.withCopy { ObjectIdentifier($0 as AnyObject) }
+                == projected.withCopy { ObjectIdentifier($0 as AnyObject) }
+                && messages.withLock { $0.last } == "projected",
+            "A weak protocol projection preserves object identity and authenticated witness dispatch"
+        )
+    }
+    receiver.delegate = nil
+    try check(
+        receiver.observedDelegate == nil && captures.destructions == 1,
+        "Dropping the final native delegate owner releases its callback capture exactly once"
+    )
+
+    let errors = ArgumentCounts()
+    let throwing = try runtime.makeSwiftProtocolValueAndWait(
+        "SwiftValueFixtures.HostThrowingDelegate",
+        methods: [
+            try NativeSwiftProtocolMethod("receive(_:)") { (fail: Bool) throws(IndirectError) in
+                if fail { throw IndirectError(ErrorToken { errors.destroyed() }) }
+            }
+        ]
+    )
+    let call = try await runtime.resolve(
+        .swift(
+            .function(
+                "SwiftValueFixtures.invokeHostThrowingDelegate(_:_:)",
+                as: ((NativeSwiftValue, Bool) throws(IndirectError) -> Void).self
+            )
+        )
+    )
+    try unsafe call.unsafeInvoke(throwing, false)
+    var heldError: NativeSwiftError?
+    do {
+        try unsafe call.unsafeInvoke(throwing, true)
+        throw ArchitectureValidationFailure(
+            description: "The generated witness lost its typed native error"
+        )
+    } catch let error as NativeSwiftError {
+        try error.withUnderlyingError {
+            try check(
+                $0 is IndirectError,
+                "A generated throwing witness preserves its typed native error"
+            )
+        }
+        heldError = error
+    }
+    try check(
+        heldError != nil && errors.destructions == 0,
+        "A retained native witness error keeps its reference-bearing payload alive"
+    )
+    heldError = nil
+    try check(
+        errors.destructions == 1,
+        "Releasing the native witness error destroys its typed payload exactly once"
+    )
     return checks
 }
