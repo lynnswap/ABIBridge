@@ -208,7 +208,7 @@ final class CompiledSwiftReplacementFixture {
             }
             if allowProtectedRefusal && !mutation.didWrite
                 && mutation.status == ABIPointerSlotProtectFailed
-                && mutation.systemErrorCode == KERN_PROTECTION_FAILURE
+                && mutation.systemErrorCode == KERN_NOT_SUPPORTED
                 && mutation.regionFlags & UInt32(VM_REGION_FLAG_TPRO_ENABLED) != 0
             {
                 return mutation

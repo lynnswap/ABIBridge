@@ -1,5 +1,6 @@
 #include "ArchitectureFixtures.h"
 #include <ABIBridge/Backend/PointerSlot.h>
+#include <ABIBridge/Memory.h>
 #include <mach/mach.h>
 #include <dlfcn.h>
 #include <ptrauth.h>
@@ -73,7 +74,7 @@ kern_return_t protection(void *slot, vm_region_submap_short_info_data_64_t& info
 // This fixture changes one pointer in a known in-process data page. It does
 // not provide synchronization with unrelated interposers or production callers.
 std::string exercise(void *slot, int32_t key, uintptr_t extra, bool diverse,
-    Function oracle, ABIImportProbeResult& result) {
+    Function oracle, ABIImportProbeResult& result, bool nested = false) {
     result = {};
     const auto baseline = oracle(); // Bind a lazy import before capturing it.
     const auto unrelated = getpid();
@@ -90,11 +91,25 @@ std::string exercise(void *slot, int32_t key, uintptr_t extra, bool diverse,
     uintptr_t replacementBits = 0;
     if (!ABIEncodePointerSlotFunction(reinterpret_cast<ABIUnmanagedFunction>(replacement), slot, key, extra, diverse, &replacementBits))
         return "Replacement signing schema was rejected";
+#if defined(__arm64__) && defined(__LP64__)
+    uint64_t states[2]{}, savedState = 0;
+    const bool checkThreadState = (before.flags & VM_REGION_FLAG_TPRO_ENABLED)
+        && ABIReadMemory(UINT64_C(0x0000000fffffc0d0), sizeof(states), states).status == ABIMemoryReadComplete
+        && states[0] && states[1] && (states[0] ^ states[1]) == (UINT64_C(1) << 36);
+    if (checkThreadState) __asm__ volatile("mrs %0, S3_6_C15_C1_5" : "=r"(savedState) :: "memory");
+#endif
     const auto changed = ABICompareExchangePointerSlot(slot, reinterpret_cast<uintptr_t>(original), replacementBits);
+#if defined(__arm64__) && defined(__LP64__)
+    uint64_t publishedState = savedState;
+    if (checkThreadState) __asm__ volatile("mrs %0, S3_6_C15_C1_5" : "=r"(publishedState) :: "memory");
+#endif
     result.protectionResult = changed.systemErrorCode;
     std::string failure;
     if (changed.didWrite) {
         result.changed = oracle() == baseline + 1;
+        const auto conflict = ABICompareExchangePointerSlot(slot, reinterpret_cast<uintptr_t>(original), replacementBits);
+        if (conflict.status != ABIPointerSlotDisplaced || conflict.didWrite || conflict.observed != replacementBits)
+            failure += "A competing pointer representation was not preserved; ";
         const auto restored = ABICompareExchangePointerSlot(slot, replacementBits, reinterpret_cast<uintptr_t>(original));
         if (!result.changed) failure += "Compiler-generated call did not use the replacement; ";
         if (changed.status != ABIPointerSlotComplete || restored.status != ABIPointerSlotComplete) {
@@ -102,11 +117,11 @@ std::string exercise(void *slot, int32_t key, uintptr_t extra, bool diverse,
                 + " restore current=" + std::to_string(changed.restoreProtectionError) + "/" + std::to_string(restored.restoreProtectionError)
                 + " restore maximum=" + std::to_string(changed.restoreMaximumError) + "/" + std::to_string(restored.restoreMaximumError) + "; ";
         }
-    } else if (changed.status != ABIPointerSlotProtectFailed || changed.systemErrorCode != KERN_PROTECTION_FAILURE
+    } else if (changed.status != ABIPointerSlotProtectFailed || changed.systemErrorCode != KERN_NOT_SUPPORTED
         || !(before.flags & VM_REGION_FLAG_TPRO_ENABLED)) {
         failure += "Slot mutation failed unexpectedly: " + std::to_string(changed.status) + "/" + std::to_string(changed.systemErrorCode) + "; ";
     }
-    // A kernel refusal is a distinct observed outcome, not a successful rebind.
+    // Unavailable controls are a distinct outcome, not a successful rebind.
     // Both outcomes must leave the original representation and protections intact.
     vm_region_submap_short_info_data_64_t after{};
     const auto readAfter = protection(slot, after);
@@ -120,6 +135,30 @@ std::string exercise(void *slot, int32_t key, uintptr_t extra, bool diverse,
     if (readAfter != KERN_SUCCESS) failure += "Read final protection failed: " + std::to_string(readAfter) + "; ";
     else if (after.protection != before.protection || after.max_protection != before.max_protection
         || after.flags != before.flags) failure += "Final page protection differs; ";
+#if defined(__arm64__) && defined(__LP64__)
+    if (checkThreadState) {
+        uint64_t restoredState;
+        __asm__ volatile("mrs %0, S3_6_C15_C1_5" : "=r"(restoredState) :: "memory");
+        if (publishedState != savedState || restoredState != savedState)
+            failure += "Pointer mutation changed the caller's full TPRO register state; ";
+        if (!result.changed) failure += "Supported TPRO storage was not replaced; ";
+        if (!nested && failure.empty()) {
+            struct RestoreState {
+                uint64_t value;
+                ~RestoreState() { __asm__ volatile("msr S3_6_C15_C1_5, %0\n\tisb" :: "r"(value) : "memory"); }
+            } restore{savedState};
+            const auto mask = states[0] ^ states[1];
+            const auto writable = (savedState & ~mask) | (states[0] & mask);
+            __asm__ volatile("msr S3_6_C15_C1_5, %0\n\tisb" :: "r"(writable) : "memory");
+            ABIImportProbeResult nestedResult{};
+            failure += exercise(slot, key, extra, diverse, oracle, nestedResult, true);
+        }
+        uint64_t finalState;
+        __asm__ volatile("mrs %0, S3_6_C15_C1_5" : "=r"(finalState) :: "memory");
+        if (finalState != savedState) failure += "Nested validation changed the caller's TPRO state; ";
+        result.threadStateVerified = failure.empty();
+    }
+#endif
     return failure;
 }
 

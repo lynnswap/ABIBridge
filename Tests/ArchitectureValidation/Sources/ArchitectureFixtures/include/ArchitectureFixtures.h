@@ -66,6 +66,7 @@ const char *ABIValidateManagedVirtualHooks(bool requireWritable, bool *published
 const char *ABIValidatePublicVirtualHooks(bool requireWritable, bool *published);
 typedef struct {
     bool changed;
+    bool threadStateVerified;
     int32_t protectionResult;
     int32_t protectionBefore, protectionAfter;
     int32_t maximumBefore, maximumAfter;

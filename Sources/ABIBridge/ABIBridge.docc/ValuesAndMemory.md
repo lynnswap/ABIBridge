@@ -4,7 +4,7 @@ Describe native storage, adapt values, read memory, and discover referenced obje
 
 ## Overview
 
-Use <doc:NativeValueAdapters> when a call needs a custom foreign representation or a runtime-defined signature. Use <doc:NativeMemory> to read accessible bytes and <doc:PointerDiscovery> to search bounded storage for candidate object pointers. Swift-specific representations and ownership conventions are covered in <doc:SwiftValues>.
+Use <doc:NativeValueAdapters> when a call needs a custom foreign representation or a runtime-defined signature. Use <doc:NativeMemory> to read accessible bytes and <doc:PointerDiscovery> to find ARM64 code references or candidate object pointers in bounded storage. Swift-specific representations and ownership conventions are covered in <doc:SwiftValues>.
 
 ## Topics
 
@@ -36,6 +36,13 @@ Use <doc:NativeValueAdapters> when a call needs a custom foreign representation 
 - ``NativePointerSearchFailure``
 - ``NativePointerSearchError``
 - ``NativePointerNormalization``
+
+### ARM64 code references
+
+- ``NativeARM64Instruction``
+- ``NativeARM64Reference``
+- ``NativeARM64ReferenceResult``
+- ``NativeARM64ReferenceError``
 
 ### Call contracts and errors
 

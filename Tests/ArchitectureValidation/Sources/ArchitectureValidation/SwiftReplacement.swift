@@ -93,12 +93,12 @@ import SwiftReplacementFixtures
                     if !mutation.didWrite {
                         try check(
                             mutation.status == ABIPointerSlotProtectFailed
-                                && mutation.systemErrorCode == KERN_PROTECTION_FAILURE
+                                && mutation.systemErrorCode == KERN_NOT_SUPPORTED
                                 && mutation.regionFlags & UInt32(VM_REGION_FLAG_TPRO_ENABLED) != 0
                                 && slot.load(as: UInt.self) == old,
                             "Swift metadata mutation failed unexpectedly: \(mutation.status)/\(mutation.systemErrorCode)"
                         )
-                        return "\(name): TPRO refusal without mutation"
+                        return "\(name): unavailable TPRO controls without mutation"
                     }
                     var bodyError: (any Error)?
                     if mutation.status == ABIPointerSlotComplete {

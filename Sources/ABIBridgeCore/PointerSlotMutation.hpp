@@ -31,14 +31,17 @@ ABIPointerSlotResult exchangePointerSlot(Memory& memory, uintptr_t address, uint
     code = memory.read(address, result.observed);
     if (code != KERN_SUCCESS) return failed(ABIPointerSlotReadFailed, code);
     if (result.observed != expected) return failed(ABIPointerSlotDisplaced);
-    const bool makeWritable = !(region.protection & VM_PROT_WRITE);
+    const bool threadProtected = region.flags & VM_REGION_FLAG_TPRO_ENABLED;
+    if (threadProtected && !memory.supportsThreadProtection())
+        return failed(ABIPointerSlotProtectFailed, KERN_NOT_SUPPORTED);
+    const bool makeWritable = !(region.protection & VM_PROT_WRITE) && !threadProtected;
     const bool copy = makeWritable && !(region.maximum & VM_PROT_WRITE);
     if (makeWritable) {
         code = memory.protect(address, false, region.protection | VM_PROT_WRITE | (copy ? VM_PROT_COPY : 0));
         if (code != KERN_SUCCESS) return failed(ABIPointerSlotProtectFailed, code);
     }
     result.observed = expected;
-    result.didWrite = memory.exchange(address, result.observed, replacement);
+    result.didWrite = memory.exchange(address, result.observed, replacement, threadProtected);
     result.status = result.didWrite ? ABIPointerSlotComplete : ABIPointerSlotDisplaced;
     if (makeWritable) {
         result.restoreProtectionError = memory.protect(address, false, region.protection);

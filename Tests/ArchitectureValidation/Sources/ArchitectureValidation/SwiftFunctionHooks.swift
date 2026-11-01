@@ -52,10 +52,10 @@ import Synchronization
               error.registration.slots.allSatisfy({ slot in
                   guard let mutation = slot.mutation else { return false }
                   return !mutation.didWrite && mutation.status == ABIPointerSlotProtectFailed
-                      && mutation.systemErrorCode == KERN_PROTECTION_FAILURE
+                      && mutation.systemErrorCode == KERN_NOT_SUPPORTED
                       && mutation.regionFlags & UInt32(VM_REGION_FLAG_TPRO_ENABLED) != 0
               }) else { throw error }
-        try check(try unsafe normal.unsafeInvoke(40) == 41, "Normal import reports TPRO refusal without mutation")
+        try check(try unsafe normal.unsafeInvoke(40) == 41, "Normal import reports unavailable TPRO controls without mutation")
     }
 
     let scalar = try await runtime.resolve(

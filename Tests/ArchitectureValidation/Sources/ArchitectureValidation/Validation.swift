@@ -67,6 +67,26 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
     }
     let runtime = ABIRuntime()
     switch mode {
+    case "code-references":
+        let instructions: [UInt32] = [0x1000_0048, 0xf940_0100, 0x9400_0000]
+        try instructions.withUnsafeBytes { bytes in
+            let address = UInt(bitPattern: bytes.baseAddress!)
+            let result = try NativeMemoryRegion(address: address, byteCount: bytes.count)
+                .arm64References()
+            try check(
+                result.memory.isComplete && result.instructionByteCount == bytes.count,
+                "ARM64 instruction bytes copied completely"
+            )
+            try check(
+                result.references.map(\.targetAddress)
+                    == Array(repeating: UInt64(address + 8), count: 3),
+                "ADR, LDR and BL resolve their original-PC targets"
+            )
+            try check(
+                result.references.map(\.kind) == [.address, .load(byteCount: 8), .call],
+                "Data addresses, loads and calls remain distinguishable"
+            )
+        }
     case "invocation-timing":
         checks += try await validateInvocationTiming()
     case "native-lookup":
@@ -112,7 +132,7 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         checks.append(
             nativePublished
                 ? "Public C/C++ virtual hooks preserve shared chains and thunks"
-                : "Public C/C++ hooks report TPRO refusal without changing dispatch"
+                : "Public C/C++ hooks report unavailable TPRO controls without changing dispatch"
         )
         for (kind, name, slot) in [
             (UInt32(0), "ABIVTable::Derived::value(int) const", 0),
@@ -178,12 +198,12 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
                 let mutation = error.registration.slot?.mutation
                 guard !nativePublished, let mutation, !mutation.didWrite,
                     mutation.status == ABIPointerSlotProtectFailed,
-                    mutation.systemErrorCode == KERN_PROTECTION_FAILURE,
+                    mutation.systemErrorCode == KERN_NOT_SUPPORTED,
                     mutation.regionFlags & UInt32(VM_REGION_FLAG_TPRO_ENABLED) != 0
                 else { throw error }
                 try check(
                     errors.isEmpty,
-                    "Public Swift hook reports TPRO refusal before invoking callbacks"
+                    "Public Swift hook reports unavailable TPRO controls before invoking callbacks"
                 )
             }
         }
@@ -258,7 +278,7 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         checks.append(
             published
                 ? "Managed virtual callbacks, thunks, snapshots and ownership passed"
-                : "Managed virtual registration reports TPRO refusal without changing dispatch or retaining callbacks"
+                : "Managed virtual registration reports unavailable TPRO controls without changing dispatch or retaining callbacks"
         )
     case "virtual-replacement":
         for (index, name) in ["primary", "secondary", "covariant"].enumerated() {
@@ -760,7 +780,8 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
         }
         defer { ABIReleasePointerSearchResult(result) }
         try check(
-            ABIPointerSearchResultIsComplete(result) != 0 && ABIPointerSearchResultGetDistinctCount(result) == 1,
+            ABIPointerSearchResultIsComplete(result) != 0
+                && ABIPointerSearchResultGetDistinctCount(result) == 1,
             "Bounded pointer discovery"
         )
         let candidate = ABIPointerSearchResultGetCandidate(result, 0)

@@ -309,7 +309,7 @@ struct ImportedFunctionHookTests {
             )
             let failed = try #require(error.failedIndex)
             #expect(
-                error.registration.slots[failed].mutation.systemErrorCode == KERN_PROTECTION_FAILURE
+                error.registration.slots[failed].mutation.systemErrorCode == KERN_NOT_SUPPORTED
             )
             let retry = try await unsafe runtime.hookImportedCalls(
                 .cxx(.function(fixture.declaration.name, as: ((Int32, Int32) -> Int32).self)),

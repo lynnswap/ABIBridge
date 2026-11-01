@@ -61,7 +61,7 @@ const char *ABIValidatePublicVirtualHooks(bool requireWritable,bool *published) 
     } catch(const virtual_hook_installation_error& error) {
         auto slot=error.registration().slot();
         if(!requireWritable && !*published && slot && !slot->mutation.didWrite
-            && slot->mutation.status==ABIPointerSlotProtectFailed && slot->mutation.systemErrorCode==KERN_PROTECTION_FAILURE
+            && slot->mutation.status==ABIPointerSlotProtectFailed && slot->mutation.systemErrorCode==KERN_NOT_SUPPORTED
             && (slot->mutation.regionFlags & VM_REGION_FLAG_TPRO_ENABLED)
             && ABIVTable::primaryOracle(&first,2)==42 && !errors) return nullptr;
         message=error.what(); return message.c_str();

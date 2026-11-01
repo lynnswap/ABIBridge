@@ -190,7 +190,7 @@ extension ABIRuntime {
     ///
     /// `importer` identifies callers, while `provider` optionally filters the recorded dependency name (including a reexport facade). Neither loads images. Source names are resolved automatically; no mangled string is required. Callbacks run synchronously on the incoming thread, without an actor hop. If a callback throws before proceeding, its original arguments pass through; otherwise its latest completed result is preserved and the error is reported.
     ///
-    /// Signature, pointee/code lifetime and external-writer synchronization are caller requirements. Unresolved lazy imports must first be called normally. TPRO pages can reject installation. Direct/inlined calls and previously copied function pointers that bypass these slots are not intercepted.
+    /// Signature, pointee/code lifetime and external-writer synchronization are caller requirements. Unresolved lazy imports must first be called normally. Supported ARM64 TPRO storage uses a thread-scoped write; unavailable protection mechanisms can reject installation. Direct/inlined calls and previously copied function pointers that bypass these slots are not intercepted.
     /// - Returns: An owner for this callback across the matched import slots.
     /// - Throws: Resolution/signature errors or `NativeImportedHookInstallationError`
     ///   preserving partial publication and rollback failures.

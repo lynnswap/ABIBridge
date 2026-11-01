@@ -58,7 +58,7 @@ Keep the plan and call `restore()` explicitly. Releasing it leaves dispatch chan
 
 Installation failure attempts to restore earlier writes. ``NativeSwiftReplacementError`` identifies the failed publication and rollback indexes. Inspect `slots` for pointer mutation, restoration, and protection recovery. Retry outstanding recovery; restoration is incomplete while page-protection repair remains.
 
-Restoration compares the current representation before writing, leaving another writer's different pointer unchanged. A reference already restored to the captured bits needs no additional pointer write. Coordinate other writers and page-protection changes; raw pointer comparisons cannot detect ABA changes. TPRO-protected references may reject installation without any write, even when their maximum protection includes WRITE.
+Restoration compares the current representation before writing, leaving another writer's different pointer unchanged. A reference already restored to the captured bits needs no additional pointer write. Coordinate other writers and page-protection changes; raw pointer comparisons cannot detect ABA changes. Supported ARM64 TPRO references use a thread-scoped write with exact state restoration, as described in <doc:ImportedFunctionHooks>. Unavailable protection mechanisms can still reject installation without writing.
 
 Published replacement and predecessor images remain pinned for process lifetime, including after restoration, so saved pointers remain callable. For code outside loader images, supply `retaining` or maintain its lifetime yourself. Supplied owners also become process-lived. The caller still manages mutable state accessed by those implementations.
 

@@ -100,7 +100,19 @@ The `import-hooks` mode registers typed Swift and C++ callbacks on a compiler-cr
 
 The `import-replacement` mode locates its own compiled `getppid` import with MachOKit, retaining the original chained-fixup metadata from the matching executable file. It checks a compiled replacement, invocation of the captured predecessor, restoration of the original pointer bits, and preservation of current/maximum page protections. A separate allocated read-only page exercises address-diversified pointer signing when compiled for arm64e. These fixture-only routines are not a public rebinding API.
 
-TPRO-protected imports can reject `vm_protect` even when their maximum protection includes WRITE. The report distinguishes `replacement and captured predecessor passed` from `kernel refused TPRO mutation`; refusal is accepted only for the observed TPRO flag and `KERN_PROTECTION_FAILURE`, with the original state verified unchanged. A completed probe does not necessarily mean its import was writable. The allocated control must actually complete replacement and restoration.
+TPRO-protected imports can reject `vm_protect` even when their maximum protection includes WRITE. The current backend uses thread-scoped TPRO writes when the supported controls are available. The report distinguishes `replacement and captured predecessor passed` from `TPRO controls unavailable`; the latter requires the observed TPRO flag and `KERN_NOT_SUPPORTED`, with the original state unchanged. A completed probe does not necessarily mean its import was writable. The allocated control must actually complete replacement and restoration.
+
+To require real TPRO pages in the device host, build from the repository root with the supplied validation-only entitlements:
+
+```sh
+bash scripts/build-device-validation.sh arm64e \
+  DEVELOPMENT_TEAM=YOUR_TEAM_ID -allowProvisioningUpdates \
+  CODE_SIGN_ENTITLEMENTS="$PWD/Tests/ArchitectureValidation/TPROValidation.entitlements"
+```
+
+The entitlement file opts the host into read-only platform memory. It is used only when explicitly supplied to the build; it does not change a package consumer's signing settings. Run `import-replacement`, `virtual-replacement`, and `virtual-public` separately. A TPRO import success report includes the TPRO region flag and verifies unchanged VM protections, competing-pointer handling, and the caller's full register state, including calls made with writes already enabled.
+
+On November 2, 2026, iPhone Air / iOS 27.0.1 / Xcode 27.2 / Release arm64e passed all three modes. The authenticated `getppid` import had region flags `10` and current/maximum protections `1/3`, unchanged after replacement and restoration. All three virtual-entry cases also reported successful writes on TPRO pages; public Swift and C/C++ hooks preserved dispatch and invalidation behavior.
 
 For a comparison with legacy lazy binding, run from the repository root:
 
@@ -108,9 +120,13 @@ For a comparison with legacy lazy binding, run from the repository root:
 swift run --package-path Tests/ArchitectureValidation --scratch-path .build/architecture-validation -Xlinker -no_fixup_chains ArchitectureProbe import-replacement
 ```
 
-The linker flag changes only the comparison fixture's binding format; it is not a consumer requirement or a way to establish support for protected imports. M5 Pro / macOS 26.6.2 runs observed refusal for the normal chained import and successful replacement for the legacy import. The signed device host can run the same mode; authenticated execution must be reported separately from macOS arm64 results.
+The linker flag changes only the comparison fixture's binding format; it is not a consumer requirement or a way to establish support for protected imports. Before thread-scoped TPRO support, M5 Pro / macOS 26.6.2 runs observed refusal for the normal chained import and successful replacement for the legacy import. The signed device host can run the same mode; authenticated execution must be reported separately from macOS arm64 results.
 
-The probe now uses the internal pointer-slot mutation transport for publication and restoration, with an independent compiler/authentication oracle. The read-only control checks unsigned storage and all four PAC keys with address diversity. An iPhone Air / iOS 27.0 arm64e host passed this control and reported unchanged TPRO-protected import storage after the expected kernel refusal. The root `PointerSlotMutationTests` additionally exercise same-page concurrency, inaccessible/executable storage, copy-on-write maximum-protection restoration, and injected VM failures through the same internal mutation sequence.
+The probe uses the internal pointer-slot mutation transport for publication and restoration, with an independent compiler/authentication oracle. The read-only control checks unsigned storage and all four PAC keys with address diversity. The root `PointerSlotMutationTests` additionally exercise same-page concurrency, inaccessible/executable storage, copy-on-write maximum-protection restoration, unsupported TPRO controls, and injected VM failures through the same internal mutation sequence.
+
+## ARM64 reference discovery
+
+The `code-references` mode exercises bounded instruction reads and distinguishes computed addresses, loads, and direct calls using their original PCs. It passed on the same iPhone Air configuration. Root `NativeMemoryTests` also compare results with assembler-defined data/callee symbols, cover negative and shifted immediates, discard clobbered register evidence, and preserve incomplete memory-read results.
 
 ## C++ virtual-entry mutation
 
@@ -120,7 +136,7 @@ The `virtual-replacement` mode uses compiler-generated primary and secondary tab
 
 The compiler probe checks inherited vptr schemas and original-declaration slot signatures for arm64/arm64e, and optionally arm64e.x1. These fixtures cover fully constructed, quiescent objects with known absolute table bounds. They do not validate construction/destruction tables, arbitrary private layouts, relative tables, or per-object shadow tables.
 
-On iPhone Air / iOS 27.0 / arm64e, the ordinary signed host preserved all three predecessors and reported `KERN_PROTECTION_FAILURE` without publishing a pointer (TPRO flag present, protections `1/3`). A separate test-only host build with `-no_data_const` successfully replaced and restored all three entries with pointer authentication still enabled (TPRO flag absent, protections `3/3`). The host setting was restored after producing that control build. arm64e.x1 has compilation/code-generation evidence only.
+Before thread-scoped TPRO support, an iPhone Air / iOS 27.0 / arm64e host preserved all three predecessors and reported `KERN_PROTECTION_FAILURE` without publishing a pointer (TPRO flag present, protections `1/3`). A separate test-only host build with `-no_data_const` successfully replaced and restored all three entries with pointer authentication still enabled (TPRO flag absent, protections `3/3`). The host setting was restored after producing that control build. The November 2 TPRO validation above supersedes that mutation limitation for the tested configuration. arm64e.x1 has compilation/code-generation evidence only.
 
 The `virtual-hooks` mode exercises the internal managed transport on the same compiler tables. It covers callback order, independent and in-flight invalidation, secondary/covariant predecessors, saved callable entries, external displacement, failed preparation cleanup, and a caller-supplied keepalive joining an existing borrowed entry. `ManagedVirtualConsumer` requires a writable control and additionally combines imported and explicit virtual registrations on one C-compatible dispatch slot. Public operation-specific frontends are a separate interface layer.
 
