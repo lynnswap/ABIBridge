@@ -48,7 +48,7 @@ let message = try unsafe decorate.unsafeInvoke("Hello")
 
 Replace saved values constructed as `NativeSwiftFunctionRequest<Signature>.function(...)`, `NativeSwiftInstanceMemberRequest<Signature>.method(...)`, or `NativeSwiftTypeMemberRequest<Signature>.initializer(...)` with `NativeRequest.swift(...)` around the same inner declaration. The wrapper is a value type and is `Sendable` when its declaration is `Sendable`. Creating it performs no lookup or ABI preparation. Resolve it on the same destinations as before: free functions on `ABIRuntime`, and member requests on `NativeSwiftType` or `NativeObject`. A type yields an explicit-receiver member handle; an object binds its receiver.
 
-Prepared handle types, invocation, ownership, error propagation, and async isolation keep their existing contracts. Requests have no public `Hashable` conformance and do not automatically cache returned handles. Retain a prepared handle for repeated calls; existing cache controls are described in <doc:SymbolLookup#Cache-and-loader-lifetime>.
+Prepared handle types, invocation, ownership, error propagation, and async isolation keep their existing contracts. Equivalent Swift requests now reuse completed preparation in the same runtime, without requiring a public `Hashable` conformance. Existing handles stay valid after cache removal. See <doc:SymbolLookup#Cache-and-loader-lifetime> for cache identity and invalidation.
 
 ## Qualify Objective-C callable requests
 

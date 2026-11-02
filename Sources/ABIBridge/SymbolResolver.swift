@@ -2,9 +2,43 @@ import ABIBridgeRuntime
 
 // The public Swift API and C entry points share the runtime's single index owner.
 final class SymbolResolver: Sendable {
-    static let shared = SymbolResolver(RuntimeSymbolResolver.shared)
+    static let shared = SymbolResolver(RuntimeSymbolResolver.shared, resolutionCache: .shared)
     let runtime: RuntimeSymbolResolver
-    init(_ runtime: RuntimeSymbolResolver = RuntimeSymbolResolver()) { self.runtime = runtime }
+    weak let resolutionCache: SwiftResolutionCache?
+    init(
+        _ runtime: RuntimeSymbolResolver = RuntimeSymbolResolver(),
+        resolutionCache: SwiftResolutionCache? = nil
+    ) {
+        self.runtime = runtime
+        self.resolutionCache = resolutionCache
+    }
+
+    func acquireImages(
+        _ selector: ImageSelector,
+        loading: ImageLoadingPolicy
+    ) throws -> [NativeImage] {
+        try withRuntimeErrors {
+            try runtime.acquireImages(selector.runtimeValue, loading: loading.runtimeValue).map(
+                NativeImage.init
+            )
+        }
+    }
+
+    func swiftDeclarationCandidates(
+        _ declaration: NativeDeclaration,
+        in images: [NativeImage],
+        extensionsOnly: Bool = false,
+        includingSharedCache: Bool = false
+    ) throws -> [SwiftCandidate] {
+        try withRuntimeErrors {
+            try runtime.swiftDeclarationCandidates(
+                declaration.runtimeValue,
+                in: images.map(\.runtimeValue),
+                extensionsOnly: extensionsOnly,
+                includingSharedCache: includingSharedCache
+            ).map(SwiftCandidate.init)
+        }
+    }
 
     func images(matching selector: ImageSelector) throws -> [NativeImage] {
         try withRuntimeErrors {

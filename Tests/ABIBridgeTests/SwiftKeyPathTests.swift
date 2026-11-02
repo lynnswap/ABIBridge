@@ -77,6 +77,12 @@ struct SwiftKeyPathTests {
         #expect(path == canonical)
         #expect(copy.isConsumed)
         #expect(!value.isConsumed)
+        let repeated = try root.resolveAndWait(request)
+        let repeatedPath = try repeated.take(
+            as: WritableKeyPath<RuntimeKeyPathRoot, RuntimeKeyPathPayload>.self
+        )
+        #expect(repeatedPath == canonical)
+        #expect(!value.isConsumed)
     }
 
     @Test func constrainedExistentialPropertiesPreserveIdentityAndWriteback() throws {

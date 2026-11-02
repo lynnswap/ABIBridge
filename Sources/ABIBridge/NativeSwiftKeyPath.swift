@@ -25,15 +25,9 @@ extension NativeSwiftType {
     public nonisolated(nonsending) func resolve(
         _ request: NativeRequest<NativeSwiftWritableKeyPathRequest>
     ) async throws -> NativeSwiftValue {
-        let name = request.declaration.name
         let valueType = request.declaration.valueType
-        let keyValueCodingKey = request.declaration.keyValueCodingKey
         let prepared = try await NativePreparation.run {
-            try self.prepareWritableKeyPath(
-                named: name,
-                valueType: valueType,
-                keyValueCodingKey: keyValueCodingKey
-            )
+            try self.prepareWritableKeyPath(request)
         }
         return try makeWritableKeyPath(prepared, valueType: valueType)
     }
@@ -45,15 +39,32 @@ extension NativeSwiftType {
     public nonisolated func resolveAndWait(
         _ request: NativeRequest<NativeSwiftWritableKeyPathRequest>
     ) throws -> NativeSwiftValue {
-        let name = request.declaration.name
         let valueType = request.declaration.valueType
-        let keyValueCodingKey = request.declaration.keyValueCodingKey
-        let prepared = try prepareWritableKeyPath(
-            named: name,
-            valueType: valueType,
-            keyValueCodingKey: keyValueCodingKey
-        )
+        let prepared = try prepareWritableKeyPath(request)
         return try makeWritableKeyPath(prepared, valueType: valueType)
+    }
+
+    private nonisolated func prepareWritableKeyPath(
+        _ request: NativeRequest<NativeSwiftWritableKeyPathRequest>
+    ) throws -> (plan: RuntimeWritableKeyPathPlan, image: NativeImage) {
+        let declaration = request.declaration
+        return try resolver.resolveSwift(
+            .keyPath(
+                SwiftResolutionTypeKey(self),
+                declaration.name,
+                SwiftResolutionTypeKey(declaration.valueType),
+                declaration.keyValueCodingKey
+            ),
+            request: request,
+            owner: self,
+            arguments: declaration.valueType.genericArguments
+        ) {
+            try prepareWritableKeyPath(
+                named: declaration.name,
+                valueType: declaration.valueType,
+                keyValueCodingKey: declaration.keyValueCodingKey
+            )
+        }
     }
 
     private nonisolated func prepareWritableKeyPath(

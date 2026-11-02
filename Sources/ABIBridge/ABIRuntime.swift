@@ -8,16 +8,24 @@ import Foundation
 ///
 /// See <doc:SymbolLookup> for search scopes and the raw-address contract.
 public actor ABIRuntime {
-    /// A runtime whose indexes are shared across callers in this process.
-    public static let shared = ABIRuntime(resolver: .shared)
+    /// A runtime whose indexes and completed Swift resolutions are shared across callers in this process.
+    public static let shared = ABIRuntime(resolver: .shared, resolutionCache: .shared)
 
     nonisolated let resolver: SymbolResolver
     nonisolated let swiftTypeCache = SwiftTypeCache()
+    nonisolated let swiftResolutionCache: SwiftResolutionCache
 
-    /// Creates a runtime with independent image and declaration indexes.
-    public init() { resolver = SymbolResolver() }
+    /// Creates a runtime with independent indexes and completed Swift resolutions.
+    public init() {
+        let cache = SwiftResolutionCache()
+        swiftResolutionCache = cache
+        resolver = SymbolResolver(resolutionCache: cache)
+    }
 
-    init(resolver: SymbolResolver) { self.resolver = resolver }
+    init(resolver: SymbolResolver, resolutionCache: SwiftResolutionCache = SwiftResolutionCache()) {
+        swiftResolutionCache = resolutionCache
+        self.resolver = SymbolResolver(resolver.runtime, resolutionCache: resolutionCache)
+    }
 
     /// Returns retained handles for matching loaded images.
     ///
@@ -139,7 +147,7 @@ public actor ABIRuntime {
 
     /// Prepares typed handles using the synchronous lookup APIs.
     ///
-    /// The operation runs on a worker and shares this runtime's indexes and native call interfaces. Other lookups can reuse completed preparation or join the work they need before the whole operation finishes. Lookup may load images and run their initializers on that worker. Calling a prepared function remains an explicit operation.
+    /// The operation runs on a worker and shares this runtime's indexes, native call interfaces, and completed Swift resolutions. Equivalent Swift requests reuse completed handles even when this operation's result is discarded. Other lookups join the work they need before the whole operation finishes. Lookup may load images and run their initializers on that worker. Calling a prepared function remains an explicit operation.
     ///
     /// - Parameter operation: Synchronous lookups to start before their results are needed.
     /// - Returns: The prepared value, which can be retained for later calls.
@@ -150,10 +158,11 @@ public actor ABIRuntime {
         try await NativePreparation.run { try operation(self) }
     }
 
-    /// Releases this runtime's resolver indexes and Swift type cache.
+    /// Releases this runtime's resolver indexes, Swift type cache, and completed Swift resolutions.
     ///
     /// Existing image, symbol, and callable handles remain valid, and in-progress resolutions may finish. Subsequent lookups rebuild the required indexes. This does not clear the process-shared call-interface cache or the native image catalog.
     public nonisolated func removeCachedResults() {
+        swiftResolutionCache.removeCachedResults()
         swiftTypeCache.removeCachedResults()
         resolver.removeCachedResults()
     }

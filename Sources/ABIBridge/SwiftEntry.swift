@@ -2,6 +2,18 @@ import ABIBridgeRuntime
 import ABIBridgeCore
 import ABIBridgeCore.Backend
 
+struct SwiftCapturedSlot: Equatable, Sendable {
+    let address: UInt
+    let bits: UInt
+
+    var isCurrent: Bool {
+        var current: UInt = 0
+        return ABIReadMemory(address, MemoryLayout<UInt>.size, &current).status
+            == ABIMemoryReadComplete
+            && current == bits
+    }
+}
+
 /// A selected Swift declaration and the code that calls of it run.
 ///
 /// Lookup establishes three facts that do not always come from one symbol:
@@ -27,6 +39,8 @@ struct SwiftEntry: Sendable {
     /// The class slot whose code lookup selected as `implementation`, for a
     /// member that its image exports only through its dispatch thunk.
     var dispatch: SwiftClassDispatch?
+    /// The mutable slot whose contents were captured during resolution.
+    var capturedSlot: SwiftCapturedSlot?
 
     init(symbol: ResolvedSymbol) {
         self.init(

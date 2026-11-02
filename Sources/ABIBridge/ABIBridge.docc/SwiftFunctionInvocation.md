@@ -52,11 +52,11 @@ let message = try unsafe decorate.unsafeInvoke("Hello")
 
 The inline `.swift(.function(...))` form describes the same request. Creating a request performs no lookup or ABI preparation. The inner declaration holds signature, generic arguments, `declaredAs:`, and `valueABIs:` options; the resolver supplies the image scope and loading policy. Both `in: ImageSelector` and `in: NativeImage` are supported, with `.automatic` and `.ifNeeded` as the defaults.
 
-Requests are reusable values and are `Sendable` when their declaration is `Sendable`; Swift callable declarations are `Sendable`. They have no public `Hashable` conformance. Repeated resolution uses existing indexes and call-interface preparation, and returns a handle for that resolution. Retain the handle when making repeated calls. See <doc:SymbolLookup#Cache-and-loader-lifetime> for cache management and <doc:SwiftAPIMigration> for earlier request spellings.
+Requests are reusable values and are `Sendable` when their declaration is `Sendable`; Swift callable declarations are `Sendable`. Equivalent requests reuse completed handles in the same runtime, including the selected declaration and its prepared call. Cache identity includes the signature, generic arguments, ABI options, and acquired images. See <doc:SymbolLookup#Cache-and-loader-lifetime> for invalidation and cache management, and <doc:SwiftAPIMigration> for earlier request spellings.
 
 ## Await lookup and preparation
 
-`resolve` searches and prepares the call interface on a worker queue while the caller suspends. `resolveAndWait` performs that work synchronously and can block the caller, including inside an async function. Both reuse symbol indexes and prepared layouts, and join any preparation already running for the required work.
+`resolve` searches and prepares the call interface on a worker queue while the caller suspends. `resolveAndWait` performs that work synchronously and can block the caller, including inside an async function. Both reuse completed resolutions, symbol indexes, and prepared layouts, and join any preparation already running for the required work.
 
 From `MainActor`, await `resolve` to keep lookup and preparation from blocking the actor:
 

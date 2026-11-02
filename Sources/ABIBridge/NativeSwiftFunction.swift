@@ -492,14 +492,32 @@ extension ABIRuntime {
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeSwiftFunction<Signature> {
-        try prepareSwiftFunction(request.declaration) {
-            try resolver.swiftDeclarationCandidates(
-                $0,
-                in: scope,
-                loading: loading,
-                extensionsOnly: $1,
-                includingSharedCache: $2
+        if scope != .automatic {
+            return try resolveSwiftFunction(
+                request,
+                in: resolver.acquireImages(scope, loading: loading)
             )
+        }
+        let declaration = request.declaration
+        return try resolver.resolveSwift(
+            .function(
+                ObjectIdentifier(Signature.self),
+                declaration.name,
+                SwiftResolutionOptionsKey(declaration.options),
+                .automatic
+            ),
+            request: request,
+            arguments: declaration.options.genericArguments
+        ) {
+            try prepareSwiftFunction(declaration) {
+                try resolver.swiftDeclarationCandidates(
+                    $0,
+                    in: .automatic,
+                    loading: loading,
+                    extensionsOnly: $1,
+                    includingSharedCache: $2
+                )
+            }
         }
     }
 
@@ -542,14 +560,32 @@ extension ABIRuntime {
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeSwiftFunction<Signature> {
-        try prepareSwiftFunction(request.declaration) {
-            try resolver.swiftDeclarationCandidates(
-                $0,
-                in: image,
-                loading: loading,
-                extensionsOnly: $1,
-                includingSharedCache: $2
-            )
+        try resolveSwiftFunction(request, in: [loading == .ifNeeded ? try image.opened() : image])
+    }
+
+    private nonisolated func resolveSwiftFunction<Signature>(
+        _ request: NativeRequest<NativeSwiftFunctionRequest<Signature>>,
+        in images: [NativeImage]
+    ) throws -> NativeSwiftFunction<Signature> {
+        let declaration = request.declaration
+        return try resolver.resolveSwift(
+            .function(
+                ObjectIdentifier(Signature.self),
+                declaration.name,
+                SwiftResolutionOptionsKey(declaration.options),
+                .images(images.map(\.identity))
+            ),
+            request: request,
+            arguments: declaration.options.genericArguments
+        ) {
+            try prepareSwiftFunction(declaration) {
+                try resolver.swiftDeclarationCandidates(
+                    $0,
+                    in: images,
+                    extensionsOnly: $1,
+                    includingSharedCache: $2
+                )
+            }
         }
     }
 
