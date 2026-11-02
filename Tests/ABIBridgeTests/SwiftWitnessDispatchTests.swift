@@ -5,12 +5,36 @@ import Testing
 @Suite(.serialized)
 struct SwiftWitnessDispatchTests {
     @Test(arguments: [false, true])
-    func hooksUseConformanceSlotsAndStableDeclarationEvidence(evolution: Bool) async throws {
+    func protocolWitnessOperations(evolution: Bool) async throws {
         let fixture = try CompiledSwiftReplacementFixture(
             writable: false,
             libraryEvolution: evolution
         )
         defer { fixture.cleanup() }
+        func check(_ name: String, _ operation: () async throws -> Void) async {
+            defer { fixture.runtime.removeCachedResults() }
+            do { try await operation() } catch { Issue.record(error, Comment(rawValue: name)) }
+        }
+        await check("hooksUseConformanceSlotsAndStableDeclarationEvidence") {
+            try await hooksUseConformanceSlotsAndStableDeclarationEvidence(fixture)
+        }
+        await check("compiledWitnessReplacementCapturesPredecessor") {
+            try await compiledWitnessReplacementCapturesPredecessor(fixture)
+        }
+        await check("accessorsStaticInitializerAndAsyncUseRequirementConventions") {
+            try await accessorsStaticInitializerAndAsyncUseRequirementConventions(fixture)
+        }
+        await check("genericAndConditionalBindingsSelectHandlers") {
+            try await genericAndConditionalBindingsSelectHandlers(fixture)
+        }
+        await check("sharedPhysicalTableFiltersIncomingSelf") {
+            try await sharedPhysicalTableFiltersIncomingSelf(fixture)
+        }
+    }
+
+    private func hooksUseConformanceSlotsAndStableDeclarationEvidence(
+        _ fixture: CompiledSwiftReplacementFixture
+    ) async throws {
         let type = try await fixture.runtime.resolve(
             .swift(.type(fixture.module + ".WitnessValue")),
             in: fixture.providerScope
@@ -60,13 +84,9 @@ struct SwiftWitnessDispatchTests {
         #expect(try unsafe oracle.unsafeInvoke(0, 40, 2) == 42)
     }
 
-    @Test(arguments: [false, true])
-    func compiledWitnessReplacementCapturesPredecessor(evolution: Bool) async throws {
-        let fixture = try CompiledSwiftReplacementFixture(
-            writable: false,
-            libraryEvolution: evolution
-        )
-        defer { fixture.cleanup() }
+    private func compiledWitnessReplacementCapturesPredecessor(
+        _ fixture: CompiledSwiftReplacementFixture
+    ) async throws {
         let type = try await fixture.runtime.resolve(
             .swift(.type(fixture.module + ".WitnessValue")),
             in: fixture.providerScope
@@ -106,13 +126,9 @@ struct SwiftWitnessDispatchTests {
         try plan.restore()
         #expect(try unsafe oracle.unsafeInvoke(0, 40, 2) == 52)
     }
-    @Test(arguments: [false, true])
-    func accessorsStaticInitializerAndAsyncUseRequirementConventions(evolution: Bool) async throws {
-        let fixture = try CompiledSwiftReplacementFixture(
-            writable: false,
-            libraryEvolution: evolution
-        )
-        defer { fixture.cleanup() }
+    private func accessorsStaticInitializerAndAsyncUseRequirementConventions(
+        _ fixture: CompiledSwiftReplacementFixture
+    ) async throws {
         let type = try await fixture.runtime.resolve(
             .swift(.type(fixture.module + ".WitnessValue")),
             in: fixture.providerScope
@@ -220,13 +236,9 @@ struct SwiftWitnessDispatchTests {
         #expect(try await unsafe asyncOracle.unsafeInvoke(0, 40, 2) == 62)
     }
 
-    @Test(arguments: [false, true])
-    func genericAndConditionalBindingsSelectHandlers(evolution: Bool) async throws {
-        let fixture = try CompiledSwiftReplacementFixture(
-            writable: false,
-            libraryEvolution: evolution
-        )
-        defer { fixture.cleanup() }
+    private func genericAndConditionalBindingsSelectHandlers(
+        _ fixture: CompiledSwiftReplacementFixture
+    ) async throws {
         let oracle = try await fixture.runtime.resolve(
             .swift(
                 .function(
@@ -273,13 +285,9 @@ struct SwiftWitnessDispatchTests {
         }
     }
 
-    @Test(arguments: [false, true])
-    func sharedPhysicalTableFiltersIncomingSelf(evolution: Bool) async throws {
-        let fixture = try CompiledSwiftReplacementFixture(
-            writable: false,
-            libraryEvolution: evolution
-        )
-        defer { fixture.cleanup() }
+    private func sharedPhysicalTableFiltersIncomingSelf(
+        _ fixture: CompiledSwiftReplacementFixture
+    ) async throws {
         let int = try await fixture.runtime.resolve(
             .swift(.type(fixture.module + ".WitnessShared", genericArguments: [.type(Int64.self)])),
             in: fixture.providerScope

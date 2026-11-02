@@ -2120,6 +2120,14 @@ struct NativeSwiftClosureTests {
             let capture = ClosureCapture(destroyed)
             observed = capture
             let saved = NestedClosureCapture()
+            // Retained calls must keep closure identity after their original
+            // ABI interface has left the bounded preparation cache.
+            for size in 1...80 {
+                _ = try RuntimeSwiftCallInterface.cached(
+                    result: RuntimeValueType(indirectSwiftSize: size, alignment: 1),
+                    parameters: []
+                )
+            }
             let producer = try NativeSwiftClosure {
                 () throws -> NativeSwiftClosure<(Int64) -> Int64> in
                 try #require(saved.value)

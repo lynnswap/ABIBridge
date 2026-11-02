@@ -63,12 +63,21 @@ package final class RuntimeSymbolResolver: Sendable {
     // Results have their own lock. Retiring the node releases all image leases
     // outside the resolver lock, including after a concurrent cache clear.
     private final class AutomaticScope: Sendable {
-        let revision: UInt64
+        struct ResultEntry: Sendable {
+            let result: Result<RuntimeSymbol, RuntimeResolutionError>
+            let dependency: RuntimeCatalogDependency
+        }
+        let catalog: RuntimeImageCatalogSnapshot
+        var revision: UInt64 { catalog.revision }
         let images: [RuntimeImage]
-        let results = Mutex<[RuntimeDeclaration: Result<RuntimeSymbol, RuntimeResolutionError>]>([:]
-        )
-        init(revision: UInt64, images: [RuntimeImage]) {
-            self.revision = revision; self.images = images
+        let results: Mutex<[RuntimeDeclaration: ResultEntry]>
+        init(
+            catalog: RuntimeImageCatalogSnapshot,
+            images: [RuntimeImage],
+            previous: AutomaticScope?
+        ) {
+            self.catalog = catalog; self.images = images
+            results = Mutex(previous?.results.withLock { $0 } ?? [:])
         }
     }
 
@@ -97,7 +106,6 @@ package final class RuntimeSymbolResolver: Sendable {
         }
         let (cached, generation) = state.withLock { ($0.automatic, $0.cacheGeneration) }
         let snapshot = try RuntimeImageSnapshot.catalog()
-        RuntimeCatalogDependency.revision(snapshot.revision).record()
         if let cached, cached.revision == snapshot.revision {
             return .automatic(cached)
         }
@@ -108,7 +116,7 @@ package final class RuntimeSymbolResolver: Sendable {
             RuntimeCatalogDependency.unstable.record()
             return .partial(retained.images)
         }
-        let candidate = AutomaticScope(revision: snapshot.revision, images: retained.images)
+        let candidate = AutomaticScope(catalog: snapshot, images: retained.images, previous: cached)
         #if DEBUG
         beforeCachePublication?(.automaticScope, self)
         #endif
@@ -146,7 +154,10 @@ package final class RuntimeSymbolResolver: Sendable {
             }
         }
         let key = declaration
-        if let cached = cache.results.withLock({ $0[key] }) { return try cached.get() }
+        if let cached = cache.results.withLock({ $0[key] }), cached.dependency.isCurrent {
+            cached.dependency.record()
+            return try cached.result.get()
+        }
         let result: Result<RuntimeSymbol, RuntimeResolutionError>
         do {
             result = .success(
@@ -163,11 +174,27 @@ package final class RuntimeSymbolResolver: Sendable {
             default: throw failure
             }
         }
-        cache.results.withLock { results in
-            // Never replace a cached symbol under the lock: releasing its last
-            // lease could reenter dyld even when another call retained the image.
-            if results[key] == nil { results[key] = result }
+        let requiredImages: Set<RuntimeImageIdentity>
+        switch result {
+        case .success(let symbol): requiredImages = [symbol.image.identity]
+        case .failure: requiredImages = Set(cache.images.map(\.identity))
         }
+        let dependency = RuntimeCatalogDependency.observing(
+            cache.catalog,
+            requiredImages: requiredImages
+        ) { [weak self] additions in
+            guard let self else { return true }
+            let retained = try self.retain(additions, skippingUnavailable: false)
+            do {
+                _ = try self.unique(declaration, images: retained.images)
+                return true
+            } catch RuntimeResolutionError.declarationNotFound { return false }
+        }
+        dependency.record()
+        let retired = cache.results.withLock { results in
+            results.updateValue(.init(result: result, dependency: dependency), forKey: key)
+        }
+        withExtendedLifetime(retired) {}
         return try result.get()
     }
 
@@ -209,13 +236,21 @@ package final class RuntimeSymbolResolver: Sendable {
 
     package func images(matching selector: RuntimeImageSelector) throws -> [RuntimeImage] {
         let catalog = try RuntimeImageSnapshot.catalog()
-        RuntimeCatalogDependency.revision(catalog.revision).record()
         let snapshots = try RuntimeImageSnapshot.matching(
             selector,
             in: catalog.images
         )
         let retained = try retain(snapshots, skippingUnavailable: selector == .automatic)
-        if !retained.isComplete { RuntimeCatalogDependency.unstable.record() }
+        if !retained.isComplete {
+            RuntimeCatalogDependency.unstable.record()
+        } else {
+            RuntimeCatalogDependency.observing(
+                catalog,
+                requiredImages: Set(snapshots.map(\.identity))
+            ) { additions in
+                try !RuntimeImageSnapshot.matching(selector, in: additions).isEmpty
+            }.record()
+        }
         return retained.images
     }
 
@@ -516,6 +551,26 @@ package final class RuntimeSymbolResolver: Sendable {
         extensionsOnly: Bool,
         includingSharedCache: Bool
     ) throws -> [RuntimeSwiftCandidate] {
+        func record(_ candidates: [RuntimeSwiftCandidate]) -> [RuntimeSwiftCandidate] {
+            if case .automatic(let automatic) = scope {
+                RuntimeCatalogDependency.observing(
+                    automatic.catalog,
+                    requiredImages: Set(candidates.map { $0.symbol.image.identity })
+                ) { [weak self] additions in
+                    guard let self else { return true }
+                    let retained = try self.retain(additions, skippingUnavailable: false)
+                    return try !self.swiftMemberCandidates(
+                        match,
+                        owner: owner,
+                        in: .images(retained.images),
+                        module: module,
+                        extensionsOnly: extensionsOnly,
+                        includingSharedCache: includingSharedCache
+                    ).isEmpty
+                }.record()
+            }
+            return candidates
+        }
         // The owner's name selects the module whose symbols are read, and the
         // entry the sections that hold it.
         let query = SymbolQuery(
@@ -557,20 +612,22 @@ package final class RuntimeSymbolResolver: Sendable {
             if fallback.isEmpty && implemented.isEmpty && !scope.isComplete {
                 throw RuntimeResolutionError.imageUnavailable
             }
-            return primary + fallback
+            return record(primary + fallback)
         }
         let dispatched = primary.filter {
             !$0.record.runsOwnCode && !implemented.contains($0.record.identity)
         }
-        guard !dispatched.isEmpty else { return primary }
+        guard !dispatched.isEmpty else { return record(primary) }
         let images = Set(dispatched.map(\.symbol.image))
         let owners = indexes.filter { images.contains($0.image) }
         let identities = Set(dispatched.map(\.record.identity))
         loadSharedCacheSymbols(for: query, into: owners)
-        return primary
-            + matches(.sharedCache, in: owners).filter {
+        return record(
+            primary
+                + matches(.sharedCache, in: owners).filter {
                 $0.record.role == .implementation && identities.contains($0.record.identity)
-            }
+                }
+        )
     }
 
     package func removeCachedResults() {
