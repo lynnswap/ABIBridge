@@ -7,6 +7,75 @@ import Testing
 
 @Suite(.serialized)
 struct RuntimePreparationTests {
+    @Test(arguments: [false, true])
+    func discardedSwiftPreparationIsReused(freeFunction: Bool) async throws {
+        let runtime = ABIRuntime()
+        let type = try runtime.resolveAndWait(
+            .swift(.type("ABIBridgeTests.SwiftPreparationReceiver"))
+        )
+        let member = NativeRequest.swift(
+            .staticMethod("readStatic()", as: (() -> SwiftPreparationValue).self)
+        )
+        let function = NativeRequest.swift(
+            .function(
+                "ABIBridgeTests.swiftPreparationRead()",
+                as: (() -> SwiftPreparationValue).self
+            )
+        )
+        SwiftPreparationValue.preparationThreads.withLock { $0.removeAll() }
+        _ = try await runtime.prepare { runtime in
+            if freeFunction { return try runtime.resolveAndWait(function, in: type.image) }
+            return try type.resolveAndWait(member)
+        }
+        let preparations = SwiftPreparationValue.preparationThreads.withLock { $0.count }
+        #expect(preparations > 0)
+        let synchronous: NativeSwiftFunction<() -> SwiftPreparationValue>
+        let asynchronous: NativeSwiftFunction<() -> SwiftPreparationValue>
+        if freeFunction {
+            synchronous = try runtime.resolveAndWait(function, in: type.image)
+            asynchronous = try await runtime.resolve(function, in: type.image)
+        } else {
+            synchronous = try type.resolveAndWait(member)
+            asynchronous = try await type.resolve(member)
+        }
+        #expect(SwiftPreparationValue.preparationThreads.withLock { $0.count } == preparations)
+        #expect(try unsafe synchronous.unsafeInvoke().raw == 42)
+        #expect(try unsafe asynchronous.unsafeInvoke().raw == 42)
+        runtime.removeCachedResults()
+        _ =
+            try freeFunction
+            ? runtime.resolveAndWait(function, in: type.image) : type.resolveAndWait(member)
+        #expect(SwiftPreparationValue.preparationThreads.withLock { $0.count } > preparations)
+        #expect(try unsafe synchronous.unsafeInvoke().raw == 42)
+    }
+
+    @Test func clearingDuringSwiftPreparationPreventsPublication() throws {
+        let runtime = ABIRuntime()
+        let type = try runtime.resolveAndWait(
+            .swift(.type("ABIBridgeTests.SwiftPreparationReceiver"))
+        )
+        let request = NativeRequest.swift(
+            .function(
+                "ABIBridgeTests.swiftPreparationRead()",
+                as: (() -> SwiftPreparationValue).self
+            )
+        )
+        SwiftPreparationValue.preparationThreads.withLock { $0.removeAll() }
+        SwiftPreparationValue.preparationCallback.withLock {
+            $0 = { runtime.removeCachedResults() }
+        }
+        defer { SwiftPreparationValue.preparationCallback.withLock { $0 = nil } }
+        let original = try runtime.resolveAndWait(request, in: type.image)
+        let originalCount = SwiftPreparationValue.preparationThreads.withLock { $0.count }
+        #expect(originalCount > 0)
+        _ = try runtime.resolveAndWait(request, in: type.image)
+        let rebuiltCount = SwiftPreparationValue.preparationThreads.withLock { $0.count }
+        #expect(rebuiltCount > originalCount)
+        _ = try runtime.resolveAndWait(request, in: type.image)
+        #expect(SwiftPreparationValue.preparationThreads.withLock { $0.count } == rebuiltCount)
+        #expect(try unsafe original.unsafeInvoke().raw == 42)
+    }
+
     @MainActor @Test
     func ordinaryLookupPreparesAColdImageAndProducesASynchronousHandle() throws {
         let fixture = try FixtureLibrary(load: false)
@@ -527,11 +596,20 @@ struct RuntimePreparationTests {
 @frozen public struct SwiftPreparationValue: BitwiseCopyable, ABIBridgeValue {
     public var raw: Int64
     static let preparationThreads = Mutex<[Bool]>([])
+    static let preparationCallback = Mutex<(@Sendable () -> Void)?>(nil)
     public static var abiType: NativeType {
         preparationThreads.withLock { $0.append(Thread.isMainThread) }
+        let callback = preparationCallback.withLock { callback in
+            let current = callback
+            callback = nil
+            return current
+        }
+        callback?()
         return .int64
     }
 }
+
+@inline(never) public func swiftPreparationRead() -> SwiftPreparationValue { .init(raw: 42) }
 
 public final class SwiftPreparationReceiver {
     public var raw: Int64 = 42

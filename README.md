@@ -12,7 +12,7 @@ In Xcode, add `https://github.com/lynnswap/ABIBridge` as a package dependency an
 
 ## What you can do
 
-Use `resolve` for async lookup or `resolveAndWait` for synchronous lookup. Keep the returned handle for repeated calls, and invoke it on the thread required by the native API.
+Use `resolve` for async lookup or `resolveAndWait` for synchronous lookup. Equivalent Swift callable requests reuse their preparation in the same runtime. Invoke the returned handle on the thread required by the native API.
 
 ### Resolve a C++ function without writing its mangled name
 

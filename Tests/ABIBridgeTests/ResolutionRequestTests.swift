@@ -1,4 +1,4 @@
-import ABIBridge
+@testable import ABIBridge
 import ABIBridgeTestSupport
 import Foundation
 import ManagedSwiftFixtures
@@ -41,6 +41,47 @@ public final class SwiftRequestTable {
 /// Requests resolve on a type or on a bound object with the same options.
 @Suite(.serialized)
 struct ResolutionRequestTests {
+    @MainActor @Test func preparedMemberIsReusedByEquivalentRequests() async throws {
+        let runtime = ABIRuntime()
+        let type = try runtime.resolveAndWait(.swift(.type("ABIBridgeTests.SwiftMemberRenderer")))
+        let prepared = try await runtime.prepare { _ in
+            try type.resolveAndWait(.swift(.method("render(_:)", as: ((Int) -> Int).self)))
+        }
+        let repeated = try type.resolveAndWait(
+            .swift(.method("render(_:)", as: ((Int) -> Int).self))
+        )
+        let asynchronous = try await type.resolve(
+            .swift(.method("render(_:)", as: ((Int) -> Int).self))
+        )
+        guard case .synchronous(let original) = prepared.call,
+            case .synchronous(let next) = repeated.call,
+            case .synchronous(let awaited) = asynchronous.call
+        else {
+            Issue.record("A synchronous member must have a synchronous call plan")
+            return
+        }
+        #expect(original === next)
+        #expect(original === awaited)
+        #expect(try unsafe repeated.unsafeInvoke(on: SwiftMemberRenderer(text: "four"), 1) == 5)
+    }
+
+    @Test func cachedMembersDoNotRetainTheirRuntime() throws {
+        weak var observedRuntime: ABIRuntime?
+        weak var observedType: NativeSwiftType?
+        do {
+            let runtime = ABIRuntime()
+            observedRuntime = runtime
+            let type = try runtime.resolveAndWait(
+                .swift(.type("ABIBridgeTests.SwiftMemberRenderer"))
+            )
+            observedType = type
+            _ = try type.resolveAndWait(.swift(.method("render(_:)", as: ((Int) -> Int).self)))
+            #expect(observedType != nil)
+        }
+        #expect(observedRuntime == nil)
+        #expect(observedType == nil)
+    }
+
     @MainActor @Test func oneRequestResolvesOnATypeAndOnAnObject() async throws {
         let runtime = ABIRuntime()
         let renderer = SwiftMemberRenderer(text: "four")

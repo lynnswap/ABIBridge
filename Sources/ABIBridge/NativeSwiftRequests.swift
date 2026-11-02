@@ -76,7 +76,7 @@ struct SwiftLookupOptions: Sendable {
 
 /// The Swift member a request names, and how lookup selects it.
 struct SwiftMemberRequest: Sendable {
-    enum Role: Sendable {
+    enum Role: Sendable, Hashable {
         case method, getter, setter, initializer
     }
 
@@ -90,7 +90,7 @@ struct SwiftMemberRequest: Sendable {
 }
 
 /// How an instance member request passes `self`.
-struct SwiftReceiverRequest: Sendable {
+struct SwiftReceiverRequest: Sendable, Hashable {
     /// Whether a value receiver passes inout; nil follows the declaration's
     /// default self convention.
     var isMutating: Bool?

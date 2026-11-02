@@ -97,13 +97,17 @@ package final class RuntimeSymbolResolver: Sendable {
         }
         let (cached, generation) = state.withLock { ($0.automatic, $0.cacheGeneration) }
         let snapshot = try RuntimeImageSnapshot.catalog()
+        RuntimeCatalogDependency.revision(snapshot.revision).record()
         if let cached, cached.revision == snapshot.revision {
             return .automatic(cached)
         }
         let retained = try retain(snapshot.images, skippingUnavailable: true)
         // Initializer completion has no add/remove notification. A partial
         // scope must be reacquired even if the catalog revision stays the same.
-        guard retained.isComplete else { return .partial(retained.images) }
+        guard retained.isComplete else {
+            RuntimeCatalogDependency.unstable.record()
+            return .partial(retained.images)
+        }
         let candidate = AutomaticScope(revision: snapshot.revision, images: retained.images)
         #if DEBUG
         beforeCachePublication?(.automaticScope, self)
@@ -196,12 +200,23 @@ package final class RuntimeSymbolResolver: Sendable {
         }
     }
 
+    package func acquireImages(
+        _ selector: RuntimeImageSelector,
+        loading: RuntimeImageLoadingPolicy
+    ) throws -> [RuntimeImage] {
+        try acquire(selector, loading: loading)
+    }
+
     package func images(matching selector: RuntimeImageSelector) throws -> [RuntimeImage] {
+        let catalog = try RuntimeImageSnapshot.catalog()
+        RuntimeCatalogDependency.revision(catalog.revision).record()
         let snapshots = try RuntimeImageSnapshot.matching(
             selector,
-            in: RuntimeImageSnapshot.current()
+            in: catalog.images
         )
-        return try retain(snapshots, skippingUnavailable: selector == .automatic).images
+        let retained = try retain(snapshots, skippingUnavailable: selector == .automatic)
+        if !retained.isComplete { RuntimeCatalogDependency.unstable.record() }
+        return retained.images
     }
 
     private func retain(
@@ -420,6 +435,23 @@ package final class RuntimeSymbolResolver: Sendable {
             in: image,
             loading: loading,
             module: module,
+            extensionsOnly: extensionsOnly,
+            includingSharedCache: includingSharedCache
+        )
+    }
+
+    package func swiftDeclarationCandidates(
+        _ declaration: RuntimeDeclaration,
+        in images: [RuntimeImage],
+        extensionsOnly: Bool = false,
+        includingSharedCache: Bool = false
+    ) throws -> [RuntimeSwiftCandidate] {
+        try validate(declaration)
+        guard let match = SwiftMemberMatch(declaration: declaration.name) else { return [] }
+        return try swiftMemberCandidates(
+            match,
+            owner: declaration.name,
+            in: .images(images),
             extensionsOnly: extensionsOnly,
             includingSharedCache: includingSharedCache
         )

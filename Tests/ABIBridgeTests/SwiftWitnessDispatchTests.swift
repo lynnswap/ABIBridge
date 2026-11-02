@@ -43,6 +43,10 @@ struct SwiftWitnessDispatchTests {
         // Lookup after publication must use immutable identity and join the
         // existing physical slot, even when no Tq symbol exists.
         let again = try await type.resolve(.swift(.method(name, as: ((Int64) -> Int64).self)))
+        fixture.runtime.removeCachedResults()
+        let fresh = try await type.resolve(.swift(.method(name, as: ((Int64) -> Int64).self)))
+        let expected = try unsafe fresh.unsafeInvoke(on: receiver, 2)
+        #expect(try unsafe again.unsafeInvoke(on: receiver, 2) == expected)
         let second = try await unsafe again.hookVirtualCalls(onFailure: { Issue.record($0) }) {
             call,
             value in try call.proceed(value * 2) + 1000

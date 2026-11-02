@@ -91,7 +91,7 @@ struct SwiftMetadataResponse: BitwiseCopyable, ABIBridgeValue {
 
 /// A concrete Swift type and its retained implementation images.
 ///
-/// Type lookup requests complete metadata without constructing an instance. Generic arguments are validated by the Swift runtime. Member lookups reuse the image's existing symbol index. See <doc:SwiftMemberInvocation> for lookup and invocation conventions.
+/// Type lookup requests complete metadata without constructing an instance. Generic arguments are validated by the Swift runtime. Member lookups reuse completed resolutions in the same runtime and the image's symbol index. See <doc:SwiftMemberInvocation> for lookup and invocation conventions.
 ///
 /// Protocol-qualified names, such as `Module.Protocol.member()` or a complete `(extension in Module):Module.Protocol.member() -> ...` declaration, bind Self to this concrete type for methods, accessors, subscripts, static members, and initializers. A requirement runs through the protocol's dispatch thunk or the witness of this type's conformance, never an extension member. genericArguments supplies only the type parameters introduced by the member.
 public actor NativeSwiftType: Hashable {
@@ -726,6 +726,7 @@ public actor NativeSwiftType: Hashable {
         }
         entry.implementation = implementation
         entry.asyncEntry = code.asyncEntry
+        entry.capturedSlot = SwiftCapturedSlot(address: dispatch.address, bits: code.bits)
         return entry
     }
 
@@ -1030,19 +1031,32 @@ public actor NativeSwiftType: Hashable {
     public nonisolated func resolveAndWait<Signature>(
         _ request: NativeRequest<NativeSwiftInstanceMemberRequest<Signature>>
     ) throws -> NativeSwiftMethod<Signature> {
-        let request = request.declaration
-        let member = try resolveMember(request.member, signature: Signature.self)
-        let receiver = try receiverPlan(
-            mutating: request.receiver.isMutating,
-            consuming: request.receiver.isConsuming,
-            generic: member.generic,
-            receiverABI: request.receiver.abi
-        )
-        return try prepareMethod(
-            member,
-            receiver: receiver,
-            consumesArguments: request.member.role == .setter
-        )
+        let declaration = request.declaration
+        return try resolver.resolveSwift(
+            .instance(
+                ObjectIdentifier(Signature.self),
+                SwiftResolutionTypeKey(self),
+                SwiftResolutionMemberKey(declaration.member),
+                declaration.receiver
+            ),
+            request: request,
+            owner: self,
+            arguments: declaration.member.options.genericArguments,
+            capturedSlot: { $0.entry.capturedSlot }
+        ) {
+            let member = try resolveMember(declaration.member, signature: Signature.self)
+            let receiver = try receiverPlan(
+                mutating: declaration.receiver.isMutating,
+                consuming: declaration.receiver.isConsuming,
+                generic: member.generic,
+                receiverABI: declaration.receiver.abi
+            )
+            return try prepareMethod(
+                member,
+                receiver: receiver,
+                consumesArguments: declaration.member.role == .setter
+            )
+        }
     }
 
     /// Resolves an instance member without blocking the caller's executor.
@@ -1080,21 +1094,33 @@ public actor NativeSwiftType: Hashable {
     public nonisolated func resolveAndWait<Signature>(
         _ request: NativeRequest<NativeSwiftTypeMemberRequest<Signature>>
     ) throws -> NativeSwiftFunction<Signature> {
-        let request = request.declaration
-        let member = try resolveMember(request.member, signature: Signature.self)
-        switch request.member.role {
-        case .initializer:
-            return try prepareFunction(
-                member,
-                consumesArguments: true,
-                classReceiver: metadata is AnyClass
-            )
-        case .method, .getter, .setter:
-            return try prepareFunction(
-                member,
-                consumesArguments: request.member.role == .setter,
-                classReceiver: member.metadata is AnyClass
-            )
+        let declaration = request.declaration
+        return try resolver.resolveSwift(
+            .typeMember(
+                ObjectIdentifier(Signature.self),
+                SwiftResolutionTypeKey(self),
+                SwiftResolutionMemberKey(declaration.member)
+            ),
+            request: request,
+            owner: self,
+            arguments: declaration.member.options.genericArguments,
+            capturedSlot: { $0.entry.capturedSlot }
+        ) {
+            let member = try resolveMember(declaration.member, signature: Signature.self)
+            switch declaration.member.role {
+            case .initializer:
+                return try prepareFunction(
+                    member,
+                    consumesArguments: true,
+                    classReceiver: metadata is AnyClass
+                )
+            case .method, .getter, .setter:
+                return try prepareFunction(
+                    member,
+                    consumesArguments: declaration.member.role == .setter,
+                    classReceiver: member.metadata is AnyClass
+                )
+            }
         }
     }
 

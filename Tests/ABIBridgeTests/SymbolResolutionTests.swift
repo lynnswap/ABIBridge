@@ -893,6 +893,31 @@ struct SymbolResolutionTests {
         #expect(try await generation(of: alias, runtime: runtime) == secondGeneration)
     }
 
+    @Test func cachedSwiftFunctionsFollowRetargetedSymlinks() async throws {
+        let module = "CachedAlias_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
+        let first = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: "public func answer() -> Int64 { 42 }"
+        )
+        let second = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: "public func answer() -> Int64 { 84 }"
+        )
+        defer { first.cleanup(); second.cleanup() }
+        let runtime = ABIRuntime()
+        let alias = first.directory.appendingPathComponent("alias.dylib")
+        let request = NativeRequest.swift(.function(module + ".answer()", as: (() -> Int64).self))
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: first.libraryURL)
+        let original = try await runtime.resolve(request, in: .path(alias))
+        #expect(try unsafe original.unsafeInvoke() == 42)
+        try FileManager.default.removeItem(at: alias)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: second.libraryURL)
+        let updated = try runtime.resolveAndWait(request, in: .path(alias))
+        #expect(updated.symbol.image.identity != original.symbol.image.identity)
+        #expect(try unsafe updated.unsafeInvoke() == 84)
+        #expect(try unsafe original.unsafeInvoke() == 42)
+    }
+
     @Test func lazyLibrarySnapshotsCopyMatchingDiagnostics() async throws {
         let fixture = try FixtureLibrary()
         defer { fixture.cleanup() }
