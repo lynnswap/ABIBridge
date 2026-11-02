@@ -281,7 +281,7 @@ package struct SymbolCandidateMatcher {
 
 package struct SwiftModuleFilter {
     package let module: String
-    private let prefix: String
+    private let prefix: [CChar]
 
     package init?(_ declaration: String) {
         var name = declaration.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -304,7 +304,7 @@ package struct SwiftModuleFilter {
         guard module.range(of: "^[A-Za-z_][A-Za-z0-9_]*$", options: .regularExpression) != nil
         else { return nil }
         self.module = module
-        prefix = String(module.utf8.count) + module
+        prefix = Array((String(module.utf8.count) + module).utf8CString)
     }
 
     // Nil also describes an incomplete trie edge. Standard module and type
@@ -338,9 +338,9 @@ package struct SwiftModuleFilter {
             return module == "Swift"
         }
         guard body.pointee >= 49 && body.pointee <= 57 else { return true }
-        return prefix.withCString { expected in
-            let count = partial ? min(strlen(body), prefix.utf8.count) : prefix.utf8.count
-            return strncmp(body, expected, count) == 0
+        return prefix.withUnsafeBufferPointer { expected in
+            let count = partial ? min(strlen(body), expected.count - 1) : expected.count - 1
+            return strncmp(body, expected.baseAddress!, count) == 0
         }
     }
 }
@@ -422,6 +422,7 @@ package final class SymbolIndex {
     private lazy var exportTrie = macho.exportTrie
     private var localSymbols: [IndexedSymbol] = []
     private var swiftTableIndices: [Int]?
+    private var swiftFallbackTableIndices: [Int] = []
     private enum DescriptorKind: UInt8 { case nominalType = 110, protocolType = 112 }
     private struct SourceScope: Hashable {
         let candidates: SymbolCandidateScope
@@ -635,32 +636,47 @@ package final class SymbolIndex {
 
     // Keep offsets rather than names: another module can reuse the language
     // scan without materializing unrelated strings or pinning a second copy.
-    private func swiftSymbols(matching predicate: (UnsafePointer<CChar>) -> Bool) -> [IndexedSymbol]
-    {
+    private func swiftSymbols(
+        in bucket: SwiftBucket? = nil,
+        matching predicate: (UnsafePointer<CChar>) -> Bool
+    ) -> [IndexedSymbol] {
         guard let table = macho.symbols64 else { return tableSymbols(matching: predicate) }
-        if swiftTableIndices == nil {
-            var indexes: [Int] = []
-            for index in 0..<table.numberOfSymbols {
+        if let indexes = swiftTableIndices {
+            let selected = bucket == .fallback ? swiftFallbackTableIndices : indexes
+            return selected.compactMap { index in
                 let entry = table.symbols[index]
-                guard Int32(entry.n_type) & N_TYPE == N_SECT else { continue }
                 let name = table.stringBase.advanced(by: Int(entry.n_un.n_strx))
-                var prefix = name
-                if prefix.pointee == 95 { prefix += 1 }
-                if prefix.pointee == 36 && (prefix[1] == 115 || prefix[1] == 83) {
-                    indexes.append(index)
-                }
+                guard predicate(name) else { return nil }
+                return imageSymbol(
+                    name: String(cString: name),
+                    offset: table.addressStart + Int(entry.n_value)
+                )
             }
-            swiftTableIndices = indexes
         }
-        return swiftTableIndices!.compactMap { index in
+        var indexes: [Int] = []
+        var fallbackIndexes: [Int] = []
+        var matches: [IndexedSymbol] = []
+        for index in 0..<table.numberOfSymbols {
             let entry = table.symbols[index]
+            guard Int32(entry.n_type) & N_TYPE == N_SECT else { continue }
             let name = table.stringBase.advanced(by: Int(entry.n_un.n_strx))
-            guard predicate(name) else { return nil }
-            return imageSymbol(
-                name: String(cString: name),
-                offset: table.addressStart + Int(entry.n_value)
-            )
+            var prefix = name
+            if prefix.pointee == 95 { prefix += 1 }
+            guard prefix.pointee == 36 && (prefix[1] == 115 || prefix[1] == 83) else { continue }
+            indexes.append(index)
+            let isFallback = SwiftModuleFilter.knownModulePrefix(name) == false
+            if isFallback { fallbackIndexes.append(index) }
+            guard bucket != .fallback || isFallback, predicate(name),
+                let symbol = imageSymbol(
+                    name: String(cString: name),
+                    offset: table.addressStart + Int(entry.n_value)
+                )
+            else { continue }
+            matches.append(symbol)
         }
+        swiftTableIndices = indexes
+        swiftFallbackTableIndices = fallbackIndexes
+        return matches
     }
 
     private func exactSymbols(named name: String, key: [UInt8]) -> [IndexedSymbol] {
@@ -915,7 +931,7 @@ package final class SymbolIndex {
         } else {
             symbols =
                 query.declaration.language == .swift && descriptorKind == nil
-                ? swiftSymbols(matching: accepts) : tableSymbols(matching: accepts)
+                ? swiftSymbols(in: swiftBucket, matching: accepts) : tableSymbols(matching: accepts)
             if let trie = exportTrie {
                 symbols += filteredExports(
                     in: trie,

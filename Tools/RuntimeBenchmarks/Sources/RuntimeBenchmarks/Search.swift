@@ -1,11 +1,59 @@
 import ABIBridge
 import ABIBridgeCore
 import ABIBridgeCore.Backend
+import BenchmarkSwiftProvider
 import Darwin
 import Foundation
+import MachO
 
 func median(_ values: [Double]) -> Double { values.sorted()[values.count / 2] }
 struct SearchBenchmark {
+    static func measureExtensions() throws {
+        let receiver = makeExtensionReceiver()
+        let request = NativeRequest.swift(
+            NativeSwiftInstanceMemberRequest.getter(
+                "(extension in BenchmarkSwiftProvider):__C.NSObject.abiBenchmarkValue.getter : Swift.Int64",
+                as: (() -> Int64).self
+            )
+        )
+        let otherRequest = NativeRequest.swift(
+            NativeSwiftInstanceMemberRequest.getter(
+                "(extension in BenchmarkSwiftProvider):__C.NSObject.abiBenchmarkOtherValue.getter : Swift.Int64",
+                as: (() -> Int64).self
+            )
+        )
+        var first: [Double] = []
+        var other: [Double] = []
+        var repeated: [Double] = []
+        for _ in 0..<5 {
+            let runtime = ABIRuntime()
+            let object = runtime.object(receiver)
+            let start = ContinuousClock.now
+            let getter = try object.resolveAndWait(request)
+            first.append(seconds(start.duration(to: .now)) * 1000)
+            let value = try unsafe getter.unsafeInvoke()
+            precondition(value == 42)
+
+            let otherStart = ContinuousClock.now
+            let otherGetter = try object.resolveAndWait(otherRequest)
+            other.append(seconds(otherStart.duration(to: .now)) * 1000)
+            let otherValue = try unsafe otherGetter.unsafeInvoke()
+            precondition(otherValue == 43)
+
+            var checksum: Int64 = 0
+            let repeatedStart = ContinuousClock.now
+            for _ in 0..<1000 {
+                let getter = try object.resolveAndWait(request)
+                checksum += try unsafe getter.unsafeInvoke()
+            }
+            repeated.append(seconds(repeatedStart.duration(to: .now)) * 1e6 / 1000)
+            precondition(checksum == 42000)
+        }
+        print(
+            "Swift extension images=\(_dyld_image_count()) first=\(median(first)) ms other-member=\(median(other)) ms repeated=\(median(repeated)) us"
+        )
+    }
+
     static func run(in directory: URL) async throws {
         for count in [100, 1000, 10000] {
             let function = "f\(count - 1)"

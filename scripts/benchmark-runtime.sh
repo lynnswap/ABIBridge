@@ -11,8 +11,8 @@ case "$task_mode" in
       -destination 'platform=macOS,arch=arm64' -derivedDataPath "$task_build/hooks" \
       -only-testing:ABIBridgeLocalTests/ObjectiveCHookBenchmarks
     ;;
-  calls|search) ;;
-  *) echo "Usage: $0 [calls|search|hooks]" >&2; exit 2 ;;
+  calls|search|extensions) ;;
+  *) echo "Usage: $0 [calls|search|extensions|hooks]" >&2; exit 2 ;;
 esac
 
 xcrun swift build --package-path "$task_root/Tools/RuntimeBenchmarks" \
@@ -21,6 +21,10 @@ task_bin=$(xcrun swift build --package-path "$task_root/Tools/RuntimeBenchmarks"
   --scratch-path "$task_build" -c release --show-bin-path)
 if [[ "$task_mode" == calls ]]; then
   "$task_bin/RuntimeBenchmarks" calls "${@:2}"
+  exit
+fi
+if [[ "$task_mode" == extensions ]]; then
+  "$task_bin/RuntimeBenchmarks" extensions
   exit
 fi
 

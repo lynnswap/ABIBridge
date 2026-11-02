@@ -1,3 +1,12 @@
+import Foundation
+
+public func makeExtensionReceiver() -> NSObject { NSObject() }
+
+extension NSObject {
+    public var abiBenchmarkValue: Int64 { 42 }
+    public var abiBenchmarkOtherValue: Int64 { 43 }
+}
+
 @inline(never) public func add(_ left: Int64, _ right: Int64) -> Int64 { left + right }
 @inline(never) public func identity<T>(_ value: T) -> T { value }
 @inline(never) public func hashEcho<T: Hashable>(_ value: T) -> T { value }
