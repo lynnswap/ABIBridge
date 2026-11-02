@@ -175,9 +175,14 @@ package final class RuntimeSymbolResolver: Sendable {
             }
         }
         let requiredImages: Set<RuntimeImageIdentity>
+        let includingSharedCache: Bool
         switch result {
-        case .success(let symbol): requiredImages = [symbol.image.identity]
-        case .failure: requiredImages = Set(cache.images.map(\.identity))
+        case .success(let symbol):
+            requiredImages = [symbol.image.identity]
+            includingSharedCache = symbol.source == .sharedCache
+        case .failure:
+            requiredImages = Set(cache.images.map(\.identity))
+            includingSharedCache = true
         }
         let dependency = RuntimeCatalogDependency.observing(
             cache.catalog,
@@ -186,7 +191,11 @@ package final class RuntimeSymbolResolver: Sendable {
             guard let self else { return true }
             let retained = try self.retain(additions, skippingUnavailable: false)
             do {
-                _ = try self.unique(declaration, images: retained.images)
+                _ = try self.unique(
+                    declaration,
+                    images: retained.images,
+                    includingSharedCache: includingSharedCache
+                )
                 return true
             } catch RuntimeResolutionError.declarationNotFound { return false }
         }
@@ -740,6 +749,7 @@ package final class RuntimeSymbolResolver: Sendable {
     private func unique(
         _ declaration: RuntimeDeclaration,
         images: [RuntimeImage],
+        includingSharedCache: Bool = true,
         relatedQueries: [SymbolQuery] = []
     ) throws -> RuntimeSymbol {
         // Keep these indexes for the whole lookup even if another caller clears
@@ -762,7 +772,11 @@ package final class RuntimeSymbolResolver: Sendable {
                 }
             }
             let primary = try matches(.image)
-            if !primary.isEmpty { return try select(declaration, from: primary) }
+            // Shared-cache locals cannot displace an image definition already
+            // selected from the complete scope.
+            if !primary.isEmpty || !includingSharedCache {
+                return try select(declaration, from: primary)
+            }
 
             loadSharedCacheSymbols(for: query, into: candidates, relatedQueries: relatedQueries)
             let fallback = try matches(.sharedCache)

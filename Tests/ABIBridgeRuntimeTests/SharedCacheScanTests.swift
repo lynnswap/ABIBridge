@@ -90,6 +90,58 @@ private func capturedSources(
 }
 
 struct SharedCacheScanTests {
+    @Test func cachedImageDefinitionsLeaveSharedCacheUnreadAfterImageLoads() throws {
+        let definition = try FixtureLibrary()
+        let addition = try FixtureLibrary(load: false)
+        defer { definition.cleanup(); addition.cleanup() }
+        let addedImage = Mutex<RuntimeImageIdentity?>(nil)
+        let captures = Mutex(0)
+        let resolver = RuntimeSymbolResolver(capturingSharedCacheSymbols: { image, _, _ in
+            if image.identity == addedImage.withLock({ $0 }) { captures.withLock { $0 += 1 } }
+            return nil
+        })
+        let declaration = RuntimeDeclaration(
+            name: definition.namespace + "::add(int, int)",
+            language: .cxx
+        )
+        let original = try resolver.resolve(declaration)
+        #expect(original.source == .image)
+
+        try addition.load()
+        let image = try #require(try resolver.images(matching: .path(addition.libraryURL)).first)
+        addedImage.withLock { $0 = image.identity }
+        let resolved = try resolver.resolve(declaration)
+        #expect(resolved.address == original.address)
+        #expect(captures.withLock { $0 } == 0)
+    }
+
+    @Test func cachedSharedCacheDefinitionsYieldToNewImageDefinitions() throws {
+        let name =
+            "SharedReplacement_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
+        let local = try FixtureLibrary()
+        let addition = try FixtureLibrary(
+            load: false,
+            cxxSource: "extern \"C\" int \(name)() { return 84; }"
+        )
+        defer { local.cleanup(); addition.cleanup() }
+        let localImage = try #require(
+            try RuntimeSymbolResolver().images(matching: .path(local.libraryURL)).first
+        ).identity
+        let address = try local.address(kind: 0)
+        let resolver = RuntimeSymbolResolver(capturingSharedCacheSymbols: { image, _, source in
+            guard image.identity == localImage, source == .loaded else { return nil }
+            return capturedSources(named: name, at: address)
+        })
+        let declaration = RuntimeDeclaration(name: name, language: .c)
+        #expect(try resolver.resolve(declaration).source == .sharedCache)
+
+        try addition.load()
+        let image = try #require(try resolver.images(matching: .path(addition.libraryURL)).first)
+        let resolved = try resolver.resolve(declaration)
+        #expect(resolved.source == .image)
+        #expect(resolved.image.identity == image.identity)
+    }
+
     @Test func wrongKindImageSymbolsDoNotBlockSharedCacheDefinitions() throws {
         let name =
             "SharedKindCollision_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
