@@ -4,6 +4,7 @@ import ABIBridgeTestSupport
 import Foundation
 import MachO
 import MachOKit
+import Synchronization
 import Testing
 
 struct SwiftSymbolIndexTests {
@@ -576,8 +577,17 @@ struct SwiftSymbolIndexTests {
         let identity = thunk.record.identity
         #expect(identity.hasSuffix("SiyF"))
         let overload = String(identity.dropLast(4)) + "SSyF"
-        let resolver = RuntimeSymbolResolver(capturingSharedCacheSymbols: { _, _, source in
+        let addition = try FixtureLibrary(load: false)
+        defer { addition.cleanup() }
+        let added = Mutex<(image: RuntimeImageIdentity, address: UInt64)?>(nil)
+        let resolver = RuntimeSymbolResolver(capturingSharedCacheSymbols: { candidate, _, source in
             guard source == .loaded else { return nil }
+            let address: UInt64
+            if candidate.identity == image.identity {
+                address = thunk.symbol.address
+            } else if let added = added.withLock({ $0 }), candidate.identity == added.image {
+                address = added.address
+            } else { return nil }
             return SharedCacheSymbols.CapturedSymbols(
                 slide: 0,
                 readers: [
@@ -585,12 +595,12 @@ struct SwiftSymbolIndexTests {
                         // Candidates at one address are one definition.
                         for (offset, name) in [identity, overload].enumerated() {
                             ("_" + name).withCString {
-                                record($0, thunk.symbol.address + UInt64(offset * 4))
+                                record($0, address + UInt64(offset * 4))
                             }
                         }
                     }
                 ],
-                imageIdentity: image.identity
+                imageIdentity: candidate.identity
             )
         })
         let candidates = try resolver.swiftDeclarationCandidates(request, in: image)
@@ -599,6 +609,17 @@ struct SwiftSymbolIndexTests {
         )
         #expect(candidates.map(\.symbol.source) == [.image, .sharedCache, .sharedCache])
         #expect(Set(candidates.map(\.record.identity)) == [identity, overload])
+        let prepared = try RuntimeCatalogDependency.recording {
+            try resolver.swiftDeclarationCandidates(request, in: .automatic, loading: .loadedOnly)
+        }
+        #expect(prepared.dependency.isCurrent)
+        try addition.load()
+        let addedImage = try #require(
+            try resolver.images(matching: .path(addition.libraryURL)).first
+        )
+        let address = UInt64(try addition.address(kind: 0))
+        added.withLock { $0 = (addedImage.identity, address) }
+        #expect(!prepared.dependency.isCurrent)
     }
 
     @Test func laterLocalSymbolsRefreshPartialFallbackAndPreserveUnrelatedGroups() async throws {
