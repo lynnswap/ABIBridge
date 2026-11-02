@@ -444,10 +444,7 @@ struct SwiftGenericBindingTests {
             scopedCopyMutation, scopedCopyEnumCase
     }
 
-    @Test(.serialized, arguments: RuntimeDependencyOperation.allCases)
-    func runtimeValuesShareCodeDependenciesAcrossNativeOperations(
-        _ operation: RuntimeDependencyOperation
-    ) async throws {
+    @Test func runtimeValuesShareCodeDependenciesAcrossNativeOperations() async throws {
         // Use synchronous lookup so preparation workers do not extend the leases under test.
         let module = "RuntimeOwner_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
         let provider = try FixtureLibrary(
@@ -520,6 +517,31 @@ struct SwiftGenericBindingTests {
         }
         let first = try factory("First", 41), second = try factory("Second", 42)
         defer { first.cleanup(); second.cleanup() }
+        // Compilation is identical for every operation. Each check still owns
+        // its runtime and values, closes both images, and verifies final release.
+        for operation in RuntimeDependencyOperation.allCases {
+            do {
+                try await checkRuntimeValueCodeDependencies(
+                    operation,
+                    module: module,
+                    provider: provider,
+                    first: first,
+                    second: second
+                )
+            } catch {
+                Issue.record(error, Comment(rawValue: "Operation: \(operation)"))
+            }
+        }
+    }
+
+    private func checkRuntimeValueCodeDependencies(
+        _ operation: RuntimeDependencyOperation,
+        module: String,
+        provider: FixtureLibrary,
+        first: FixtureLibrary,
+        second: FixtureLibrary
+    ) async throws {
+        defer { first.close(); second.close() }
         try first.load(); try second.load()
         weak var argumentLease: RuntimeImageLease?
         let runtime = ABIRuntime()
@@ -876,7 +898,9 @@ struct SwiftGenericBindingTests {
         first.close(); second.close()
         // Check the actual image lease before invoking code that would be unloaded.
         guard argumentLease != nil else {
-            Issue.record("The runtime result discarded its argument's closure implementation image")
+            Issue.record(
+                "\(operation): the runtime result discarded its argument's closure implementation image"
+            )
             return
         }
         func inspect() throws {
@@ -898,12 +922,14 @@ struct SwiftGenericBindingTests {
                     )
                 )
             )
-            #expect(try unsafe read.unsafeInvoke(on: receiver) == 42)
+            #expect(try unsafe read.unsafeInvoke(on: receiver) == 42, "Operation: \(operation)")
         }
         try inspect()
         result = nil
         runtime.removeCachedResults()
-        withExtendedLifetime(preparedCopy) { #expect(argumentLease == nil) }
+        withExtendedLifetime(preparedCopy) {
+            #expect(argumentLease == nil, "Operation: \(operation)")
+        }
     }
     #endif
 
