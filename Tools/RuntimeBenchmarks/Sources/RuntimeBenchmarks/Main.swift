@@ -21,20 +21,25 @@ import Foundation
             }
             try await Benchmark.run(iterations: iterations)
         case "prepare": try await Benchmark.runPreparation()
+        case "extensions": try SearchBenchmark.measureExtensions()
         case "search":
             guard CommandLine.arguments.count == 3 else {
                 throw NSError(
-                    domain: "RuntimeBenchmarks", code: 1,
+                    domain: "RuntimeBenchmarks",
+                    code: 1,
                     userInfo: [
                         NSLocalizedDescriptionKey:
                             "search requires the generated provider directory"
-                    ])
+                    ]
+                )
             }
             try await SearchBenchmark.run(in: URL(fileURLWithPath: CommandLine.arguments[2]))
         default:
             throw NSError(
-                domain: "RuntimeBenchmarks", code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "Use calls, prepare, or search"])
+                domain: "RuntimeBenchmarks",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Use calls, prepare, search, or extensions"]
+            )
         }
     }
 }
