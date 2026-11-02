@@ -43,7 +43,7 @@ Retain the handle for repeated calls. For other declarations in the same image, 
 
 A Swift module name does not necessarily identify its containing framework: a statically linked module can live in the executable, and a framework can contain several modules. Select the image that actually supplies the declaration. An explicit framework scope does not search its dependencies or fall back to the whole process. If the provider can vary, list its possible frameworks in a ``NativeSymbolRequest``. Append `.automatic` only when a final process-wide search is needed.
 
-An automatic search checks every available image for absence or ambiguity, so its first lookup can cost substantially more than a framework-scoped lookup. The runtime caches results while the catalog is unchanged; loading or unloading refreshes that scope. Keep these caches between lookups.
+An automatic search checks every available image for absence or ambiguity, so its first lookup can cost substantially more than a framework-scoped lookup. The runtime keeps cached results across unrelated image loads. When the catalog changes, it checks newly loaded images for declarations that could affect each lookup. Keep these caches between lookups.
 
 ## Prepare known requirements ahead of time
 
@@ -207,7 +207,7 @@ Call `runtime.removeCachedResults()` to release that runtime's resolver indexes,
 
 A ``NativeRequest`` describes a symbol, type, callable or key path to resolve. Equivalent Swift function and member requests reuse completed handles while their runtime remains alive, including handles prepared by a `prepare` closure whose result was discarded. Internal cache keys include the signature, generic arguments, declaration and ABI options, and lookup type or acquired image identities. Requests retain their existing public interface without a `Hashable` conformance. Other lookup families continue to share their existing symbol, index, and native call-interface caches.
 
-Each explicit image scope is acquired before cache lookup, so loading policies and retargeted filesystem paths still apply. Results that depend on the loaded-image catalog are invalidated when that catalog changes. Partial catalog searches and failed resolutions are not cached. A captured class or witness slot is checked before returning its cached handle; changing that slot causes a new resolution. Previously returned handles keep their captured implementation.
+Each explicit image scope is acquired before cache lookup, so loading policies and retargeted filesystem paths still apply. A catalog change checks the added images against each cached lookup; unrelated additions preserve its completed preparation, while competing declarations require a new resolution. Removing an image required by a lookup also invalidates it. Partial catalog searches and failed callable resolutions are not cached. A captured class or witness slot is checked before returning its cached handle; changing that slot causes a new resolution. Previously returned handles keep their captured implementation.
 
 Swift key-path requests share descriptor preparation and return a fresh owned value each time. Object binding also remains a separate operation, so shared results do not retain a bound receiver. Concurrent misses can prepare independently and still join the required index scans and native call-interface work. Keeping a returned handle allows direct invocation without another lookup.
 

@@ -7,6 +7,74 @@ import Testing
 
 @Suite(.serialized)
 struct RuntimePreparationTests {
+    @Test func unrelatedImageLoadsPreservePreparedSwiftCalls() async throws {
+        let libraries = try (0..<3).map { index in
+            try FixtureLibrary(
+                load: false,
+                cxxSource: "extern \"C\" int unrelated\(index)() { return 0; }"
+            )
+        }
+        defer { libraries.forEach { $0.cleanup() } }
+        let runtime = ABIRuntime()
+        let typeRequest = NativeRequest.swift(.type("ABIBridgeTests.SwiftPreparationReceiver"))
+        let type = try runtime.resolveAndWait(typeRequest)
+        let function = NativeRequest.swift(
+            .function(
+                "ABIBridgeTests.swiftPreparationRead()",
+                as: (() -> SwiftPreparationValue).self
+            )
+        )
+        let method = NativeRequest.swift(
+            .method(
+                "ABIBridgeTests.SwiftPreparationReadable.read()",
+                as: (() -> SwiftPreparationValue).self
+            )
+        )
+        SwiftPreparationValue.preparationThreads.withLock { $0.removeAll() }
+        _ = try await runtime.prepare {
+            _ = try $0.resolveAndWait(function)
+            _ = try type.resolveAndWait(method)
+        }
+        let preparations = SwiftPreparationValue.preparationThreads.withLock { $0.count }
+        #expect(preparations > 0)
+        for library in libraries {
+            try library.load()
+            #expect(try runtime.resolveAndWait(typeRequest) === type)
+            let resolved = try runtime.resolveAndWait(function)
+            let member = try type.resolveAndWait(method)
+            #expect(SwiftPreparationValue.preparationThreads.withLock { $0.count } == preparations)
+            #expect(try unsafe resolved.unsafeInvoke().raw == 42)
+            #expect(try unsafe member.unsafeInvoke(on: SwiftPreparationReceiver()).raw == 42)
+        }
+    }
+
+    @Test func matchingImageLoadsInvalidatePreparedSwiftCalls() throws {
+        let module =
+            "PreparedCollision_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let first = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: "public func value() -> Int { 42 }"
+        )
+        let second = try FixtureLibrary(
+            load: false,
+            swiftModule: module,
+            swiftSource: "public func value() -> Int { 84 }"
+        )
+        defer { first.cleanup(); second.cleanup() }
+        let runtime = ABIRuntime()
+        let request = NativeRequest.swift(.function(module + ".value()", as: (() -> Int).self))
+        let original = try runtime.resolveAndWait(request)
+        #expect(try unsafe original.unsafeInvoke() == 42)
+        try second.load()
+        do {
+            _ = try runtime.resolveAndWait(request)
+            Issue.record("A newly loaded competing declaration must invalidate the prepared result")
+        } catch ABIResolutionError.ambiguousDeclaration(_, let candidates) {
+            #expect(candidates.count == 2)
+        }
+        #expect(try unsafe original.unsafeInvoke() == 42)
+    }
+
     @Test(arguments: [false, true])
     func discardedSwiftPreparationIsReused(freeFunction: Bool) async throws {
         let runtime = ABIRuntime()
@@ -610,6 +678,12 @@ struct RuntimePreparationTests {
 }
 
 @inline(never) public func swiftPreparationRead() -> SwiftPreparationValue { .init(raw: 42) }
+
+public protocol SwiftPreparationReadable {
+    func read() -> SwiftPreparationValue
+}
+
+extension SwiftPreparationReceiver: SwiftPreparationReadable {}
 
 public final class SwiftPreparationReceiver {
     public var raw: Int64 = 42

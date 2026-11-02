@@ -1,10 +1,81 @@
 import Synchronization
 
-/// The loaded-image catalog observed while deriving a result.
-package enum RuntimeCatalogDependency: Equatable, Sendable {
-    case none
-    case revision(UInt64)
-    case unstable
+/// The image changes that could affect a completed lookup.
+package struct RuntimeCatalogDependency: Equatable, Sendable {
+    private let observations: [Observation]
+    private let unstable: Bool
+
+    package static let none = Self(observations: [], unstable: false)
+    package static let unstable = Self(observations: [], unstable: true)
+
+    private final class Observation: Sendable, Equatable {
+        private struct State: Sendable {
+            var revision: UInt64
+            var images: Set<RuntimeImageIdentity>
+        }
+        private let state: Mutex<State>
+        private let requiredImages: Set<RuntimeImageIdentity>
+        private let affectsResult: @Sendable ([RuntimeImageSnapshot]) throws -> Bool
+
+        init(
+            catalog: RuntimeImageCatalogSnapshot,
+            requiredImages: Set<RuntimeImageIdentity>,
+            affectsResult: @escaping @Sendable ([RuntimeImageSnapshot]) throws -> Bool
+        ) {
+            state = Mutex(
+                State(revision: catalog.revision, images: Set(catalog.images.map(\.identity)))
+            )
+            self.requiredImages = requiredImages
+            self.affectsResult = affectsResult
+        }
+
+        static func == (lhs: Observation, rhs: Observation) -> Bool { lhs === rhs }
+
+        func isCurrent(in catalog: RuntimeImageCatalogSnapshot) -> Bool {
+            let previous = state.withLock { $0 }
+            if previous.revision == catalog.revision { return true }
+            // A load generation's symbols do not change. Retained results keep
+            // their defining images alive; only new generations need searching.
+            let images = Set(catalog.images.map(\.identity))
+            guard requiredImages.isSubset(of: images) else { return false }
+            let added = catalog.images.filter { !previous.images.contains($0.identity) }
+            do {
+                if !added.isEmpty, try Self.withoutRecording({ try affectsResult(added) }) {
+                    return false
+                }
+                guard try RuntimeImageSnapshot.catalog().revision == catalog.revision else {
+                    return false
+                }
+            } catch { return false }
+            state.withLock { current in
+                if current.revision < catalog.revision {
+                    current = State(revision: catalog.revision, images: images)
+                }
+            }
+            return true
+        }
+
+        private static func withoutRecording<Value>(_ body: () throws -> Value) rethrows -> Value {
+            try RuntimeCatalogDependency.$recorder.withValue(nil, operation: body)
+        }
+    }
+
+    package static func observing(
+        _ catalog: RuntimeImageCatalogSnapshot,
+        requiredImages: Set<RuntimeImageIdentity>,
+        affectsResult: @escaping @Sendable ([RuntimeImageSnapshot]) throws -> Bool
+    ) -> Self {
+        Self(
+            observations: [
+                Observation(
+                    catalog: catalog,
+                    requiredImages: requiredImages,
+                    affectsResult: affectsResult
+                )
+            ],
+            unstable: false
+        )
+    }
 
     private final class Recorder: Sendable {
         let parent: Recorder?
@@ -14,14 +85,20 @@ package enum RuntimeCatalogDependency: Equatable, Sendable {
 
         func record(_ dependency: RuntimeCatalogDependency) {
             value.withLock { current in
-                switch (current, dependency) {
-                case (_, .none): break
-                case (.none, _): current = dependency
-                case (.revision(let first), .revision(let second)) where first == second: break
-                default: current = .unstable
-                }
+                current = Self.merge(current, dependency)
             }
             parent?.record(dependency)
+        }
+
+        private static func merge(
+            _ first: RuntimeCatalogDependency,
+            _ second: RuntimeCatalogDependency
+        ) -> RuntimeCatalogDependency {
+            RuntimeCatalogDependency(
+                observations: first.observations
+                    + second.observations.filter { !first.observations.contains($0) },
+                unstable: first.unstable || second.unstable
+            )
         }
     }
 
@@ -38,10 +115,9 @@ package enum RuntimeCatalogDependency: Equatable, Sendable {
     package func record() { Self.recorder?.record(self) }
 
     package var isCurrent: Bool {
-        switch self {
-        case .none: true
-        case .revision(let revision): (try? RuntimeImageSnapshot.catalog().revision) == revision
-        case .unstable: false
-        }
+        guard !unstable else { return false }
+        guard !observations.isEmpty else { return true }
+        guard let catalog = try? RuntimeImageSnapshot.catalog() else { return false }
+        return observations.allSatisfy { $0.isCurrent(in: catalog) }
     }
 }
