@@ -558,9 +558,13 @@ package final class RuntimeSymbolResolver: Sendable {
         in scope: SearchScope,
         module: String? = nil,
         extensionsOnly: Bool,
-        includingSharedCache: Bool
+        includingSharedCache: Bool,
+        searchingSharedCache: Bool = true
     ) throws -> [RuntimeSwiftCandidate] {
-        func record(_ candidates: [RuntimeSwiftCandidate]) -> [RuntimeSwiftCandidate] {
+        func record(
+            _ candidates: [RuntimeSwiftCandidate],
+            searchingSharedCache: Bool
+        ) -> [RuntimeSwiftCandidate] {
             if case .automatic(let automatic) = scope {
                 RuntimeCatalogDependency.observing(
                     automatic.catalog,
@@ -574,7 +578,8 @@ package final class RuntimeSymbolResolver: Sendable {
                         in: .images(retained.images),
                         module: module,
                         extensionsOnly: extensionsOnly,
-                        includingSharedCache: includingSharedCache
+                        includingSharedCache: includingSharedCache,
+                        searchingSharedCache: searchingSharedCache
                     ).isEmpty
                 }.record()
             }
@@ -611,6 +616,9 @@ package final class RuntimeSymbolResolver: Sendable {
         // that code, so images that export only such thunks still consult the
         // shared cache.
         let primary = matches(.image, in: indexes)
+        // A completed image-tier lookup only depends on new image candidates.
+        // An empty addition must not widen that lookup to shared-cache locals.
+        guard searchingSharedCache else { return primary }
         let implemented = Set(primary.lazy.filter(\.record.runsOwnCode).map(\.record.identity))
         guard !implemented.isEmpty, !includingSharedCache else {
             loadSharedCacheSymbols(for: query, into: indexes)
@@ -621,12 +629,12 @@ package final class RuntimeSymbolResolver: Sendable {
             if fallback.isEmpty && implemented.isEmpty && !scope.isComplete {
                 throw RuntimeResolutionError.imageUnavailable
             }
-            return record(primary + fallback)
+            return record(primary + fallback, searchingSharedCache: true)
         }
         let dispatched = primary.filter {
             !$0.record.runsOwnCode && !implemented.contains($0.record.identity)
         }
-        guard !dispatched.isEmpty else { return record(primary) }
+        guard !dispatched.isEmpty else { return record(primary, searchingSharedCache: false) }
         let images = Set(dispatched.map(\.symbol.image))
         let owners = indexes.filter { images.contains($0.image) }
         let identities = Set(dispatched.map(\.record.identity))
@@ -635,7 +643,8 @@ package final class RuntimeSymbolResolver: Sendable {
             primary
                 + matches(.sharedCache, in: owners).filter {
                 $0.record.role == .implementation && identities.contains($0.record.identity)
-                }
+                },
+            searchingSharedCache: false
         )
     }
 

@@ -90,6 +90,79 @@ private func capturedSources(
 }
 
 struct SharedCacheScanTests {
+    @Test func memberValidationPreservesImageAndSharedCacheSearchScopes() throws {
+        let module = "MemberValidation_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
+        let source = """
+            public struct Counter {
+                public init() {}
+                public func value() -> Int { 42 }
+                public var count: Int { 42 }
+            }
+            public protocol Readable {}
+            extension Readable { public func extended() -> Int { 42 } }
+            """
+        let definition = try FixtureLibrary(swiftModule: module, swiftSource: source)
+        let addition = try FixtureLibrary(load: false)
+        let competing = try FixtureLibrary(
+            load: false,
+            swiftModule: module,
+            swiftSource: source.replacingOccurrences(of: "42", with: "84")
+        )
+        defer { definition.cleanup(); addition.cleanup(); competing.cleanup() }
+        let local = Mutex<(image: RuntimeImageIdentity, address: UInt, name: String)?>(nil)
+        let captures = Mutex(0)
+        let resolver = RuntimeSymbolResolver(capturingSharedCacheSymbols: { image, _, source in
+            guard let local = local.withLock({ $0 }), image.identity == local.image,
+                source == .loaded
+            else { return nil }
+            captures.withLock { $0 += 1 }
+            return capturedSources(named: local.name, at: local.address)
+        })
+        let requests: [(String, Bool)] = [
+            (module + ".Counter.value() -> Swift.Int", false),
+            (module + ".Counter.count.getter : Swift.Int", false),
+            (module + ".Counter.init() -> " + module + ".Counter", false),
+            ("(extension in \(module)):\(module).Readable.extended() -> Swift.Int", true),
+        ]
+        let prepared = try requests.map { name, extensionsOnly in
+            let result = try RuntimeCatalogDependency.recording {
+                try resolver.swiftDeclarationCandidates(
+                    RuntimeDeclaration(name: name, language: .swift),
+                    in: .automatic,
+                    loading: .loadedOnly,
+                    extensionsOnly: extensionsOnly
+                )
+            }
+            #expect(!result.value.isEmpty, "\(name)")
+            #expect(result.value.allSatisfy { $0.symbol.source == .image && $0.record.runsOwnCode })
+            return result
+        }
+        let implementation = try #require(prepared[0].value.first).record.identity
+        #expect(implementation.hasSuffix("SiyF"))
+        let overload = String(implementation.dropLast(4)) + "SSyF"
+        let expanded = try RuntimeCatalogDependency.recording {
+            try resolver.swiftDeclarationCandidates(
+                RuntimeDeclaration(name: requests[0].0, language: .swift),
+                in: .automatic,
+                loading: .loadedOnly,
+                includingSharedCache: true
+            )
+        }
+        #expect(expanded.dependency.isCurrent)
+
+        try addition.load()
+        let image = try #require(try resolver.images(matching: .path(addition.libraryURL)).first)
+        let address = try addition.address(kind: 0)
+        local.withLock { $0 = (image.identity, address, overload) }
+        for result in prepared { #expect(result.dependency.isCurrent) }
+        #expect(captures.withLock { $0 } == 0)
+        #expect(!expanded.dependency.isCurrent)
+        #expect(captures.withLock { $0 } > 0)
+
+        try competing.load()
+        for result in prepared { #expect(!result.dependency.isCurrent) }
+    }
+
     @Test func cachedImageDefinitionsLeaveSharedCacheUnreadAfterImageLoads() throws {
         let definition = try FixtureLibrary()
         let addition = try FixtureLibrary(load: false)
