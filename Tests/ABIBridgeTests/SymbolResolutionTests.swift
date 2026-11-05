@@ -2,6 +2,8 @@ import ABIBridgeTestSupport
 #if os(macOS)
 #if DEBUG
 @testable import ABIBridge
+import ABIBridgeRuntime
+import Synchronization
 #else
 import ABIBridge
 #endif
@@ -12,6 +14,54 @@ import Testing
 
 @Suite(.serialized)
 struct SymbolResolutionTests {
+    #if DEBUG
+    @Test func preparedTypeSkipsUnrelatedCatalogRefreshAndDetectsNewAmbiguity() async throws {
+        let module = "CachedType_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let source = "public struct Value { public var number: Int = 0 }"
+        let first = try FixtureLibrary(swiftModule: module, swiftSource: source)
+        let unrelated = try FixtureLibrary(load: false)
+        let second = try FixtureLibrary(load: false, swiftModule: module, swiftSource: source)
+        defer { first.cleanup(); unrelated.cleanup(); second.cleanup() }
+        let publications = Mutex(0)
+        let backend = RuntimeSymbolResolver(beforePublishingCache: { publication, _ in
+            if case .automaticScope = publication { publications.withLock { $0 += 1 } }
+        })
+        let runtime = ABIRuntime(resolver: SymbolResolver(backend))
+        let request = NativeRequest.swift(NativeSwiftTypeRequest.type(module + ".Value"))
+        _ = try await runtime.resolve(request)
+        let prepared = try await runtime.resolve(request)
+        let before = publications.withLock { $0 }
+        try unrelated.load()
+        let repeated = try await runtime.resolve(request)
+        #expect(repeated === prepared)
+        #expect(publications.withLock { $0 } == before)
+        try second.load()
+        do {
+            _ = try await runtime.resolve(request)
+            Issue.record("A newly loaded definition must invalidate the prepared type lookup")
+        } catch ABIResolutionError.ambiguousDeclaration(_, let candidates) {
+            #expect(candidates.count == 2)
+        }
+        let explicit = try await runtime.resolve(request, in: .path(second.libraryURL))
+        #expect(explicit.image != prepared.image)
+    }
+    #endif
+
+    @Test func preparedTypesDistinguishCanonicallyEquivalentUTF8() async throws {
+        let module = "CachedType_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let fixture = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: "public struct \u{00E9} {}"
+        )
+        defer { fixture.cleanup() }
+        let runtime = ABIRuntime()
+        _ = try await runtime.resolve(.swift(.type(module + ".\u{00E9}")))
+        do {
+            _ = try await runtime.resolve(.swift(.type(module + ".e\u{0301}")))
+            Issue.record("A cached type must not match a different UTF-8 spelling")
+        } catch ABIResolutionError.declarationNotFound {}
+    }
+
     @Test(arguments: [false, true])
     func exactSpellingsPreserveCXXVariantsAndUnderscores(stripped: Bool) async throws {
         let fixture = try FixtureLibrary(stripped: stripped)

@@ -52,6 +52,7 @@ enum SwiftResolutionKey: Hashable, Sendable {
     }
 
     case function(ObjectIdentifier, String, SwiftResolutionOptionsKey, Scope)
+    case nominalType([UInt8], ObjectIdentifier?, [NativeSwiftGenericArgument.Identity], Scope)
     case instance(
         ObjectIdentifier,
         SwiftResolutionTypeKey,
