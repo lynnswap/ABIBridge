@@ -1287,22 +1287,36 @@ extension ABIRuntime {
         loading: ImageLoadingPolicy = .ifNeeded
     ) throws -> NativeSwiftType {
         let specification = request.declaration
-        let revision = swiftTypeCache.revision
-        let descriptor = try resolver.resolve(
-            .init(
-                name: "nominal type descriptor for " + specification.name,
-                language: .swift,
-                kind: .data
+        let prepare = {
+            let revision = self.swiftTypeCache.revision
+            let descriptor = try self.resolver.resolve(
+                .init(
+                    name: "nominal type descriptor for " + specification.name,
+                    language: .swift,
+                    kind: .data
+                ),
+                in: scope,
+                loading: loading
+            )
+            return try self.makeSwiftType(
+                named: specification.name,
+                descriptor: descriptor,
+                representation: specification.representation,
+                genericArguments: specification.genericArguments,
+                revision: revision
+            )
+        }
+        guard scope == .automatic else { return try prepare() }
+        return try resolver.resolveSwift(
+            .nominalType(
+                specification.name,
+                specification.representation.map(ObjectIdentifier.init),
+                specification.genericArguments.map(\.identity),
+                .automatic
             ),
-            in: scope,
-            loading: loading
-        )
-        return try makeSwiftType(
-            named: specification.name,
-            descriptor: descriptor,
-            representation: specification.representation,
-            genericArguments: specification.genericArguments,
-            revision: revision
+            request: request,
+            arguments: specification.genericArguments,
+            prepare: prepare
         )
     }
 

@@ -423,6 +423,7 @@ package final class SymbolIndex {
     private var localSymbols: [IndexedSymbol] = []
     private var swiftTableIndices: [Int]?
     private var swiftFallbackTableIndices: [Int] = []
+    private var swiftDescriptorTableIndices: [DescriptorKind: [Int]] = [:]
     private enum DescriptorKind: UInt8 { case nominalType = 110, protocolType = 112 }
     private struct SourceScope: Hashable {
         let candidates: SymbolCandidateScope
@@ -638,35 +639,54 @@ package final class SymbolIndex {
     // scan without materializing unrelated strings or pinning a second copy.
     private func swiftSymbols(
         in bucket: SwiftBucket? = nil,
+        descriptorKind: DescriptorKind? = nil,
         matching predicate: (UnsafePointer<CChar>) -> Bool
     ) -> [IndexedSymbol] {
         guard let table = macho.symbols64 else { return tableSymbols(matching: predicate) }
-        if let indexes = swiftTableIndices {
-            let selected = bucket == .fallback ? swiftFallbackTableIndices : indexes
-            return selected.compactMap { index in
+        if swiftTableIndices == nil {
+            var indexes: [Int] = []
+            var fallbackIndexes: [Int] = []
+            var descriptors: [DescriptorKind: [Int]] = [:]
+            var index = 0
+            while index < table.numberOfSymbols {
                 let entry = table.symbols[index]
+                let current = index
+                index += 1
+                guard Int32(entry.n_type) & N_TYPE == N_SECT else { continue }
                 let name = table.stringBase.advanced(by: Int(entry.n_un.n_strx))
-                guard predicate(name) else { return nil }
-                return imageSymbol(
-                    name: String(cString: name),
-                    offset: table.addressStart + Int(entry.n_value)
-                )
+                var prefix = name
+                if prefix.pointee == 95 { prefix += 1 }
+                guard prefix.pointee == 36 && (prefix[1] == 115 || prefix[1] == 83) else {
+                    continue
+                }
+                indexes.append(current)
+                if SwiftModuleFilter.knownModulePrefix(name) == false {
+                    fallbackIndexes.append(current)
+                }
+                let count = strlen(name)
+                if count >= 2, name[count - 2] == 77 {
+                    if name[count - 1] == CChar(DescriptorKind.nominalType.rawValue) {
+                        descriptors[.nominalType, default: []].append(current)
+                    } else if name[count - 1] == CChar(DescriptorKind.protocolType.rawValue) {
+                        descriptors[.protocolType, default: []].append(current)
+                    }
+                }
             }
+            swiftTableIndices = indexes
+            swiftFallbackTableIndices = fallbackIndexes
+            swiftDescriptorTableIndices = descriptors
         }
-        var indexes: [Int] = []
-        var fallbackIndexes: [Int] = []
+        let selected: [Int]
+        if let descriptorKind {
+            selected = swiftDescriptorTableIndices[descriptorKind] ?? []
+        } else {
+            selected = bucket == .fallback ? swiftFallbackTableIndices : swiftTableIndices!
+        }
         var matches: [IndexedSymbol] = []
-        for index in 0..<table.numberOfSymbols {
+        for index in selected {
             let entry = table.symbols[index]
-            guard Int32(entry.n_type) & N_TYPE == N_SECT else { continue }
             let name = table.stringBase.advanced(by: Int(entry.n_un.n_strx))
-            var prefix = name
-            if prefix.pointee == 95 { prefix += 1 }
-            guard prefix.pointee == 36 && (prefix[1] == 115 || prefix[1] == 83) else { continue }
-            indexes.append(index)
-            let isFallback = SwiftModuleFilter.knownModulePrefix(name) == false
-            if isFallback { fallbackIndexes.append(index) }
-            guard bucket != .fallback || isFallback, predicate(name),
+            guard predicate(name),
                 let symbol = imageSymbol(
                     name: String(cString: name),
                     offset: table.addressStart + Int(entry.n_value)
@@ -674,8 +694,6 @@ package final class SymbolIndex {
             else { continue }
             matches.append(symbol)
         }
-        swiftTableIndices = indexes
-        swiftFallbackTableIndices = fallbackIndexes
         return matches
     }
 
@@ -915,23 +933,28 @@ package final class SymbolIndex {
         if let cached = sourceSymbols[scope] { return cached }
         let prefixes = DeclarationKey.symbolPrefixes(for: query.declaration.language)
         let accepts: (UnsafePointer<CChar>) -> Bool = { raw in
+            guard query.acceptsCandidate(raw) else { return false }
+            if let swiftBucket,
+                SwiftModuleFilter.knownModulePrefix(raw) != (swiftBucket == .knownModule)
+            {
+                return false
+            }
             if let descriptorKind {
                 let count = strlen(raw)
                 guard count >= 2, raw[count - 2] == 77,
                     raw[count - 1] == CChar(descriptorKind.rawValue)
                 else { return false }
             }
-            guard query.acceptsCandidate(raw) else { return false }
-            guard let swiftBucket else { return true }
-            return SwiftModuleFilter.knownModulePrefix(raw) == (swiftBucket == .knownModule)
+            return true
         }
         var symbols: [IndexedSymbol]
         if let cached = imageSymbols[scope] {
             symbols = cached
         } else {
             symbols =
-                query.declaration.language == .swift && descriptorKind == nil
-                ? swiftSymbols(in: swiftBucket, matching: accepts) : tableSymbols(matching: accepts)
+                query.declaration.language == .swift
+                ? swiftSymbols(in: swiftBucket, descriptorKind: descriptorKind, matching: accepts)
+                : tableSymbols(matching: accepts)
             if let trie = exportTrie {
                 symbols += filteredExports(
                     in: trie,
