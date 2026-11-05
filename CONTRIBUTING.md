@@ -244,7 +244,7 @@ Keep each pull request independently buildable and link its issue. Explain the b
 
 ## Publish a release
 
-Releases use Git tags and GitHub source archives, without uploaded binary assets. The [Release workflow](.github/workflows/release.yml) validates an approved commit with CI, then publishes its draft automatically. Failed or cancelled validation leaves the draft unpublished.
+Releases use Git tags and GitHub source archives, without uploaded binary assets. The approved tag is created before the [Release workflow](.github/workflows/release.yml) validates the commit with CI and publishes its draft. Failed or cancelled validation leaves the tag available and the draft unpublished.
 
 ### Start an approved release
 
@@ -259,20 +259,21 @@ python3 scripts/release.py start v0.1.0 \
 
 Replace the example values with the approved ones. The title defaults to the version; use `--title` to change it or `--prerelease` for a prerelease.
 
-The command creates or reuses a matching draft and dispatches validation from `main`. It reports the draft URL and dispatch acceptance without waiting for publication. Saving a draft in the GitHub UI does not start the workflow.
+The command creates or reuses a matching draft and tag, then dispatches validation from `main`. The tag makes the approved version available to package consumers immediately. It reports the draft URL, tag, and dispatch acceptance without waiting for publication. Saving a draft in the GitHub UI does not create a tag or start the workflow.
 
 ### While validation runs
 
-Leave the draft, assets, and tag unchanged. Before publication, the workflow rechecks the approved metadata and requires any existing tag to resolve to the tested SHA. If no tag exists, publication creates it after validation succeeds. Only the publish job receives publication credentials; it runs the release script from the workflow's `main` commit. Stable releases use GitHub's legacy latest-release selection; prereleases are not marked latest.
+Leave the draft, assets, and tag unchanged. Before publication, the workflow rechecks the approved metadata and requires the tag to resolve to the tested SHA. It does not create or move tags. Only the publish job receives publication credentials; it runs the release script from the workflow's `main` commit. Stable releases use GitHub's legacy latest-release selection; prereleases are not marked latest.
 
 ### Recover from a failure
 
 | Situation | Next step |
 | --- | --- |
+| Tag creation failed | Update the caller's GitHub CLI credentials or address the tag rule failure, then repeat the same start command. A matching draft is reused. |
 | Dispatch failed or its response is uncertain | Check Actions before repeating the command; GitHub may have accepted it. A repeat reuses a matching draft. |
 | Validation failed | Address the failure and use GitHub's re-run controls. A different target SHA needs approval again. |
-| Publication failed after creating the tag | Rerun the failed publish job with the same approved SHA; it resumes without moving the tag. |
+| Publication failed | Rerun the failed publish job with the same approved SHA; it resumes without moving the tag. |
 | Draft content changed | Review the new content and start a matching command. Older runs will not publish it. |
 | Publication already succeeded | A retry is a no-op. |
 
-The publish job normally uses `GITHUB_TOKEN`. GitHub may reject tag creation for a historical commit whose workflow files differ from current branch tips. In that case, configure `RELEASE_TOKEN` with a repository-scoped fine-grained PAT granting **Contents: write** and **Workflows: write**, or a classic token with `repo` and `workflow`, then rerun the failed publish job. Repository tag rules still apply. See [GitHub's reference-creation permissions](https://docs.github.com/en/rest/git/refs#create-a-reference).
+Tag creation uses the caller's authenticated GitHub CLI credentials. For historical commits whose workflow files differ from current branch tips, these credentials need **Contents: write** and **Workflows: write**, or the classic `repo` and `workflow` scopes. Update those credentials and repeat the same start command if GitHub rejects tag creation. Repository tag rules still apply. The publish job uses `GITHUB_TOKEN` or the configured `RELEASE_TOKEN` to publish the existing draft. See [GitHub's reference-creation permissions](https://docs.github.com/en/rest/git/refs#create-a-reference).
