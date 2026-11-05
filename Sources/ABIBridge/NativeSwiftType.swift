@@ -1309,7 +1309,7 @@ extension ABIRuntime {
         guard scope == .automatic else { return try prepare() }
         return try resolver.resolveSwift(
             .nominalType(
-                specification.name,
+                Array(specification.name.utf8),
                 specification.representation.map(ObjectIdentifier.init),
                 specification.genericArguments.map(\.identity),
                 .automatic

@@ -46,6 +46,22 @@ struct SymbolResolutionTests {
         #expect(explicit.image != prepared.image)
     }
     #endif
+
+    @Test func preparedTypesDistinguishCanonicallyEquivalentUTF8() async throws {
+        let module = "CachedType_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let fixture = try FixtureLibrary(
+            swiftModule: module,
+            swiftSource: "public struct \u{00E9} {}"
+        )
+        defer { fixture.cleanup() }
+        let runtime = ABIRuntime()
+        _ = try await runtime.resolve(.swift(.type(module + ".\u{00E9}")))
+        do {
+            _ = try await runtime.resolve(.swift(.type(module + ".e\u{0301}")))
+            Issue.record("A cached type must not match a different UTF-8 spelling")
+        } catch ABIResolutionError.declarationNotFound {}
+    }
+
     @Test(arguments: [false, true])
     func exactSpellingsPreserveCXXVariantsAndUnderscores(stripped: Bool) async throws {
         let fixture = try FixtureLibrary(stripped: stripped)
