@@ -12,6 +12,7 @@ package final class RuntimeSymbolResolver: Sendable {
     }
     package static let shared = RuntimeSymbolResolver()
     private let state = Mutex(ResolutionState())
+    private let pathObservations = RuntimePathObservation.Pool()
 
     #if DEBUG
     private let sharedCacheCapture:
@@ -64,11 +65,18 @@ package final class RuntimeSymbolResolver: Sendable {
         let identity: RuntimeImagePathIdentity
         let image: RuntimeImage
         let acquiringThread: UInt?
+        let observation: RuntimePathObservation?
 
-        init(identity: RuntimeImagePathIdentity, image: RuntimeImage, acquiringThread: UInt?) {
+        init(
+            identity: RuntimeImagePathIdentity,
+            image: RuntimeImage,
+            acquiringThread: UInt?,
+            observation: RuntimePathObservation?
+        ) {
             self.identity = identity
             self.image = image
             self.acquiringThread = acquiringThread
+            self.observation = observation
         }
     }
 
@@ -255,15 +263,14 @@ package final class RuntimeSymbolResolver: Sendable {
         loading: RuntimeImageLoadingPolicy
     ) throws -> [RuntimeImage] {
         let key = Array(path.utf8)
-        let identity = RuntimeImagePathIdentity(path: path)
         let thread = UInt(bitPattern: pthread_self())
         let (cached, generation) = state.withLock { ($0.pathImages[key], $0.cacheGeneration) }
-        if let cached, cached.identity == identity,
+        if let cached, cached.observation?.isCurrent != false,
             cached.acquiringThread == nil || cached.acquiringThread == thread
         {
             return [cached.image]
         }
-        if let cached, cached.identity != identity {
+        if let cached, cached.observation?.isCurrent == false {
             let retired = state.withLock { state -> PathImage? in
                 guard state.pathImages[key] === cached else { return nil }
                 return state.pathImages.removeValue(forKey: key)
@@ -271,6 +278,8 @@ package final class RuntimeSymbolResolver: Sendable {
             withExtendedLifetime(retired) {}
         }
         guard loading == .ifNeeded else { return try images(matching: selector) }
+        let identity = RuntimeImagePathIdentity(path: path)
+        let observation = identity == .sharedCache ? nil : pathObservations.observe(path)
         let image = try RuntimeImage.opening(path: path)
         // A path can change while dlopen runs constructors. Publish only the
         // file identity observed on both sides of that acquisition.
@@ -293,7 +302,8 @@ package final class RuntimeSymbolResolver: Sendable {
             let candidate = PathImage(
                 identity: identity,
                 image: image,
-                acquiringThread: verified ? nil : thread
+                acquiringThread: verified ? nil : thread,
+                observation: observation
             )
             return state.pathImages.updateValue(candidate, forKey: key)
         }

@@ -9,6 +9,39 @@ private final class CachedImageTestClass {}
 
 @Suite(.serialized)
 struct CachePublicationTests {
+    @Test func fileNotificationsInvalidateNestedSymbolicLinks() async throws {
+        let first = try FixtureLibrary(), second = try FixtureLibrary()
+        defer { first.cleanup(); second.cleanup() }
+        let intermediate = second.directory.appendingPathComponent("target.dylib")
+        let alias = first.directory.appendingPathComponent("alias.dylib")
+        try FileManager.default.createSymbolicLink(
+            at: intermediate,
+            withDestinationURL: first.libraryURL
+        )
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: intermediate)
+        let resolver = RuntimeSymbolResolver()
+        let path = RuntimeImageSelector.path(alias)
+        let original = try #require(resolver.acquireImages(path, loading: .ifNeeded).first)
+        let expected = try #require(
+            resolver.acquireImages(.path(second.libraryURL), loading: .ifNeeded).first
+        )
+        try FileManager.default.removeItem(at: intermediate)
+        try FileManager.default.createSymbolicLink(
+            at: intermediate,
+            withDestinationURL: second.libraryURL
+        )
+        let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+        while ContinuousClock.now < deadline {
+            let current = try #require(resolver.acquireImages(path, loading: .ifNeeded).first)
+            if current.identity == expected.identity {
+                #expect(current.identity != original.identity)
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        Issue.record("The symbolic-link notification did not invalidate the cached path")
+    }
+
     @Test func pathAcquisitionIsNotRepublishedAfterClear() throws {
         let fixture = try FixtureLibrary()
         defer { fixture.cleanup() }

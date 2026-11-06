@@ -160,6 +160,8 @@ public actor ABIRuntime {
 
     /// Releases this runtime's resolver indexes, Swift type cache, and completed Swift resolutions.
     ///
+    /// File-path acquisitions are invalidated synchronously. Call this after changing a managed library file or symbolic link when subsequent lookups must use the new target without waiting for file notifications.
+    ///
     /// Existing image, symbol, and callable handles remain valid, and in-progress resolutions may finish. Subsequent lookups rebuild the required indexes. This does not clear the process-shared call-interface cache or the native image catalog.
     public nonisolated func removeCachedResults() {
         swiftResolutionCache.removeCachedResults()

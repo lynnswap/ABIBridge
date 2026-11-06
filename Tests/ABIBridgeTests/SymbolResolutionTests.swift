@@ -943,7 +943,7 @@ struct SymbolResolutionTests {
         #expect(try await generation(of: alias, runtime: runtime) == secondGeneration)
     }
 
-    @Test func cachedSwiftFunctionsFollowRetargetedSymlinks() async throws {
+    @Test func cachedSwiftFunctionsFollowExplicitlyInvalidatedSymlinks() async throws {
         let module = "CachedAlias_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
         let first = try FixtureLibrary(
             swiftModule: module,
@@ -962,6 +962,7 @@ struct SymbolResolutionTests {
         #expect(try unsafe original.unsafeInvoke() == 42)
         try FileManager.default.removeItem(at: alias)
         try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: second.libraryURL)
+        runtime.removeCachedResults()
         let updated = try runtime.resolveAndWait(request, in: .path(alias))
         #expect(updated.symbol.image.identity != original.symbol.image.identity)
         #expect(try unsafe updated.unsafeInvoke() == 84)
