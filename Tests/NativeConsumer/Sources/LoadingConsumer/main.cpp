@@ -2,14 +2,40 @@
 #include <ABIBridge/NativeInvocation.hpp>
 #include <atomic>
 #include <cassert>
+#include <chrono>
 #include <dlfcn.h>
 #include <filesystem>
 #include <iostream>
+#include <semaphore>
 #include <thread>
 #include <unistd.h>
 #include <vector>
 
 static std::atomic<unsigned> initializationCount = 0;
+static const char *loadingPath;
+static std::thread initializationObserver;
+static std::binary_semaphore observerStarted{0};
+static std::binary_semaphore observerFinished{0};
+static int observedValue;
+
+extern "C" __attribute__((used)) void ABIBridgeLoadingWillInitialize() {
+    using namespace abi_bridge;
+    auto runtime = runtime::current();
+    const declaration query("ABIBridgeLoadedValue", language::c);
+    // Seed the path cache from inside the initializer. Other threads must still
+    // let the loader finish initialization before reusing that acquisition.
+    runtime.resolve(query, image_selector::path(loadingPath));
+    initializationObserver = std::thread([] {
+        observerStarted.release();
+        auto runtime = abi_bridge::runtime::current();
+        auto symbol = runtime.resolve({"ABIBridgeLoadedValue", abi_bridge::language::c},
+                                      abi_bridge::image_selector::path(loadingPath));
+        observedValue = abi_bridge::function<int()>(symbol).unsafe_invoke();
+        observerFinished.release();
+    });
+    observerStarted.acquire();
+    assert(!observerFinished.try_acquire_for(std::chrono::milliseconds(100)));
+}
 
 static void checkDuplicateInstallNames(const std::filesystem::path& directory) {
     using namespace abi_bridge;
@@ -45,6 +71,7 @@ extern "C" __attribute__((used)) void ABIBridgeLoadingDidInitialize() {
 
 int main(int argc, char **argv) {
     assert(argc == 2);
+    loadingPath = argv[1];
     using namespace abi_bridge;
     auto runtime = abi_bridge::runtime::current();
     const auto scope = image_selector::install_name("@rpath/libLoadingFixture.dylib");
@@ -55,6 +82,8 @@ int main(int argc, char **argv) {
     } catch (const resolution_error& error) { assert(error.code() == ABIFailureImageNotLoaded); }
     assert(initializationCount == 0);
     auto symbol = runtime.resolve(query, scope);
+    initializationObserver.join();
+    assert(observerFinished.try_acquire() && observedValue == 42);
     auto value = function<int()>(symbol);
     assert(value.unsafe_invoke() == 42 && initializationCount == 1);
     auto absolute = runtime.resolve(query, image_selector::path(argv[1]));

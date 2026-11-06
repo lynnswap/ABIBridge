@@ -21,7 +21,7 @@ package final class RuntimeSymbolResolver: Sendable {
             ) -> SharedCacheSymbols.CapturedSymbols?
         )?
     package enum CachePublication: Sendable {
-        case automaticScope, importIndex, virtualEntries
+        case automaticScope, importIndex, virtualEntries, pathImage
     }
     private let beforeCachePublication:
         (
@@ -58,6 +58,18 @@ package final class RuntimeSymbolResolver: Sendable {
     private struct Scope: Hashable {
         let selector: RuntimeImageSelector
         let loading: RuntimeImageLoadingPolicy
+    }
+
+    private final class PathImage: Sendable {
+        let identity: RuntimeImagePathIdentity
+        let image: RuntimeImage
+        let acquiringThread: UInt?
+
+        init(identity: RuntimeImagePathIdentity, image: RuntimeImage, acquiringThread: UInt?) {
+            self.identity = identity
+            self.image = image
+            self.acquiringThread = acquiringThread
+        }
     }
 
     // Results have their own lock. Retiring the node releases all image leases
@@ -211,17 +223,18 @@ package final class RuntimeSymbolResolver: Sendable {
         _ selector: RuntimeImageSelector,
         loading: RuntimeImageLoadingPolicy
     ) throws -> [RuntimeImage] {
-        guard loading == .ifNeeded, selector != .automatic else {
-            return try images(matching: selector)
-        }
-        try selector.validateTarget()
         switch selector {
         case .automatic: return try images(matching: selector)
         case .installName(let name):
+            guard loading == .ifNeeded else { return try images(matching: selector) }
+            try selector.validateTarget()
             return [try RuntimeImage.opening(path: name)]
         case .path(let url):
-            return [try RuntimeImage.opening(path: url.path)]
+            try selector.validateTarget()
+            return try acquirePath(url.path, selector: selector, loading: loading)
         case .framework(let name):
+            guard loading == .ifNeeded else { return try images(matching: selector) }
+            try selector.validateTarget()
             let loaded = try images(matching: selector)
             if loaded.count == 1 { return [try loaded[0].opened()] }
             if loaded.count > 1 {
@@ -234,6 +247,57 @@ package final class RuntimeSymbolResolver: Sendable {
             guard let target = candidates.first else { return [] }
             return [try RuntimeImage.opening(path: target.path)]
         }
+    }
+
+    private func acquirePath(
+        _ path: String,
+        selector: RuntimeImageSelector,
+        loading: RuntimeImageLoadingPolicy
+    ) throws -> [RuntimeImage] {
+        let key = Array(path.utf8)
+        let identity = RuntimeImagePathIdentity(path: path)
+        let thread = UInt(bitPattern: pthread_self())
+        let (cached, generation) = state.withLock { ($0.pathImages[key], $0.cacheGeneration) }
+        if let cached, cached.identity == identity,
+            cached.acquiringThread == nil || cached.acquiringThread == thread
+        {
+            return [cached.image]
+        }
+        if let cached, cached.identity != identity {
+            let retired = state.withLock { state -> PathImage? in
+                guard state.pathImages[key] === cached else { return nil }
+                return state.pathImages.removeValue(forKey: key)
+            }
+            withExtendedLifetime(retired) {}
+        }
+        guard loading == .ifNeeded else { return try images(matching: selector) }
+        let image = try RuntimeImage.opening(path: path)
+        // A path can change while dlopen runs constructors. Publish only the
+        // file identity observed on both sides of that acquisition.
+        guard let identity, identity == RuntimeImagePathIdentity(path: path) else {
+            return [image]
+        }
+        #if DEBUG
+        beforeCachePublication?(.pathImage, self)
+        #endif
+        let retired = state.withLock { state -> PathImage? in
+            guard state.cacheGeneration == generation else { return nil }
+            // A recursive dlopen can return inside this image's initializer.
+            // Another thread's successful acquisition confirms initialization
+            // before the cached lease becomes reusable on every thread.
+            let previous = state.pathImages[key]
+            let verified =
+                previous?.identity == identity
+                && previous?.image.identity == image.identity
+                && previous?.acquiringThread != thread
+            let candidate = PathImage(
+                identity: identity,
+                image: image,
+                acquiringThread: verified ? nil : thread
+            )
+            return state.pathImages.updateValue(candidate, forKey: key)
+        }
+        return withExtendedLifetime(retired) { [image] }
     }
 
     package func acquireImages(
@@ -652,7 +716,7 @@ package final class RuntimeSymbolResolver: Sendable {
         let removed = state.withLock { state in
             let indexes = (
                 state.indexes, state.imports, state.virtualEntries, state.automatic,
-                state.classImages, state.virtualTables, state.queries
+                state.classImages, state.virtualTables, state.queries, state.pathImages
             )
             state.cacheGeneration &+= 1
             state.indexes = [:]
@@ -662,6 +726,7 @@ package final class RuntimeSymbolResolver: Sendable {
             state.automatic = nil
             state.classImages = [:]
             state.queries = [:]
+            state.pathImages = [:]
             return indexes
         }
         withExtendedLifetime(removed) {}
@@ -1050,6 +1115,7 @@ package final class RuntimeSymbolResolver: Sendable {
         var classImages: [ObjectIdentifier: RuntimeImage] = [:]
         var indexes: [RuntimeImageIdentity: SymbolIndex] = [:]
         var queries: [RuntimeDeclaration: SymbolQuery] = [:]
+        var pathImages: [[UInt8]: PathImage] = [:]
         var imports: [RuntimeImageIdentity: ImportIndex] = [:]
         var virtualEntries: [RuntimeImageIdentity: VirtualEntryIndex] = [:]
         var virtualTables: [UInt: VirtualEntryIndex] = [:]

@@ -9,6 +9,54 @@ private final class CachedImageTestClass {}
 
 @Suite(.serialized)
 struct CachePublicationTests {
+    @Test func pathAcquisitionIsNotRepublishedAfterClear() throws {
+        let fixture = try FixtureLibrary()
+        defer { fixture.cleanup() }
+        let publications = Mutex(0)
+        let resolver = RuntimeSymbolResolver(beforePublishingCache: { cache, resolver in
+            guard case .pathImage = cache else { return }
+            let count = publications.withLock { count in
+                count += 1; return count
+            }
+            if count == 1 { resolver.removeCachedResults() }
+        })
+        let path = RuntimeImageSelector.path(fixture.libraryURL)
+        let first = try #require(resolver.acquireImages(path, loading: .ifNeeded).first)
+        let current = try #require(resolver.acquireImages(path, loading: .ifNeeded).first)
+        #expect(current.lease !== first.lease)
+        let cached = try #require(resolver.acquireImages(path, loading: .ifNeeded).first)
+        #expect(cached.lease === current.lease)
+        #expect(publications.withLock { $0 } == 2)
+    }
+
+    @Test func pathAcquisitionsReuseTheirLeaseAndClearWithTheResolver() throws {
+        let fixture = try FixtureLibrary()
+        defer { fixture.cleanup() }
+        let resolver = RuntimeSymbolResolver()
+        let path = RuntimeImageSelector.path(fixture.libraryURL)
+        let first = try #require(resolver.acquireImages(path, loading: .ifNeeded).first)
+        let repeated = try #require(resolver.acquireImages(path, loading: .ifNeeded).first)
+        #expect(repeated.lease === first.lease)
+        let inspection = try #require(resolver.acquireImages(path, loading: .loadedOnly).first)
+        #expect(inspection.lease === first.lease)
+        let finished = DispatchSemaphore(value: 0)
+        let acquired = Mutex<Result<RuntimeImage?, any Error>?>(nil)
+        Thread {
+            let result = Result { try resolver.acquireImages(path, loading: .ifNeeded).first }
+            acquired.withLock { $0 = result }
+            finished.signal()
+        }.start()
+        #expect(finished.wait(timeout: .now() + 10) == .success)
+        let result = try #require(acquired.withLock { $0 })
+        let otherThread = try #require(try result.get())
+        let shared = try #require(resolver.acquireImages(path, loading: .ifNeeded).first)
+        #expect(shared.lease === otherThread.lease)
+        resolver.removeCachedResults()
+        let reopened = try #require(resolver.acquireImages(path, loading: .ifNeeded).first)
+        #expect(reopened.identity == first.identity)
+        #expect(reopened.lease !== first.lease)
+    }
+
     @Test func automaticScopeIsNotRepublishedAfterClear() throws {
         let declaration = RuntimeDeclaration(name: "getpid", language: .c)
         let warmup = RuntimeSymbolResolver()

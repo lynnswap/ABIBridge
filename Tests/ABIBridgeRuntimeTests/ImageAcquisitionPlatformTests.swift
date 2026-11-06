@@ -1,5 +1,6 @@
 import ABIBridgeRuntime
 import CoreFoundation
+import Foundation
 import Testing
 
 struct ImageAcquisitionPlatformTests {
@@ -19,6 +20,10 @@ struct ImageAcquisitionPlatformTests {
         let fromLease = try runtime.resolve(declaration, in: image)
         #expect(fromLease.image.identity == image.identity)
         #expect(function.address == fromLease.address)
+        let path = RuntimeImageSelector.path(URL(fileURLWithPath: image.path))
+        let first = try #require(runtime.acquireImages(path, loading: .ifNeeded).first)
+        let repeated = try #require(runtime.acquireImages(path, loading: .ifNeeded).first)
+        #expect(repeated.lease === first.lease)
         runtime.removeCachedResults()
         unsafe fromLease.withUnsafeAddress { address in
             #expect(
