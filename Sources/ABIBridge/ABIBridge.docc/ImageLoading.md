@@ -15,6 +15,8 @@ let create = try runtime.resolveAndWait(
 
 Explicit framework and file-URL scopes default to ``ImageLoadingPolicy/ifNeeded``. The native loader acquires the selected image and performs its normal initialization before resolution proceeds. A catalog entry or process-lifetime mapping alone is not used as an initialization guarantee. Ordinary dyld reentrancy rules still apply when resolution is called from an initializer.
 
+After successful file-URL acquisition, the runtime retains and reuses that image while the path identifies the same file. Cache hits check the file identity without calling `dlopen` again. The first acquisition on another thread still passes through the loader to finish any recursive initialization; subsequent lookups can reuse the acquisition across threads. Shared-cache paths can be reused even when no separate file is present. A changed or unavailable path is acquired again; `removeCachedResults()` also discards these retained acquisitions. Existing handles keep their original image when a path is redirected.
+
 Loading runs on the resolution thread: the caller for synchronous lookup, or a worker for async preparation and resolution factories. If the library requires an initialization context, acquire it there and then use `loading: .loadedOnly`. See <doc:SymbolLookup> for choosing synchronous or async lookup.
 
 Framework lookup first checks matching loaded images, then application and system public/private framework locations, including shared-cache-only images. Multiple candidates throw `ABIResolutionError.ambiguousImage`; use an executable URL to distinguish them. Discovery does not guarantee loadability.

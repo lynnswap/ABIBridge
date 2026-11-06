@@ -35,6 +35,22 @@ package enum RuntimeImageLoadingPolicy: Int32, Hashable, Sendable {
     case loadedOnly = 1
 }
 
+enum RuntimeImagePathIdentity: Equatable, Sendable {
+    case file(device: dev_t, inode: ino_t)
+    case sharedCache
+
+    init?(path: String) {
+        var information = stat()
+        if path.withCString({ stat($0, &information) }) == 0 {
+            self = .file(device: information.st_dev, inode: information.st_ino)
+        } else if path.withCString(ABIImageIsInSharedCache) {
+            self = .sharedCache
+        } else {
+            return nil
+        }
+    }
+}
+
 package struct RuntimeImage: Hashable, Sendable {
     package init(identity: RuntimeImageIdentity, path: String, lease: RuntimeImageLease) {
         self.identity = identity; self.path = path; self.lease = lease
