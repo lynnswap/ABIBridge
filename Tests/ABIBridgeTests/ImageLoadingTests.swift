@@ -47,11 +47,18 @@ struct ImageLoadingTests {
             in: first!.symbol.image
         )
         #expect(first!.symbol.image.identity == second!.symbol.image.identity)
+        let originalGeneration = second!.symbol.image.identity.loadGeneration
         runtime.removeCachedResults()
         first = nil
         #expect(try unsafe second!.unsafeInvoke() == 42)
         second = nil
         #expect(try runtime.resolveImagesAndWait(matching: scope).isEmpty)
+        let reloaded = try runtime.resolveAndWait(
+            .cxx(.function(declaration.name, as: (() -> Int32).self)),
+            in: scope
+        )
+        #expect(reloaded.symbol.image.identity.loadGeneration != originalGeneration)
+        #expect(try unsafe reloaded.unsafeInvoke() == 42)
     }
 
     @Test func installNamesAndSymlinksSelectTheActualImage() async throws {

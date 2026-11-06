@@ -16,6 +16,7 @@
 #include <utility>
 #include <string>
 #include <vector>
+#include <unordered_map>
 #include <dispatch/dispatch.h>
 
 namespace {
@@ -50,6 +51,9 @@ struct Catalog {
     uint64_t generation = 0;
     uint64_t revision = 0;
     std::vector<Image> images;
+    // A dyld handle identifies its loader until that image unloads. This map
+    // owns no loader references; remove-image notification retires its entries.
+    std::unordered_map<void *, uint64_t> handles;
     std::shared_ptr<const std::vector<Image>> snapshot;
     std::vector<std::weak_ptr<Observation>> observations;
 };
@@ -117,6 +121,10 @@ void removedImage(const mach_header *header, intptr_t)
     auto& state = catalog();
     std::lock_guard lock(state.mutex);
     const auto address = reinterpret_cast<uintptr_t>(header);
+    for (const auto& image : state.images) {
+        if (image.header == address)
+            std::erase_if(state.handles, [&](const auto& entry) { return entry.second == image.generation; });
+    }
     std::erase_if(state.images, [address](const Image& image) { return image.header == address; });
     ++state.revision;
     state.snapshot.reset();
@@ -314,11 +322,12 @@ ABIImageLease *ABIAcquireImageLease(uint64_t generation)
 
 namespace {
 
-std::vector<Image> imageSnapshot()
+std::shared_ptr<const std::vector<Image>> imageSnapshot()
 {
     auto& state = catalog();
     std::lock_guard lock(state.mutex);
-    return state.images;
+    if (!state.snapshot) state.snapshot = std::make_shared<const std::vector<Image>>(state.images);
+    return state.snapshot;
 }
 
 std::string canonicalPath(const std::string& path)
@@ -351,7 +360,8 @@ bool hasRegisteredTarget(const std::string& target)
         expanded = path.substr(0, path.find_last_of('/') + 1) + target.substr(prefixLength);
     }
     const auto canonical = canonicalPath(expanded);
-    for (const auto& image : imageSnapshot()) {
+    const auto images = imageSnapshot();
+    for (const auto& image : *images) {
         // This classifies a failed acquisition, not a successful image identity.
         // In particular, matching LC_ID_DYLIB never selects a lease.
         if (target == image.path || (!image.installName.empty() && target == image.installName))
@@ -385,17 +395,20 @@ ABIImageLease *ABIOpenImage(const char *path, bool loadIfNeeded, ABIResolutionFa
         loadingFailure(error, ABIFailureImageUnavailable, "The native image catalog is unavailable.");
         return nullptr;
     }
-    const auto canonical = canonicalPath(path);
-    // An executable cannot be opened as a dylib. It already owns process lifetime.
-    for (const auto& image : imageSnapshot()) {
-        if (image.executable && canonicalPath(image.path) == canonical)
-            return new ABIImageLease { nullptr, image };
-    }
     void *handle = dlopen(path, RTLD_LAZY | RTLD_LOCAL | RTLD_FIRST | (loadIfNeeded ? 0 : RTLD_NOLOAD));
-    if (!handle && !loadIfNeeded && path[0] != '@' && std::strchr(path, '/') && canonical != path) {
-        // dyld can skip realpath for suffix aliases of a canonical path.
-        // Keep its original selection first, and preserve initialization readiness.
-        handle = dlopen(canonical.c_str(), RTLD_LAZY | RTLD_LOCAL | RTLD_FIRST | RTLD_NOLOAD);
+    if (!handle) {
+        const auto canonical = canonicalPath(path);
+        // An executable cannot be opened as a dylib. It already owns process lifetime.
+        const auto images = imageSnapshot();
+        for (const auto& image : *images) {
+            if (image.executable && canonicalPath(image.path) == canonical)
+                return new ABIImageLease { nullptr, image };
+        }
+        if (!loadIfNeeded && path[0] != '@' && std::strchr(path, '/') && canonical != path) {
+            // dyld can skip realpath for suffix aliases of a canonical path.
+            // Keep its original selection first, and preserve initialization readiness.
+            handle = dlopen(canonical.c_str(), RTLD_LAZY | RTLD_LOCAL | RTLD_FIRST | RTLD_NOLOAD);
+        }
     }
     if (!handle) {
         const char *loaderError = dlerror();
@@ -406,17 +419,30 @@ ABIImageLease *ABIOpenImage(const char *path, bool loadIfNeeded, ABIResolutionFa
         return nullptr;
     }
     std::unique_ptr<void, decltype(&dlclose)> owner(handle, dlclose);
+    {
+        auto& state = catalog();
+        std::lock_guard lock(state.mutex);
+        if (const auto cached = state.handles.find(handle); cached != state.handles.end()) {
+            const auto image = findGeneration(state.images, cached->second);
+            if (image != state.images.end()) {
+                auto *lease = new ABIImageLease { handle, *image };
+                owner.release();
+                return lease;
+            }
+        }
+    }
     // Catalog callbacks have completed when dlopen returns. Do not identify the
     // image from dlsym: a re-export can belong to a dependency, and local-only
     // libraries need not export an anchor or Mach-O header symbol.
     const auto images = imageSnapshot();
+    const auto canonical = canonicalPath(path);
     const auto leaf = leafName(canonical);
     const Image *matched = nullptr;
     std::vector<const Image *> unavailablePaths;
     for (int pass = 0; pass < 2 && !matched; ++pass) {
-        for (const auto& image : images) {
+        for (const auto& image : *images) {
             const bool likely = leafName(image.path) == leaf || leafName(image.installName) == leaf;
-            if (image.executable || (pass == 0) != likely) continue;
+            if ((pass == 0) != likely) continue;
             const auto match = pathMatchesHandle(image.path, handle);
             if (!match) { unavailablePaths.push_back(&image); continue; }
             if (!*match) continue;
@@ -434,7 +460,7 @@ ABIImageLease *ABIOpenImage(const char *path, bool loadIfNeeded, ABIResolutionFa
             // two ordinary loaded images can share it and resolve to one handle.
             if (!image->processLifetime || !image->installName.starts_with('/') ||
                 !image->path.ends_with(image->installName) ||
-                std::count_if(images.begin(), images.end(), [&](const Image& other) {
+                std::count_if(images->begin(), images->end(), [&](const Image& other) {
                     return other.installName == image->installName;
                 }) != 1)
                 continue;
@@ -452,6 +478,11 @@ ABIImageLease *ABIOpenImage(const char *path, bool loadIfNeeded, ABIResolutionFa
         return nullptr;
     }
     auto *lease = new ABIImageLease { handle, *matched };
+    {
+        auto& state = catalog();
+        std::lock_guard lock(state.mutex);
+        state.handles[handle] = matched->generation;
+    }
     owner.release();
     return lease;
 }
@@ -463,7 +494,8 @@ ABIImageLease *ABIOpenLoadedImage(uint64_t generation, ABIResolutionFailure **er
         loadingFailure(error, ABIFailureImageUnavailable, "The native image catalog is unavailable.");
         return nullptr;
     }
-    for (const auto& image : imageSnapshot()) {
+    const auto images = imageSnapshot();
+    for (const auto& image : *images) {
         if (image.generation != generation) continue;
         if (image.executable) return new ABIImageLease { nullptr, image };
         std::string messages;

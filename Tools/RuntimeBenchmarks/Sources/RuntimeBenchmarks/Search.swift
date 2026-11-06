@@ -119,8 +119,29 @@ struct SearchBenchmark {
                     }
                     retained.append(seconds(start.duration(to: .now)) * 1e6 / 1000)
                 }
+                let missing: NativeRequest<NativeSymbolLookupRequest>
+                switch language {
+                case "C++": missing = .cxx(.symbol("LookupBench::absent()"))
+                case "C": missing = .c(.symbol("lookup_absent"))
+                default: missing = .swift(.symbol("SwiftLookupBench.absent() -> Swift.Int32"))
+                }
+                var absent: [Double] = []
+                for _ in 0..<5 {
+                    let start = ContinuousClock.now
+                    for _ in 0..<1000 {
+                        do {
+                            _ = try runtime.resolveAndWait(
+                                missing,
+                                in: initial.image,
+                                loading: .loadedOnly
+                            )
+                            preconditionFailure("Missing declaration unexpectedly resolved")
+                        } catch ABIResolutionError.declarationNotFound {}
+                    }
+                    absent.append(seconds(start.duration(to: .now)) * 1e6 / 1000)
+                }
                 print(
-                    "\(language) declarations=\(count) first=\(median(first)) ms repeated-path=\(median(repeated)) us retained-image=\(median(retained)) us"
+                    "\(language) declarations=\(count) first=\(median(first)) ms repeated-path=\(median(repeated)) us retained-image=\(median(retained)) us absent=\(median(absent)) us"
                 )
             }
             try measureMembers(count: count, in: directory)
