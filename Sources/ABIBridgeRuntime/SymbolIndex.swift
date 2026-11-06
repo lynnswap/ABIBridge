@@ -467,6 +467,9 @@ package final class SymbolIndex {
     }
     private var swiftMembers: [SwiftMemberScope: SwiftMemberIndex] = [:]
     private var swiftRecords: [IndexedSymbol: RuntimeSwiftDeclaration?] = [:]
+    private var resolutions:
+        [RuntimeDeclaration: [RuntimeSymbol.Source: Result<Resolution, RuntimeResolutionError>]] =
+            [:]
 
     package init(image: RuntimeImage) {
         self.image = image
@@ -582,6 +585,7 @@ package final class SymbolIndex {
             }
         }
         guard !additions.isEmpty else { return }
+        resolutions.removeAll()
         let fallback = (
             sourceSymbols.filter { $0.key.candidates == .swiftFallback },
             decoded[Self.swiftFallbackScope],
@@ -1468,6 +1472,21 @@ package final class SymbolIndex {
     }
 
     func resolveCandidate(
+        _ query: SymbolQuery,
+        source: RuntimeSymbol.Source
+    ) throws -> Resolution {
+        if let cached = resolutions[query.declaration]?[source] { return try cached.get() }
+        let result: Result<Resolution, RuntimeResolutionError>
+        do {
+            result = .success(try findCandidate(query, source: source))
+        } catch let failure as RuntimeResolutionError {
+            result = .failure(failure)
+        }
+        resolutions[query.declaration, default: [:]][source] = result
+        return try result.get()
+    }
+
+    private func findCandidate(
         _ query: SymbolQuery,
         source: RuntimeSymbol.Source
     ) throws -> Resolution {

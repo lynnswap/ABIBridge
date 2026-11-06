@@ -54,8 +54,10 @@ struct SymbolIndexStorageTests {
         let expected = try fixture.address(kind: 0)
         let index = SymbolIndex(image: image)
         #expect(index.matches(declaration).isEmpty)
+        #expect(try index.resolve(declaration, source: .sharedCache) == nil)
         let exact = RuntimeDeclaration(machOName: "__ZN15ABICacheFixture3addEii", language: .cxx)
         #expect(index.matches(exact).isEmpty)
+        #expect(try index.resolve(exact, source: .sharedCache) == nil)
         index.appendSharedCacheSymbols(
             [
                 IndexedSymbol(
@@ -68,6 +70,7 @@ struct SymbolIndexStorageTests {
         )
         let resolved = try #require(try index.resolve(declaration, source: .sharedCache))
         #expect(unsafe resolved.withUnsafeAddress { UInt(bitPattern: $0) } == expected)
+        #expect(try index.resolve(declaration, source: .image) == nil)
         let exactResolved = try #require(try index.resolve(exact, source: .sharedCache))
         #expect(unsafe exactResolved.withUnsafeAddress { UInt(bitPattern: $0) } == expected)
     }

@@ -642,7 +642,7 @@ package final class RuntimeSymbolResolver: Sendable {
         return record(
             primary
                 + matches(.sharedCache, in: owners).filter {
-                $0.record.role == .implementation && identities.contains($0.record.identity)
+                    $0.record.role == .implementation && identities.contains($0.record.identity)
                 },
             searchingSharedCache: false
         )
@@ -652,7 +652,7 @@ package final class RuntimeSymbolResolver: Sendable {
         let removed = state.withLock { state in
             let indexes = (
                 state.indexes, state.imports, state.virtualEntries, state.automatic,
-                state.classImages, state.virtualTables
+                state.classImages, state.virtualTables, state.queries
             )
             state.cacheGeneration &+= 1
             state.indexes = [:]
@@ -661,6 +661,7 @@ package final class RuntimeSymbolResolver: Sendable {
             state.virtualTables = [:]
             state.automatic = nil
             state.classImages = [:]
+            state.queries = [:]
             return indexes
         }
         withExtendedLifetime(removed) {}
@@ -763,8 +764,15 @@ package final class RuntimeSymbolResolver: Sendable {
     ) throws -> RuntimeSymbol {
         // Keep these indexes for the whole lookup even if another caller clears
         // the cache while shared-cache metadata is being read.
-        let query = SymbolQuery(declaration)
-        let candidates = state.withLock { state in images.map { state.index(for: $0) } }
+        let (cachedQuery, candidates, generation) = state.withLock { state in
+            (state.queries[declaration], images.map { state.index(for: $0) }, state.cacheGeneration)
+        }
+        let query = cachedQuery ?? SymbolQuery(declaration)
+        if cachedQuery == nil {
+            state.withLock { state in
+                if state.cacheGeneration == generation { state.queries[declaration] = query }
+            }
+        }
         return try withExtendedLifetime(candidates) {
             var hasKindMismatch = false
             func matches(_ source: RuntimeSymbol.Source) throws -> [RuntimeSymbol] {
@@ -1041,6 +1049,7 @@ package final class RuntimeSymbolResolver: Sendable {
         var automatic: AutomaticScope?
         var classImages: [ObjectIdentifier: RuntimeImage] = [:]
         var indexes: [RuntimeImageIdentity: SymbolIndex] = [:]
+        var queries: [RuntimeDeclaration: SymbolQuery] = [:]
         var imports: [RuntimeImageIdentity: ImportIndex] = [:]
         var virtualEntries: [RuntimeImageIdentity: VirtualEntryIndex] = [:]
         var virtualTables: [UInt: VirtualEntryIndex] = [:]
