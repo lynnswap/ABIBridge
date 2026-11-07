@@ -88,7 +88,7 @@ private final class ProjectionPreparationGate: Sendable {
 }
 #endif
 
-@Suite(.serialized)
+@Suite(.serialized, LookupBatch())
 struct SwiftRuntimeValueProjectionTests {
     @MainActor @Test
     func createsNamedEmptyEnumCasesForNativeCalls() async throws {
@@ -1285,49 +1285,51 @@ struct SwiftRuntimeValueProjectionTests {
         )
         defer { fixture.cleanup() }
         let runtime = ABIRuntime()
-        let type = try await runtime.resolve(
-            .swift(.type(module + ".Selection")),
-            in: .path(fixture.libraryURL)
-        )
-        let count = try await runtime.resolve(
-            .swift(
-                .function(
-                    module + ".destructionCount()",
-                    as: (() -> Int64).self
-                )
-            ),
-            in: .path(fixture.libraryURL)
-        )
-        let read = try await type.resolve(
-            .swift(
-                .method(
-                    "isEmpty()",
-                    as: (() -> Bool).self,
-                    receiverABI: .opaque(named: type.name)
+        try await runtime.prepare { _ async throws in
+            let type = try await runtime.resolve(
+                .swift(.type(module + ".Selection")),
+                in: .path(fixture.libraryURL)
+            )
+            let count = try await runtime.resolve(
+                .swift(
+                    .function(
+                        module + ".destructionCount()",
+                        as: (() -> Int64).self
+                    )
+                ),
+                in: .path(fixture.libraryURL)
+            )
+            let read = try await type.resolve(
+                .swift(
+                    .method(
+                        "isEmpty()",
+                        as: (() -> Bool).self,
+                        receiverABI: .opaque(named: type.name)
+                    )
                 )
             )
-        )
-        let fill = try await type.resolve(
-            .swift(
-                .method(
-                    "fill()",
-                    as: (() -> Void).self,
-                    receiverABI: .opaque(named: type.name),
-                    receiver: .mutating
+            let fill = try await type.resolve(
+                .swift(
+                    .method(
+                        "fill()",
+                        as: (() -> Void).self,
+                        receiverABI: .opaque(named: type.name),
+                        receiver: .mutating
+                    )
                 )
             )
-        )
-        var value: NativeSwiftValue? = try type.makeEnumCase(named: "empty")
-        #expect(try unsafe count.unsafeInvoke() == 0)
-        #expect(try unsafe read.unsafeInvoke(on: #require(value)))
-        try unsafe fill.unsafeInvoke(on: #require(value))
-        #expect(try unsafe !read.unsafeInvoke(on: #require(value)))
-        var copied: NativeSwiftValue? = try #require(value).copy()
-        value = nil
-        #expect(try unsafe count.unsafeInvoke() == 0)
-        #expect(try unsafe !read.unsafeInvoke(on: #require(copied)))
-        copied = nil
-        #expect(try unsafe count.unsafeInvoke() == 1)
+            var value: NativeSwiftValue? = try type.makeEnumCase(named: "empty")
+            #expect(try unsafe count.unsafeInvoke() == 0)
+            #expect(try unsafe read.unsafeInvoke(on: #require(value)))
+            try unsafe fill.unsafeInvoke(on: #require(value))
+            #expect(try unsafe !read.unsafeInvoke(on: #require(value)))
+            var copied: NativeSwiftValue? = try #require(value).copy()
+            value = nil
+            #expect(try unsafe count.unsafeInvoke() == 0)
+            #expect(try unsafe !read.unsafeInvoke(on: #require(copied)))
+            copied = nil
+            #expect(try unsafe count.unsafeInvoke() == 1)
+        }
     }
 
     @MainActor @Test

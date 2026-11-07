@@ -10,59 +10,64 @@ import ABIBridgeCore.Backend
 import Foundation
 import Testing
 
+@Suite(LookupBatch())
 struct SwiftExistentialValueTests {
     @Test func erasedProtocolGetterResultsResolveFromTheirDescriptors() async throws {
         let runtime = ABIRuntime()
-        let type = try await runtime.resolve(
-            .swift(.type("ManagedSwiftFixtures.ExistentialGetterOwner"))
-        )
-        let receiver = ExistentialGetterOwner(42)
-        let typed = try await type.resolve(
-            .swift(
-                .getter(
-                    "value",
-                    as: (() -> any ExistentialValue).self
+        try await runtime.prepare { _ async throws in
+            let type = try await runtime.resolve(
+                .swift(.type("ManagedSwiftFixtures.ExistentialGetterOwner"))
+            )
+            let receiver = ExistentialGetterOwner(42)
+            let typed = try await type.resolve(
+                .swift(
+                    .getter(
+                        "value",
+                        as: (() -> any ExistentialValue).self
+                    )
                 )
             )
-        )
-        #expect(try unsafe typed.unsafeInvoke(on: receiver).number == 42)
-        let erased = try await type.resolve(
-            .swift(
-                .getter(
-                    "value",
-                    as: (() -> NativeSwiftValue).self
+            #expect(try unsafe typed.unsafeInvoke(on: receiver).number == 42)
+            let erased = try await type.resolve(
+                .swift(
+                    .getter(
+                        "value",
+                        as: (() -> NativeSwiftValue).self
+                    )
                 )
             )
-        )
-        let value = try unsafe erased.unsafeInvoke(on: receiver)
-        #expect(try value.withCopy { ($0 as? any ExistentialValue)?.number } == 42)
+            let value = try unsafe erased.unsafeInvoke(on: receiver)
+            #expect(try value.withCopy { ($0 as? any ExistentialValue)?.number } == 42)
+        }
     }
 
     @Test func superclassTypePacksUseConsistentCompilerContainers() async throws {
         let runtime = ABIRuntime()
-        for pack in [[], [Int.self, String.self]] as [[Any.Type]] {
-            let bindings: [NativeSwiftGenericArgument] = [.pack(pack.map { .type($0) })]
-            let make = try await runtime.resolve(
-                .swift(
-                    .function(
-                        "ManagedSwiftFixtures.makeSuperclassPackExistential(_:)",
-                        as: ((Int64) -> NativeSwiftValue).self,
-                        genericArguments: bindings
+        try await runtime.prepare { _ async throws in
+            for pack in [[], [Int.self, String.self]] as [[Any.Type]] {
+                let bindings: [NativeSwiftGenericArgument] = [.pack(pack.map { .type($0) })]
+                let make = try await runtime.resolve(
+                    .swift(
+                        .function(
+                            "ManagedSwiftFixtures.makeSuperclassPackExistential(_:)",
+                            as: ((Int64) -> NativeSwiftValue).self,
+                            genericArguments: bindings
+                        )
                     )
                 )
-            )
-            let echo = try await runtime.resolve(
-                .swift(
-                    .function(
-                        "ManagedSwiftFixtures.echoSuperclassPackExistential(_:)",
-                        as: ((NativeSwiftValue) -> NativeSwiftValue).self,
-                        genericArguments: bindings
+                let echo = try await runtime.resolve(
+                    .swift(
+                        .function(
+                            "ManagedSwiftFixtures.echoSuperclassPackExistential(_:)",
+                            as: ((NativeSwiftValue) -> NativeSwiftValue).self,
+                            genericArguments: bindings
+                        )
                     )
                 )
-            )
-            let value = try unsafe make.unsafeInvoke(42)
-            let result = try unsafe echo.unsafeInvoke(value)
-            #expect(try result.withCopy { ($0 as? any ExistentialPackMarker)?.number } == 42)
+                let value = try unsafe make.unsafeInvoke(42)
+                let result = try unsafe echo.unsafeInvoke(value)
+                #expect(try result.withCopy { ($0 as? any ExistentialPackMarker)?.number } == 42)
+            }
         }
     }
     @Test func linkedSuperclassPackValuesAndCallbacksShareMetadata() async throws {

@@ -32,8 +32,8 @@ struct AutomaticLookupCacheTests {
         #expect(try String(contentsOf: counter, encoding: .utf8) == "1")
     }
 
-    @Test(arguments: [false, true])
-    func lookupIndexesAreReleasedAfterBatch(throwing: Bool) throws {
+    @Test(arguments: [false, true], [false, true])
+    func lookupIndexesAreReleasedAfterBatch(throwing: Bool, asynchronous: Bool) async throws {
         enum BatchFailure: Error { case expected }
         let fixture = try FixtureLibrary()
         defer { fixture.cleanup() }
@@ -44,16 +44,30 @@ struct AutomaticLookupCacheTests {
         )
         weak var index: SymbolIndex?
         var symbol: RuntimeSymbol?
-        do {
+        func resolve() throws {
+            symbol = try resolver.resolve(declaration, in: .path(fixture.libraryURL))
+            index = resolver.cachedSymbolIndexes.first
+            #expect(index != nil)
+        }
+        func verify() throws {
             try resolver.withCachedLookups {
-                symbol = try resolver.resolve(declaration, in: .path(fixture.libraryURL))
-                index = resolver.cachedSymbolIndexes.first
-                #expect(index != nil)
-                try resolver.withCachedLookups {
-                    _ = try resolver.resolve(declaration, in: .path(fixture.libraryURL))
+                _ = try resolver.resolve(declaration, in: .path(fixture.libraryURL))
+            }
+            #expect(index != nil)
+            if throwing { throw BatchFailure.expected }
+        }
+        do {
+            if asynchronous {
+                try await resolver.withCachedLookups {
+                    try resolve()
+                    await Task.yield()
+                    try verify()
                 }
-                #expect(index != nil)
-                if throwing { throw BatchFailure.expected }
+            } else {
+                try resolver.withCachedLookups {
+                    try resolve()
+                    try verify()
+                }
             }
         } catch BatchFailure.expected {
             #expect(throwing)

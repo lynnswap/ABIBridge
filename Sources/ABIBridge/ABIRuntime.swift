@@ -171,6 +171,27 @@ public actor ABIRuntime {
         }
     }
 
+    /// Shares working lookup indexes across asynchronous preparation.
+    ///
+    /// The closure keeps the caller's actor isolation, including access to values
+    /// that are not Sendable. Use asynchronous resolution inside it to keep
+    /// symbol scanning off that actor. Indexes are released when the last
+    /// overlapping lookup or batch finishes, including after an error.
+    /// Completed resolutions remain available outside the batch.
+    ///
+    /// - Parameters:
+    ///   - isolation: The caller's actor isolation, inherited by default.
+    ///   - operation: Related lookups to prepare in one batch.
+    /// - Returns: The closure's result, in the caller's isolation domain.
+    public func prepare<Value>(
+        isolation: isolated (any Actor)? = #isolation,
+        _ operation: (ABIRuntime) async throws -> Value
+    ) async rethrows -> Value {
+        try await resolver.withCachedLookups(isolation: isolation) {
+            try await operation(self)
+        }
+    }
+
     /// Releases all of this runtime's removable caches.
     ///
     /// Existing handles remain valid. Use ``removeCachedResults(in:)`` to retain unselected caches.

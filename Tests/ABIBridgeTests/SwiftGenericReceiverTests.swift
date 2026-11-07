@@ -58,6 +58,7 @@ extension GenericReceiver where Value == ReceiverNumber {
 private final class InheritedGenericReceiver: GenericReceiver<ReceiverNumber> {}
 private enum ReceiverFailure: Error { case rejected }
 
+@Suite(LookupBatch())
 struct SwiftGenericReceiverTests {
     @MainActor @Test func classReceiversFulfillNestedGenericRequirements() async throws {
         let receiver = GenericSourceNested(GenericSourceBox(GenericSourceValue(39)))
@@ -561,119 +562,133 @@ struct SwiftGenericReceiverTests {
         #expect(try unsafe independent.unsafeInvoke("member") == "member")
     }
 
-    @MainActor @Test func extractedGenericMethodsKeepContextWithoutRetainingTheOriginalObject() async throws {
+    @MainActor @Test func extractedGenericMethodsKeepContextWithoutRetainingTheOriginalObject()
+        async throws
+    {
         let runtime = ABIRuntime()
-        weak var observed: GenericReceiver<ReceiverNumber>?
-        let consuming: NativeSwiftMethod<() -> String>
-        let asynchronous: NativeSwiftMethod<nonisolated(nonsending) (String) async -> String>
-        do {
-            let original = GenericReceiver(ReceiverNumber(number: 1))
-            observed = original
-            consuming = try await runtime.object(original).resolve(
-                .swift(
-                    .method(
-                        "consumeTitle()",
-                        as: (() -> String).self,
-                        receiver: .consuming
+        try await runtime.prepare { _ async throws in
+            weak var observed: GenericReceiver<ReceiverNumber>?
+            let consuming: NativeSwiftMethod<() -> String>
+            let asynchronous: NativeSwiftMethod<nonisolated(nonsending) (String) async -> String>
+            do {
+                let original = GenericReceiver(ReceiverNumber(number: 1))
+                observed = original
+                consuming = try await runtime.object(original).resolve(
+                    .swift(
+                        .method(
+                            "consumeTitle()",
+                            as: (() -> String).self,
+                            receiver: .consuming
+                        )
                     )
-                )
-            ).method
-            asynchronous = try await runtime.object(original).resolve(
-                .swift(
-                    .method(
-                        "asyncTitle(_:)",
-                        as: ((String) async -> String).self
+                ).method
+                asynchronous = try await runtime.object(original).resolve(
+                    .swift(
+                        .method(
+                            "asyncTitle(_:)",
+                            as: ((String) async -> String).self
+                        )
                     )
-                )
-            ).method
+                ).method
+            }
+            runtime.removeCachedResults()
+            #expect(observed == nil)
+            var second: GenericReceiver<ReceiverNumber>? = GenericReceiver(.init(number: 42))
+            weak let observedSecond = second
+            var bound: NativeBoundSwiftMethod<nonisolated(nonsending) (String) async -> String>? =
+                try asynchronous.bind(to: second!)
+            #expect(try unsafe consuming.unsafeInvoke(on: second!) == "42")
+            #expect(try unsafe await asynchronous.unsafeInvoke(on: second!, "value:") == "value:42")
+            second = nil
+            #expect(try unsafe await bound!.unsafeInvoke("bound:") == "bound:42")
+            bound = nil
+            withExtendedLifetime((consuming, asynchronous)) { #expect(observedSecond == nil) }
+            let incompatible = try asynchronous.bind(
+                to: GenericReceiver(ReceiverText(text: "different"))
+            )
+            await #expect(throws: ABIInvocationError.self) {
+                try unsafe await incompatible.unsafeInvoke("")
+            }
         }
-        runtime.removeCachedResults()
-        #expect(observed == nil)
-        var second: GenericReceiver<ReceiverNumber>? = GenericReceiver(.init(number: 42))
-        weak let observedSecond = second
-        var bound: NativeBoundSwiftMethod<nonisolated(nonsending) (String) async -> String>? = try asynchronous.bind(to: second!)
-        #expect(try unsafe consuming.unsafeInvoke(on: second!) == "42")
-        #expect(try unsafe await asynchronous.unsafeInvoke(on: second!, "value:") == "value:42")
-        second = nil
-        #expect(try unsafe await bound!.unsafeInvoke("bound:") == "bound:42")
-        bound = nil
-        withExtendedLifetime((consuming, asynchronous)) { #expect(observedSecond == nil) }
-        let incompatible = try asynchronous.bind(to: GenericReceiver(ReceiverText(text: "different")))
-        await #expect(throws: ABIInvocationError.self) { try unsafe await incompatible.unsafeInvoke("") }
     }
 
     @MainActor @Test(arguments: [false, true])
     func concreteMembersUseLiveGenericContext(_ inherited: Bool) async throws {
-        let receiver: GenericReceiver<ReceiverNumber> = inherited
+        let receiver: GenericReceiver<ReceiverNumber> =
+            inherited
             ? InheritedGenericReceiver(.init(number: 42)) : GenericReceiver(.init(number: 42))
         let runtime = ABIRuntime()
-        let object = runtime.object(receiver)
-        let method = try await object.resolve(
-            .swift(.method("title(_:)", as: ((String) -> String).self))
-        )
-        let complete = try await object.resolve(
-            .swift(
-                .method(
-                    "title(Swift.String) -> Swift.String",
-                    as: ((String) -> String).self
+        try await runtime.prepare { _ async throws in
+            let object = runtime.object(receiver)
+            let method = try await object.resolve(
+                .swift(.method("title(_:)", as: ((String) -> String).self))
+            )
+            let complete = try await object.resolve(
+                .swift(
+                    .method(
+                        "title(Swift.String) -> Swift.String",
+                        as: ((String) -> String).self
+                    )
                 )
             )
-        )
-        let get = try await object.resolve(.swift(.getter("text", as: (() -> String).self)))
-        let fullGet = try await object.resolve(
-            .swift(
-                .getter(
-                    "text.getter : Swift.String",
-                    as: (() -> String).self
+            let get = try await object.resolve(.swift(.getter("text", as: (() -> String).self)))
+            let fullGet = try await object.resolve(
+                .swift(
+                    .getter(
+                        "text.getter : Swift.String",
+                        as: (() -> String).self
+                    )
                 )
             )
-        )
-        let set = try await object.resolve(.swift(.setter("text", as: ((String) -> Void).self)))
-        receiver.text = "!"
-        #expect(receiver.text == "42!")
-        try unsafe set.unsafeInvoke("?")
-        runtime.removeCachedResults()
-        for prefix in ["", String(repeating: "prefix", count: 100)] {
-            let expected = receiver.title(prefix)
-            #expect(try unsafe method.unsafeInvoke(prefix) == expected)
-            #expect(try unsafe complete.unsafeInvoke(prefix) == expected)
+            let set = try await object.resolve(.swift(.setter("text", as: ((String) -> Void).self)))
+            receiver.text = "!"
+            #expect(receiver.text == "42!")
+            try unsafe set.unsafeInvoke("?")
+            runtime.removeCachedResults()
+            for prefix in ["", String(repeating: "prefix", count: 100)] {
+                let expected = receiver.title(prefix)
+                #expect(try unsafe method.unsafeInvoke(prefix) == expected)
+                #expect(try unsafe complete.unsafeInvoke(prefix) == expected)
+            }
+            #expect(try unsafe get.unsafeInvoke() == receiver.text)
+            #expect(try unsafe fullGet.unsafeInvoke() == receiver.text)
         }
-        #expect(try unsafe get.unsafeInvoke() == receiver.text)
-        #expect(try unsafe fullGet.unsafeInvoke() == receiver.text)
     }
 
     @MainActor @Test func specializationsKeepSeparateMetadataAndReleaseReceivers() async throws {
         let runtime = ABIRuntime()
-        weak var first: GenericReceiver<ReceiverNumber>?
-        weak var second: GenericReceiver<ReceiverText>?
-        var handles: [NativeBoundSwiftMethod<() -> String>] = []
-        do {
-            let a = GenericReceiver(ReceiverNumber(number: 42))
-            let b = GenericReceiver(ReceiverText(text: String(repeating: "text", count: 100)))
-            first = a
-            second = b
-            #expect(a.consumeTitle() == "42")
-            #expect(b.consumeTitle() == String(repeating: "text", count: 100))
-            for object: AnyObject in [a, b] {
-                handles.append(
-                    try await runtime.object(object).resolve(
-                        .swift(
-                            .method(
-                                "consumeTitle()",
-                                as: (() -> String).self,
-                                receiver: .consuming
+        try await runtime.prepare { _ async throws in
+            weak var first: GenericReceiver<ReceiverNumber>?
+            weak var second: GenericReceiver<ReceiverText>?
+            var handles: [NativeBoundSwiftMethod<() -> String>] = []
+            do {
+                let a = GenericReceiver(ReceiverNumber(number: 42))
+                let b = GenericReceiver(ReceiverText(text: String(repeating: "text", count: 100)))
+                first = a
+                second = b
+                #expect(a.consumeTitle() == "42")
+                #expect(b.consumeTitle() == String(repeating: "text", count: 100))
+                for object: AnyObject in [a, b] {
+                    handles.append(
+                        try await runtime.object(object).resolve(
+                            .swift(
+                                .method(
+                                    "consumeTitle()",
+                                    as: (() -> String).self,
+                                    receiver: .consuming
+                                )
                             )
                         )
                     )
-                )
+                }
             }
+            runtime.removeCachedResults()
+            #expect(first != nil && second != nil)
+            #expect(try unsafe handles[0].unsafeInvoke() == "42")
+            #expect(try unsafe handles[1].unsafeInvoke() == String(repeating: "text", count: 100))
+            handles.removeAll()
+            #expect(first == nil && second == nil)
         }
-        runtime.removeCachedResults()
-        #expect(first != nil && second != nil)
-        #expect(try unsafe handles[0].unsafeInvoke() == "42")
-        #expect(try unsafe handles[1].unsafeInvoke() == String(repeating: "text", count: 100))
-        handles.removeAll()
-        #expect(first == nil && second == nil)
     }
 
     @MainActor @Test func effectsUseExistingMethodTransports() async throws {

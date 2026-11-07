@@ -18,6 +18,7 @@ private struct RejectingScopedCounter: ABIBridgeValue {
     static func nativeValue(from value: Self) throws -> NativeValue { try .init(copying: value.number, as: abiType) }
 }
 
+@Suite(LookupBatch())
 struct SwiftOpaqueResultTests {
     @MainActor @Test func scopedNonescapableResultsExpireAndDestroyAfterTheBody() async throws {
         let runtime = ABIRuntime.shared

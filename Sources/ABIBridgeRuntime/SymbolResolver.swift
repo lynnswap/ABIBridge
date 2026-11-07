@@ -812,6 +812,15 @@ package final class RuntimeSymbolResolver: Sendable {
         return try operation()
     }
 
+    package func withCachedLookups<Value>(
+        isolation: isolated (any Actor)? = #isolation,
+        _ operation: () async throws -> Value
+    ) async rethrows -> Value {
+        beginLookup()
+        defer { endLookup() }
+        return try await operation()
+    }
+
     private func beginLookup() {
         state.withLock { $0.activeLookups += 1 }
     }

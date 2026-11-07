@@ -18,25 +18,27 @@ struct ConformanceMatrixTests {
         _ variant: ConformanceVariant
     ) async throws {
         let fixture = try await ConformanceFixtures.shared.fixture(for: variant)
-        let expected = fixture.expected(item.id)
-        try #require(expected != "unknown case")
-        if let evidence = item.expectedError(variant) {
-            await #expect {
-                _ = try await item.invoke(fixture)
-            } throws: { error in
-                guard case ABIResolutionError.metadataUnavailable(let message) = error else {
-                    return false
+        try await fixture.runtime.prepare { _ in
+            let expected = fixture.expected(item.id)
+            try #require(expected != "unknown case")
+            if let evidence = item.expectedError(variant) {
+                await #expect {
+                    _ = try await item.invoke(fixture)
+                } throws: { error in
+                    guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                        return false
+                    }
+                    return message.contains(evidence)
                 }
-                return message.contains(evidence)
-            }
-        } else if let reason = item.knownIssue(variant) {
-            await withKnownIssue(Comment(rawValue: reason)) {
-                do { #expect(try await item.invoke(fixture) == expected) } catch {
-                    Issue.record(error)
+            } else if let reason = item.knownIssue(variant) {
+                await withKnownIssue(Comment(rawValue: reason)) {
+                    do { #expect(try await item.invoke(fixture) == expected) } catch {
+                        Issue.record(error)
+                    }
                 }
+            } else {
+                #expect(try await item.invoke(fixture) == expected)
             }
-        } else {
-            #expect(try await item.invoke(fixture) == expected)
         }
     }
 }
