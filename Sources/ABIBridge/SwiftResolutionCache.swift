@@ -184,13 +184,15 @@ extension SymbolResolver {
         prepare: () throws -> Value
     ) throws -> Value {
         guard let resolutionCache else { return try prepare() }
-        return try resolutionCache.resolve(
-            key,
-            request: request,
-            owner: owner,
-            arguments: arguments,
-            capturedSlot: capturedSlot,
-            prepare: prepare
-        )
+        return try withCachedLookups {
+            try resolutionCache.resolve(
+                key,
+                request: request,
+                owner: owner,
+                arguments: arguments,
+                capturedSlot: capturedSlot,
+                prepare: prepare
+            )
+        }
     }
 }

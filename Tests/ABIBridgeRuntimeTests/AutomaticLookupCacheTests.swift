@@ -6,6 +6,37 @@ import Testing
 
 @Suite(.serialized)
 struct AutomaticLookupCacheTests {
+    @Test(arguments: [false, true])
+    func lookupIndexesAreReleasedAfterBatch(throwing: Bool) throws {
+        enum BatchFailure: Error { case expected }
+        let fixture = try FixtureLibrary()
+        defer { fixture.cleanup() }
+        let resolver = RuntimeSymbolResolver()
+        let declaration = RuntimeDeclaration(name: fixture.namespace + "::add(int, int)", language: .cxx)
+        weak var index: SymbolIndex?
+        var symbol: RuntimeSymbol?
+        do {
+            try resolver.withCachedLookups {
+                symbol = try resolver.resolve(declaration, in: .path(fixture.libraryURL))
+                index = resolver.cachedSymbolIndexes.first
+                #expect(index != nil)
+                try resolver.withCachedLookups {
+                    _ = try resolver.resolve(declaration, in: .path(fixture.libraryURL))
+                }
+                #expect(index != nil)
+                if throwing { throw BatchFailure.expected }
+            }
+        } catch BatchFailure.expected {
+            #expect(throwing)
+        }
+        #expect(index == nil)
+        let retained = try #require(symbol)
+        let reused = try resolver.resolve(declaration, in: .path(fixture.libraryURL))
+        #expect(reused.address == retained.address)
+        #expect(reused.image.lease === retained.image.lease)
+        #expect(resolver.cachedSymbolIndexes.isEmpty)
+    }
+
     @Test func wrongKindLocalSymbolsDoNotHideFunctionsInOtherImages() throws {
         let name = "KindCollision_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
         let data = try FixtureLibrary(

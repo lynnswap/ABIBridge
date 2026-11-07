@@ -203,6 +203,8 @@ See <doc:NativeInspection> for C++ adoption and retention. These operations keep
 
 ## Cache and loader lifetime
 
+Search indexes and decoded symbol tables live only while lookups are active. Use `runtime.prepare { runtime in ... }` to share those indexes across a batch of resolutions. They are released when the last overlapping lookup or batch finishes, including when a batch throws. Completed symbol and Swift resolutions, type handles, and native call interfaces remain cached, so repeating the same request can reuse its result outside the batch. Image changes still invalidate affected results.
+
 Call `runtime.removeCachedResults()` to release that runtime's resolver indexes, Swift type cache, and completed Swift resolutions. Existing image, symbol, and callable handles stay valid, as do resolutions already in progress; subsequent lookups prepare new results. Results from an older cache generation are not republished after removal. The process-shared native call-interface cache and the image catalog remain available. Known Swift classes reuse their defining image while it remains retained.
 
 Select caches with ``ABIRuntime/Cache`` when only some preparation should be discarded:

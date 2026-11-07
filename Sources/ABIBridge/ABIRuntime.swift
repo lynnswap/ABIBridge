@@ -2,7 +2,7 @@ import Foundation
 
 /// Resolves declarations using shared image and symbol indexes.
 ///
-/// Use ``shared`` to reuse indexes across callers, or create a runtime with an independent cache. Explicit scopes acquire images by default. Image and symbol handles retain their images until the last owner releases them.
+/// Use ``shared`` to reuse completed resolutions across callers, or create a runtime with independent caches. Search indexes are shared by overlapping lookups and released when the last lookup or ``prepare(_:)`` batch finishes. Explicit scopes acquire images by default. Image and symbol handles retain their images until the last owner releases them.
 ///
 /// Searches prepare indexes on demand. Async resolution moves search and call preparation to a worker; bound Objective-C receiver callbacks and C++ virtual-slot capture stay on the caller's executor. `resolve…AndWait` factories run on the caller's thread and wait for any required work already in progress. Use `prepare(_:)` to start that work early without occupying the caller's actor.
 ///
@@ -158,7 +158,7 @@ public actor ABIRuntime {
 
     /// Prepares typed handles using the synchronous lookup APIs.
     ///
-    /// The operation runs on a worker and shares this runtime's indexes, native call interfaces, and completed Swift resolutions. Equivalent Swift requests reuse completed handles even when this operation's result is discarded. Other lookups join the work they need before the whole operation finishes. Lookup may load images and run their initializers on that worker. Calling a prepared function remains an explicit operation.
+    /// The operation runs on a worker and shares lookup indexes for the duration of the closure. Indexes are released after the last overlapping lookup or preparation finishes. Native call interfaces, resolved Swift types, and completed Swift calls remain cached for reuse. Equivalent Swift requests reuse completed handles even when this operation's result is discarded. Lookup may load images and run their initializers on that worker. Calling a prepared function remains an explicit operation.
     ///
     /// - Parameter operation: Synchronous lookups to start before their results are needed.
     /// - Returns: The prepared value, which can be retained for later calls.
@@ -166,7 +166,9 @@ public actor ABIRuntime {
     public nonisolated func prepare<Value: Sendable>(
         _ operation: @escaping @Sendable (ABIRuntime) throws -> Value
     ) async throws -> Value {
-        try await NativePreparation.run { try operation(self) }
+        try await NativePreparation.run {
+            try self.resolver.withCachedLookups { try operation(self) }
+        }
     }
 
     /// Releases all of this runtime's removable caches.

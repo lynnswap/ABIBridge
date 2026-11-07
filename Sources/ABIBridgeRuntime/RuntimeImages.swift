@@ -129,6 +129,13 @@ package final class RuntimeImageLease: @unchecked Sendable {
 package struct RuntimeImageCatalogSnapshot: Sendable {
     package let revision: UInt64
     package let images: [RuntimeImageSnapshot]
+    package let imageIdentities: Set<RuntimeImageIdentity>
+
+    package init(revision: UInt64, images: [RuntimeImageSnapshot]) {
+        self.revision = revision
+        self.images = images
+        imageIdentities = Set(images.map(\.identity))
+    }
 }
 
 package struct RuntimeImageSnapshot: Sendable {
