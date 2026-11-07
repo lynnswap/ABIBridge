@@ -14,6 +14,7 @@ extension Optional: ABIBridgeSwiftValue where Wrapped == OptionalScreenNumber {
     }
 }
 
+@Suite(LookupBatch())
 struct SwiftOptionalValueTests {
     @Test func optionalValuesPassAsTheirEnumStorage() async throws {
         let runtime = ABIRuntime.shared

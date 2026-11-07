@@ -224,25 +224,27 @@ struct SwiftMemberInvocationTests {
         )
         defer { library.cleanup() }
         let runtime = ABIRuntime()
-        let member = "(extension in \(module)):\(module).Valued.doubled() -> Swift.Int64"
-        // The extension takes Self by address, so the representation's storage
-        // stands for the resilient value.
-        let counter = try await runtime.resolve(
-            .swift(.type(module + ".Counter", as: Int64.self)),
-            in: .path(library.libraryURL)
-        )
-        let doubled = try await counter.resolve(.swift(.method(member, as: (() -> Int64).self)))
-        #expect(try unsafe doubled.unsafeInvoke(on: Int64(21)) == 42)
-        // Storage smaller than the value cannot stand for it.
-        let narrow = try await runtime.resolve(
-            .swift(.type(module + ".Counter", as: Int32.self)),
-            in: .path(library.libraryURL)
-        )
-        do {
-            _ = try await narrow.resolve(.swift(.method(member, as: (() -> Int64).self)))
-            Issue.record("Four bytes stood for an eight-byte Self")
-        } catch let ABIResolutionError.signatureMismatch(mismatch) {
-            #expect(mismatch.position == .receiver)
+        try await runtime.prepare { _ async throws in
+            let member = "(extension in \(module)):\(module).Valued.doubled() -> Swift.Int64"
+            // The extension takes Self by address, so the representation's storage
+            // stands for the resilient value.
+            let counter = try await runtime.resolve(
+                .swift(.type(module + ".Counter", as: Int64.self)),
+                in: .path(library.libraryURL)
+            )
+            let doubled = try await counter.resolve(.swift(.method(member, as: (() -> Int64).self)))
+            #expect(try unsafe doubled.unsafeInvoke(on: Int64(21)) == 42)
+            // Storage smaller than the value cannot stand for it.
+            let narrow = try await runtime.resolve(
+                .swift(.type(module + ".Counter", as: Int32.self)),
+                in: .path(library.libraryURL)
+            )
+            do {
+                _ = try await narrow.resolve(.swift(.method(member, as: (() -> Int64).self)))
+                Issue.record("Four bytes stood for an eight-byte Self")
+            } catch let ABIResolutionError.signatureMismatch(mismatch) {
+                #expect(mismatch.position == .receiver)
+            }
         }
     }
 
@@ -281,82 +283,87 @@ struct SwiftMemberInvocationTests {
         )
         defer { library.cleanup() }
         let runtime = ABIRuntime()
-        let payloadType = try await runtime.resolve(.swift(.type(module + ".Payload")))
-        let payloadABI = try NativeType.opaque(named: payloadType.name)
-        let declaration = module + ".Provider.payload.getter : " + payloadType.name
-        let objectGetter = try await payloadType.resolve(
-            .swift(
-                .getter(
-                    "object",
-                    as: (() -> AnyObject).self,
-                    receiverABI: payloadABI
-                )
-            )
-        )
-        let textGetter = try await payloadType.resolve(
-            .swift(
-                .getter(
-                    "text",
-                    as: (() -> String).self,
-                    receiverABI: payloadABI
-                )
-            )
-        )
-        for (name, text, protocolName) in [
-            ("ValueProvider", "value", "Provider"),
-            ("ObjectProvider", "object", "Provider"),
-            ("ObjectProvider", "object", "ObjectProviderProtocol"),
-        ] {
-            let type = try await runtime.resolve(.swift(.type(module + "." + name)))
-            let factory = try await runtime.resolve(
-                .swift(
-                    .function(
-                        module + ".make" + name + "(Swift.AnyObject) -> " + type.name,
-                        as: ((AnyObject) -> NativeSwiftValue).self,
-                        valueABIs: [
-                            type: name == "ValueProvider" ? try .opaque(named: type.name) : .pointer
-                        ]
-                    )
-                )
-            )
-            let getter = try await type.resolve(
+        try await runtime.prepare { _ async throws in
+            let payloadType = try await runtime.resolve(.swift(.type(module + ".Payload")))
+            let payloadABI = try NativeType.opaque(named: payloadType.name)
+            let declaration = module + ".Provider.payload.getter : " + payloadType.name
+            let objectGetter = try await payloadType.resolve(
                 .swift(
                     .getter(
-                        module + "." + protocolName + ".payload.getter : " + payloadType.name,
-                        as: (() -> NativeSwiftValue).self,
-                        valueABIs: [payloadType: payloadABI]
+                        "object",
+                        as: (() -> AnyObject).self,
+                        receiverABI: payloadABI
                     )
                 )
             )
-            weak var observed: NSObject?
-            var result: NativeSwiftValue?
-            do {
-                let object = NSObject()
-                observed = object
-                let receiver = try unsafe factory.unsafeInvoke(object)
-                result = try unsafe getter.unsafeInvoke(on: receiver)
-                #expect(try unsafe objectGetter.unsafeInvoke(on: #require(result)) === object)
-                #expect(try unsafe textGetter.unsafeInvoke(on: #require(result)) == text)
+            let textGetter = try await payloadType.resolve(
+                .swift(
+                    .getter(
+                        "text",
+                        as: (() -> String).self,
+                        receiverABI: payloadABI
+                    )
+                )
+            )
+            for (name, text, protocolName) in [
+                ("ValueProvider", "value", "Provider"),
+                ("ObjectProvider", "object", "Provider"),
+                ("ObjectProvider", "object", "ObjectProviderProtocol"),
+            ] {
+                let type = try await runtime.resolve(.swift(.type(module + "." + name)))
+                let factory = try await runtime.resolve(
+                    .swift(
+                        .function(
+                            module + ".make" + name + "(Swift.AnyObject) -> " + type.name,
+                            as: ((AnyObject) -> NativeSwiftValue).self,
+                            valueABIs: [
+                                type: name == "ValueProvider"
+                                    ? try .opaque(named: type.name) : .pointer
+                            ]
+                        )
+                    )
+                )
+                let getter = try await type.resolve(
+                    .swift(
+                        .getter(
+                            module + "." + protocolName + ".payload.getter : " + payloadType.name,
+                            as: (() -> NativeSwiftValue).self,
+                            valueABIs: [payloadType: payloadABI]
+                        )
+                    )
+                )
+                weak var observed: NSObject?
+                var result: NativeSwiftValue?
+                do {
+                    let object = NSObject()
+                    observed = object
+                    let receiver = try unsafe factory.unsafeInvoke(object)
+                    result = try unsafe getter.unsafeInvoke(on: receiver)
+                    #expect(try unsafe objectGetter.unsafeInvoke(on: #require(result)) === object)
+                    #expect(try unsafe textGetter.unsafeInvoke(on: #require(result)) == text)
+                }
+                runtime.removeCachedResults()
+                #expect(observed != nil)
+                result = nil
+                #expect(observed == nil)
             }
-            runtime.removeCachedResults()
-            #expect(observed != nil)
-            result = nil
-            #expect(observed == nil)
-        }
-        let unrelated = try await runtime.resolve(.swift(.type("ABIBridgeTests.SwiftMemberPoint")))
-        #expect {
-            try unrelated.resolveAndWait(
-                .swift(
-                    .getter(
-                        declaration,
-                        as: (() -> NativeSwiftValue).self,
-                        valueABIs: [payloadType: payloadABI]
+            let unrelated = try await runtime.resolve(
+                .swift(.type("ABIBridgeTests.SwiftMemberPoint"))
+            )
+            #expect {
+                try unrelated.resolveAndWait(
+                    .swift(
+                        .getter(
+                            declaration,
+                            as: (() -> NativeSwiftValue).self,
+                            valueABIs: [payloadType: payloadABI]
+                        )
                     )
                 )
-            )
-        } throws: { error in
-            guard case ABIResolutionError.signatureMismatch = error else { return false }
-            return true
+            } throws: { error in
+                guard case ABIResolutionError.signatureMismatch = error else { return false }
+                return true
+            }
         }
     }
     @Test func protocolRequirementMethodsBindAssociatedTypesAndIndirectSelf() async throws {
@@ -417,123 +424,127 @@ struct SwiftMemberInvocationTests {
         )
         defer { library.cleanup() }
         let runtime = ABIRuntime()
-        let payloadType = try await runtime.resolve(.swift(.type(module + ".Payload")))
-        let payloadABI = try NativeType.opaque(named: payloadType.name)
-        let serviceType = try await runtime.resolve(.swift(.type(module + ".Service")))
-        let declaration =
-            module + ".Processor.process(_: A.Job, in: A.Environment, using: "
-            + serviceType.name + ") -> " + module + ".Box<A.Job.Output>"
-        typealias Signature = (NativeSwiftValue, NativeSwiftValue, NativeSwiftValue) ->
-            NativeSwiftValue
-        let objectGetter = try await payloadType.resolve(
-            .swift(
-                .getter(
-                    "object",
-                    as: (() -> AnyObject).self,
-                    receiverABI: payloadABI
+        try await runtime.prepare { _ async throws in
+            let payloadType = try await runtime.resolve(.swift(.type(module + ".Payload")))
+            let payloadABI = try NativeType.opaque(named: payloadType.name)
+            let serviceType = try await runtime.resolve(.swift(.type(module + ".Service")))
+            let declaration =
+                module + ".Processor.process(_: A.Job, in: A.Environment, using: "
+                + serviceType.name + ") -> " + module + ".Box<A.Job.Output>"
+            typealias Signature = (NativeSwiftValue, NativeSwiftValue, NativeSwiftValue) ->
+                NativeSwiftValue
+            let objectGetter = try await payloadType.resolve(
+                .swift(
+                    .getter(
+                        "object",
+                        as: (() -> AnyObject).self,
+                        receiverABI: payloadABI
+                    )
                 )
             )
-        )
-        let numberGetter = try await payloadType.resolve(
-            .swift(
-                .getter(
-                    "number",
-                    as: (() -> Int64).self,
-                    receiverABI: payloadABI
+            let numberGetter = try await payloadType.resolve(
+                .swift(
+                    .getter(
+                        "number",
+                        as: (() -> Int64).self,
+                        receiverABI: payloadABI
+                    )
                 )
             )
-        )
-        let direct = try await runtime.resolve(
-            .swift(
-                .function(
-                    module + ".direct(_:_:)",
-                    as: ((AnyObject, Bool) -> Int64).self
-                )
-            )
-        )
-        var inputs: [NativeSwiftValue] = []
-        for name in ["Request", "Environment", "Service"] {
-            let type = try await runtime.resolve(.swift(.type(module + "." + name)))
-            let make = try await runtime.resolve(
+            let direct = try await runtime.resolve(
                 .swift(
                     .function(
-                        module + ".make" + name + "()",
-                        as: (() -> NativeSwiftValue).self,
-                        valueABIs: [
-                            type: name == "Service" ? .pointer : try .opaque(named: type.name)
-                        ]
+                        module + ".direct(_:_:)",
+                        as: ((AnyObject, Bool) -> Int64).self
                     )
                 )
             )
-            inputs.append(try unsafe make.unsafeInvoke())
-        }
-        for name in ["ValueProcessor", "ObjectProcessor"] {
-            let type = try await runtime.resolve(.swift(.type(module + "." + name)))
-            let factory = try await runtime.resolve(
-                .swift(
-                    .function(
-                        module + ".make" + name + "(_:)",
-                        as: ((AnyObject) -> NativeSwiftValue).self,
-                        valueABIs: [
-                            type: name == "ValueProcessor"
-                                ? try .opaque(named: type.name) : .pointer
-                        ]
-                    )
-                )
-            )
-            let method = try await type.resolve(
-                .swift(
-                    .method(
-                        declaration,
-                        as: Signature.self
-                    )
-                )
-            )
-            #expect(method.symbol.declaration.name.hasPrefix("dispatch thunk of "))
-            weak var observed: NSObject?
-            var result: NativeSwiftValue?
-            do {
-                let object = NSObject()
-                observed = object
-                let receiver = try unsafe factory.unsafeInvoke(object)
-                let expected = try unsafe direct.unsafeInvoke(object, name == "ObjectProcessor")
-                result = try unsafe method.unsafeInvoke(
-                    on: receiver,
-                    inputs[0],
-                    inputs[1],
-                    inputs[2]
-                )
-                let valueGetter = try await #require(result).type.resolve(
+            var inputs: [NativeSwiftValue] = []
+            for name in ["Request", "Environment", "Service"] {
+                let type = try await runtime.resolve(.swift(.type(module + "." + name)))
+                let make = try await runtime.resolve(
                     .swift(
-                        .getter(
-                            "value",
-                            as: (() -> NativeSwiftValue).self
+                        .function(
+                            module + ".make" + name + "()",
+                            as: (() -> NativeSwiftValue).self,
+                            valueABIs: [
+                                type: name == "Service" ? .pointer : try .opaque(named: type.name)
+                            ]
                         )
                     )
                 )
-                let payload = try unsafe valueGetter.unsafeInvoke(on: #require(result))
-                #expect(try unsafe objectGetter.unsafeInvoke(on: payload) === object)
-                #expect(try unsafe numberGetter.unsafeInvoke(on: payload) == expected)
-                #expect(!receiver.isConsumed && inputs.allSatisfy { !$0.isConsumed })
+                inputs.append(try unsafe make.unsafeInvoke())
             }
-            runtime.removeCachedResults()
-            #expect(observed != nil)
-            result = nil
-            #expect(observed == nil)
-        }
-        let unrelated = try await runtime.resolve(.swift(.type("ABIBridgeTests.SwiftMemberPoint")))
-        #expect {
-            try unrelated.resolveAndWait(
-                .swift(
-                    .method(
-                        declaration,
-                        as: Signature.self
+            for name in ["ValueProcessor", "ObjectProcessor"] {
+                let type = try await runtime.resolve(.swift(.type(module + "." + name)))
+                let factory = try await runtime.resolve(
+                    .swift(
+                        .function(
+                            module + ".make" + name + "(_:)",
+                            as: ((AnyObject) -> NativeSwiftValue).self,
+                            valueABIs: [
+                                type: name == "ValueProcessor"
+                                    ? try .opaque(named: type.name) : .pointer
+                            ]
+                        )
                     )
                 )
+                let method = try await type.resolve(
+                    .swift(
+                        .method(
+                            declaration,
+                            as: Signature.self
+                        )
+                    )
+                )
+                #expect(method.symbol.declaration.name.hasPrefix("dispatch thunk of "))
+                weak var observed: NSObject?
+                var result: NativeSwiftValue?
+                do {
+                    let object = NSObject()
+                    observed = object
+                    let receiver = try unsafe factory.unsafeInvoke(object)
+                    let expected = try unsafe direct.unsafeInvoke(object, name == "ObjectProcessor")
+                    result = try unsafe method.unsafeInvoke(
+                        on: receiver,
+                        inputs[0],
+                        inputs[1],
+                        inputs[2]
+                    )
+                    let valueGetter = try await #require(result).type.resolve(
+                        .swift(
+                            .getter(
+                                "value",
+                                as: (() -> NativeSwiftValue).self
+                            )
+                        )
+                    )
+                    let payload = try unsafe valueGetter.unsafeInvoke(on: #require(result))
+                    #expect(try unsafe objectGetter.unsafeInvoke(on: payload) === object)
+                    #expect(try unsafe numberGetter.unsafeInvoke(on: payload) == expected)
+                    #expect(!receiver.isConsumed && inputs.allSatisfy { !$0.isConsumed })
+                }
+                runtime.removeCachedResults()
+                #expect(observed != nil)
+                result = nil
+                #expect(observed == nil)
+            }
+            let unrelated = try await runtime.resolve(
+                .swift(.type("ABIBridgeTests.SwiftMemberPoint"))
             )
-        } throws: { error in
-            guard case ABIResolutionError.signatureMismatch = error else { return false }
-            return true
+            #expect {
+                try unrelated.resolveAndWait(
+                    .swift(
+                        .method(
+                            declaration,
+                            as: Signature.self
+                        )
+                    )
+                )
+            } throws: { error in
+                guard case ABIResolutionError.signatureMismatch = error else { return false }
+                return true
+            }
         }
     }
     @Test func protocolRequirementMethodsPreserveMethodGenericMetadataAndWitnesses() async throws {
@@ -565,68 +576,70 @@ struct SwiftMemberInvocationTests {
         )
         defer { library.cleanup() }
         let runtime = ABIRuntime()
-        let make = try await runtime.resolve(
-            .swift(
-                .function(
-                    module + ".makeMapper()",
-                    as: (() -> NativeSwiftValue).self
+        try await runtime.prepare { _ async throws in
+            let make = try await runtime.resolve(
+                .swift(
+                    .function(
+                        module + ".makeMapper()",
+                        as: (() -> NativeSwiftValue).self
+                    )
                 )
             )
-        )
-        let receiver = try unsafe make.unsafeInvoke()
-        let method = try await receiver.type.resolve(
-            .swift(
-                .method(
-                    module + ".Mapper.runtimeType<A>(A1) -> Any.Type",
-                    as: ((String) -> Any.Type).self,
-                    genericArguments: [.type(String.self)]
+            let receiver = try unsafe make.unsafeInvoke()
+            let method = try await receiver.type.resolve(
+                .swift(
+                    .method(
+                        module + ".Mapper.runtimeType<A>(A1) -> Any.Type",
+                        as: ((String) -> Any.Type).self,
+                        genericArguments: [.type(String.self)]
+                    )
                 )
             )
-        )
-        let actual = try unsafe method.unsafeInvoke(on: receiver, "metadata")
-        try #require(ObjectIdentifier(actual) == ObjectIdentifier(String.self))
-        let describe = try await receiver.type.resolve(
-            .swift(
-                .method(
-                    module
-                        + ".Mapper.describe<A where A1: Swift.CustomStringConvertible>(A1) -> Swift.String",
-                    as: ((Int64) -> String).self,
-                    genericArguments: [.type(Int64.self)]
+            let actual = try unsafe method.unsafeInvoke(on: receiver, "metadata")
+            try #require(ObjectIdentifier(actual) == ObjectIdentifier(String.self))
+            let describe = try await receiver.type.resolve(
+                .swift(
+                    .method(
+                        module
+                            + ".Mapper.describe<A where A1: Swift.CustomStringConvertible>(A1) -> Swift.String",
+                        as: ((Int64) -> String).self,
+                        genericArguments: [.type(Int64.self)]
+                    )
                 )
             )
-        )
-        #expect(try unsafe describe.unsafeInvoke(on: receiver, 42) == "42")
-        let makeBox = try await runtime.resolve(
-            .swift(
-                .function(
-                    module + ".makeBox(_:)",
-                    as: ((NativeSwiftValue) -> NativeSwiftValue).self
+            #expect(try unsafe describe.unsafeInvoke(on: receiver, 42) == "42")
+            let makeBox = try await runtime.resolve(
+                .swift(
+                    .function(
+                        module + ".makeBox(_:)",
+                        as: ((NativeSwiftValue) -> NativeSwiftValue).self
+                    )
                 )
             )
-        )
-        let owner = try unsafe makeBox.unsafeInvoke(receiver)
-        let makeValueBox = try await runtime.resolve(
-            .swift(
-                .function(
-                    module + ".makeValueBox(_:)",
-                    as: ((String) -> NativeSwiftValue).self
+            let owner = try unsafe makeBox.unsafeInvoke(receiver)
+            let makeValueBox = try await runtime.resolve(
+                .swift(
+                    .function(
+                        module + ".makeValueBox(_:)",
+                        as: ((String) -> NativeSwiftValue).self
+                    )
                 )
             )
-        )
-        let input = try unsafe makeValueBox.unsafeInvoke("metadata")
-        let withBoxes = try await receiver.type.resolve(
-            .swift(
-                .method(
-                    module + ".Mapper.withBoxes<A>(" + module + ".Box<A1>, " + module
-                        + ".Box<A>) -> Any.Type",
-                    as: ((NativeSwiftValue, NativeSwiftValue) -> Any.Type).self,
-                    genericArguments: [.type(String.self)]
+            let input = try unsafe makeValueBox.unsafeInvoke("metadata")
+            let withBoxes = try await receiver.type.resolve(
+                .swift(
+                    .method(
+                        module + ".Mapper.withBoxes<A>(" + module + ".Box<A1>, " + module
+                            + ".Box<A>) -> Any.Type",
+                        as: ((NativeSwiftValue, NativeSwiftValue) -> Any.Type).self,
+                        genericArguments: [.type(String.self)]
+                    )
                 )
             )
-        )
-        let withBoxesType = try unsafe withBoxes.unsafeInvoke(on: receiver, input, owner)
-        #expect(ObjectIdentifier(withBoxesType) == ObjectIdentifier(String.self))
-        #expect(!receiver.isConsumed && !input.isConsumed && !owner.isConsumed)
+            let withBoxesType = try unsafe withBoxes.unsafeInvoke(on: receiver, input, owner)
+            #expect(ObjectIdentifier(withBoxesType) == ObjectIdentifier(String.self))
+            #expect(!receiver.isConsumed && !input.isConsumed && !owner.isConsumed)
+        }
     }
 
     @Test func protocolRequirementsWithoutDispatchThunksRunTheConformancesWitness() async throws {
@@ -723,192 +736,196 @@ struct SwiftMemberInvocationTests {
         )
         defer { stripped.cleanup() }
         let runtime = ABIRuntime()
-        let libraries = [base: protocols, other: conformers, last: stripped]
+        try await runtime.prepare { _ async throws in
+            let libraries = [base: protocols, other: conformers, last: stripped]
 
-        // The linker folds Square's and Twin's identical witnesses into one
-        // address; each still serves only its own conformance.
-        let witnesses = try ["Square", "Twin"].map { owner in
-            let symbol = try runtime.resolveAndWait(
+            // The linker folds Square's and Twin's identical witnesses into one
+            // address; each still serves only its own conformance.
+            let witnesses = try ["Square", "Twin"].map { owner in
+                let symbol = try runtime.resolveAndWait(
+                    .swift(
+                        .symbol(
+                            "protocol witness for \(base).Shape.area() -> Swift.Int64"
+                                + " in conformance \(base).\(owner) : \(base).Shape in \(base)"
+                        )
+                    ),
+                    in: .path(protocols.libraryURL)
+                )
+                return unsafe symbol.withUnsafeAddress { UInt(bitPattern: $0) }
+            }
+            try #require(witnesses[0] == witnesses[1])
+            func area(
+                _ module: String,
+                _ type: String,
+                _ arguments: [NativeSwiftGenericArgument] = []
+            ) async throws -> Int64 {
+                let scope = ImageSelector.path(libraries[module]!.libraryURL)
+                let make = try await runtime.resolve(
+                    .swift(
+                        .function(
+                            module + ".make" + type + "()",
+                            as: (() -> AnyObject).self
+                        )
+                    ),
+                    in: scope
+                )
+                let owner = try await runtime.resolve(
+                    .swift(.type(module + "." + type, genericArguments: arguments)),
+                    in: scope
+                )
+                let area = try await owner.resolve(
+                    .swift(
+                        .method(
+                            base + ".Shape.area()",
+                            as: (() -> Int64).self
+                        )
+                    )
+                )
+                #expect(area.symbol.declaration.name.hasPrefix("protocol witness for "))
+                return try unsafe area.unsafeInvoke(on: make.unsafeInvoke())
+            }
+            #expect(try await area(base, "Square") == 9)
+            #expect(try await area(base, "Twin") == 16)
+            // A conditional conformance's witness table is instantiated for the type.
+            #expect(try await area(base, "Crate", [.type(Int64.self)]) == 21)
+            #expect(try await area(other, "Plate") == 11)
+            // A subclass finds its superclass's conformance in the superclass's module.
+            #expect(try await area(last, "Saucer") == 11)
+
+            // An initializer requirement runs the witness of the conformance that
+            // Saucer inherits from another module, and constructs a Saucer.
+            let saucer = try await runtime.resolve(
+                .swift(.type(last + ".Saucer")),
+                in: .path(stripped.libraryURL)
+            )
+            let makeSaucer = try await saucer.resolve(
                 .swift(
-                    .symbol(
-                        "protocol witness for \(base).Shape.area() -> Swift.Int64"
-                            + " in conformance \(base).\(owner) : \(base).Shape in \(base)"
+                    .initializer(
+                        base + ".Shape.init()",
+                        as: (() -> AnyObject).self
+                    )
+                )
+            )
+            let made = try unsafe makeSaucer.unsafeInvoke()
+            #expect(String(describing: type(of: made)) == "Saucer")
+
+            // Other conformances' witnesses show that Shape declares area(), so
+            // its default implementation does not stand in for Hidden's witness.
+            let hidden = try await runtime.resolve(
+                .swift(.type(last + ".Hidden")),
+                in: .path(stripped.libraryURL)
+            )
+            await #expect {
+                _ = try await hidden.resolve(
+                    .swift(
+                        .method(
+                            base + ".Shape.area()",
+                            as: (() -> Int64).self
+                        )
+                    )
+                )
+            } throws: { error in
+                guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                    return false
+                }
+                return message.contains("witness of \(last).Hidden's conformance")
+            }
+            let makeHidden = try await runtime.resolve(
+                .swift(
+                    .function(
+                        last + ".makeHidden()",
+                        as: (() -> AnyObject).self
+                    )
+                ),
+                in: .path(stripped.libraryURL)
+            )
+            let defaultArea = try await hidden.resolve(
+                .swift(
+                    .method(
+                        "(extension in \(base)):\(base).Shape.area() -> Swift.Int64",
+                        as: (() -> Int64).self
+                    )
+                )
+            )
+            #expect(try unsafe defaultArea.unsafeInvoke(on: makeHidden.unsafeInvoke()) == -1)
+
+            // Shape requires scaled(Int64) and its extension declares
+            // scaled(String). Hidden's missing witness rules out only the
+            // requirement, which a request for String does not name.
+            let scaledText = try await hidden.resolve(
+                .swift(
+                    .method(
+                        base + ".Shape.scaled(Swift.String) -> Swift.String",
+                        as: ((String) -> String).self
+                    )
+                )
+            )
+            let receiver = try unsafe makeHidden.unsafeInvoke()
+            #expect(try unsafe scaledText.unsafeInvoke(on: receiver, "a") == "scaled a")
+            let scaledLabel = try await hidden.resolve(
+                .swift(
+                    .method(
+                        base + ".Shape.scaled(_:)",
+                        as: ((String) -> String).self
+                    )
+                )
+            )
+            #expect(try unsafe scaledLabel.unsafeInvoke(on: receiver, "b") == "scaled b")
+            await #expect {
+                _ = try await hidden.resolve(
+                    .swift(
+                        .method(
+                            base + ".Shape.scaled(_:)",
+                            as: ((Int64) -> Int64).self
+                        )
+                    )
+                )
+            } throws: { error in
+                guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                    return false
+                }
+                return message.contains("witness of \(last).Hidden's conformance")
+            }
+            // The witnesses of a conformance in Shape's image name its method
+            // requirements, so a method that only its extension declares applies.
+            // The property's modify coroutine, which has a witness that the index
+            // does not record, is not a method and does not need a name.
+            let describe = try await hidden.resolve(
+                .swift(
+                    .method(
+                        base + ".Shape.describe()",
+                        as: (() -> String).self
+                    )
+                )
+            )
+            #expect(try unsafe describe.unsafeInvoke(on: receiver) == "shape 5")
+            // Square's own witness table names them as well.
+            let square = try await runtime.resolve(
+                .swift(.type(base + ".Square")),
+                in: .path(protocols.libraryURL)
+            )
+            let makeSquare = try await runtime.resolve(
+                .swift(
+                    .function(
+                        base + ".makeSquare()",
+                        as: (() -> AnyObject).self
                     )
                 ),
                 in: .path(protocols.libraryURL)
             )
-            return unsafe symbol.withUnsafeAddress { UInt(bitPattern: $0) }
-        }
-        try #require(witnesses[0] == witnesses[1])
-        func area(
-            _ module: String,
-            _ type: String,
-            _ arguments: [NativeSwiftGenericArgument] = []
-        ) async throws -> Int64 {
-            let scope = ImageSelector.path(libraries[module]!.libraryURL)
-            let make = try await runtime.resolve(
-                .swift(
-                    .function(
-                        module + ".make" + type + "()",
-                        as: (() -> AnyObject).self
-                    )
-                ),
-                in: scope
-            )
-            let owner = try await runtime.resolve(
-                .swift(.type(module + "." + type, genericArguments: arguments)),
-                in: scope
-            )
-            let area = try await owner.resolve(
+            let describeSquare = try await square.resolve(
                 .swift(
                     .method(
-                        base + ".Shape.area()",
-                        as: (() -> Int64).self
+                        base + ".Shape.describe()",
+                        as: (() -> String).self
                     )
                 )
             )
-            #expect(area.symbol.declaration.name.hasPrefix("protocol witness for "))
-            return try unsafe area.unsafeInvoke(on: make.unsafeInvoke())
+            #expect(
+                try unsafe describeSquare.unsafeInvoke(on: makeSquare.unsafeInvoke()) == "shape 9"
+            )
+
         }
-        #expect(try await area(base, "Square") == 9)
-        #expect(try await area(base, "Twin") == 16)
-        // A conditional conformance's witness table is instantiated for the type.
-        #expect(try await area(base, "Crate", [.type(Int64.self)]) == 21)
-        #expect(try await area(other, "Plate") == 11)
-        // A subclass finds its superclass's conformance in the superclass's module.
-        #expect(try await area(last, "Saucer") == 11)
-
-        // An initializer requirement runs the witness of the conformance that
-        // Saucer inherits from another module, and constructs a Saucer.
-        let saucer = try await runtime.resolve(
-            .swift(.type(last + ".Saucer")),
-            in: .path(stripped.libraryURL)
-        )
-        let makeSaucer = try await saucer.resolve(
-            .swift(
-                .initializer(
-                    base + ".Shape.init()",
-                    as: (() -> AnyObject).self
-                )
-            )
-        )
-        let made = try unsafe makeSaucer.unsafeInvoke()
-        #expect(String(describing: type(of: made)) == "Saucer")
-
-        // Other conformances' witnesses show that Shape declares area(), so
-        // its default implementation does not stand in for Hidden's witness.
-        let hidden = try await runtime.resolve(
-            .swift(.type(last + ".Hidden")),
-            in: .path(stripped.libraryURL)
-        )
-        await #expect {
-            _ = try await hidden.resolve(
-                .swift(
-                    .method(
-                        base + ".Shape.area()",
-                        as: (() -> Int64).self
-                    )
-                )
-            )
-        } throws: { error in
-            guard case ABIResolutionError.metadataUnavailable(let message) = error else {
-                return false
-            }
-            return message.contains("witness of \(last).Hidden's conformance")
-        }
-        let makeHidden = try await runtime.resolve(
-            .swift(
-                .function(
-                    last + ".makeHidden()",
-                    as: (() -> AnyObject).self
-                )
-            ),
-            in: .path(stripped.libraryURL)
-        )
-        let defaultArea = try await hidden.resolve(
-            .swift(
-                .method(
-                    "(extension in \(base)):\(base).Shape.area() -> Swift.Int64",
-                    as: (() -> Int64).self
-                )
-            )
-        )
-        #expect(try unsafe defaultArea.unsafeInvoke(on: makeHidden.unsafeInvoke()) == -1)
-
-        // Shape requires scaled(Int64) and its extension declares
-        // scaled(String). Hidden's missing witness rules out only the
-        // requirement, which a request for String does not name.
-        let scaledText = try await hidden.resolve(
-            .swift(
-                .method(
-                    base + ".Shape.scaled(Swift.String) -> Swift.String",
-                    as: ((String) -> String).self
-                )
-            )
-        )
-        let receiver = try unsafe makeHidden.unsafeInvoke()
-        #expect(try unsafe scaledText.unsafeInvoke(on: receiver, "a") == "scaled a")
-        let scaledLabel = try await hidden.resolve(
-            .swift(
-                .method(
-                    base + ".Shape.scaled(_:)",
-                    as: ((String) -> String).self
-                )
-            )
-        )
-        #expect(try unsafe scaledLabel.unsafeInvoke(on: receiver, "b") == "scaled b")
-        await #expect {
-            _ = try await hidden.resolve(
-                .swift(
-                    .method(
-                        base + ".Shape.scaled(_:)",
-                        as: ((Int64) -> Int64).self
-                    )
-                )
-            )
-        } throws: { error in
-            guard case ABIResolutionError.metadataUnavailable(let message) = error else {
-                return false
-            }
-            return message.contains("witness of \(last).Hidden's conformance")
-        }
-        // The witnesses of a conformance in Shape's image name its method
-        // requirements, so a method that only its extension declares applies.
-        // The property's modify coroutine, which has a witness that the index
-        // does not record, is not a method and does not need a name.
-        let describe = try await hidden.resolve(
-            .swift(
-                .method(
-                    base + ".Shape.describe()",
-                    as: (() -> String).self
-                )
-            )
-        )
-        #expect(try unsafe describe.unsafeInvoke(on: receiver) == "shape 5")
-        // Square's own witness table names them as well.
-        let square = try await runtime.resolve(
-            .swift(.type(base + ".Square")),
-            in: .path(protocols.libraryURL)
-        )
-        let makeSquare = try await runtime.resolve(
-            .swift(
-                .function(
-                    base + ".makeSquare()",
-                    as: (() -> AnyObject).self
-                )
-            ),
-            in: .path(protocols.libraryURL)
-        )
-        let describeSquare = try await square.resolve(
-            .swift(
-                .method(
-                    base + ".Shape.describe()",
-                    as: (() -> String).self
-                )
-            )
-        )
-        #expect(try unsafe describeSquare.unsafeInvoke(on: makeSquare.unsafeInvoke()) == "shape 9")
-
     }
 
     @Test func extensionMembersDoNotStandInForUnnamedRequirements() async throws {
@@ -951,103 +968,105 @@ struct SwiftMemberInvocationTests {
         )
         defer { library.cleanup() }
         let runtime = ABIRuntime()
-        let scope = ImageSelector.path(library.libraryURL)
-        let meter = try await runtime.resolve(.swift(.type(module + ".Meter")), in: scope)
-        let make = try await runtime.resolve(
-            .swift(
-                .function(
-                    module + ".makeMeter()",
-                    as: (() -> AnyObject).self
+        try await runtime.prepare { _ async throws in
+            let scope = ImageSelector.path(library.libraryURL)
+            let meter = try await runtime.resolve(.swift(.type(module + ".Meter")), in: scope)
+            let make = try await runtime.resolve(
+                .swift(
+                    .function(
+                        module + ".makeMeter()",
+                        as: (() -> AnyObject).self
+                    )
+                ),
+                in: scope
+            )
+            await #expect {
+                _ = try await meter.resolve(
+                    .swift(
+                        .method(
+                            module + ".Gauge.read()",
+                            as: (() -> Int64).self
+                        )
+                    )
                 )
-            ),
-            in: scope
-        )
-        await #expect {
-            _ = try await meter.resolve(
+            } throws: { error in
+                guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                    return false
+                }
+                return message.contains("whether it is one of them is not established")
+            }
+            await #expect {
+                _ = try await meter.resolve(
+                    .swift(.method(module + ".Calibrated.read()", as: (() -> Int64).self))
+                )
+            } throws: { error in
+                guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                    return false
+                }
+                return message.contains(module + ".Gauge")
+                    && message.contains("whether it is one of them is not established")
+            }
+            // Gauge has no getter requirement, so its extension's getter applies.
+            let label = try await meter.resolve(
+                .swift(
+                    .getter(
+                        module + ".Gauge.label",
+                        as: (() -> String).self
+                    )
+                )
+            )
+            #expect(try unsafe label.unsafeInvoke(on: make.unsafeInvoke()) == "gauge")
+            // Tagged requires only an associated type, which no member names.
+            let tagName = try await meter.resolve(
                 .swift(
                     .method(
-                        module + ".Gauge.read()",
+                        module + ".Tagged.tagName()",
+                        as: (() -> String).self
+                    )
+                )
+            )
+            #expect(try unsafe tagName.unsafeInvoke(on: make.unsafeInvoke()) == "tagged")
+            // The standard library exports Equatable's method descriptors, which
+            // name its static requirement ==.
+            let kindName = try await meter.resolve(
+                .swift(
+                    .staticMethod(
+                        "Swift.Equatable.kindName()",
+                        as: (() -> String).self
+                    )
+                )
+            )
+            #expect(try unsafe kindName.unsafeInvoke() == "equatable")
+            // A complete declaration of a protocol extension's initializer.
+            let reset = try await meter.resolve(
+                .swift(
+                    .initializer(
+                        "(extension in \(module)):\(module).Resettable.init(value: Swift.Int64) -> A",
+                        as: ((Int64) -> AnyObject).self
+                    )
+                )
+            )
+            #expect(String(describing: type(of: try unsafe reset.unsafeInvoke(4))) == "Meter")
+            // A complete extension declaration names the extension member.
+            let read = try await meter.resolve(
+                .swift(
+                    .method(
+                        "(extension in \(module)):\(module).Gauge.read() -> Swift.Int64",
                         as: (() -> Int64).self
                     )
                 )
             )
-        } throws: { error in
-            guard case ABIResolutionError.metadataUnavailable(let message) = error else {
-                return false
-            }
-            return message.contains("whether it is one of them is not established")
+            #expect(try unsafe read.unsafeInvoke(on: make.unsafeInvoke()) == -1)
+            let calibratedRead = try await meter.resolve(
+                .swift(
+                    .method(
+                        "(extension in \(module)):\(module).Calibrated.read() -> Swift.Int64",
+                        as: (() -> Int64).self
+                    )
+                )
+            )
+            #expect(try unsafe calibratedRead.unsafeInvoke(on: make.unsafeInvoke()) == -2)
         }
-        await #expect {
-            _ = try await meter.resolve(
-                .swift(.method(module + ".Calibrated.read()", as: (() -> Int64).self))
-            )
-        } throws: { error in
-            guard case ABIResolutionError.metadataUnavailable(let message) = error else {
-                return false
-            }
-            return message.contains(module + ".Gauge")
-                && message.contains("whether it is one of them is not established")
-        }
-        // Gauge has no getter requirement, so its extension's getter applies.
-        let label = try await meter.resolve(
-            .swift(
-                .getter(
-                    module + ".Gauge.label",
-                    as: (() -> String).self
-                )
-            )
-        )
-        #expect(try unsafe label.unsafeInvoke(on: make.unsafeInvoke()) == "gauge")
-        // Tagged requires only an associated type, which no member names.
-        let tagName = try await meter.resolve(
-            .swift(
-                .method(
-                    module + ".Tagged.tagName()",
-                    as: (() -> String).self
-                )
-            )
-        )
-        #expect(try unsafe tagName.unsafeInvoke(on: make.unsafeInvoke()) == "tagged")
-        // The standard library exports Equatable's method descriptors, which
-        // name its static requirement ==.
-        let kindName = try await meter.resolve(
-            .swift(
-                .staticMethod(
-                    "Swift.Equatable.kindName()",
-                    as: (() -> String).self
-                )
-            )
-        )
-        #expect(try unsafe kindName.unsafeInvoke() == "equatable")
-        // A complete declaration of a protocol extension's initializer.
-        let reset = try await meter.resolve(
-            .swift(
-                .initializer(
-                    "(extension in \(module)):\(module).Resettable.init(value: Swift.Int64) -> A",
-                    as: ((Int64) -> AnyObject).self
-                )
-            )
-        )
-        #expect(String(describing: type(of: try unsafe reset.unsafeInvoke(4))) == "Meter")
-        // A complete extension declaration names the extension member.
-        let read = try await meter.resolve(
-            .swift(
-                .method(
-                    "(extension in \(module)):\(module).Gauge.read() -> Swift.Int64",
-                    as: (() -> Int64).self
-                )
-            )
-        )
-        #expect(try unsafe read.unsafeInvoke(on: make.unsafeInvoke()) == -1)
-        let calibratedRead = try await meter.resolve(
-            .swift(
-                .method(
-                    "(extension in \(module)):\(module).Calibrated.read() -> Swift.Int64",
-                    as: (() -> Int64).self
-                )
-            )
-        )
-        #expect(try unsafe calibratedRead.unsafeInvoke(on: make.unsafeInvoke()) == -2)
     }
 
     @Test(arguments: [false, true])
@@ -1082,62 +1101,69 @@ struct SwiftMemberInvocationTests {
         )
         defer { library.cleanup() }
         let runtime = ABIRuntime()
-        let scope = ImageSelector.path(library.libraryURL)
-        let type = try await runtime.resolve(.swift(.type(module + ".Meter")), in: scope)
-        let make = try await runtime.resolve(
-            .swift(.function(module + ".makeMeter()", as: (() -> AnyObject).self)),
-            in: scope
-        )
-        let object = try unsafe make.unsafeInvoke()
-        for name in [module + ".Leaf.read(_:)", module + ".Leaf.read(Swift.Int64) -> Swift.Int64"] {
+        try await runtime.prepare { _ async throws in
+            let scope = ImageSelector.path(library.libraryURL)
+            let type = try await runtime.resolve(.swift(.type(module + ".Meter")), in: scope)
+            let make = try await runtime.resolve(
+                .swift(.function(module + ".makeMeter()", as: (() -> AnyObject).self)),
+                in: scope
+            )
+            let object = try unsafe make.unsafeInvoke()
+            for name in [
+                module + ".Leaf.read(_:)", module + ".Leaf.read(Swift.Int64) -> Swift.Int64",
+            ] {
+                await #expect {
+                    _ = try await type.resolve(.swift(.method(name, as: ((Int64) -> Int64).self)))
+                } throws: { error in
+                    guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                        return false
+                    }
+                    return message.contains(module + ".Root.read")
+                        && message.contains("requirement")
+                }
+            }
             await #expect {
-                _ = try await type.resolve(.swift(.method(name, as: ((Int64) -> Int64).self)))
+                _ = try await type.resolve(
+                    .swift(.getter(module + ".Leaf.value", as: (() -> Int64).self))
+                )
             } throws: { error in
                 guard case ABIResolutionError.metadataUnavailable(let message) = error else {
                     return false
                 }
-                return message.contains(module + ".Root.read") && message.contains("requirement")
+                return message.contains(module + ".Root")
             }
-        }
-        await #expect {
-            _ = try await type.resolve(
-                .swift(.getter(module + ".Leaf.value", as: (() -> Int64).self))
-            )
-        } throws: { error in
-            guard case ABIResolutionError.metadataUnavailable(let message) = error else {
-                return false
+            await #expect {
+                _ = try await type.resolve(
+                    .swift(.staticMethod(module + ".Leaf.code()", as: (() -> Int64).self))
+                )
+            } throws: { error in
+                guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                    return false
+                }
+                return message.contains(module + ".Root")
             }
-            return message.contains(module + ".Root")
-        }
-        await #expect {
-            _ = try await type.resolve(
-                .swift(.staticMethod(module + ".Leaf.code()", as: (() -> Int64).self))
-            )
-        } throws: { error in
-            guard case ABIResolutionError.metadataUnavailable(let message) = error else {
-                return false
-            }
-            return message.contains(module + ".Root")
-        }
-        let read = try await type.resolve(
-            .swift(
-                .method(
-                    "(extension in \(module)):\(module).Leaf.read(Swift.Int64) -> Swift.Int64",
-                    as: ((Int64) -> Int64).self
+            let read = try await type.resolve(
+                .swift(
+                    .method(
+                        "(extension in \(module)):\(module).Leaf.read(Swift.Int64) -> Swift.Int64",
+                        as: ((Int64) -> Int64).self
+                    )
                 )
             )
-        )
-        #expect(try unsafe read.unsafeInvoke(on: object, 4) == -4)
-        for name in [
-            module + ".Leaf.read(_:)", module + ".Leaf.read(Swift.String) -> Swift.String",
-        ] {
-            let text = try await type.resolve(.swift(.method(name, as: ((String) -> String).self)))
-            #expect(try unsafe text.unsafeInvoke(on: object, "a") == "leaf a")
+            #expect(try unsafe read.unsafeInvoke(on: object, 4) == -4)
+            for name in [
+                module + ".Leaf.read(_:)", module + ".Leaf.read(Swift.String) -> Swift.String",
+            ] {
+                let text = try await type.resolve(
+                    .swift(.method(name, as: ((String) -> String).self))
+                )
+                #expect(try unsafe text.unsafeInvoke(on: object, "a") == "leaf a")
+            }
+            let label = try await type.resolve(
+                .swift(.method(module + ".Leaf.label()", as: (() -> String).self))
+            )
+            #expect(try unsafe label.unsafeInvoke(on: object) == "leaf")
         }
-        let label = try await type.resolve(
-            .swift(.method(module + ".Leaf.label()", as: (() -> String).self))
-        )
-        #expect(try unsafe label.unsafeInvoke(on: object) == "leaf")
     }
 
     @Test func objectiveCProtocolExtensionMembersResolveAfterRequirementChecks() async throws {
@@ -1173,64 +1199,67 @@ struct SwiftMemberInvocationTests {
         )
         defer { library.cleanup() }
         let runtime = ABIRuntime()
-        let scope = ImageSelector.path(library.libraryURL)
-        let type = try await runtime.resolve(.swift(.type(module + ".Impl")), in: scope)
-        let make = try await runtime.resolve(
-            .swift(
-                .function(
-                    module + ".makeImpl()",
-                    as: (() -> AnyObject).self
-                )
-            ),
-            in: scope
-        )
-        let object = try unsafe make.unsafeInvoke()
-        let bonus = try await type.resolve(
-            .swift(
-                .method(
-                    module + ".Foreign.bonus()",
-                    as: (() -> Int64).self
-                )
+        try await runtime.prepare { _ async throws in
+            let scope = ImageSelector.path(library.libraryURL)
+            let type = try await runtime.resolve(.swift(.type(module + ".Impl")), in: scope)
+            let make = try await runtime.resolve(
+                .swift(
+                    .function(
+                        module + ".makeImpl()",
+                        as: (() -> AnyObject).self
+                    )
+                ),
+                in: scope
             )
-        )
-        #expect(try unsafe bonus.unsafeInvoke(on: object) == 2)
-        // The requirement storeValue: is another member than store(value:).
-        let store = try await type.resolve(
-            .swift(
-                .method(
-                    module + ".Foreign.store(value:)",
-                    as: ((Int64) -> Int64).self
+            let object = try unsafe make.unsafeInvoke()
+            let bonus = try await type.resolve(
+                .swift(
+                    .method(
+                        module + ".Foreign.bonus()",
+                        as: (() -> Int64).self
+                    )
                 )
             )
-        )
-        #expect(try unsafe store.unsafeInvoke(on: object, 42) == 42)
-        // An imported protocol's extension member.
-        let copied = try await type.resolve(
-            .swift(
-                .method(
-                    "__C.NSCopying.copied()",
-                    as: (() -> Int64).self
+            #expect(try unsafe bonus.unsafeInvoke(on: object) == 2)
+            // The requirement storeValue: is another member than store(value:).
+            let store = try await type.resolve(
+                .swift(
+                    .method(
+                        module + ".Foreign.store(value:)",
+                        as: ((Int64) -> Int64).self
+                    )
                 )
             )
-        )
-        #expect(try unsafe copied.unsafeInvoke(on: object) == 3)
-        let extra = try await type.resolve(
-            .swift(.method("__C.NSObject.extra()", as: (() -> Int64).self))
-        )
-        #expect(try unsafe extra.unsafeInvoke(on: object) == 4)
-        let equal = try await type.resolve(
-            .swift(.method("__C.NSObject.isEqual(_:)", as: ((Int64) -> Int64).self))
-        )
-        #expect(try unsafe equal.unsafeInvoke(on: object, 41) == 42)
-        await #expect {
-            _ = try await type.resolve(
-                .swift(.method("__C.NSObject.isProxy()", as: (() -> Bool).self))
+            #expect(try unsafe store.unsafeInvoke(on: object, 42) == 42)
+            // An imported protocol's extension member.
+            let copied = try await type.resolve(
+                .swift(
+                    .method(
+                        "__C.NSCopying.copied()",
+                        as: (() -> Int64).self
+                    )
+                )
             )
-        } throws: { error in
-            guard case ABIResolutionError.metadataUnavailable(let message) = error else {
-                return false
+            #expect(try unsafe copied.unsafeInvoke(on: object) == 3)
+            let extra = try await type.resolve(
+                .swift(.method("__C.NSObject.extra()", as: (() -> Int64).self))
+            )
+            #expect(try unsafe extra.unsafeInvoke(on: object) == 4)
+            let equal = try await type.resolve(
+                .swift(.method("__C.NSObject.isEqual(_:)", as: ((Int64) -> Int64).self))
+            )
+            #expect(try unsafe equal.unsafeInvoke(on: object, 41) == 42)
+            await #expect {
+                _ = try await type.resolve(
+                    .swift(.method("__C.NSObject.isProxy()", as: (() -> Bool).self))
+                )
+            } throws: { error in
+                guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                    return false
+                }
+                return message.contains("isProxy")
+                    && message.contains("SDK imports it as isProxy()")
             }
-            return message.contains("isProxy") && message.contains("SDK imports it as isProxy()")
         }
     }
 
@@ -1286,88 +1315,94 @@ struct SwiftMemberInvocationTests {
         )
         defer { library.cleanup() }
         let runtime = ABIRuntime()
-        let scope = ImageSelector.path(library.libraryURL)
-        let type = try await runtime.resolve(.swift(.type(module + ".Impl")), in: scope)
-        let native = try await runtime.resolve(
-            .swift(.function(module + ".swiftStoreExtra(_:)", as: ((Int64) -> Int64).self)),
-            in: scope
-        )
-        #expect(try unsafe native.unsafeInvoke(9) == 9)
-        func expectRequirement(_ selector: String, _ operation: () async throws -> Void) async {
-            await #expect { try await operation() } throws: { error in
-                guard case ABIResolutionError.metadataUnavailable(let message) = error else {
-                    return false
+        try await runtime.prepare { _ async throws in
+            let scope = ImageSelector.path(library.libraryURL)
+            let type = try await runtime.resolve(.swift(.type(module + ".Impl")), in: scope)
+            let native = try await runtime.resolve(
+                .swift(.function(module + ".swiftStoreExtra(_:)", as: ((Int64) -> Int64).self)),
+                in: scope
+            )
+            #expect(try unsafe native.unsafeInvoke(9) == 9)
+            func expectRequirement(_ selector: String, _ operation: () async throws -> Void) async {
+                await #expect { try await operation() } throws: { error in
+                    guard case ABIResolutionError.metadataUnavailable(let message) = error else {
+                        return false
+                    }
+                    return message.contains(selector)
+                        && message.contains("no record establishes its Swift name")
+                        && message.contains("(extension in \(module)):")
+                        && message.contains("NativeObject")
                 }
-                return message.contains(selector)
-                    && message.contains("no record establishes its Swift name")
-                    && message.contains("(extension in \(module)):")
-                    && message.contains("NativeObject")
             }
-        }
-        await expectRequirement("renamedSelector:") {
-            _ = try await type.resolve(
-                .swift(.method(module + ".Store.extra(_:)", as: ((Int64) -> Int64).self))
-            )
-        }
-        await expectRequirement("renamedSelector:") {
-            _ = try await type.resolve(
-                .swift(.method(module + ".SwiftStore.extra(_:)", as: ((Int64) -> Int64).self))
-            )
-        }
-        await expectRequirement("inherited") {
-            _ = try await type.resolve(
-                .swift(.method(module + ".Store.inherited()", as: (() -> Double).self))
-            )
-        }
-        await expectRequirement("isOn") {
-            _ = try await type.resolve(.swift(.getter(module + ".Store.on", as: (() -> Bool).self)))
-        }
-        await expectRequirement("setValue:") {
-            _ = try await type.resolve(
-                .swift(.setter(module + ".Store.value", as: ((Int64) -> Void).self))
-            )
-        }
-        await expectRequirement("make") {
-            _ = try await type.resolve(
-                .swift(.staticMethod(module + ".Store.make()", as: (() -> Int64).self))
-            )
-        }
-        let make = try await runtime.resolve(
-            .swift(.function(module + ".makeImpl()", as: (() -> AnyObject).self)),
-            in: scope
-        )
-        let object = try unsafe make.unsafeInvoke()
-        let exact = try await type.resolve(
-            .swift(
-                .method(
-                    "(extension in \(module)):\(module).Store.extra(Swift.Int64) -> Swift.Int64",
-                    as: ((Int64) -> Int64).self
+            await expectRequirement("renamedSelector:") {
+                _ = try await type.resolve(
+                    .swift(.method(module + ".Store.extra(_:)", as: ((Int64) -> Int64).self))
                 )
+            }
+            await expectRequirement("renamedSelector:") {
+                _ = try await type.resolve(
+                    .swift(.method(module + ".SwiftStore.extra(_:)", as: ((Int64) -> Int64).self))
+                )
+            }
+            await expectRequirement("inherited") {
+                _ = try await type.resolve(
+                    .swift(.method(module + ".Store.inherited()", as: (() -> Double).self))
+                )
+            }
+            await expectRequirement("isOn") {
+                _ = try await type.resolve(
+                    .swift(.getter(module + ".Store.on", as: (() -> Bool).self))
+                )
+            }
+            await expectRequirement("setValue:") {
+                _ = try await type.resolve(
+                    .swift(.setter(module + ".Store.value", as: ((Int64) -> Void).self))
+                )
+            }
+            await expectRequirement("make") {
+                _ = try await type.resolve(
+                    .swift(.staticMethod(module + ".Store.make()", as: (() -> Int64).self))
+                )
+            }
+            let make = try await runtime.resolve(
+                .swift(.function(module + ".makeImpl()", as: (() -> AnyObject).self)),
+                in: scope
             )
-        )
-        #expect(try unsafe exact.unsafeInvoke(on: object, 9) == -1)
-        let maybe = try await type.resolve(
-            .swift(.method(module + ".OptionalStore.maybe()", as: (() -> Int64).self))
-        )
-        #expect(try unsafe maybe.unsafeInvoke(on: object) == 42)
-        let level = try await type.resolve(
-            .swift(.getter(module + ".OptionalStore.level", as: (() -> Int64).self))
-        )
-        #expect(try unsafe level.unsafeInvoke(on: object) == 43)
-        await expectRequirement("level") {
-            _ = try await type.resolve(
-                .swift(.getter(module + ".OptionalStore.nullableLevel", as: (() -> Int64?).self))
-            )
-        }
-        await expectRequirement("level") {
-            _ = try await type.resolve(
+            let object = try unsafe make.unsafeInvoke()
+            let exact = try await type.resolve(
                 .swift(
-                    .getter(
-                        module + ".OptionalStore.nullableLevel",
-                        as: (() -> NativeSwiftValue).self
+                    .method(
+                        "(extension in \(module)):\(module).Store.extra(Swift.Int64) -> Swift.Int64",
+                        as: ((Int64) -> Int64).self
                     )
                 )
             )
+            #expect(try unsafe exact.unsafeInvoke(on: object, 9) == -1)
+            let maybe = try await type.resolve(
+                .swift(.method(module + ".OptionalStore.maybe()", as: (() -> Int64).self))
+            )
+            #expect(try unsafe maybe.unsafeInvoke(on: object) == 42)
+            let level = try await type.resolve(
+                .swift(.getter(module + ".OptionalStore.level", as: (() -> Int64).self))
+            )
+            #expect(try unsafe level.unsafeInvoke(on: object) == 43)
+            await expectRequirement("level") {
+                _ = try await type.resolve(
+                    .swift(
+                        .getter(module + ".OptionalStore.nullableLevel", as: (() -> Int64?).self)
+                    )
+                )
+            }
+            await expectRequirement("level") {
+                _ = try await type.resolve(
+                    .swift(
+                        .getter(
+                            module + ".OptionalStore.nullableLevel",
+                            as: (() -> NativeSwiftValue).self
+                        )
+                    )
+                )
+            }
         }
     }
 
@@ -1446,356 +1481,372 @@ struct SwiftMemberInvocationTests {
         defer { extensions.cleanup() }
 
         let runtime = ABIRuntime(), scope = ImageSelector.path(library.libraryURL)
-        await #expect(throws: ABIResolutionError.self) {
-            try await runtime.resolve(
-                .swift(.symbol(module + ".Base.value(Swift.Int64) -> Swift.Int64")),
-                in: scope
-            )
-        }
-        let base = try await runtime.resolve(.swift(.type(module + ".Base")), in: scope)
-        let derived = try await runtime.resolve(.swift(.type(module + ".Derived")), in: scope)
-        let mode = try await runtime.resolve(.swift(.type(module + ".Mode")), in: scope)
-        func make(_ name: String) async throws -> AnyObject {
-            let make = try await runtime.resolve(
+        try await runtime.prepare { _ async throws in
+            await #expect(throws: ABIResolutionError.self) {
+                try await runtime.resolve(
+                    .swift(.symbol(module + ".Base.value(Swift.Int64) -> Swift.Int64")),
+                    in: scope
+                )
+            }
+            let base = try await runtime.resolve(.swift(.type(module + ".Base")), in: scope)
+            let derived = try await runtime.resolve(.swift(.type(module + ".Derived")), in: scope)
+            let mode = try await runtime.resolve(.swift(.type(module + ".Mode")), in: scope)
+            func make(_ name: String) async throws -> AnyObject {
+                let make = try await runtime.resolve(
+                    .swift(
+                        .function(
+                            module + "." + name + "() -> " + base.name,
+                            as: (() -> AnyObject).self
+                        )
+                    ),
+                    in: scope
+                )
+                return try unsafe make.unsafeInvoke()
+            }
+            let baseObject = try await make("makeBase"),
+                derivedObject = try await make("makeDerived")
+            let describe = try await runtime.resolve(
                 .swift(
                     .function(
-                        module + "." + name + "() -> " + base.name,
-                        as: (() -> AnyObject).self
+                        module + ".describe(" + base.name + ") -> Swift.String",
+                        as: ((AnyObject) -> String).self
                     )
                 ),
                 in: scope
             )
-            return try unsafe make.unsafeInvoke()
-        }
-        let baseObject = try await make("makeBase"), derivedObject = try await make("makeDerived")
-        let describe = try await runtime.resolve(
-            .swift(
-                .function(
-                    module + ".describe(" + base.name + ") -> Swift.String",
-                    as: ((AnyObject) -> String).self
-                )
-            ),
-            in: scope
-        )
 
-        // The lookup type's entry is captured; a subclass receiver does not redispatch.
-        let baseValue = try await base.resolve(
-            .swift(
-                .method(
-                    "value(_:)",
-                    as: ((Int64) -> Int64).self
-                )
-            )
-        )
-        #expect(try unsafe baseValue.unsafeInvoke(on: baseObject, 40) == 41)
-        #expect(try unsafe baseValue.unsafeInvoke(on: derivedObject, 40) == 41)
-        // An override has no thunk of its own; the inherited slot of the lookup type holds it.
-        let derivedValue = try derived.resolveAndWait(
-            .swift(
-                .method(
-                    "value(_:)",
-                    as: ((Int64) -> Int64).self
-                )
-            )
-        )
-        #expect(try unsafe derivedValue.unsafeInvoke(on: derivedObject, 40) == 42)
-        let bound = try await runtime.object(derivedObject).resolve(
-            .swift(
-                .method(
-                    "value(_:)",
-                    as: ((Int64) -> Int64).self
-                )
-            )
-        )
-        #expect(try unsafe bound.unsafeInvoke(40) == 42)
-
-        let setCount = try await base.resolve(.swift(.setter("count", as: ((Int64) -> Void).self)))
-        let getCount = try await base.resolve(.swift(.getter("count", as: (() -> Int64).self)))
-        try unsafe setCount.unsafeInvoke(on: baseObject, 7)
-        #expect(try unsafe getCount.unsafeInvoke(on: baseObject) == 7)
-        let extensionCount = try await base.resolve(
-            .swift(
-                .getter(
-                    "count",
-                    as: (() async -> Int64).self,
-                    declaredAs: "() async -> Swift.Int64"
-                )
-            )
-        )
-        #expect(try await unsafe extensionCount.unsafeInvoke(on: baseObject) == 99)
-        // A runtime-only resilient value binds its declaration through the thunk.
-        let setMode = try await base.resolve(
-            .swift(
-                .setter(
-                    "mode.setter : " + mode.name,
-                    as: ((NativeSwiftValue) -> Void).self,
-                    valueABIs: [mode: .opaque(named: mode.name)]
-                )
-            )
-        )
-        try unsafe setMode.unsafeInvoke(on: baseObject, try mode.makeEnumCase(named: "on"))
-        #expect(try unsafe describe.unsafeInvoke(baseObject) == "on:7")
-
-        // Relative names that need binding search dispatch thunks too, and the
-        // async overload does not match the synchronous request.
-        let declared = try await base.resolve(
-            .swift(
-                .method(
-                    "value(_:)",
-                    as: ((Int64) -> Int64).self,
-                    declaredAs: "(Swift.Int64) -> Swift.Int64"
-                )
-            )
-        )
-        #expect(try unsafe declared.unsafeInvoke(on: baseObject, 40) == 41)
-        // An accessor's async effect comes from its method descriptor.
-        let asyncCount = try await base.resolve(
-            .swift(
-                .getter(
-                    "asyncCount",
-                    as: (() async -> Int64).self
-                )
-            )
-        )
-        #expect(try await unsafe asyncCount.unsafeInvoke(on: baseObject) == 7)
-        // Class members also use the lookup type's slot, and the class's
-        // method hides the extension's.
-        for declared in [nil, "() -> Swift.Int64"] {
-            let kind = try await base.resolve(
+            // The lookup type's entry is captured; a subclass receiver does not redispatch.
+            let baseValue = try await base.resolve(
                 .swift(
-                    .staticMethod(
-                        "kind()",
-                        as: (() -> Int64).self,
-                        declaredAs: declared
+                    .method(
+                        "value(_:)",
+                        as: ((Int64) -> Int64).self
                     )
                 )
             )
-            #expect(try unsafe kind.unsafeInvoke() == 5)
-        }
-        let derivedKind = try await derived.resolve(
-            .swift(.staticMethod("kind()", as: (() -> Int64).self))
-        )
-        #expect(try unsafe derivedKind.unsafeInvoke() == 6)
-        let kindValue = try await base.resolve(
-            .swift(.staticGetter("kindValue", as: (() -> Int64).self))
-        )
-        #expect(try unsafe kindValue.unsafeInvoke() == 5)
-        // A class getter's descriptor says it is synchronous, so it does not
-        // hide an async extension getter requested with its declaration.
-        let extensionKind = try await base.resolve(
-            .swift(
-                .staticGetter(
-                    "kindValue",
-                    as: (() async -> Int64).self,
-                    declaredAs: "() async -> Swift.Int64"
+            #expect(try unsafe baseValue.unsafeInvoke(on: baseObject, 40) == 41)
+            #expect(try unsafe baseValue.unsafeInvoke(on: derivedObject, 40) == 41)
+            // An override has no thunk of its own; the inherited slot of the lookup type holds it.
+            let derivedValue = try derived.resolveAndWait(
+                .swift(
+                    .method(
+                        "value(_:)",
+                        as: ((Int64) -> Int64).self
+                    )
                 )
             )
-        )
-        #expect(try await unsafe extensionKind.unsafeInvoke() == 88)
-        // The descriptor decides this before the class layout is decoded, so
-        // a generic class, whose slots are not selected, does not hide it either.
-        let makeGeneric = try await runtime.resolve(
-            .swift(
-                .function(
-                    module + ".makeGeneric()",
-                    as: (() -> NativeSwiftValue).self
-                )
-            ),
-            in: scope
-        )
-        let generic = try unsafe makeGeneric.unsafeInvoke().type
-        let genericKind = try await generic.resolve(
-            .swift(
-                .staticGetter(
-                    "kindValue",
-                    as: (() async -> Int64).self,
-                    declaredAs: "() async -> Swift.Int64"
+            #expect(try unsafe derivedValue.unsafeInvoke(on: derivedObject, 40) == 42)
+            let bound = try await runtime.object(derivedObject).resolve(
+                .swift(
+                    .method(
+                        "value(_:)",
+                        as: ((Int64) -> Int64).self
+                    )
                 )
             )
-        )
-        #expect(try await unsafe genericKind.unsafeInvoke() == 89)
-        // The opaque result descriptor is named by the member, not its thunk.
-        let opaque = try await base.resolve(
-            .swift(
-                .method(
-                    "opaque()",
-                    as: (() -> NativeSwiftValue).self
-                )
-            )
-        )
-        #expect(try unsafe opaque.unsafeInvoke(on: baseObject).withCopy { $0 as? Int64 } == 7)
-        // Replacement publishes the captured entry. A redispatching thunk would
-        // reach Derived's override of the replacement instead.
-        let replacement = try await base.resolve(
-            .swift(
-                .method(
-                    "replacement(_:)",
-                    as: ((Int64) -> Int64).self
-                )
-            )
-        )
-        let plan = try unsafe derivedValue.prepareVirtualReplacementAndWait(with: replacement)
-        let oracle = try await runtime.resolve(
-            .swift(
-                .function(
-                    module + ".value(" + base.name + ", Swift.Int64) -> Swift.Int64",
-                    as: ((AnyObject, Int64) -> Int64).self
-                )
-            ),
-            in: scope
-        )
-        try unsafe plan.install()
-        defer { try? plan.restore() }
-        #expect(try unsafe oracle.unsafeInvoke(derivedObject, 40) == 140)
-        try plan.restore()
-        #expect(try unsafe oracle.unsafeInvoke(derivedObject, 40) == 42)
+            #expect(try unsafe bound.unsafeInvoke(40) == 42)
 
-        // A replacement from another image keeps the declaration's opaque
-        // descriptor lookup in the declaring image.
-        let patchModule = "ThunkPatch_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
-        let patch = try FixtureLibrary(
-            swiftModule: patchModule,
-            swiftSource: """
-                open class Patch {
-                    public init() {}
-                    @inline(never) open func opaque() -> some Equatable { Int64(9) }
-                }
-                """,
-            linkArguments: ["-O", "-enable-library-evolution"]
-        )
-        defer { patch.cleanup() }
-        let patchType = try await runtime.resolve(
-            .swift(.type(patchModule + ".Patch")),
-            in: .path(patch.libraryURL)
-        )
-        let patchOpaque = try await patchType.resolve(
-            .swift(
-                .method(
-                    "opaque()",
-                    as: (() -> NativeSwiftValue).self
+            let setCount = try await base.resolve(
+                .swift(.setter("count", as: ((Int64) -> Void).self))
+            )
+            let getCount = try await base.resolve(.swift(.getter("count", as: (() -> Int64).self)))
+            try unsafe setCount.unsafeInvoke(on: baseObject, 7)
+            #expect(try unsafe getCount.unsafeInvoke(on: baseObject) == 7)
+            let extensionCount = try await base.resolve(
+                .swift(
+                    .getter(
+                        "count",
+                        as: (() async -> Int64).self,
+                        declaredAs: "() async -> Swift.Int64"
+                    )
                 )
             )
-        )
-        let opaquePlan = try unsafe opaque.prepareVirtualReplacementAndWait(with: patchOpaque)
-        try unsafe opaquePlan.install()
-        defer { try? opaquePlan.restore() }
-        let replaced = try base.resolveAndWait(
-            .swift(
-                .method(
-                    "opaque()",
-                    as: (() -> NativeSwiftValue).self
+            #expect(try await unsafe extensionCount.unsafeInvoke(on: baseObject) == 99)
+            // A runtime-only resilient value binds its declaration through the thunk.
+            let setMode = try await base.resolve(
+                .swift(
+                    .setter(
+                        "mode.setter : " + mode.name,
+                        as: ((NativeSwiftValue) -> Void).self,
+                        valueABIs: [mode: .opaque(named: mode.name)]
+                    )
                 )
             )
-        )
-        #expect(try unsafe replaced.unsafeInvoke(on: baseObject).withCopy { $0 as? Int64 } == 9)
-        try opaquePlan.restore()
+            try unsafe setMode.unsafeInvoke(on: baseObject, try mode.makeEnumCase(named: "on"))
+            #expect(try unsafe describe.unsafeInvoke(baseObject) == "on:7")
 
-        // A hook's generated dispatcher has no image; a later lookup still captures it.
-        let hook = try await unsafe derivedValue.hookVirtualCalls(onFailure: { _ in }) {
-            call,
-            input in
-            try call.proceed(input) + 1000
-        }
-        defer { hook.invalidate() }
-        let hooked = try derived.resolveAndWait(
-            .swift(
-                .method(
-                    "value(_:)",
-                    as: ((Int64) -> Int64).self
+            // Relative names that need binding search dispatch thunks too, and the
+            // async overload does not match the synchronous request.
+            let declared = try await base.resolve(
+                .swift(
+                    .method(
+                        "value(_:)",
+                        as: ((Int64) -> Int64).self,
+                        declaredAs: "(Swift.Int64) -> Swift.Int64"
+                    )
                 )
             )
-        )
-        #expect(try unsafe hooked.unsafeInvoke(on: derivedObject, 40) == 1042)
+            #expect(try unsafe declared.unsafeInvoke(on: baseObject, 40) == 41)
+            // An accessor's async effect comes from its method descriptor.
+            let asyncCount = try await base.resolve(
+                .swift(
+                    .getter(
+                        "asyncCount",
+                        as: (() async -> Int64).self
+                    )
+                )
+            )
+            #expect(try await unsafe asyncCount.unsafeInvoke(on: baseObject) == 7)
+            // Class members also use the lookup type's slot, and the class's
+            // method hides the extension's.
+            for declared in [nil, "() -> Swift.Int64"] {
+                let kind = try await base.resolve(
+                    .swift(
+                        .staticMethod(
+                            "kind()",
+                            as: (() -> Int64).self,
+                            declaredAs: declared
+                        )
+                    )
+                )
+                #expect(try unsafe kind.unsafeInvoke() == 5)
+            }
+            let derivedKind = try await derived.resolve(
+                .swift(.staticMethod("kind()", as: (() -> Int64).self))
+            )
+            #expect(try unsafe derivedKind.unsafeInvoke() == 6)
+            let kindValue = try await base.resolve(
+                .swift(.staticGetter("kindValue", as: (() -> Int64).self))
+            )
+            #expect(try unsafe kindValue.unsafeInvoke() == 5)
+            // A class getter's descriptor says it is synchronous, so it does not
+            // hide an async extension getter requested with its declaration.
+            let extensionKind = try await base.resolve(
+                .swift(
+                    .staticGetter(
+                        "kindValue",
+                        as: (() async -> Int64).self,
+                        declaredAs: "() async -> Swift.Int64"
+                    )
+                )
+            )
+            #expect(try await unsafe extensionKind.unsafeInvoke() == 88)
+            // The descriptor decides this before the class layout is decoded, so
+            // a generic class, whose slots are not selected, does not hide it either.
+            let makeGeneric = try await runtime.resolve(
+                .swift(
+                    .function(
+                        module + ".makeGeneric()",
+                        as: (() -> NativeSwiftValue).self
+                    )
+                ),
+                in: scope
+            )
+            let generic = try unsafe makeGeneric.unsafeInvoke().type
+            let genericKind = try await generic.resolve(
+                .swift(
+                    .staticGetter(
+                        "kindValue",
+                        as: (() async -> Int64).self,
+                        declaredAs: "() async -> Swift.Int64"
+                    )
+                )
+            )
+            #expect(try await unsafe genericKind.unsafeInvoke() == 89)
+            // The opaque result descriptor is named by the member, not its thunk.
+            let opaque = try await base.resolve(
+                .swift(
+                    .method(
+                        "opaque()",
+                        as: (() -> NativeSwiftValue).self
+                    )
+                )
+            )
+            #expect(try unsafe opaque.unsafeInvoke(on: baseObject).withCopy { $0 as? Int64 } == 7)
+            // Replacement publishes the captured entry. A redispatching thunk would
+            // reach Derived's override of the replacement instead.
+            let replacement = try await base.resolve(
+                .swift(
+                    .method(
+                        "replacement(_:)",
+                        as: ((Int64) -> Int64).self
+                    )
+                )
+            )
+            let plan = try unsafe derivedValue.prepareVirtualReplacementAndWait(with: replacement)
+            let oracle = try await runtime.resolve(
+                .swift(
+                    .function(
+                        module + ".value(" + base.name + ", Swift.Int64) -> Swift.Int64",
+                        as: ((AnyObject, Int64) -> Int64).self
+                    )
+                ),
+                in: scope
+            )
+            try unsafe plan.install()
+            defer { try? plan.restore() }
+            #expect(try unsafe oracle.unsafeInvoke(derivedObject, 40) == 140)
+            try plan.restore()
+            #expect(try unsafe oracle.unsafeInvoke(derivedObject, 40) == 42)
+
+            // A replacement from another image keeps the declaration's opaque
+            // descriptor lookup in the declaring image.
+            let patchModule =
+                "ThunkPatch_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+            let patch = try FixtureLibrary(
+                swiftModule: patchModule,
+                swiftSource: """
+                    open class Patch {
+                        public init() {}
+                        @inline(never) open func opaque() -> some Equatable { Int64(9) }
+                    }
+                    """,
+                linkArguments: ["-O", "-enable-library-evolution"]
+            )
+            defer { patch.cleanup() }
+            let patchType = try await runtime.resolve(
+                .swift(.type(patchModule + ".Patch")),
+                in: .path(patch.libraryURL)
+            )
+            let patchOpaque = try await patchType.resolve(
+                .swift(
+                    .method(
+                        "opaque()",
+                        as: (() -> NativeSwiftValue).self
+                    )
+                )
+            )
+            let opaquePlan = try unsafe opaque.prepareVirtualReplacementAndWait(with: patchOpaque)
+            try unsafe opaquePlan.install()
+            defer { try? opaquePlan.restore() }
+            let replaced = try base.resolveAndWait(
+                .swift(
+                    .method(
+                        "opaque()",
+                        as: (() -> NativeSwiftValue).self
+                    )
+                )
+            )
+            #expect(try unsafe replaced.unsafeInvoke(on: baseObject).withCopy { $0 as? Int64 } == 9)
+            try opaquePlan.restore()
+
+            // A hook's generated dispatcher has no image; a later lookup still captures it.
+            let hook = try await unsafe derivedValue.hookVirtualCalls(onFailure: { _ in }) {
+                call,
+                input in
+                try call.proceed(input) + 1000
+            }
+            defer { hook.invalidate() }
+            let hooked = try derived.resolveAndWait(
+                .swift(
+                    .method(
+                        "value(_:)",
+                        as: ((Int64) -> Int64).self
+                    )
+                )
+            )
+            #expect(try unsafe hooked.unsafeInvoke(on: derivedObject, 40) == 1042)
+        }
     }
     #endif
 
     @MainActor @Test func extractedMethodsAndBindingsHaveIndependentReceiverLifetimes() async throws
     {
         let runtime = ABIRuntime()
-        weak var observedOriginal: SwiftMemberRenderer?
-        let render: NativeSwiftMethod<(Int) -> Int>
-        let getter: NativeSwiftMethod<() -> String>
-        let setter: NativeSwiftMethod<(String) -> Void>
-        do {
-            let original = SwiftMemberRenderer(text: "original")
-            observedOriginal = original
-            render = try await runtime.object(original).resolve(
+        try await runtime.prepare { _ async throws in
+            weak var observedOriginal: SwiftMemberRenderer?
+            let render: NativeSwiftMethod<(Int) -> Int>
+            let getter: NativeSwiftMethod<() -> String>
+            let setter: NativeSwiftMethod<(String) -> Void>
+            do {
+                let original = SwiftMemberRenderer(text: "original")
+                observedOriginal = original
+                render = try await runtime.object(original).resolve(
+                    .swift(
+                        .method(
+                            "render(_:)",
+                            as: ((Int) -> Int).self
+                        )
+                    )
+                ).method
+                getter = try await runtime.object(original).resolve(
+                    .swift(
+                        .getter(
+                            "consumedText",
+                            as: (() -> String).self,
+                            receiver: .consuming
+                        )
+                    )
+                ).method
+                setter = try await runtime.object(original).resolve(
+                    .swift(
+                        .setter(
+                            "consumedText",
+                            as: ((String) -> Void).self,
+                            receiver: .consuming
+                        )
+                    )
+                ).method
+            }
+            runtime.removeCachedResults()
+            #expect(observedOriginal == nil)
+            var receiver: SwiftMemberRenderer? = SwiftMemberDerived(text: "second")
+            weak let observedReceiver = receiver
+            var bound: NativeBoundSwiftMethod<(Int) -> Int>? = try render.bind(to: receiver!)
+            try unsafe setter.unsafeInvoke(on: receiver!, "ready")
+            #expect(try unsafe getter.unsafeInvoke(on: receiver!) == "ready")
+            #expect(try unsafe render.unsafeInvoke(on: receiver!, 37) == 42)
+            receiver = nil
+            #expect(observedReceiver != nil)
+            #expect(try unsafe bound!.unsafeInvoke(37) == 42)
+            bound = nil
+            withExtendedLifetime((render, getter, setter)) { #expect(observedReceiver == nil) }
+            let incompatible = try render.bind(to: NSObject())
+            #expect(throws: ABIInvocationError.self) { try unsafe incompatible.unsafeInvoke(0) }
+            let adaptedType = try await runtime.resolve(
+                .swift(.type("ABIBridgeTests.SwiftMemberRenderer", as: AnyObject.self))
+            )
+            let adapted = try await adaptedType.resolve(
                 .swift(
                     .method(
                         "render(_:)",
                         as: ((Int) -> Int).self
                     )
                 )
-            ).method
-            getter = try await runtime.object(original).resolve(
-                .swift(
-                    .getter(
-                        "consumedText",
-                        as: (() -> String).self,
-                        receiver: .consuming
-                    )
-                )
-            ).method
-            setter = try await runtime.object(original).resolve(
-                .swift(
-                    .setter(
-                        "consumedText",
-                        as: ((String) -> Void).self,
-                        receiver: .consuming
-                    )
-                )
-            ).method
-        }
-        runtime.removeCachedResults()
-        #expect(observedOriginal == nil)
-        var receiver: SwiftMemberRenderer? = SwiftMemberDerived(text: "second")
-        weak let observedReceiver = receiver
-        var bound: NativeBoundSwiftMethod<(Int) -> Int>? = try render.bind(to: receiver!)
-        try unsafe setter.unsafeInvoke(on: receiver!, "ready")
-        #expect(try unsafe getter.unsafeInvoke(on: receiver!) == "ready")
-        #expect(try unsafe render.unsafeInvoke(on: receiver!, 37) == 42)
-        receiver = nil
-        #expect(observedReceiver != nil)
-        #expect(try unsafe bound!.unsafeInvoke(37) == 42)
-        bound = nil
-        withExtendedLifetime((render, getter, setter)) { #expect(observedReceiver == nil) }
-        let incompatible = try render.bind(to: NSObject())
-        #expect(throws: ABIInvocationError.self) { try unsafe incompatible.unsafeInvoke(0) }
-        let adaptedType = try await runtime.resolve(
-            .swift(.type("ABIBridgeTests.SwiftMemberRenderer", as: AnyObject.self))
-        )
-        let adapted = try await adaptedType.resolve(
-            .swift(
-                .method(
-                    "render(_:)",
-                    as: ((Int) -> Int).self
-                )
             )
-        )
-        let adaptedBinding = try adapted.bind(to: NSObject())
-        #expect(throws: ABIInvocationError.self) { try unsafe adaptedBinding.unsafeInvoke(0) }
+            let adaptedBinding = try adapted.bind(to: NSObject())
+            #expect(throws: ABIInvocationError.self) { try unsafe adaptedBinding.unsafeInvoke(0) }
+        }
     }
 
     @MainActor @Test(arguments: [false, true])
     func privateReceiversKeepTheirDeclarationIdentity(_ second: Bool) async throws {
         let receiver = second ? makeSecondPrivateReceiver() : makeFirstPrivateReceiver()
         let runtime = ABIRuntime()
-        let object = runtime.object(receiver)
-        for member in ["title()", "title() -> Swift.String"] {
-            let title = try await object.resolve(.swift(.method(member, as: (() -> String).self)))
-            #expect(try unsafe title.unsafeInvoke() == (second ? "22" : "11"))
+        try await runtime.prepare { _ async throws in
+            let object = runtime.object(receiver)
+            for member in ["title()", "title() -> Swift.String"] {
+                let title = try await object.resolve(
+                    .swift(.method(member, as: (() -> String).self))
+                )
+                #expect(try unsafe title.unsafeInvoke() == (second ? "22" : "11"))
+            }
+            let echo = try await object.resolve(
+                .swift(.method("echo(_:)", as: ((Int) -> Int).self))
+            )
+            #expect(try unsafe echo.unsafeInvoke(1) == (second ? 23 : 12))
+            let inherited = try await object.resolve(
+                .swift(.method("inherited()", as: (() -> Int).self))
+            )
+            #expect(try unsafe inherited.unsafeInvoke() == (second ? 22 : 11))
+            let getter = try await object.resolve(.swift(.getter("value", as: (() -> Int).self)))
+            let setter = try await object.resolve(
+                .swift(.setter("value", as: ((Int) -> Void).self))
+            )
+            runtime.removeCachedResults()
+            try unsafe setter.unsafeInvoke(42)
+            #expect(try unsafe getter.unsafeInvoke() == 42)
         }
-        let echo = try await object.resolve(.swift(.method("echo(_:)", as: ((Int) -> Int).self)))
-        #expect(try unsafe echo.unsafeInvoke(1) == (second ? 23 : 12))
-        let inherited = try await object.resolve(
-            .swift(.method("inherited()", as: (() -> Int).self))
-        )
-        #expect(try unsafe inherited.unsafeInvoke() == (second ? 22 : 11))
-        let getter = try await object.resolve(.swift(.getter("value", as: (() -> Int).self)))
-        let setter = try await object.resolve(.swift(.setter("value", as: ((Int) -> Void).self)))
-        runtime.removeCachedResults()
-        try unsafe setter.unsafeInvoke(42)
-        #expect(try unsafe getter.unsafeInvoke() == 42)
     }
 
     /// A signature that names a private type matches its declaration: as a
@@ -1870,71 +1921,73 @@ struct SwiftMemberInvocationTests {
 
     @MainActor @Test func missingMembersPreserveRequestedOwner() async throws {
         let runtime = ABIRuntime()
-        let receiver = SwiftMemberLookupReceiver()
-        let owner = "ABIBridgeTests.SwiftMemberLookupReceiver"
-        let path = try #require(Bundle(for: SwiftMemberLookupReceiver.self).executableURL)
-        let type = try await runtime.resolve(
-            .swift(.type(owner)),
-            in: .path(path),
-            loading: .loadedOnly
-        )
-        for operation in [
-            "method", "getter", "setter", "staticMethod", "staticGetter", "staticSetter",
-        ] {
-            let expected: String
-            switch operation {
-            case "method": expected = owner + ".missing()"
-            case "getter": expected = owner + ".missing.getter"
-            case "setter": expected = owner + ".missing.setter"
-            case "staticMethod": expected = "static " + owner + ".missing()"
-            case "staticGetter": expected = "static " + owner + ".missing.getter"
-            default: expected = "static " + owner + ".missing.setter"
-            }
-            await #expect(
-                throws: ABIResolutionError.declarationNotFound(
-                    NativeDeclaration(name: expected, language: .swift)
-                )
-            ) {
+        try await runtime.prepare { _ async throws in
+            let receiver = SwiftMemberLookupReceiver()
+            let owner = "ABIBridgeTests.SwiftMemberLookupReceiver"
+            let path = try #require(Bundle(for: SwiftMemberLookupReceiver.self).executableURL)
+            let type = try await runtime.resolve(
+                .swift(.type(owner)),
+                in: .path(path),
+                loading: .loadedOnly
+            )
+            for operation in [
+                "method", "getter", "setter", "staticMethod", "staticGetter", "staticSetter",
+            ] {
+                let expected: String
                 switch operation {
-                case "method":
-                    _ = try await runtime.object(receiver).resolve(
-                        .swift(
-                            .method(
-                                "missing()",
-                                as: (() -> Int).self
+                case "method": expected = owner + ".missing()"
+                case "getter": expected = owner + ".missing.getter"
+                case "setter": expected = owner + ".missing.setter"
+                case "staticMethod": expected = "static " + owner + ".missing()"
+                case "staticGetter": expected = "static " + owner + ".missing.getter"
+                default: expected = "static " + owner + ".missing.setter"
+                }
+                await #expect(
+                    throws: ABIResolutionError.declarationNotFound(
+                        NativeDeclaration(name: expected, language: .swift)
+                    )
+                ) {
+                    switch operation {
+                    case "method":
+                        _ = try await runtime.object(receiver).resolve(
+                            .swift(
+                                .method(
+                                    "missing()",
+                                    as: (() -> Int).self
+                                )
                             )
                         )
-                    )
-                case "getter":
-                    _ = try await runtime.object(receiver).resolve(
-                        .swift(
-                            .getter(
-                                "missing",
-                                as: (() -> Int).self
+                    case "getter":
+                        _ = try await runtime.object(receiver).resolve(
+                            .swift(
+                                .getter(
+                                    "missing",
+                                    as: (() -> Int).self
+                                )
                             )
                         )
-                    )
-                case "setter":
-                    _ = try await runtime.object(receiver).resolve(
-                        .swift(
-                            .setter(
-                                "missing",
-                                as: ((Int) -> Void).self
+                    case "setter":
+                        _ = try await runtime.object(receiver).resolve(
+                            .swift(
+                                .setter(
+                                    "missing",
+                                    as: ((Int) -> Void).self
+                                )
                             )
                         )
-                    )
-                case "staticMethod":
-                    _ = try await type.resolve(
-                        .swift(.staticMethod("missing()", as: (() -> Int).self))
-                    )
-                case "staticGetter":
-                    _ = try await type.resolve(
-                        .swift(.staticGetter("missing", as: (() -> Int).self))
-                    )
-                default:
-                    _ = try await type.resolve(
-                        .swift(.staticSetter("missing", as: ((Int) -> Void).self))
-                    )
+                    case "staticMethod":
+                        _ = try await type.resolve(
+                            .swift(.staticMethod("missing()", as: (() -> Int).self))
+                        )
+                    case "staticGetter":
+                        _ = try await type.resolve(
+                            .swift(.staticGetter("missing", as: (() -> Int).self))
+                        )
+                    default:
+                        _ = try await type.resolve(
+                            .swift(.staticSetter("missing", as: ((Int) -> Void).self))
+                        )
+                    }
                 }
             }
         }
@@ -1942,32 +1995,11 @@ struct SwiftMemberInvocationTests {
 
     @MainActor @Test func consumingAccessorsPreserveCallerReferencesAndValues() async throws {
         let runtime = ABIRuntime()
-        let type = try await runtime.resolve(.swift(.type("ABIBridgeTests.SwiftMemberRenderer")))
-        let get = try await type.resolve(
-            .swift(
-                .getter(
-                    "consumedText",
-                    as: (() -> String).self,
-                    receiver: .consuming
-                )
+        try await runtime.prepare { _ async throws in
+            let type = try await runtime.resolve(
+                .swift(.type("ABIBridgeTests.SwiftMemberRenderer"))
             )
-        )
-        let set = try await type.resolve(
-            .swift(
-                .setter(
-                    "consumedText",
-                    as: ((String) -> Void).self,
-                    receiver: .consuming
-                )
-            )
-        )
-        var value: SwiftMemberRenderer? = .init(text: String(repeating: "a", count: 100))
-        weak let observed = value
-        #expect(try unsafe get.unsafeInvoke(on: value!) == value?.text)
-        try unsafe set.unsafeInvoke(on: value!, String(repeating: "b", count: 100))
-        #expect(value?.text == String(repeating: "b", count: 100))
-        var boundGet: NativeBoundSwiftMethod<() -> String>? = try await runtime.object(value!)
-            .resolve(
+            let get = try await type.resolve(
                 .swift(
                     .getter(
                         "consumedText",
@@ -1976,7 +2008,33 @@ struct SwiftMemberInvocationTests {
                     )
                 )
             )
-        var boundSet: NativeBoundSwiftMethod<(String) -> Void>? = try await runtime.object(value!)
+            let set = try await type.resolve(
+                .swift(
+                    .setter(
+                        "consumedText",
+                        as: ((String) -> Void).self,
+                        receiver: .consuming
+                    )
+                )
+            )
+            var value: SwiftMemberRenderer? = .init(text: String(repeating: "a", count: 100))
+            weak let observed = value
+            #expect(try unsafe get.unsafeInvoke(on: value!) == value?.text)
+            try unsafe set.unsafeInvoke(on: value!, String(repeating: "b", count: 100))
+            #expect(value?.text == String(repeating: "b", count: 100))
+            var boundGet: NativeBoundSwiftMethod<() -> String>? = try await runtime.object(value!)
+                .resolve(
+                    .swift(
+                        .getter(
+                            "consumedText",
+                            as: (() -> String).self,
+                            receiver: .consuming
+                        )
+                    )
+                )
+            var boundSet: NativeBoundSwiftMethod<(String) -> Void>? = try await runtime.object(
+                value!
+            )
             .resolve(
                 .swift(
                     .setter(
@@ -1986,87 +2044,52 @@ struct SwiftMemberInvocationTests {
                     )
                 )
             )
-        value = nil
-        try unsafe boundSet!.unsafeInvoke(String(repeating: "c", count: 100))
-        #expect(try unsafe boundGet!.unsafeInvoke() == String(repeating: "c", count: 100))
-        boundGet = nil
-        #expect(observed != nil)
-        boundSet = nil
-        #expect(observed == nil)
+            value = nil
+            try unsafe boundSet!.unsafeInvoke(String(repeating: "c", count: 100))
+            #expect(try unsafe boundGet!.unsafeInvoke() == String(repeating: "c", count: 100))
+            boundGet = nil
+            #expect(observed != nil)
+            boundSet = nil
+            #expect(observed == nil)
 
-        let pointType = try await runtime.resolve(.swift(.type("ABIBridgeTests.SwiftMemberPoint")))
-        let getValue = try await pointType.resolve(
-            .swift(
-                .getter(
-                    "consumedValue",
-                    as: (() -> Int64).self,
-                    receiver: .consuming
+            let pointType = try await runtime.resolve(
+                .swift(.type("ABIBridgeTests.SwiftMemberPoint"))
+            )
+            let getValue = try await pointType.resolve(
+                .swift(
+                    .getter(
+                        "consumedValue",
+                        as: (() -> Int64).self,
+                        receiver: .consuming
+                    )
                 )
             )
-        )
-        let setValue = try await pointType.resolve(
-            .swift(
-                .setter(
-                    "consumedValue",
-                    as: ((Int64) -> Void).self,
-                    receiver: .consuming
+            let setValue = try await pointType.resolve(
+                .swift(
+                    .setter(
+                        "consumedValue",
+                        as: ((Int64) -> Void).self,
+                        receiver: .consuming
+                    )
                 )
             )
-        )
-        var point = SwiftMemberPoint(value: 12)
-        #expect(try unsafe getValue.unsafeInvoke(on: point) == 12)
-        try unsafe setValue.unsafeInvoke(on: point, 7)
-        #expect(SwiftMemberPoint.observedConsumedValue == 19 && point.value == 12)
-        try unsafe setValue.unsafeInvoke(on: &point, 8)
-        #expect(SwiftMemberPoint.observedConsumedValue == 20 && point.value == 12)
-        SwiftMemberPoint.observedConsumedValue = 0
+            var point = SwiftMemberPoint(value: 12)
+            #expect(try unsafe getValue.unsafeInvoke(on: point) == 12)
+            try unsafe setValue.unsafeInvoke(on: point, 7)
+            #expect(SwiftMemberPoint.observedConsumedValue == 19 && point.value == 12)
+            try unsafe setValue.unsafeInvoke(on: &point, 8)
+            #expect(SwiftMemberPoint.observedConsumedValue == 20 && point.value == 12)
+            SwiftMemberPoint.observedConsumedValue = 0
+        }
     }
 
     @MainActor @Test func consumingReceiversTransferAnIndependentCopy() async throws {
         let runtime = ABIRuntime()
-        let type = try await runtime.resolve(.swift(.type("ABIBridgeTests.SwiftMemberRenderer")))
-        let consume = try await type.resolve(
-            .swift(
-                .method(
-                    "consumeText()",
-                    as: (() -> Int).self,
-                    receiver: .consuming
-                )
+        try await runtime.prepare { _ async throws in
+            let type = try await runtime.resolve(
+                .swift(.type("ABIBridgeTests.SwiftMemberRenderer"))
             )
-        )
-        let invalidResult = try await type.resolve(
-            .swift(
-                .method(
-                    "consumeReturningNil() -> Swift.Optional<Swift.UnsafeRawPointer>",
-                    as: (() -> UnsafeRawPointer).self,
-                    receiver: .consuming
-                )
-            )
-        )
-        var value: SwiftMemberRenderer? = .init(text: String(repeating: "x", count: 100))
-        weak let observed = value
-        #expect(try unsafe consume.unsafeInvoke(on: value!) == 100)
-        #expect(throws: ABIInvocationError.self) {
-            try unsafe invalidResult.unsafeInvoke(on: value!)
-        }
-        #expect(value?.text.count == 100)
-        let rawType = try await runtime.resolve(
-            .swift(.type(type.name, as: UnsafeRawPointer.self)),
-            in: type.image
-        )
-        let rawConsume = try await rawType.resolve(
-            .swift(
-                .method(
-                    "consumeText()",
-                    as: (() -> Int).self,
-                    receiver: .consuming
-                )
-            )
-        )
-        let pointer = UnsafeRawPointer(Unmanaged.passUnretained(value!).toOpaque())
-        #expect(try unsafe rawConsume.unsafeInvoke(on: pointer) == 100)
-        var bound: NativeBoundSwiftMethod<() -> Int>? = try await runtime.object(value!)
-            .resolve(
+            let consume = try await type.resolve(
                 .swift(
                     .method(
                         "consumeText()",
@@ -2075,83 +2098,134 @@ struct SwiftMemberInvocationTests {
                     )
                 )
             )
-        value = nil
-        #expect(observed != nil)
-        #expect(try unsafe bound!.unsafeInvoke() == 100)
-        bound = nil
-        #expect(observed == nil)
+            let invalidResult = try await type.resolve(
+                .swift(
+                    .method(
+                        "consumeReturningNil() -> Swift.Optional<Swift.UnsafeRawPointer>",
+                        as: (() -> UnsafeRawPointer).self,
+                        receiver: .consuming
+                    )
+                )
+            )
+            var value: SwiftMemberRenderer? = .init(text: String(repeating: "x", count: 100))
+            weak let observed = value
+            #expect(try unsafe consume.unsafeInvoke(on: value!) == 100)
+            #expect(throws: ABIInvocationError.self) {
+                try unsafe invalidResult.unsafeInvoke(on: value!)
+            }
+            #expect(value?.text.count == 100)
+            let rawType = try await runtime.resolve(
+                .swift(.type(type.name, as: UnsafeRawPointer.self)),
+                in: type.image
+            )
+            let rawConsume = try await rawType.resolve(
+                .swift(
+                    .method(
+                        "consumeText()",
+                        as: (() -> Int).self,
+                        receiver: .consuming
+                    )
+                )
+            )
+            let pointer = UnsafeRawPointer(Unmanaged.passUnretained(value!).toOpaque())
+            #expect(try unsafe rawConsume.unsafeInvoke(on: pointer) == 100)
+            var bound: NativeBoundSwiftMethod<() -> Int>? = try await runtime.object(value!)
+                .resolve(
+                    .swift(
+                        .method(
+                            "consumeText()",
+                            as: (() -> Int).self,
+                            receiver: .consuming
+                        )
+                    )
+                )
+            value = nil
+            #expect(observed != nil)
+            #expect(try unsafe bound!.unsafeInvoke() == 100)
+            bound = nil
+            #expect(observed == nil)
 
-        let pointType = try await runtime.resolve(.swift(.type("ABIBridgeTests.SwiftMemberPoint")))
-        let take = try await pointType.resolve(
-            .swift(
-                .method(
-                    "consumeValue()",
-                    as: (() -> Int64).self,
-                    receiver: .consuming
+            let pointType = try await runtime.resolve(
+                .swift(.type("ABIBridgeTests.SwiftMemberPoint"))
+            )
+            let take = try await pointType.resolve(
+                .swift(
+                    .method(
+                        "consumeValue()",
+                        as: (() -> Int64).self,
+                        receiver: .consuming
+                    )
                 )
             )
-        )
-        let point = SwiftMemberPoint(value: 42)
-        #expect(try unsafe take.unsafeInvoke(on: point) == 42 && point.value == 42)
-        let largeType = try await runtime.resolve(.swift(.type("ABIBridgeTests.SwiftMemberLarge")))
-        let change = try await largeType.resolve(
-            .swift(
-                .method(
-                    "consumeAfterChanging(_:)",
-                    as: ((Int64) -> Int64).self,
-                    receiver: .consuming
+            let point = SwiftMemberPoint(value: 42)
+            #expect(try unsafe take.unsafeInvoke(on: point) == 42 && point.value == 42)
+            let largeType = try await runtime.resolve(
+                .swift(.type("ABIBridgeTests.SwiftMemberLarge"))
+            )
+            let change = try await largeType.resolve(
+                .swift(
+                    .method(
+                        "consumeAfterChanging(_:)",
+                        as: ((Int64) -> Int64).self,
+                        receiver: .consuming
+                    )
                 )
             )
-        )
-        let large = SwiftMemberLarge(a: 1, b: 2, c: 3, d: 4, e: 5)
-        #expect(try unsafe change.unsafeInvoke(on: large, 10) == 24 && large.a == 1)
+            let large = SwiftMemberLarge(a: 1, b: 2, c: 3, d: 4, e: 5)
+            #expect(try unsafe change.unsafeInvoke(on: large, 10) == 24 && large.a == 1)
+        }
     }
 
     @Test func throwingDeclarationsNeedEffectsAndInitializersCanBorrow() async throws {
         let runtime = ABIRuntime()
-        let type = try await runtime.resolve(.swift(.type("ABIBridgeTests.SwiftMemberRenderer")))
-        let member = "typedFailure() throws(ABIBridgeTests.SwiftMemberFailure) -> Swift.Int"
-        _ = try runtime.resolveAndWait(
-            .swift(.symbol(type.name + "." + member)),
-            in: type.image
-        )
-        do {
-            _ = try await type.resolve(.swift(.method(member, as: (() -> Int).self)))
-            Issue.record("Typed-throwing members need a throwing function metatype")
-        } catch let ABIResolutionError.signatureMismatch(mismatch) {
-            #expect(mismatch.expected == "ABIBridgeTests.SwiftMemberFailure")
-        }
-        do {
-            _ = try await runtime.resolve(
-                .swift(
-                    .function(
-                        "ABIBridgeTests.swiftMemberTypedFailure() throws(ABIBridgeTests.SwiftMemberFailure) -> Swift.Int",
-                        as: (() -> Int).self
-                    )
-                ),
+        try await runtime.prepare { _ async throws in
+            let type = try await runtime.resolve(
+                .swift(.type("ABIBridgeTests.SwiftMemberRenderer"))
+            )
+            let member = "typedFailure() throws(ABIBridgeTests.SwiftMemberFailure) -> Swift.Int"
+            _ = try runtime.resolveAndWait(
+                .swift(.symbol(type.name + "." + member)),
                 in: type.image
             )
-            Issue.record("Typed-throwing free functions need a throwing function metatype")
-        } catch let ABIResolutionError.signatureMismatch(mismatch) {
-            #expect(mismatch.expected == "ABIBridgeTests.SwiftMemberFailure")
-        }
-        let initializer =
-            "init(borrowedChild: __shared ABIBridgeTests.SwiftMemberRenderer) -> ABIBridgeTests.SwiftMemberRenderer"
-        _ = try runtime.resolveAndWait(
-            .swift(.symbol(type.name + ".__allocating_" + initializer)),
-            in: type.image
-        )
-        let make = try await type.resolve(
-            .swift(
-                .initializer(
-                    initializer,
-                    as: ((NativeSwiftBorrowing<SwiftMemberRenderer>) -> SwiftMemberRenderer).self
+            do {
+                _ = try await type.resolve(.swift(.method(member, as: (() -> Int).self)))
+                Issue.record("Typed-throwing members need a throwing function metatype")
+            } catch let ABIResolutionError.signatureMismatch(mismatch) {
+                #expect(mismatch.expected == "ABIBridgeTests.SwiftMemberFailure")
+            }
+            do {
+                _ = try await runtime.resolve(
+                    .swift(
+                        .function(
+                            "ABIBridgeTests.swiftMemberTypedFailure() throws(ABIBridgeTests.SwiftMemberFailure) -> Swift.Int",
+                            as: (() -> Int).self
+                        )
+                    ),
+                    in: type.image
+                )
+                Issue.record("Typed-throwing free functions need a throwing function metatype")
+            } catch let ABIResolutionError.signatureMismatch(mismatch) {
+                #expect(mismatch.expected == "ABIBridgeTests.SwiftMemberFailure")
+            }
+            let initializer =
+                "init(borrowedChild: __shared ABIBridgeTests.SwiftMemberRenderer) -> ABIBridgeTests.SwiftMemberRenderer"
+            _ = try runtime.resolveAndWait(
+                .swift(.symbol(type.name + ".__allocating_" + initializer)),
+                in: type.image
+            )
+            let make = try await type.resolve(
+                .swift(
+                    .initializer(
+                        initializer,
+                        as: ((NativeSwiftBorrowing<SwiftMemberRenderer>) -> SwiftMemberRenderer)
+                            .self
+                    )
                 )
             )
-        )
-        let child = SwiftMemberRenderer(text: "borrowed")
-        let parent = try unsafe make.unsafeInvoke(.init(child))
-        #expect(parent.object === child && parent.text == "borrowed")
+            let child = SwiftMemberRenderer(text: "borrowed")
+            let parent = try unsafe make.unsafeInvoke(.init(child))
+            #expect(parent.object === child && parent.text == "borrowed")
+        }
     }
 
     @Test func operatorsResolveByLabelsAndReportFixityAmbiguity() async throws {
@@ -2613,28 +2687,36 @@ struct SwiftMemberInvocationTests {
 
     @Test func valueAndEnumMembersUseTheirSwiftReceiverLayouts() async throws {
         let runtime = ABIRuntime()
-        let point = try await runtime.resolve(.swift(.type("ABIBridgeTests.SwiftMemberPoint")))
-        let read = try await point.resolve(.swift(.method("read(_:)", as: ((Int64) -> Int64).self)))
-        var value = SwiftMemberPoint(value: 10)
-        #expect(try unsafe read.unsafeInvoke(on: value, 5) == value.read(5))
-        let change = try await point.resolve(
-            .swift(
-                .method(
-                    "change(_:)",
-                    as: ((Int64) -> Void).self,
-                    receiver: .mutating
+        try await runtime.prepare { _ async throws in
+            let point = try await runtime.resolve(.swift(.type("ABIBridgeTests.SwiftMemberPoint")))
+            let read = try await point.resolve(
+                .swift(.method("read(_:)", as: ((Int64) -> Int64).self))
+            )
+            var value = SwiftMemberPoint(value: 10)
+            #expect(try unsafe read.unsafeInvoke(on: value, 5) == value.read(5))
+            let change = try await point.resolve(
+                .swift(
+                    .method(
+                        "change(_:)",
+                        as: ((Int64) -> Void).self,
+                        receiver: .mutating
+                    )
                 )
             )
-        )
-        #expect(throws: ABIResolutionError.self) { try unsafe change.unsafeInvoke(on: value, 42) }
-        try unsafe change.unsafeInvoke(on: &value, 42)
-        #expect(value.value == 42)
-        let mode = try await runtime.resolve(.swift(.type("ABIBridgeTests.SwiftMemberMode")))
-        let modeRead = try await mode.resolve(.swift(.method("read(_:)", as: ((Int) -> Int).self)))
-        #expect(
-            try unsafe modeRead.unsafeInvoke(on: SwiftMemberMode.second, 7)
-                == SwiftMemberMode.second.read(7)
-        )
+            #expect(throws: ABIResolutionError.self) {
+                try unsafe change.unsafeInvoke(on: value, 42)
+            }
+            try unsafe change.unsafeInvoke(on: &value, 42)
+            #expect(value.value == 42)
+            let mode = try await runtime.resolve(.swift(.type("ABIBridgeTests.SwiftMemberMode")))
+            let modeRead = try await mode.resolve(
+                .swift(.method("read(_:)", as: ((Int) -> Int).self))
+            )
+            #expect(
+                try unsafe modeRead.unsafeInvoke(on: SwiftMemberMode.second, 7)
+                    == SwiftMemberMode.second.read(7)
+            )
+        }
     }
 
     @Test func valueMutationSurvivesAResultConversionFailure() async throws {

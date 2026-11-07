@@ -3,6 +3,7 @@ import ManagedSwiftFixtures
 import Testing
 
 /// Requests whose class types differ from the native declaration's.
+@Suite(LookupBatch())
 struct SwiftSignatureCompatibilityTests {
     private let runtime = ABIRuntime.shared
 

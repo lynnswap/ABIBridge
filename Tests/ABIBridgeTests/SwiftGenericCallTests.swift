@@ -181,35 +181,42 @@ struct SwiftGenericCallTests {
 
     @Test func labelBindingPreservesAmbiguityAndCompleteSignatureSelection() async throws {
         let runtime = ABIRuntime()
-        let name = "ManagedSwiftFixtures.ambiguousLookupGeneric(_:)"
-        for clearCache in [false, true] {
-            if clearCache { runtime.removeCachedResults() }
-            do {
-                _ = try await runtime.resolve(
+        try await runtime.prepare { _ async throws in
+            let name = "ManagedSwiftFixtures.ambiguousLookupGeneric(_:)"
+            for clearCache in [false, true] {
+                if clearCache { runtime.removeCachedResults() }
+                do {
+                    _ = try await runtime.resolve(
+                        .swift(
+                            .function(
+                                name,
+                                as: ((Int64) -> Int64).self,
+                                genericArguments: [.type(Int64.self)]
+                            )
+                        )
+                    )
+                    Issue.record("Two applicable generic declarations must remain ambiguous")
+                } catch let ABIResolutionError.ambiguousDeclaration(_, candidates) {
+                    #expect(candidates.count == 2)
+                }
+            }
+            for constraint in ["Equatable", "CustomStringConvertible"] {
+                let selected = try await runtime.resolve(
                     .swift(
                         .function(
-                            name,
+                            "ManagedSwiftFixtures.ambiguousLookupGeneric<A where A: Swift."
+                                + constraint
+                                + ">(A) -> Swift.Int64",
                             as: ((Int64) -> Int64).self,
                             genericArguments: [.type(Int64.self)]
                         )
                     )
                 )
-                Issue.record("Two applicable generic declarations must remain ambiguous")
-            } catch let ABIResolutionError.ambiguousDeclaration(_, candidates) { #expect(candidates.count == 2) }
-        }
-        for constraint in ["Equatable", "CustomStringConvertible"] {
-            let selected = try await runtime.resolve(
-                .swift(
-                    .function(
-                        "ManagedSwiftFixtures.ambiguousLookupGeneric<A where A: Swift." + constraint
-                            + ">(A) -> Swift.Int64",
-                        as: ((Int64) -> Int64).self,
-                        genericArguments: [.type(Int64.self)]
-                    )
-                )
-            )
-            let expected = constraint == "Equatable" ? referenceEquatableLookup(Int64(42)) : referenceDescriptionLookup(Int64(42))
-            #expect(try unsafe selected.unsafeInvoke(42) == expected)
+                let expected =
+                    constraint == "Equatable"
+                    ? referenceEquatableLookup(Int64(42)) : referenceDescriptionLookup(Int64(42))
+                #expect(try unsafe selected.unsafeInvoke(42) == expected)
+            }
         }
     }
 
@@ -217,162 +224,188 @@ struct SwiftGenericCallTests {
         typealias TextBody = NativeSwiftClosure<() -> String>
         typealias NumberBody = NativeSwiftClosure<() -> Int64>
         let runtime = ABIRuntime()
-        let invoke = try await runtime.resolve(
-            .swift(
-                .function(
-                    "ManagedSwiftFixtures.closurePackGeneric<each A>(repeat () -> A) -> (repeat A)",
-                    as: ((TextBody, NumberBody) -> (String, Int64)).self,
-                    genericArguments: [.pack([.type(String.self), .type(Int64.self)])]
+        try await runtime.prepare { _ async throws in
+            let invoke = try await runtime.resolve(
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.closurePackGeneric<each A>(repeat () -> A) -> (repeat A)",
+                        as: ((TextBody, NumberBody) -> (String, Int64)).self,
+                        genericArguments: [.pack([.type(String.self), .type(Int64.self)])]
+                    )
                 )
             )
-        )
-        let failEncoding = try await runtime.resolve(
-            .swift(
-                .function(
-                    "ManagedSwiftFixtures.closurePackThenArgumentGeneric<each A>(_: repeat () -> A, after: Swift.Int64) -> (repeat A)",
-                    as: ((TextBody, NumberBody, RejectGenericArgument) -> (String, Int64)).self,
-                    genericArguments: [.pack([.type(String.self), .type(Int64.self)])]
+            let failEncoding = try await runtime.resolve(
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.closurePackThenArgumentGeneric<each A>(_: repeat () -> A, after: Swift.Int64) -> (repeat A)",
+                        as: ((TextBody, NumberBody, RejectGenericArgument) -> (String, Int64)).self,
+                        genericArguments: [.pack([.type(String.self), .type(Int64.self)])]
+                    )
                 )
             )
-        )
-        let wrapperIdentity = try await runtime.resolve(
-            .swift(
-                .function(
-                    "ManagedSwiftFixtures.packGeneric<each A>(repeat A) -> (repeat A)",
-                    as: ((TextBody) -> TextBody).self,
-                    genericArguments: [.pack([.type(TextBody.self)])]
+            let wrapperIdentity = try await runtime.resolve(
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.packGeneric<each A>(repeat A) -> (repeat A)",
+                        as: ((TextBody) -> TextBody).self,
+                        genericArguments: [.pack([.type(TextBody.self)])]
+                    )
                 )
             )
-        )
-        let state = GenericCaptureState()
-        do {
-            let capture = GenericCapture(state)
-            let first = try TextBody { capture.value() }
-            let second = try NumberBody { _ = capture; return 42 }
-            let result = try unsafe invoke.unsafeInvoke(first, second)
-            #expect(result == (String(repeating: "capture", count: 100), 42))
-            let unchanged = try unsafe wrapperIdentity.unsafeInvoke(first)
-            #expect(try unsafe unchanged.unsafeInvoke() == String(repeating: "capture", count: 100))
+            let state = GenericCaptureState()
             do {
-                _ = try unsafe failEncoding.unsafeInvoke(first, second, RejectGenericArgument())
-                Issue.record("Expected encoding to fail after preparing the pack closures")
-            } catch GenericConversionFailure.rejected {}
-            #expect(try unsafe first.unsafeInvoke() == String(repeating: "capture", count: 100))
-            #expect(state.deaths.withLock { $0 } == 0)
-        }
-        #expect(state.deaths.withLock { $0 } == 1)
-        let empty = try await runtime.resolve(
-            .swift(
-                .function(
-                    "ManagedSwiftFixtures.closurePackGeneric<each A>(repeat () -> A) -> (repeat A)",
-                    as: (() -> Void).self,
-                    genericArguments: [.pack([])]
+                let capture = GenericCapture(state)
+                let first = try TextBody { capture.value() }
+                let second = try NumberBody {
+                    _ = capture; return 42
+                }
+                let result = try unsafe invoke.unsafeInvoke(first, second)
+                #expect(result == (String(repeating: "capture", count: 100), 42))
+                let unchanged = try unsafe wrapperIdentity.unsafeInvoke(first)
+                #expect(
+                    try unsafe unchanged.unsafeInvoke() == String(repeating: "capture", count: 100)
+                )
+                do {
+                    _ = try unsafe failEncoding.unsafeInvoke(first, second, RejectGenericArgument())
+                    Issue.record("Expected encoding to fail after preparing the pack closures")
+                } catch GenericConversionFailure.rejected {}
+                #expect(try unsafe first.unsafeInvoke() == String(repeating: "capture", count: 100))
+                #expect(state.deaths.withLock { $0 } == 0)
+            }
+            #expect(state.deaths.withLock { $0 } == 1)
+            let empty = try await runtime.resolve(
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.closurePackGeneric<each A>(repeat () -> A) -> (repeat A)",
+                        as: (() -> Void).self,
+                        genericArguments: [.pack([])]
+                    )
                 )
             )
-        )
-        try unsafe empty.unsafeInvoke()
+            try unsafe empty.unsafeInvoke()
+        }
     }
 
     @MainActor @Test func ownedPackClosuresKeepIndependentNativeCaptures() async throws {
         typealias Owner = GenericClosurePackOwner<String, Int64>
         let runtime = ABIRuntime()
-        let type = try await runtime.resolve(
-            .swift(
-                .type(
-                    "ManagedSwiftFixtures.GenericClosurePackOwner",
-                    genericArguments: [.pack([.type(String.self), .type(Int64.self)])]
+        try await runtime.prepare { _ async throws in
+            let type = try await runtime.resolve(
+                .swift(
+                    .type(
+                        "ManagedSwiftFixtures.GenericClosurePackOwner",
+                        genericArguments: [.pack([.type(String.self), .type(Int64.self)])]
+                    )
                 )
             )
-        )
-        let initialize = try await type.resolve(
-            .swift(
-                .initializer(
-                    "init(_:)",
-                    as: ((
-                        NativeSwiftConsuming<NativeSwiftClosure<() -> String>>,
-                        NativeSwiftClosure<() -> Int64>
-                    ) -> Owner).self
+            let initialize = try await type.resolve(
+                .swift(
+                    .initializer(
+                        "init(_:)",
+                        as: ((
+                            NativeSwiftConsuming<NativeSwiftClosure<() -> String>>,
+                            NativeSwiftClosure<() -> Int64>
+                        ) -> Owner).self
+                    )
                 )
             )
-        )
-        let call = try await type.resolve(
-            .swift(.method("call()", as: (() -> (String, Int64)).self))
-        )
-        let apply = try await type.resolve(
-            .swift(
-                .method(
-                    "apply(_:)",
-                    as: ((
-                        NativeSwiftBorrowing<NativeSwiftClosure<() -> String>>,
-                        NativeSwiftClosure<() -> Int64>
-                    ) -> (String, Int64)).self
+            let call = try await type.resolve(
+                .swift(.method("call()", as: (() -> (String, Int64)).self))
+            )
+            let apply = try await type.resolve(
+                .swift(
+                    .method(
+                        "apply(_:)",
+                        as: ((
+                            NativeSwiftBorrowing<NativeSwiftClosure<() -> String>>,
+                            NativeSwiftClosure<() -> Int64>
+                        ) -> (String, Int64)).self
+                    )
                 )
             )
-        )
-        let state = GenericCaptureState()
-        var owner: Owner?
-        do {
-            let capture = GenericCapture(state)
-            let first = try NativeSwiftClosure<() -> String> { capture.value() }
-            let second = try NativeSwiftClosure<() -> Int64> { _ = capture; return 42 }
-            owner = try unsafe initialize.unsafeInvoke(.init(first), second)
+            let state = GenericCaptureState()
+            var owner: Owner?
+            do {
+                let capture = GenericCapture(state)
+                let first = try NativeSwiftClosure<() -> String> { capture.value() }
+                let second = try NativeSwiftClosure<() -> Int64> {
+                    _ = capture; return 42
+                }
+                owner = try unsafe initialize.unsafeInvoke(.init(first), second)
+            }
+            #expect(state.deaths.withLock { $0 } == 0)
+            let result = try unsafe call.unsafeInvoke(on: owner!)
+            #expect(result == (String(repeating: "capture", count: 100), 42))
+            let applied = try unsafe apply.unsafeInvoke(
+                on: owner!,
+                .init(NativeSwiftClosure<() -> String> { "arguments" }),
+                NativeSwiftClosure<() -> Int64> { 43 }
+            )
+            #expect(applied == ("arguments", 43))
+            owner = nil
+            #expect(state.deaths.withLock { $0 } == 1)
         }
-        #expect(state.deaths.withLock { $0 } == 0)
-        let result = try unsafe call.unsafeInvoke(on: owner!)
-        #expect(result == (String(repeating: "capture", count: 100), 42))
-        let applied = try unsafe apply.unsafeInvoke(on: owner!, .init(NativeSwiftClosure<() -> String> { "arguments" }),
-            NativeSwiftClosure<() -> Int64> { 43 })
-        #expect(applied == ("arguments", 43))
-        owner = nil
-        #expect(state.deaths.withLock { $0 } == 1)
     }
 
     @MainActor @Test func packClosuresPreserveAsyncAndTypedErrorConventions() async throws {
         let runtime = ABIRuntime()
-        typealias AsyncText = NativeSwiftClosure<() async -> String>
-        typealias AsyncNumber = NativeSwiftClosure<() async -> Int64>
-        let asyncCall = try await runtime.resolve(
-            .swift(
-                .function(
-                    "ManagedSwiftFixtures.asyncClosurePackGeneric<each A>(repeat nonisolated(nonsending) () async -> A) async -> (repeat A)",
-                    as: ((AsyncText, AsyncNumber) async -> (String, Int64)).self,
-                    genericArguments: [.pack([.type(String.self), .type(Int64.self)])]
+        try await runtime.prepare { _ async throws in
+            typealias AsyncText = NativeSwiftClosure<() async -> String>
+            typealias AsyncNumber = NativeSwiftClosure<() async -> Int64>
+            let asyncCall = try await runtime.resolve(
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.asyncClosurePackGeneric<each A>(repeat nonisolated(nonsending) () async -> A) async -> (repeat A)",
+                        as: ((AsyncText, AsyncNumber) async -> (String, Int64)).self,
+                        genericArguments: [.pack([.type(String.self), .type(Int64.self)])]
+                    )
                 )
             )
-        )
-        let text: @Sendable () async -> String = { await Task.yield(); return "async pack" }
-        let number: @Sendable () async -> Int64 = { await Task.yield(); return 42 }
-        let result = try unsafe await asyncCall.unsafeInvoke(AsyncText(text), AsyncNumber(number))
-        #expect(result == ("async pack", 42))
-        typealias ObjectBody = NativeSwiftClosure<() throws(GenericGetterFailure) -> GenericCapture>
-        typealias FailingBody = NativeSwiftClosure<() throws(GenericGetterFailure) -> Int64>
-        let throwingCall = try await runtime.resolve(
-            .swift(
-                .function(
-                    "ManagedSwiftFixtures.throwingClosurePackGeneric<A, B where A: Swift.Error>(repeat () throws(A) -> B) throws(A) -> (repeat B)",
-                    as: ((ObjectBody, FailingBody) throws(GenericGetterFailure) -> (
-                        GenericCapture, Int64
-                    )).self,
-                    genericArguments: [
-                        .type(GenericGetterFailure.self),
-                        .pack([.type(GenericCapture.self), .type(Int64.self)]),
-                    ]
-                )
-            )
-        )
-        let state = GenericCaptureState()
-        do {
-            let capture = GenericCapture(state)
-            let first = try ObjectBody { capture }
-            let second = try FailingBody { () throws(GenericGetterFailure) in throw GenericGetterFailure(43) }
-            do {
-                _ = try unsafe throwingCall.unsafeInvoke(first, second)
-                Issue.record("Expected the second pack closure's native error")
-            } catch let error as NativeSwiftError {
-                #expect(error.withUnderlyingError { ($0 as? GenericGetterFailure)?.code == 43 })
+            let text: @Sendable () async -> String = {
+                await Task.yield(); return "async pack"
             }
+            let number: @Sendable () async -> Int64 = {
+                await Task.yield(); return 42
+            }
+            let result = try unsafe await asyncCall.unsafeInvoke(
+                AsyncText(text),
+                AsyncNumber(number)
+            )
+            #expect(result == ("async pack", 42))
+            typealias ObjectBody = NativeSwiftClosure<
+                () throws(GenericGetterFailure) -> GenericCapture
+            >
+            typealias FailingBody = NativeSwiftClosure<() throws(GenericGetterFailure) -> Int64>
+            let throwingCall = try await runtime.resolve(
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.throwingClosurePackGeneric<A, B where A: Swift.Error>(repeat () throws(A) -> B) throws(A) -> (repeat B)",
+                        as: ((ObjectBody, FailingBody) throws(GenericGetterFailure) -> (
+                            GenericCapture, Int64
+                        )).self,
+                        genericArguments: [
+                            .type(GenericGetterFailure.self),
+                            .pack([.type(GenericCapture.self), .type(Int64.self)]),
+                        ]
+                    )
+                )
+            )
+            let state = GenericCaptureState()
+            do {
+                let capture = GenericCapture(state)
+                let first = try ObjectBody { capture }
+                let second = try FailingBody { () throws(GenericGetterFailure) in
+                    throw GenericGetterFailure(43)
+                }
+                do {
+                    _ = try unsafe throwingCall.unsafeInvoke(first, second)
+                    Issue.record("Expected the second pack closure's native error")
+                } catch let error as NativeSwiftError {
+                    #expect(error.withUnderlyingError { ($0 as? GenericGetterFailure)?.code == 43 })
+                }
+            }
+            #expect(state.deaths.withLock { $0 } == 1)
         }
-        #expect(state.deaths.withLock { $0 } == 1)
     }
 
     @Test func protocolNameSuffixDoesNotChangeGenericValueConvention() async throws {
@@ -391,85 +424,100 @@ struct SwiftGenericCallTests {
 
     @MainActor @Test func ownershipWrappersPreserveGenericClosureEncoding() async throws {
         let runtime = ABIRuntime()
-        let borrowed = try await runtime.resolve(
-            .swift(
-                .function(
-                    "ManagedSwiftFixtures.runGeneric<A>(() -> A) -> A",
-                    as: ((NativeSwiftBorrowing<NativeSwiftClosure<() -> String>>) -> String).self,
-                    genericArguments: [.type(String.self)]
-                )
-            )
-        )
-        let consumed = try await runtime.resolve(
-            .swift(
-                .function(
-                    "ManagedSwiftFixtures.consumeClosureGeneric<A, B where B: Swift.Error>(__owned () -> A, B, Swift.Bool) throws(B) -> A",
-                    as: ((
-                        NativeSwiftConsuming<NativeSwiftClosure<() -> String>>,
-                        GenericConversionFailure, Bool
-                    ) throws(GenericConversionFailure) -> String).self,
-                    genericArguments: [.type(String.self), .type(GenericConversionFailure.self)]
-                )
-            )
-        )
-        let encodingFailure = try await runtime.resolve(
-            .swift(
-                .function(
-                    "ManagedSwiftFixtures.consumeClosureThenArgumentGeneric<A>(__owned () -> A, Swift.Int64) -> A",
-                    as: ((
-                        NativeSwiftConsuming<NativeSwiftClosure<() -> String>>,
-                        RejectGenericArgument
+        try await runtime.prepare { _ async throws in
+            let borrowed = try await runtime.resolve(
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.runGeneric<A>(() -> A) -> A",
+                        as: ((NativeSwiftBorrowing<NativeSwiftClosure<() -> String>>) -> String)
+                            .self,
+                        genericArguments: [.type(String.self)]
                     )
-                        -> String).self,
-                    genericArguments: [.type(String.self)]
                 )
             )
-        )
-        let state = GenericCaptureState()
-        do {
-            let capture = GenericCapture(state)
-            let body = try NativeSwiftClosure<() -> String> { capture.value() }
-            #expect(try unsafe borrowed.unsafeInvoke(.init(body)) == String(repeating: "capture", count: 100))
-            #expect(try unsafe consumed.unsafeInvoke(.init(body), .rejected, false) == String(repeating: "capture", count: 100))
-            do {
-                _ = try unsafe consumed.unsafeInvoke(.init(body), .rejected, true)
-                Issue.record("Expected the consuming generic callback's native error")
-            } catch let error as NativeSwiftError {
-                #expect(error.withUnderlyingError { $0 is GenericConversionFailure })
-            }
-            do {
-                _ = try unsafe encodingFailure.unsafeInvoke(.init(body), RejectGenericArgument())
-                Issue.record("Expected argument encoding to fail before native invocation")
-            } catch GenericConversionFailure.rejected {}
-            #expect(try unsafe body.unsafeInvoke() == String(repeating: "capture", count: 100))
-            #expect(state.calls.withLock { $0 } == 3)
-            #expect(state.deaths.withLock { $0 } == 0)
-        }
-        #expect(state.deaths.withLock { $0 } == 1)
-        typealias AsyncBody = NativeSwiftClosure<() async throws(GenericGetterFailure) -> Int64>
-        let asynchronous = try await runtime.resolve(
-            .swift(
-                .function(
-                    "ManagedSwiftFixtures.suspendedGenericErrorCallback<A where A: Swift.Error>(nonisolated(nonsending) () async throws(A) -> Swift.Int64) async throws(A) -> Swift.Int64",
-                    as: ((NativeSwiftBorrowing<AsyncBody>) async throws(GenericGetterFailure)
-                        -> Int64)
-                        .self,
-                    genericArguments: [.type(GenericGetterFailure.self)]
+            let consumed = try await runtime.resolve(
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.consumeClosureGeneric<A, B where B: Swift.Error>(__owned () -> A, B, Swift.Bool) throws(B) -> A",
+                        as: ((
+                            NativeSwiftConsuming<NativeSwiftClosure<() -> String>>,
+                            GenericConversionFailure, Bool
+                        ) throws(GenericConversionFailure) -> String).self,
+                        genericArguments: [
+                            .type(String.self), .type(GenericConversionFailure.self),
+                        ]
+                    )
                 )
             )
-        )
-        for shouldThrow in [false, true] {
-            let operation: @Sendable () async throws(GenericGetterFailure) -> Int64 = { () async throws(GenericGetterFailure) in
-                await Task.yield()
-                if shouldThrow { throw GenericGetterFailure(42) }
-                return 42
-            }
-            let body = try AsyncBody(operation)
+            let encodingFailure = try await runtime.resolve(
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.consumeClosureThenArgumentGeneric<A>(__owned () -> A, Swift.Int64) -> A",
+                        as: ((
+                            NativeSwiftConsuming<NativeSwiftClosure<() -> String>>,
+                            RejectGenericArgument
+                        )
+                            -> String).self,
+                        genericArguments: [.type(String.self)]
+                    )
+                )
+            )
+            let state = GenericCaptureState()
             do {
-                #expect(try unsafe await asynchronous.unsafeInvoke(.init(body)) == 42)
-                #expect(!shouldThrow)
-            } catch let error as NativeSwiftError {
-                #expect(shouldThrow && error.withUnderlyingError { $0 is GenericGetterFailure })
+                let capture = GenericCapture(state)
+                let body = try NativeSwiftClosure<() -> String> { capture.value() }
+                #expect(
+                    try unsafe borrowed.unsafeInvoke(.init(body))
+                        == String(repeating: "capture", count: 100)
+                )
+                #expect(
+                    try unsafe consumed.unsafeInvoke(.init(body), .rejected, false)
+                        == String(repeating: "capture", count: 100)
+                )
+                do {
+                    _ = try unsafe consumed.unsafeInvoke(.init(body), .rejected, true)
+                    Issue.record("Expected the consuming generic callback's native error")
+                } catch let error as NativeSwiftError {
+                    #expect(error.withUnderlyingError { $0 is GenericConversionFailure })
+                }
+                do {
+                    _ = try unsafe encodingFailure.unsafeInvoke(
+                        .init(body),
+                        RejectGenericArgument()
+                    )
+                    Issue.record("Expected argument encoding to fail before native invocation")
+                } catch GenericConversionFailure.rejected {}
+                #expect(try unsafe body.unsafeInvoke() == String(repeating: "capture", count: 100))
+                #expect(state.calls.withLock { $0 } == 3)
+                #expect(state.deaths.withLock { $0 } == 0)
+            }
+            #expect(state.deaths.withLock { $0 } == 1)
+            typealias AsyncBody = NativeSwiftClosure<() async throws(GenericGetterFailure) -> Int64>
+            let asynchronous = try await runtime.resolve(
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.suspendedGenericErrorCallback<A where A: Swift.Error>(nonisolated(nonsending) () async throws(A) -> Swift.Int64) async throws(A) -> Swift.Int64",
+                        as: ((NativeSwiftBorrowing<AsyncBody>) async throws(GenericGetterFailure)
+                            -> Int64)
+                            .self,
+                        genericArguments: [.type(GenericGetterFailure.self)]
+                    )
+                )
+            )
+            for shouldThrow in [false, true] {
+                let operation: @Sendable () async throws(GenericGetterFailure) -> Int64 = {
+                    () async throws(GenericGetterFailure) in
+                    await Task.yield()
+                    if shouldThrow { throw GenericGetterFailure(42) }
+                    return 42
+                }
+                let body = try AsyncBody(operation)
+                do {
+                    #expect(try unsafe await asynchronous.unsafeInvoke(.init(body)) == 42)
+                    #expect(!shouldThrow)
+                } catch let error as NativeSwiftError {
+                    #expect(shouldThrow && error.withUnderlyingError { $0 is GenericGetterFailure })
+                }
             }
         }
     }
@@ -862,52 +910,56 @@ struct SwiftGenericCallTests {
     }
     @Test func genericConsumedCopiesReleaseOnSuccessErrorAndEncodingFailure() async throws {
         let runtime = ABIRuntime()
-        let consume = try await runtime.resolve(
-            .swift(
-                .function(
-                    "ManagedSwiftFixtures.consumeGenericFailure<A, B where B: Swift.Error>(__owned A, B, Swift.Bool) throws(B) -> ()",
-                    as: ((NativeSwiftConsuming<GenericCapture>, ScalarFailure, Bool)
-                        throws(ScalarFailure) -> Void).self,
-                    genericArguments: [.type(GenericCapture.self), .type(ScalarFailure.self)]
+        try await runtime.prepare { _ async throws in
+            let consume = try await runtime.resolve(
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.consumeGenericFailure<A, B where B: Swift.Error>(__owned A, B, Swift.Bool) throws(B) -> ()",
+                        as: ((NativeSwiftConsuming<GenericCapture>, ScalarFailure, Bool)
+                            throws(ScalarFailure) -> Void).self,
+                        genericArguments: [.type(GenericCapture.self), .type(ScalarFailure.self)]
+                    )
                 )
             )
-        )
-        let conversion = try await runtime.resolve(
-            .swift(
-                .function(
-                    "ManagedSwiftFixtures.consumeThenArgumentGeneric<A>(__owned A, Swift.Int64) -> ()",
-                    as: ((NativeSwiftConsuming<GenericCapture>, RejectGenericArgument) -> Void)
-                        .self,
-                    genericArguments: [.type(GenericCapture.self)]
+            let conversion = try await runtime.resolve(
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.consumeThenArgumentGeneric<A>(__owned A, Swift.Int64) -> ()",
+                        as: ((NativeSwiftConsuming<GenericCapture>, RejectGenericArgument) -> Void)
+                            .self,
+                        genericArguments: [.type(GenericCapture.self)]
+                    )
                 )
             )
-        )
-        let state = GenericCaptureState()
-        for fail in [false, true] {
+            let state = GenericCaptureState()
+            for fail in [false, true] {
+                weak var observed: GenericCapture?
+                do {
+                    let value = GenericCapture(state)
+                    observed = value
+                    do {
+                        try unsafe consume.unsafeInvoke(.init(value), ScalarFailure(42), fail)
+                        #expect(!fail)
+                    } catch let error as NativeSwiftError {
+                        error.withUnderlyingError {
+                            #expect(fail && ($0 as? ScalarFailure)?.code == 42)
+                        }
+                    }
+                    #expect(observed === value)
+                }
+                #expect(observed == nil)
+            }
             weak var observed: GenericCapture?
             do {
                 let value = GenericCapture(state)
                 observed = value
-                do {
-                    try unsafe consume.unsafeInvoke(.init(value), ScalarFailure(42), fail)
-                    #expect(!fail)
-                } catch let error as NativeSwiftError {
-                    error.withUnderlyingError { #expect(fail && ($0 as? ScalarFailure)?.code == 42) }
+                #expect(throws: GenericConversionFailure.rejected) {
+                    try unsafe conversion.unsafeInvoke(.init(value), RejectGenericArgument())
                 }
                 #expect(observed === value)
             }
-            #expect(observed == nil)
+            #expect(observed == nil && state.deaths.withLock { $0 } == 3)
         }
-        weak var observed: GenericCapture?
-        do {
-            let value = GenericCapture(state)
-            observed = value
-            #expect(throws: GenericConversionFailure.rejected) {
-                try unsafe conversion.unsafeInvoke(.init(value), RejectGenericArgument())
-            }
-            #expect(observed === value)
-        }
-        #expect(observed == nil && state.deaths.withLock { $0 } == 3)
     }
 
     @Test func genericOwnershipPreservesRawStorageAndWritebackOnErrors() async throws {

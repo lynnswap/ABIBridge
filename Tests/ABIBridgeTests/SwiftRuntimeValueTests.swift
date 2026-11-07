@@ -53,69 +53,71 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
     var text: NativeSwiftClosure<(String) -> String>?
 }
 
-@Suite struct SwiftRuntimeValueTests {
+@Suite(LookupBatch()) struct SwiftRuntimeValueTests {
     @Test(arguments: [false, true])
     func variadicTupleInitializersConsumeTheArrayTail(_ hasTail: Bool) async throws {
         typealias Entry = (LifetimeToken, String)
         let runtime = ABIRuntime()
-        let path = try #require(Bundle(for: LifetimeToken.self).executableURL)
-        let type = try await runtime.resolve(
-            .swift(
-                .type(
-                    "ManagedSwiftFixtures.VariadicTupleSeries",
-                    genericArguments: [.type(LifetimeToken.self)]
-                )
-            ),
-            in: .path(path)
-        )
-        let initialize = try await type.resolve(
-            .swift(
-                .initializer(
-                    "init((A, Swift.String), (A, Swift.String)...) -> ManagedSwiftFixtures.VariadicTupleSeries<A>",
-                    as: ((NativeSwiftValue, NativeSwiftValue) -> NativeSwiftValue).self,
-                    valueABIs: [type: .opaque(named: type.name)]
+        try await runtime.prepare { _ async throws in
+            let path = try #require(Bundle(for: LifetimeToken.self).executableURL)
+            let type = try await runtime.resolve(
+                .swift(
+                    .type(
+                        "ManagedSwiftFixtures.VariadicTupleSeries",
+                        genericArguments: [.type(LifetimeToken.self)]
+                    )
+                ),
+                in: .path(path)
+            )
+            let initialize = try await type.resolve(
+                .swift(
+                    .initializer(
+                        "init((A, Swift.String), (A, Swift.String)...) -> ManagedSwiftFixtures.VariadicTupleSeries<A>",
+                        as: ((NativeSwiftValue, NativeSwiftValue) -> NativeSwiftValue).self,
+                        valueABIs: [type: .opaque(named: type.name)]
+                    )
                 )
             )
-        )
-        let ownEntry = try await runtime.resolve(
-            .swift(
-                .function(
-                    "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
-                    as: ((Entry) -> NativeSwiftValue).self,
-                    genericArguments: [.type(Entry.self)]
-                )
-            ),
-            in: .path(path)
-        )
-        let ownTail = try await runtime.resolve(
-            .swift(
-                .function(
-                    "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
-                    as: (([Entry]) -> NativeSwiftValue).self,
-                    genericArguments: [.type([Entry].self)]
-                )
-            ),
-            in: .path(path)
-        )
-        weak var observed: LifetimeToken?
-        var deaths = 0
-        var result: NativeSwiftValue?
-        do {
-            let token = LifetimeToken { deaths += 1 }
-            observed = token
-            let first = try unsafe ownEntry.unsafeInvoke((token, "first"))
-            let remaining = try unsafe ownTail.unsafeInvoke(hasTail ? [(token, "tail")] : [])
-            result = try unsafe initialize.unsafeInvoke(first, remaining)
-            #expect(first.isConsumed && remaining.isConsumed)
+            let ownEntry = try await runtime.resolve(
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+                        as: ((Entry) -> NativeSwiftValue).self,
+                        genericArguments: [.type(Entry.self)]
+                    )
+                ),
+                in: .path(path)
+            )
+            let ownTail = try await runtime.resolve(
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.copyRuntimeValue<A>(A) -> A",
+                        as: (([Entry]) -> NativeSwiftValue).self,
+                        genericArguments: [.type([Entry].self)]
+                    )
+                ),
+                in: .path(path)
+            )
+            weak var observed: LifetimeToken?
+            var deaths = 0
+            var result: NativeSwiftValue?
+            do {
+                let token = LifetimeToken { deaths += 1 }
+                observed = token
+                let first = try unsafe ownEntry.unsafeInvoke((token, "first"))
+                let remaining = try unsafe ownTail.unsafeInvoke(hasTail ? [(token, "tail")] : [])
+                result = try unsafe initialize.unsafeInvoke(first, remaining)
+                #expect(first.isConsumed && remaining.isConsumed)
+            }
+            #expect(observed != nil && deaths == 0)
+            try result?.withCopy {
+                let series = try #require($0 as? VariadicTupleSeries<LifetimeToken>)
+                #expect(series.values.map(\.1) == (hasTail ? ["first", "tail"] : ["first"]))
+                #expect(series.values.allSatisfy { $0.0 === observed })
+            }
+            result = nil
+            #expect(observed == nil && deaths == 1)
         }
-        #expect(observed != nil && deaths == 0)
-        try result?.withCopy {
-            let series = try #require($0 as? VariadicTupleSeries<LifetimeToken>)
-            #expect(series.values.map(\.1) == (hasTail ? ["first", "tail"] : ["first"]))
-            #expect(series.values.allSatisfy { $0.0 === observed })
-        }
-        result = nil
-        #expect(observed == nil && deaths == 1)
     }
 
     @Test func ordinaryRuntimeResultsRequireScopedInvocation() async throws {
@@ -3192,25 +3194,29 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         )
         defer { library.cleanup() }
         let runtime = ABIRuntime()
-        let type = try await runtime.resolve(
-            .swift(.type(module + ".Record")),
-            in: .path(library.libraryURL)
-        )
-        let decode = try await runtime.resolve(
-            .swift(
-                .function(
-                    module + ".decode(_:from:)",
-                    as: ((NativeSwiftValue, NSData) throws -> (NativeSwiftValue, String)).self,
-                    genericArguments: [.type(type)]
-                )
-            ),
-            in: .path(library.libraryURL)
-        )
-        let data = Data(#"{"number":42}"#.utf8) as NSData
-        let (value, typeName) = try unsafe decode.unsafeInvoke(type.makeMetatypeValue(), data)
-        #expect(typeName == type.name)
-        let number = try await value.type.resolve(.swift(.getter("number", as: (() -> Int64).self)))
-        #expect(try unsafe number.unsafeInvoke(on: value) == 42)
+        try await runtime.prepare { _ async throws in
+            let type = try await runtime.resolve(
+                .swift(.type(module + ".Record")),
+                in: .path(library.libraryURL)
+            )
+            let decode = try await runtime.resolve(
+                .swift(
+                    .function(
+                        module + ".decode(_:from:)",
+                        as: ((NativeSwiftValue, NSData) throws -> (NativeSwiftValue, String)).self,
+                        genericArguments: [.type(type)]
+                    )
+                ),
+                in: .path(library.libraryURL)
+            )
+            let data = Data(#"{"number":42}"#.utf8) as NSData
+            let (value, typeName) = try unsafe decode.unsafeInvoke(type.makeMetatypeValue(), data)
+            #expect(typeName == type.name)
+            let number = try await value.type.resolve(
+                .swift(.getter("number", as: (() -> Int64).self))
+            )
+            #expect(try unsafe number.unsafeInvoke(on: value) == 42)
+        }
     }
 
     #endif
@@ -3253,43 +3259,45 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
         defer { factory.cleanup() }
         try factory.load()
         let runtime = ABIRuntime()
-        for (name, number) in [("make", Int64(42)), ("makeHidden", Int64(43))] {
-            let value: NativeSwiftValue
-            do {
-                let make = try await runtime.resolve(
-                    .swift(
-                        .function(
-                            module + "Factory." + name + "()",
-                            as: (() -> NativeSwiftValue).self
-                        )
-                    ),
-                    in: .path(factory.libraryURL)
+        try await runtime.prepare { _ async throws in
+            for (name, number) in [("make", Int64(42)), ("makeHidden", Int64(43))] {
+                let value: NativeSwiftValue
+                do {
+                    let make = try await runtime.resolve(
+                        .swift(
+                            .function(
+                                module + "Factory." + name + "()",
+                                as: (() -> NativeSwiftValue).self
+                            )
+                        ),
+                        in: .path(factory.libraryURL)
+                    )
+                    value = try unsafe make.unsafeInvoke().copy()
+                }
+                runtime.removeCachedResults()
+                factory.close()
+                let expected = try #require(
+                    try runtime.resolveImagesAndWait(matching: .path(provider.libraryURL)).first
                 )
-                value = try unsafe make.unsafeInvoke().copy()
-            }
-            runtime.removeCachedResults()
-            factory.close()
-            let expected = try #require(
-                try runtime.resolveImagesAndWait(matching: .path(provider.libraryURL)).first
-            )
-            #expect(value.type.image.identity == expected.identity)
-            let getter = try await value.type.resolve(
-                .swift(.getter("value", as: (() -> Int64).self))
-            )
-            #expect(try unsafe getter.unsafeInvoke(on: value) == number)
-            weak var observed: AnyObject?
-            try value.withCopy { observed = $0 as AnyObject }
-            let take = try await value.type.resolve(
-                .swift(
-                    .method(
-                        "take()",
-                        as: (() -> Int64).self,
-                        receiver: .consuming
+                #expect(value.type.image.identity == expected.identity)
+                let getter = try await value.type.resolve(
+                    .swift(.getter("value", as: (() -> Int64).self))
+                )
+                #expect(try unsafe getter.unsafeInvoke(on: value) == number)
+                weak var observed: AnyObject?
+                try value.withCopy { observed = $0 as AnyObject }
+                let take = try await value.type.resolve(
+                    .swift(
+                        .method(
+                            "take()",
+                            as: (() -> Int64).self,
+                            receiver: .consuming
+                        )
                     )
                 )
-            )
-            #expect(try unsafe take.unsafeInvoke(on: value) == number)
-            #expect(value.isConsumed && observed == nil)
+                #expect(try unsafe take.unsafeInvoke(on: value) == number)
+                #expect(value.isConsumed && observed == nil)
+            }
         }
     }
     #endif
