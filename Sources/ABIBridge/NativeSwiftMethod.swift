@@ -74,7 +74,9 @@ public struct NativeSwiftMethod<Signature>: Sendable {
     /// hooks and replacements change: the entry whose code lookup selected,
     /// or else the entry that the declaration's method descriptors name.
     func virtualDispatch() throws -> SwiftVirtualDispatch {
-        try SwiftVirtualDispatch(type: type, entry: entry, asynchronous: call.isAsync)
+        try type.resolver.withCachedLookups {
+            try SwiftVirtualDispatch(type: type, entry: entry, asynchronous: call.isAsync)
+        }
     }
 
     /// Retains an object for repeated calls to this captured implementation.

@@ -90,6 +90,113 @@ private func capturedSources(
 }
 
 struct SharedCacheScanTests {
+    @Test func clearingCachesPreservesCapturedAndScannedCandidates() throws {
+        let first = try FixtureLibrary(), second = try FixtureLibrary()
+        defer { first.cleanup(); second.cleanup() }
+        let firstAddress = try first.address(kind: 1)
+        let secondAddress = try second.address(kind: 2)
+        let firstURL = first.libraryURL, secondURL = second.libraryURL
+        let images = RuntimeSymbolResolver()
+        let firstIdentity = try #require(try images.images(matching: .path(firstURL)).first)
+            .identity
+        let secondIdentity = try #require(try images.images(matching: .path(secondURL)).first)
+            .identity
+        let declaration = RuntimeDeclaration(
+            name: "ABIBridgeSnapshotCandidates",
+            language: .c,
+            kind: .data
+        )
+        let holder = Mutex<RuntimeSymbolResolver?>(nil)
+        let resolver = RuntimeSymbolResolver(capturingSharedCacheSymbols: {
+            image,
+            requested,
+            source in
+            guard requested == declaration, source == .loaded else { return nil }
+            if image.identity == firstIdentity {
+                return capturedSources(named: requested.name, at: firstAddress)
+            }
+            if image.identity == secondIdentity {
+                holder.withLock { $0 }?.removeCachedResults()
+                return capturedSources(named: requested.name, at: secondAddress)
+            }
+            return nil
+        })
+        holder.withLock { $0 = resolver }
+        defer { holder.withLock { $0 = nil } }
+        _ = try resolver.resolve(declaration, in: .path(firstURL), loading: .loadedOnly)
+        do {
+            _ = try resolver.resolve(declaration)
+            Issue.record("Both definitions must remain visible when a scan clears the caches")
+        } catch RuntimeResolutionError.ambiguousDeclaration(_, let candidates) {
+            #expect(candidates.count == 2)
+        }
+    }
+
+    @Test func missingAliasesReuseCompletedSearchesOutsideBatch() throws {
+        let fixture = try FixtureLibrary()
+        defer { fixture.cleanup() }
+        let address = try fixture.address(kind: 1)
+        let declaration = RuntimeDeclaration(
+            name: "ABIBridgeCachedAlias",
+            language: .c,
+            kind: .data
+        )
+        let reads = Mutex(0)
+        let resolver = RuntimeSymbolResolver(capturingSharedCacheSymbols: { _, requested, source in
+            guard source == .loaded else { return nil }
+            reads.withLock { $0 += 1 }
+            return capturedSources(named: declaration.name, at: address)
+        })
+        let request = RuntimeSymbolRequest(
+            declaration,
+            alternatives: [.init(name: "ABIBridgeMissingAlias", language: .c, kind: .data)],
+            in: [.path(fixture.libraryURL)],
+            loading: .loadedOnly
+        )
+        #expect(try resolver.resolve(request).address == UInt64(address))
+        let preparedReads = reads.withLock { $0 }
+        #expect(preparedReads > 0)
+        #expect(try resolver.resolve(request).address == UInt64(address))
+        #expect(reads.withLock { $0 } == preparedReads)
+    }
+
+    @Test func overlappingBatchesKeepIndexesUntilTheLastBatchEnds() throws {
+        let fixture = try FixtureLibrary()
+        defer { fixture.cleanup() }
+        let resolver = RuntimeSymbolResolver()
+        let declaration = RuntimeDeclaration(
+            name: fixture.namespace + "::add(int, int)",
+            language: .cxx
+        )
+        let libraryURL = fixture.libraryURL
+        let entered = DispatchSemaphore(value: 0)
+        let releaseFirst = DispatchSemaphore(value: 0), releaseSecond = DispatchSemaphore(value: 0)
+        let first = SharedCacheScanWorker("First batch") {
+            try resolver.withCachedLookups {
+                _ = try resolver.resolve(declaration, in: .path(libraryURL))
+                entered.signal()
+                return releaseFirst.wait(timeout: .now() + 30)
+            }
+        }
+        defer { releaseFirst.signal(); first.waitForCleanup() }
+        #expect(entered.wait(timeout: .now() + 30) == .success)
+        let second = SharedCacheScanWorker("Second batch") {
+            try resolver.withCachedLookups {
+                _ = try resolver.resolve(declaration, in: .path(libraryURL))
+                entered.signal()
+                return releaseSecond.wait(timeout: .now() + 30)
+            }
+        }
+        defer { releaseSecond.signal(); second.waitForCleanup() }
+        #expect(entered.wait(timeout: .now() + 30) == .success)
+        releaseFirst.signal()
+        #expect(try first.value(until: .now() + 30) == .success)
+        #expect(!resolver.cachedSymbolIndexes.isEmpty)
+        releaseSecond.signal()
+        #expect(try second.value(until: .now() + 30) == .success)
+        #expect(resolver.cachedSymbolIndexes.isEmpty)
+    }
+
     @Test func memberValidationPreservesImageAndSharedCacheSearchScopes() throws {
         let module = "MemberValidation_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
         let source = """

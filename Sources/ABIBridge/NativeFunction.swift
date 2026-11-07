@@ -258,7 +258,7 @@ extension ABIRuntime {
     ///
     /// - Parameters:
     ///   - request: The language, declaration name, and concrete call signature.
-    ///   - image: The retained image whose symbol index can be reused.
+    ///   - image: The retained image to search.
     ///   - loading: Whether to acquire and initialize an explicit image.
     /// - Returns: A reusable function retaining its image and prepared signature.
     /// - Throws: A resolution error, unsupported representation, or call preparation error.

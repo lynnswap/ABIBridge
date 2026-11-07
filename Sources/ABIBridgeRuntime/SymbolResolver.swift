@@ -52,7 +52,12 @@ package final class RuntimeSymbolResolver: Sendable {
     }
 
     package var hasSharedCacheWaiters: Bool {
-        state.withLock { state in state.indexes.values.contains(where: \.hasSharedCacheWaiters) }
+        state.withLock { state in
+            state.lookups.indexes.values.contains(where: \.hasSharedCacheWaiters)
+        }
+    }
+    package var cachedSymbolIndexes: [SymbolIndex] {
+        state.withLock { Array($0.lookups.indexes.values) }
     }
     #endif
 
@@ -80,6 +85,11 @@ package final class RuntimeSymbolResolver: Sendable {
         }
     }
 
+    private struct RetainedImage {
+        let image: RuntimeImage
+        var acquiringThread: UInt?
+    }
+
     // Results have their own lock. Retiring the node releases all image leases
     // outside the resolver lock, including after a concurrent cache clear.
     private final class AutomaticScope: Sendable {
@@ -90,6 +100,7 @@ package final class RuntimeSymbolResolver: Sendable {
         let catalog: RuntimeImageCatalogSnapshot
         var revision: UInt64 { catalog.revision }
         let images: [RuntimeImage]
+        let imageIdentities: Set<RuntimeImageIdentity>
         let results: Mutex<[RuntimeDeclaration: ResultEntry]>
         init(
             catalog: RuntimeImageCatalogSnapshot,
@@ -97,6 +108,7 @@ package final class RuntimeSymbolResolver: Sendable {
             previous: AutomaticScope?
         ) {
             self.catalog = catalog; self.images = images
+            imageIdentities = Set(images.map(\.identity))
             results = Mutex(previous?.results.withLock { $0 } ?? [:])
         }
     }
@@ -163,13 +175,34 @@ package final class RuntimeSymbolResolver: Sendable {
                 ? RuntimeResolutionError.imageNotLoaded : RuntimeResolutionError.imageUnavailable
         }
         guard case .automatic(let cache) = scope else {
+            if case .images(let images) = scope {
+                let key = SearchKey(images: images.map(\.identity), declaration: declaration)
+                let (cached, generation) = state.withLock {
+                    ($0.explicitResolutions[key], $0.cacheGeneration)
+                }
+                if let cached { return try cached.get() }
+                let result: Result<RuntimeSymbol, RuntimeResolutionError>
+                do {
+                    result = .success(
+                        try unique(declaration, images: images, relatedQueries: relatedQueries)
+                    )
+                } catch let failure as RuntimeResolutionError {
+                    switch failure {
+                    case .declarationNotFound, .ambiguousDeclaration, .invalidAddress:
+                        result = .failure(failure)
+                    default: throw failure
+                    }
+                }
+                state.withLock { state in
+                    if state.cacheGeneration == generation, state.explicitResolutions[key] == nil {
+                        state.explicitResolutions[key] = result
+                    }
+                }
+                return try result.get()
+            }
             do {
-                return try unique(
-                    declaration,
-                    images: scope.images,
-                    relatedQueries: relatedQueries
-                )
-            } catch RuntimeResolutionError.declarationNotFound where !scope.isComplete {
+                return try unique(declaration, images: scope.images, relatedQueries: relatedQueries)
+            } catch RuntimeResolutionError.declarationNotFound {
                 throw RuntimeResolutionError.imageUnavailable
             }
         }
@@ -201,7 +234,7 @@ package final class RuntimeSymbolResolver: Sendable {
             requiredImages = [symbol.image.identity]
             includingSharedCache = symbol.source == .sharedCache
         case .failure:
-            requiredImages = Set(cache.images.map(\.identity))
+            requiredImages = cache.imageIdentities
             includingSharedCache = true
         }
         let dependency = RuntimeCatalogDependency.observing(
@@ -314,10 +347,14 @@ package final class RuntimeSymbolResolver: Sendable {
         _ selector: RuntimeImageSelector,
         loading: RuntimeImageLoadingPolicy
     ) throws -> [RuntimeImage] {
-        try acquire(selector, loading: loading)
+        beginLookup()
+        defer { endLookup() }
+        return try acquire(selector, loading: loading)
     }
 
     package func images(matching selector: RuntimeImageSelector) throws -> [RuntimeImage] {
+        beginLookup()
+        defer { endLookup() }
         let catalog = try RuntimeImageSnapshot.catalog()
         let snapshots = try RuntimeImageSnapshot.matching(
             selector,
@@ -341,15 +378,35 @@ package final class RuntimeSymbolResolver: Sendable {
         _ snapshots: [RuntimeImageSnapshot],
         skippingUnavailable: Bool
     ) throws -> (images: [RuntimeImage], isComplete: Bool) {
-        let retained = state.withLock { state in
-            snapshots.map { state.indexes[$0.identity]?.image }
+        let thread = UInt(bitPattern: pthread_self())
+        let (retained, generation) = state.withLock { state in
+            (snapshots.map { state.retainedImages[$0.identity] }, state.cacheGeneration)
         }
         var images: [RuntimeImage] = []
         var isComplete = true
         for (snapshot, cached) in zip(snapshots, retained) {
-            if let cached { images.append(cached); continue }
+            if let cached, cached.acquiringThread == nil || cached.acquiringThread == thread {
+                images.append(cached.image)
+                continue
+            }
             do {
-                images.append(try snapshot.retain())
+                let image = try snapshot.retain()
+                if let cached {
+                    // A second thread's successful acquisition proves that a
+                    // lease captured by a recursive initializer is now ready.
+                    state.withLock { state in
+                        if state.cacheGeneration == generation,
+                            state.retainedImages[snapshot.identity]?.image.lease
+                                === cached.image.lease
+                        {
+                            state.retainedImages[snapshot.identity]?.acquiringThread = nil
+                        }
+                    }
+                    images.append(cached.image)
+                    withExtendedLifetime(image) {}
+                } else {
+                    images.append(image)
+                }
             } catch RuntimeResolutionError.imageChanged {
                 // This generation disappeared; add/remove already advances the revision.
                 continue
@@ -365,6 +422,8 @@ package final class RuntimeSymbolResolver: Sendable {
         in selector: RuntimeImageSelector = .automatic,
         loading: RuntimeImageLoadingPolicy = .ifNeeded
     ) throws -> RuntimeSymbol {
+        beginLookup()
+        defer { endLookup() }
         try validate(declaration)
         return try resolve(declaration, in: searchScope(selector, loading: loading))
     }
@@ -374,16 +433,25 @@ package final class RuntimeSymbolResolver: Sendable {
         in image: RuntimeImage,
         loading: RuntimeImageLoadingPolicy = .ifNeeded
     ) throws -> RuntimeSymbol {
+        beginLookup()
+        defer { endLookup() }
         try validate(declaration)
-        return try unique(declaration, images: [loading == .ifNeeded ? image.opened() : image])
+        return try resolve(
+            declaration,
+            in: .images([loading == .ifNeeded ? image.opened() : image])
+        )
     }
 
     package func resolve(_ request: RuntimeSymbolRequest) throws -> RuntimeSymbol {
+        beginLookup()
+        defer { endLookup() }
         var scopes: [Scope: Result<SearchScope, any Error>] = [:]
         return try resolve(request, scopes: &scopes)
     }
 
     package func resolve(_ requests: [RuntimeSymbolRequest]) -> [Result<RuntimeSymbol, any Error>] {
+        beginLookup()
+        defer { endLookup() }
         var scopes: [Scope: Result<SearchScope, any Error>] = [:]
         var relatedQueries: [Scope: [SymbolQuery]] = [:]
         for request in requests {
@@ -493,6 +561,8 @@ package final class RuntimeSymbolResolver: Sendable {
         forSwiftClass type: AnyClass,
         lookup: () throws -> RuntimeImage
     ) throws -> RuntimeImage {
+        beginLookup()
+        defer { endLookup() }
         let key = ObjectIdentifier(type)
         let (cached, generation) = state.withLock { ($0.classImages[key], $0.cacheGeneration) }
         if let cached { return cached }
@@ -520,6 +590,8 @@ package final class RuntimeSymbolResolver: Sendable {
         extensionsOnly: Bool = false,
         includingSharedCache: Bool = false
     ) throws -> [RuntimeSwiftCandidate] {
+        beginLookup()
+        defer { endLookup() }
         try validate(declaration)
         guard let match = SwiftMemberMatch(declaration: declaration.name) else { return [] }
         return try swiftMemberCandidates(
@@ -545,6 +617,8 @@ package final class RuntimeSymbolResolver: Sendable {
         extensionsOnly: Bool = false,
         includingSharedCache: Bool = false
     ) throws -> [RuntimeSwiftCandidate] {
+        beginLookup()
+        defer { endLookup() }
         try validate(declaration)
         guard let match = SwiftMemberMatch(declaration: declaration.name) else { return [] }
         return try swiftMemberCandidates(
@@ -564,6 +638,8 @@ package final class RuntimeSymbolResolver: Sendable {
         extensionsOnly: Bool = false,
         includingSharedCache: Bool = false
     ) throws -> [RuntimeSwiftCandidate] {
+        beginLookup()
+        defer { endLookup() }
         try validate(declaration)
         guard let match = SwiftMemberMatch(declaration: declaration.name) else { return [] }
         return try swiftMemberCandidates(
@@ -591,7 +667,9 @@ package final class RuntimeSymbolResolver: Sendable {
         extensionsOnly: Bool = false,
         includingSharedCache: Bool = false
     ) throws -> [RuntimeSwiftCandidate] {
-        try swiftMemberCandidates(
+        beginLookup()
+        defer { endLookup() }
+        return try swiftMemberCandidates(
             match,
             owner: owner,
             in: searchScope(selector, loading: loading),
@@ -613,6 +691,8 @@ package final class RuntimeSymbolResolver: Sendable {
         extensionsOnly: Bool = false,
         includingSharedCache: Bool = false
     ) throws -> [RuntimeSwiftCandidate] {
+        beginLookup()
+        defer { endLookup() }
         let scope =
             try image.map { SearchScope.images([loading == .ifNeeded ? try $0.opened() : $0]) }
             ?? searchScope(.automatic, loading: .loadedOnly)
@@ -635,6 +715,8 @@ package final class RuntimeSymbolResolver: Sendable {
         includingSharedCache: Bool,
         searchingSharedCache: Bool = true
     ) throws -> [RuntimeSwiftCandidate] {
+        beginLookup()
+        defer { endLookup() }
         func record(
             _ candidates: [RuntimeSwiftCandidate],
             searchingSharedCache: Bool
@@ -722,27 +804,34 @@ package final class RuntimeSymbolResolver: Sendable {
         )
     }
 
-    package func removeCachedResults() {
-        let removed = state.withLock { state in
-            let indexes = (
-                state.indexes, state.imports, state.virtualEntries, state.automatic,
-                state.classImages, state.virtualTables, state.queries, state.pathImages
-            )
-            state.cacheGeneration &+= 1
-            state.indexes = [:]
-            state.imports = [:]
-            state.virtualEntries = [:]
-            state.virtualTables = [:]
-            state.automatic = nil
-            state.classImages = [:]
-            state.queries = [:]
-            state.pathImages = [:]
-            return indexes
+    /// Reuses lookup indexes for a synchronous batch. Overlapping batches share indexes
+    /// until the last active lookup ends; returned symbols retain their own images.
+    package func withCachedLookups<Value>(_ operation: () throws -> Value) rethrows -> Value {
+        beginLookup()
+        defer { endLookup() }
+        return try operation()
+    }
+
+    private func beginLookup() {
+        state.withLock { $0.activeLookups += 1 }
+    }
+
+    private func endLookup() {
+        let removed = state.withLock { state -> LookupIndexes? in
+            state.activeLookups -= 1
+            return state.activeLookups == 0 ? state.removeLookupIndexes() : nil
         }
         withExtendedLifetime(removed) {}
     }
 
+    package func removeCachedResults() {
+        let removed = state.withLock { $0.removeCachedResults() }
+        withExtendedLifetime(removed) {}
+    }
+
     package func importIndex(for image: RuntimeImage) throws -> ImportIndex {
+        beginLookup()
+        defer { endLookup() }
         let (cached, generation) = state.withLock {
             ($0.imports[image.identity], $0.cacheGeneration)
         }
@@ -767,6 +856,8 @@ package final class RuntimeSymbolResolver: Sendable {
         addressPoint: UInt,
         entryCount: Int
     ) throws -> RuntimeVirtualEntryResolution {
+        beginLookup()
+        defer { endLookup() }
         let (size, overflow) = entryCount.multipliedReportingOverflow(by: MemoryLayout<UInt>.size)
         guard entryCount >= 0, !overflow, addressPoint != 0, UInt(size) <= UInt.max - addressPoint
         else {
@@ -831,50 +922,96 @@ package final class RuntimeSymbolResolver: Sendable {
         }
     }
 
+    private enum LookupCandidate {
+        case symbol(RuntimeSymbol)
+        case index(SymbolIndex)
+    }
+
     private func unique(
         _ declaration: RuntimeDeclaration,
         images: [RuntimeImage],
         includingSharedCache: Bool = true,
         relatedQueries: [SymbolQuery] = []
     ) throws -> RuntimeSymbol {
-        // Keep these indexes for the whole lookup even if another caller clears
-        // the cache while shared-cache metadata is being read.
+        beginLookup()
+        defer { endLookup() }
+        // A lookup keeps one snapshot through explicit invalidation, including
+        // symbols cached before the lookup began and indexes it still has to scan.
         let (cachedQuery, candidates, generation) = state.withLock { state in
-            (state.queries[declaration], images.map { state.index(for: $0) }, state.cacheGeneration)
+            let candidates = images.map { image -> LookupCandidate in
+                let primary = SymbolKey(
+                    image: image.identity,
+                    declaration: declaration,
+                    source: .image
+                )
+                let shared = SymbolKey(
+                    image: image.identity,
+                    declaration: declaration,
+                    source: .sharedCache
+                )
+                if let symbol = state.resolvedSymbols[primary] { return .symbol(symbol) }
+                if let symbol = state.resolvedSymbols[shared] { return .symbol(symbol) }
+                return .index(state.index(for: image))
+            }
+            return (state.lookups.queries[declaration], candidates, state.cacheGeneration)
+        }
+        let indexes = candidates.compactMap { candidate -> SymbolIndex? in
+            if case .index(let index) = candidate { return index }
+            return nil
+        }
+        func cachedSymbols(_ source: RuntimeSymbol.Source) -> [RuntimeSymbol] {
+            candidates.compactMap { candidate in
+                if case .symbol(let symbol) = candidate, symbol.source == source { return symbol }
+                return nil
+            }
+        }
+        let cachedPrimary = cachedSymbols(.image)
+        if indexes.isEmpty {
+            let matches =
+                !cachedPrimary.isEmpty
+                ? cachedPrimary
+                : includingSharedCache ? cachedSymbols(.sharedCache) : []
+            return try select(declaration, from: matches)
         }
         let query = cachedQuery ?? SymbolQuery(declaration)
         if cachedQuery == nil {
             state.withLock { state in
-                if state.cacheGeneration == generation { state.queries[declaration] = query }
-            }
-        }
-        return try withExtendedLifetime(candidates) {
-            var hasKindMismatch = false
-            func matches(_ source: RuntimeSymbol.Source) throws -> [RuntimeSymbol] {
-                try state.withLock { _ in
-                    try candidates.compactMap { index in
-                        switch try index.resolveCandidate(query, source: source) {
-                        case .missing: return nil
-                        case .kindMismatch:
-                            hasKindMismatch = true
-                            return nil
-                        case .symbol(let symbol): return symbol
-                        }
-                    }
+                if state.cacheGeneration == generation {
+                    state.lookups.queries[declaration] = query
                 }
             }
-            let primary = try matches(.image)
-            // Shared-cache locals cannot displace an image definition already
-            // selected from the complete scope.
-            if !primary.isEmpty || !includingSharedCache {
-                return try select(declaration, from: primary)
-            }
-
-            loadSharedCacheSymbols(for: query, into: candidates, relatedQueries: relatedQueries)
-            let fallback = try matches(.sharedCache)
-            if fallback.isEmpty && hasKindMismatch { throw RuntimeResolutionError.invalidAddress }
-            return try select(declaration, from: fallback)
         }
+        var hasKindMismatch = false
+        func matches(_ source: RuntimeSymbol.Source) throws -> [RuntimeSymbol] {
+            try state.withLock { state in
+                var symbols = cachedSymbols(source)
+                for index in indexes {
+                    switch try index.resolveCandidate(query, source: source) {
+                    case .missing: break
+                    case .kindMismatch: hasKindMismatch = true
+                    case .symbol(let symbol):
+                        let key = SymbolKey(
+                            image: index.image.identity,
+                            declaration: declaration,
+                            source: source
+                        )
+                        if state.cacheGeneration == generation, state.resolvedSymbols[key] == nil {
+                            state.resolvedSymbols[key] = symbol
+                        }
+                        symbols.append(symbol)
+                    }
+                }
+                return symbols
+            }
+        }
+        let primary = try matches(.image)
+        if !primary.isEmpty || !includingSharedCache {
+            return try select(declaration, from: primary)
+        }
+        loadSharedCacheSymbols(for: query, into: indexes, relatedQueries: relatedQueries)
+        let fallback = try matches(.sharedCache)
+        if fallback.isEmpty && hasKindMismatch { throw RuntimeResolutionError.invalidAddress }
+        return try select(declaration, from: fallback)
     }
 
     /// The declaration, such as `8ProbeLib5PointV`, under which `image`
@@ -886,6 +1023,8 @@ package final class RuntimeSymbolResolver: Sendable {
         at address: UInt64,
         in image: RuntimeImage
     ) -> String? {
+        beginLookup()
+        defer { endLookup() }
         let index = state.withLock { $0.index(for: image) }
         return withExtendedLifetime(index) {
             state.withLock { _ in index.exportedSwiftTypeDeclaration(at: address) }
@@ -898,6 +1037,8 @@ package final class RuntimeSymbolResolver: Sendable {
         ofConformanceAt descriptor: UInt64,
         in image: RuntimeImage
     ) -> [RuntimeSwiftCandidate] {
+        beginLookup()
+        defer { endLookup() }
         let index = state.withLock { $0.index(for: image) }
         return withExtendedLifetime(index) {
             state.withLock { _ in index.swiftWitnesses(ofConformanceAt: descriptor) }
@@ -907,6 +1048,8 @@ package final class RuntimeSymbolResolver: Sendable {
     /// The address of the protocol conformance descriptor that `image` names
     /// `name`, as the remangler spells it.
     package func swiftConformanceDescriptor(named name: String, in image: RuntimeImage) -> UInt64? {
+        beginLookup()
+        defer { endLookup() }
         let index = state.withLock { $0.index(for: image) }
         return withExtendedLifetime(index) {
             state.withLock { _ in index.swiftConformanceDescriptor(named: name) }
@@ -919,6 +1062,8 @@ package final class RuntimeSymbolResolver: Sendable {
         at address: UInt64,
         in image: RuntimeImage
     ) -> Set<String> {
+        beginLookup()
+        defer { endLookup() }
         let index = state.withLock { $0.index(for: image) }
         return withExtendedLifetime(index) {
             state.withLock { _ in index.swiftMethodDescriptorRequirements(at: address) }
@@ -930,6 +1075,8 @@ package final class RuntimeSymbolResolver: Sendable {
     /// or its symbol table. Only local symbols name the descriptor of a
     /// private or local type, and stripping the image removes them.
     package func swiftTypeDeclaration(at address: UInt64, in image: RuntimeImage) -> String? {
+        beginLookup()
+        defer { endLookup() }
         let index = state.withLock { $0.index(for: image) }
         return withExtendedLifetime(index) {
             state.withLock { _ in index.swiftTypeDeclaration(at: address) }
@@ -949,6 +1096,8 @@ package final class RuntimeSymbolResolver: Sendable {
         declaredBy module: String,
         in image: RuntimeImage
     ) -> Bool {
+        beginLookup()
+        defer { endLookup() }
         let index = state.withLock { $0.index(for: image) }
         return withExtendedLifetime(index) {
             state.withLock { _ in index.hasTrivialStoredVariableDescriptor(declaredBy: module) }
@@ -964,6 +1113,8 @@ package final class RuntimeSymbolResolver: Sendable {
         ofTypeAt address: UInt64,
         in image: RuntimeImage
     ) -> [String: Bool] {
+        beginLookup()
+        defer { endLookup() }
         let index = state.withLock { $0.index(for: image) }
         return withExtendedLifetime(index) {
             state.withLock { _ in index.swiftPropertyDeclarations(ofTypeAt: address) }
@@ -975,6 +1126,8 @@ package final class RuntimeSymbolResolver: Sendable {
         withPrefix prefix: String,
         in image: RuntimeImage
     ) -> [IndexedSymbol] {
+        beginLookup()
+        defer { endLookup() }
         let index = state.withLock { $0.index(for: image) }
         return withExtendedLifetime(index) {
             state.withLock { _ in index.exportedSymbols(withPrefix: prefix) }
@@ -986,6 +1139,8 @@ package final class RuntimeSymbolResolver: Sendable {
         in image: RuntimeImage,
         suggestedName: String
     ) throws -> String? {
+        beginLookup()
+        defer { endLookup() }
         let query = SymbolQuery(
             .init(
                 name: "nominal type descriptor for " + suggestedName,
@@ -1117,23 +1272,62 @@ package final class RuntimeSymbolResolver: Sendable {
         )
     }
 
-    private struct ResolutionState {
-        // Catalog revisions track image changes; this generation also retires
-        // candidates being built outside the lock when callers clear caches.
-        var cacheGeneration: UInt64 = 0
-        var automatic: AutomaticScope?
-        var classImages: [ObjectIdentifier: RuntimeImage] = [:]
+    private struct SearchKey: Hashable {
+        let images: [RuntimeImageIdentity]
+        let declaration: RuntimeDeclaration
+    }
+
+    private struct SymbolKey: Hashable {
+        let image: RuntimeImageIdentity
+        let declaration: RuntimeDeclaration
+        let source: RuntimeSymbol.Source
+    }
+
+    private struct LookupIndexes {
         var indexes: [RuntimeImageIdentity: SymbolIndex] = [:]
         var queries: [RuntimeDeclaration: SymbolQuery] = [:]
+    }
+
+    private struct ResolutionState {
+        // Explicit invalidation also retires candidates prepared outside the lock.
+        var cacheGeneration: UInt64 = 0
+        var activeLookups = 0
+        var lookups = LookupIndexes()
+        var automatic: AutomaticScope?
+        var classImages: [ObjectIdentifier: RuntimeImage] = [:]
         var pathImages: [[UInt8]: PathImage] = [:]
+        var resolvedSymbols: [SymbolKey: RuntimeSymbol] = [:]
+        var explicitResolutions: [SearchKey: Result<RuntimeSymbol, RuntimeResolutionError>] = [:]
+        var retainedImages: [RuntimeImageIdentity: RetainedImage] = [:]
         var imports: [RuntimeImageIdentity: ImportIndex] = [:]
         var virtualEntries: [RuntimeImageIdentity: VirtualEntryIndex] = [:]
         var virtualTables: [UInt: VirtualEntryIndex] = [:]
 
+        mutating func removeLookupIndexes() -> LookupIndexes {
+            let removed = lookups
+            lookups = LookupIndexes()
+            return removed
+        }
+
+        mutating func removeCachedResults() -> Self {
+            let removed = self
+            self = Self()
+            cacheGeneration = removed.cacheGeneration &+ 1
+            activeLookups = removed.activeLookups
+            return removed
+        }
+
         mutating func index(for image: RuntimeImage) -> SymbolIndex {
-            if let cached = indexes[image.identity] { return cached }
-            let index = SymbolIndex(image: image)
-            indexes[image.identity] = index
+            if let cached = lookups.indexes[image.identity] { return cached }
+            let retained =
+                retainedImages[image.identity]
+                ?? RetainedImage(
+                    image: image,
+                    acquiringThread: UInt(bitPattern: pthread_self())
+                )
+            retainedImages[image.identity] = retained
+            let index = SymbolIndex(image: retained.image)
+            lookups.indexes[image.identity] = index
             return index
         }
     }

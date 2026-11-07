@@ -13,7 +13,9 @@ package struct RuntimeSwiftProtocolDescriptor: Sendable {
         if let cached = descriptors.withLock({ $0[symbol.address] }) { return cached }
         // Parsing can resolve symbols and acquire image leases. Do that work
         // outside the process cache lock, then publish one successful result.
-        let candidate = try Self(symbol: symbol, resolver: resolver)
+        let candidate = try resolver.withCachedLookups {
+            try Self(symbol: symbol, resolver: resolver)
+        }
         return withExtendedLifetime(candidate) {
             descriptors.withLock { descriptors in
                 if let cached = descriptors[symbol.address] { return cached }

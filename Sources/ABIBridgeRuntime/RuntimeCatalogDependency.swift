@@ -23,7 +23,7 @@ package struct RuntimeCatalogDependency: Equatable, Sendable {
             affectsResult: @escaping @Sendable ([RuntimeImageSnapshot]) throws -> Bool
         ) {
             state = Mutex(
-                State(revision: catalog.revision, images: Set(catalog.images.map(\.identity)))
+                State(revision: catalog.revision, images: catalog.imageIdentities)
             )
             self.requiredImages = requiredImages
             self.affectsResult = affectsResult
@@ -36,7 +36,7 @@ package struct RuntimeCatalogDependency: Equatable, Sendable {
             if previous.revision == catalog.revision { return true }
             // A load generation's symbols do not change. Retained results keep
             // their defining images alive; only new generations need searching.
-            let images = Set(catalog.images.map(\.identity))
+            let images = catalog.imageIdentities
             guard requiredImages.isSubset(of: images) else { return false }
             let added = catalog.images.filter { !previous.images.contains($0.identity) }
             do {

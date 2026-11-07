@@ -61,11 +61,11 @@ This policy does not certify initialization; the caller supplies the native prec
 
 ## Preserve lifetime and failure information
 
-Resolved symbols, functions, types, and runtime indexes retain their image owners. Clearing a cache releases its references while existing handles remain valid. A final release balances ABIBridge's loader reference; physical unloading remains dyld's decision.
+Resolved symbols, functions, types, and the runtime's acquired-image cache retain their image owners independently of temporary search indexes. Clearing a cache releases its references while existing handles remain valid. A final release balances ABIBridge's loader reference; physical unloading remains dyld's decision.
 
 Loading may execute constructors and acquire dependencies even when the requested declaration is subsequently missing. These effects cannot be rolled back as a transaction. `ABIResolutionError.imageLoadFailed(target:message:)` preserves the original dyld diagnostic. Loader failures stop ordered fallback; they are not silently treated as a missing declaration. A later operation can retry acquisition after its cause is addressed.
 
-Only the requested explicit target is acquired. ABIBridge uses its existing symbol indexes to locate definitions afterward; it does not treat the import names returned by `resolveLazyLibraries` or `resolveLazyLibrariesAndWait` as addresses or traverse mutable binding chains. Batch scope snapshots are refreshed after acquisition attempts, including failures that may have changed loader state.
+Only the requested explicit target is acquired. ABIBridge uses working symbol indexes to locate definitions afterward; it does not treat the import names returned by `resolveLazyLibraries` or `resolveLazyLibrariesAndWait` as addresses or traverse mutable binding chains. Batch scope snapshots are refreshed after acquisition attempts, including failures that may have changed loader state.
 
 ## Native consumers
 

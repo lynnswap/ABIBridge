@@ -109,7 +109,12 @@ struct RuntimePreparationTests {
         #expect(SwiftPreparationValue.preparationThreads.withLock { $0.count } == preparations)
         #expect(try unsafe synchronous.unsafeInvoke().raw == 42)
         #expect(try unsafe asynchronous.unsafeInvoke().raw == 42)
-        runtime.removeCachedResults()
+        runtime.removeCachedResults(in: [.symbolLookup, .swiftTypes])
+        _ =
+            try freeFunction
+            ? runtime.resolveAndWait(function, in: type.image) : type.resolveAndWait(member)
+        #expect(SwiftPreparationValue.preparationThreads.withLock { $0.count } == preparations)
+        runtime.removeCachedResults(in: [.swiftResolutions])
         _ =
             try freeFunction
             ? runtime.resolveAndWait(function, in: type.image) : type.resolveAndWait(member)
@@ -117,7 +122,23 @@ struct RuntimePreparationTests {
         #expect(try unsafe synchronous.unsafeInvoke().raw == 42)
     }
 
-    @Test func clearingDuringSwiftPreparationPreventsPublication() throws {
+    @Test func selectiveRemovalPreservesUnselectedTypeCache() throws {
+        let runtime = ABIRuntime()
+        let request = NativeRequest.swift(.type("ABIBridgeTests.SwiftPreparationReceiver"))
+        let original = try runtime.resolveAndWait(request)
+        runtime.removeCachedResults(in: [.symbolLookup, .swiftResolutions])
+        #expect(try runtime.resolveAndWait(request) === original)
+        runtime.removeCachedResults(in: [.swiftTypes])
+        let rebuilt = try runtime.resolveAndWait(request)
+        #expect(rebuilt !== original)
+        runtime.removeCachedResults(in: [])
+        #expect(try runtime.resolveAndWait(request) === rebuilt)
+    }
+
+    @Test(arguments: ABIRuntime.Cache.allCases)
+    func clearingDuringSwiftPreparationOnlyPreventsSelectedPublication(
+        cache: ABIRuntime.Cache
+    ) throws {
         let runtime = ABIRuntime()
         let type = try runtime.resolveAndWait(
             .swift(.type("ABIBridgeTests.SwiftPreparationReceiver"))
@@ -130,7 +151,7 @@ struct RuntimePreparationTests {
         )
         SwiftPreparationValue.preparationThreads.withLock { $0.removeAll() }
         SwiftPreparationValue.preparationCallback.withLock {
-            $0 = { runtime.removeCachedResults() }
+            $0 = { runtime.removeCachedResults(in: [cache]) }
         }
         defer { SwiftPreparationValue.preparationCallback.withLock { $0 = nil } }
         let original = try runtime.resolveAndWait(request, in: type.image)
@@ -138,7 +159,11 @@ struct RuntimePreparationTests {
         #expect(originalCount > 0)
         _ = try runtime.resolveAndWait(request, in: type.image)
         let rebuiltCount = SwiftPreparationValue.preparationThreads.withLock { $0.count }
-        #expect(rebuiltCount > originalCount)
+        if cache == .swiftResolutions {
+            #expect(rebuiltCount > originalCount)
+        } else {
+            #expect(rebuiltCount == originalCount)
+        }
         _ = try runtime.resolveAndWait(request, in: type.image)
         #expect(SwiftPreparationValue.preparationThreads.withLock { $0.count } == rebuiltCount)
         #expect(try unsafe original.unsafeInvoke().raw == 42)
@@ -179,7 +204,8 @@ struct RuntimePreparationTests {
             }
         )
 
-        runtime.removeCachedResults()
+        let clear: () -> Void = runtime.removeCachedResults
+        clear()
         #expect(unsafe prepared.withUnsafeAddress { $0.load(as: Int32.self) } == 42)
         let rebuilt = try runtime.resolveAndWait(request)
         #expect(rebuilt.image.identity == prepared.image.identity)

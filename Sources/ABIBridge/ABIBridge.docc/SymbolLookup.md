@@ -203,9 +203,19 @@ See <doc:NativeInspection> for C++ adoption and retention. These operations keep
 
 ## Cache and loader lifetime
 
+Search indexes and decoded symbol tables live only while lookups are active. Use `runtime.prepare { runtime in ... }` to share those indexes across a batch of resolutions. They are released when the last overlapping lookup or batch finishes, including when a batch throws. Completed symbol and Swift resolutions, type handles, and native call interfaces remain cached, so repeating the same request can reuse its result outside the batch. Image changes still invalidate affected results.
+
 Call `runtime.removeCachedResults()` to release that runtime's resolver indexes, Swift type cache, and completed Swift resolutions. Existing image, symbol, and callable handles stay valid, as do resolutions already in progress; subsequent lookups prepare new results. Results from an older cache generation are not republished after removal. The process-shared native call-interface cache and the image catalog remain available. Known Swift classes reuse their defining image while it remains retained.
 
-A ``NativeRequest`` describes a symbol, type, callable or key path to resolve. Equivalent Swift function and member requests reuse completed handles while their runtime remains alive, including handles prepared by a `prepare` closure whose result was discarded. Internal cache keys include the signature, generic arguments, declaration and ABI options, and lookup type or acquired image identities. Requests retain their existing public interface without a `Hashable` conformance. Other lookup families continue to share their existing symbol, index, and native call-interface caches.
+Select caches with ``ABIRuntime/Cache`` when only some preparation should be discarded:
+
+```swift
+runtime.removeCachedResults(in: [.symbolLookup])
+```
+
+This releases search indexes and symbol lookup results while preserving prepared Swift calls and type handles for reuse. Use `.swiftResolutions` to remove completed callable and key-path resolutions, or `.swiftTypes` to remove cached type lookups. These selections do not invalidate handles already held by callers. An empty set removes nothing.
+
+A ``NativeRequest`` describes a symbol, type, callable or key path to resolve. Equivalent Swift function and member requests reuse completed handles while their runtime remains alive, including handles prepared by a `prepare` closure whose result was discarded. Internal cache keys include the signature, generic arguments, declaration and ABI options, and lookup type or acquired image identities. Requests retain their existing public interface without a `Hashable` conformance. Other lookup families reuse completed symbols and native call interfaces. Prepared import and virtual-entry indexes retain their own resources; working symbol indexes are shared only by active lookups.
 
 Each explicit image scope is acquired before cache lookup, so loading policies and retargeted filesystem paths still apply. A catalog change checks the added images against each cached lookup; unrelated additions preserve its completed preparation, while competing declarations require a new resolution. Removing an image required by a lookup also invalidates it. Partial catalog searches and failed callable resolutions are not cached. A captured class or witness slot is checked before returning its cached handle; changing that slot causes a new resolution. Previously returned handles keep their captured implementation.
 

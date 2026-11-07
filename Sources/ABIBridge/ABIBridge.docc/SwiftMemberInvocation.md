@@ -100,7 +100,7 @@ try unsafe start.unsafeInvoke(on: renderer)
 try unsafe stop.unsafeInvoke(on: renderer)
 ```
 
-Type lookup obtains the nominal descriptor and requests complete metadata. For a generic type, supply `genericArguments: [.type(String.self)]`, or the corresponding arguments and packs in outer-to-inner declaration order. Type handles share the runtime's symbol indexes, retain their defining image and argument owners, and remain valid after removeCachedResults().
+Type lookup obtains the nominal descriptor and requests complete metadata. For a generic type, supply `genericArguments: [.type(String.self)]`, or the corresponding arguments and packs in outer-to-inner declaration order. Type handles retain their defining image and argument owners and remain valid after removeCachedResults(). Working symbol indexes are shared only while lookups are active.
 
 Concrete members capture the selected implementation. Lookup prefers declarations in the type's defining image, then searches extension-qualified implementations in loaded images, and then walks superclass declarations in each superclass's defining image. These calls do not perform virtual redispatch. Existing receiver metadata also supplies the context for concrete members declared by a generic superclass.
 
@@ -199,7 +199,7 @@ Lookup checks the native conformance before invocation and retains the protocol 
 
 ## Await type and member preparation
 
-Types and objects resolve member requests with async `resolve` and synchronous `resolveAndWait`. `ABIRuntime` uses the same pair for `.swift(.type(...))` requests. Async lookup moves search, metadata, and call preparation to a worker queue while the caller suspends. `AndWait` runs on the caller's thread or blocks while joining required work already running. Both reuse indexes and call layouts. `ABIRuntime` and `NativeSwiftType` are actors.
+Types and objects resolve member requests with async `resolve` and synchronous `resolveAndWait`. `ABIRuntime` uses the same pair for `.swift(.type(...))` requests. Async lookup moves search, metadata, and call preparation to a worker queue while the caller suspends. `AndWait` runs on the caller's thread or blocks while joining required work already running. Both reuse completed resolutions and call layouts; working indexes are shared while lookups are active. `ABIRuntime` and `NativeSwiftType` are actors.
 
 Use async resolution on `MainActor` without an earlier `prepare` call:
 

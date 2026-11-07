@@ -61,6 +61,11 @@ enum SwiftResolutionKey: Hashable, Sendable {
     )
     case typeMember(ObjectIdentifier, SwiftResolutionTypeKey, SwiftResolutionMemberKey)
     case keyPath(SwiftResolutionTypeKey, String, SwiftResolutionTypeKey, String?)
+
+    var cache: ABIRuntime.Cache {
+        if case .nominalType = self { return .swiftTypes }
+        return .swiftResolutions
+    }
 }
 
 /// Owns completed Swift resolutions independently of their retained types and resolvers.
@@ -100,7 +105,7 @@ final class SwiftResolutionCache: Sendable {
     }
 
     private struct State: Sendable {
-        var generation: UInt64 = 0
+        var generations: [ABIRuntime.Cache: UInt64] = [:]
         var entries: [SwiftResolutionKey: Entry] = [:]
     }
     private let state = Mutex(State())
@@ -114,7 +119,9 @@ final class SwiftResolutionCache: Sendable {
         prepare: () throws -> Value
     ) throws -> Value {
         let arguments = (owner?.genericArguments ?? []) + arguments
-        let (cached, generation) = state.withLock { ($0.entries[key], $0.generation) }
+        let (cached, generation) = state.withLock {
+            ($0.entries[key], $0.generations[key.cache, default: 0])
+        }
         if let cached, cached.retainsOwners(of: arguments),
             cached.dependency.isCurrent, cached.slot?.isCurrent != false,
             let value = cached.value as? Value
@@ -143,7 +150,9 @@ final class SwiftResolutionCache: Sendable {
             slot: capturedSlot(value)
         )
         let (selected, displaced) = state.withLock { state -> (Entry, Entry?) in
-            guard state.generation == generation else { return (entry, nil) }
+            guard state.generations[key.cache, default: 0] == generation else {
+                return (entry, nil)
+            }
             if let existing = state.entries[key], existing.dependency == entry.dependency,
                 existing.slot == entry.slot, existing.retainsOwners(of: arguments)
             {
@@ -156,11 +165,11 @@ final class SwiftResolutionCache: Sendable {
         return selected.value as? Value ?? value
     }
 
-    func removeCachedResults() {
+    func removeCachedResults(in caches: Set<ABIRuntime.Cache>) {
         let removed = state.withLock { state in
-            state.generation &+= 1
-            let removed = state.entries
-            state.entries = [:]
+            for cache in caches { state.generations[cache, default: 0] &+= 1 }
+            let removed = state.entries.filter { caches.contains($0.key.cache) }
+            for key in removed.keys { state.entries.removeValue(forKey: key) }
             return removed
         }
         withExtendedLifetime(removed) {}
@@ -176,14 +185,16 @@ extension SymbolResolver {
         capturedSlot: (Value) -> SwiftCapturedSlot? = { _ in nil },
         prepare: () throws -> Value
     ) throws -> Value {
-        guard let resolutionCache else { return try prepare() }
-        return try resolutionCache.resolve(
-            key,
-            request: request,
-            owner: owner,
-            arguments: arguments,
-            capturedSlot: capturedSlot,
-            prepare: prepare
-        )
+        guard let resolutionCache else { return try withCachedLookups(prepare) }
+        return try withCachedLookups {
+            try resolutionCache.resolve(
+                key,
+                request: request,
+                owner: owner,
+                arguments: arguments,
+                capturedSlot: capturedSlot,
+                prepare: prepare
+            )
+        }
     }
 }

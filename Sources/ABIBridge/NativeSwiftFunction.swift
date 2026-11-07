@@ -190,7 +190,9 @@ public struct NativeSwiftFunction<Signature>: Sendable {
                 "Virtual hooks and replacements of a function require a class member or protocol requirement receiving its metatype as self; free functions and concrete static members of structs and enums have no virtual slot."
             )
         }
-        return try SwiftVirtualDispatch(type: type, entry: entry, asynchronous: call.isAsync)
+        return try type.resolver.withCachedLookups {
+            try SwiftVirtualDispatch(type: type, entry: entry, asynchronous: call.isAsync)
+        }
     }
 
     /// Calls the Swift entry point using its prepared declaration-level signature.
@@ -549,7 +551,7 @@ extension ABIRuntime {
     ///
     /// - Parameters:
     ///   - request: The function and its lookup options.
-    ///   - image: An image whose symbol index is reused.
+    ///   - image: The retained image to search.
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable handle retaining its image and prepared Swift
     ///   ABI.
@@ -594,7 +596,7 @@ extension ABIRuntime {
     ///
     /// - Parameters:
     ///   - request: The function and its lookup options.
-    ///   - image: An image whose symbol index is reused.
+    ///   - image: The retained image to search.
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A reusable handle retaining its image and prepared Swift
     ///   ABI.

@@ -2,20 +2,31 @@ import Foundation
 
 /// Resolves declarations using shared image and symbol indexes.
 ///
-/// Use ``shared`` to reuse indexes across callers, or create a runtime with an independent cache. Explicit scopes acquire images by default. Image and symbol handles retain their images until the last owner releases them.
+/// Use ``shared`` to reuse completed resolutions across callers, or create a runtime with independent caches. Search indexes are shared by overlapping lookups and released when the last lookup or ``prepare(_:)`` batch finishes. Explicit scopes acquire images by default. Image and symbol handles retain their images until the last owner releases them.
 ///
 /// Searches prepare indexes on demand. Async resolution moves search and call preparation to a worker; bound Objective-C receiver callbacks and C++ virtual-slot capture stay on the caller's executor. `resolve…AndWait` factories run on the caller's thread and wait for any required work already in progress. Use `prepare(_:)` to start that work early without occupying the caller's actor.
 ///
 /// See <doc:SymbolLookup> for search scopes and the raw-address contract.
 public actor ABIRuntime {
-    /// A runtime whose indexes and completed Swift resolutions are shared across callers in this process.
+    /// Independently removable caches owned by a runtime.
+    public enum Cache: CaseIterable, Hashable, Sendable {
+        /// Symbol indexes, parsed declarations, image acquisitions, and symbol lookup results.
+        /// Removing this cache preserves prepared Swift calls and types.
+        case symbolLookup
+        /// Completed Swift function, member, and key-path resolutions.
+        case swiftResolutions
+        /// Resolved Swift type handles.
+        case swiftTypes
+    }
+
+    /// A runtime whose completed resolutions are shared across callers in this process.
     public static let shared = ABIRuntime(resolver: .shared, resolutionCache: .shared)
 
     nonisolated let resolver: SymbolResolver
     nonisolated let swiftTypeCache = SwiftTypeCache()
     nonisolated let swiftResolutionCache: SwiftResolutionCache
 
-    /// Creates a runtime with independent indexes and completed Swift resolutions.
+    /// Creates a runtime with independent resolution caches.
     public init() {
         let cache = SwiftResolutionCache()
         swiftResolutionCache = cache
@@ -72,7 +83,7 @@ public actor ABIRuntime {
     ///
     /// - Parameters:
     ///   - request: A language-qualified source-level or exact name and storage requirement.
-    ///   - image: The retained image whose index can be reused.
+    ///   - image: The retained image to search.
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A resolved symbol retaining that image.
     /// - Throws: ``ABIResolutionError`` when the declaration cannot be resolved
@@ -98,7 +109,7 @@ public actor ABIRuntime {
 
     /// Resolves independent requirements, preserving input order and partial success.
     ///
-    /// Retained images for each scope are reused within this batch, and symbol indexes use this runtime's existing cache. Results are independent; the batch is not an atomic snapshot of loader activity.
+    /// Retained images and working symbol indexes are reused within this batch. Results are independent; the batch is not an atomic snapshot of loader activity.
     /// - Parameter requests: Requirements to resolve, or an empty array.
     /// - Returns: One owned symbol or lookup error for each input requirement.
     public nonisolated func resolveAndWait(
@@ -147,7 +158,7 @@ public actor ABIRuntime {
 
     /// Prepares typed handles using the synchronous lookup APIs.
     ///
-    /// The operation runs on a worker and shares this runtime's indexes, native call interfaces, and completed Swift resolutions. Equivalent Swift requests reuse completed handles even when this operation's result is discarded. Other lookups join the work they need before the whole operation finishes. Lookup may load images and run their initializers on that worker. Calling a prepared function remains an explicit operation.
+    /// The operation runs on a worker and shares lookup indexes for the duration of the closure. Indexes are released after the last overlapping lookup or preparation finishes. Native call interfaces, resolved Swift types, and completed Swift calls remain cached for reuse. Equivalent Swift requests reuse completed handles even when this operation's result is discarded. Lookup may load images and run their initializers on that worker. Calling a prepared function remains an explicit operation.
     ///
     /// - Parameter operation: Synchronous lookups to start before their results are needed.
     /// - Returns: The prepared value, which can be retained for later calls.
@@ -155,18 +166,33 @@ public actor ABIRuntime {
     public nonisolated func prepare<Value: Sendable>(
         _ operation: @escaping @Sendable (ABIRuntime) throws -> Value
     ) async throws -> Value {
-        try await NativePreparation.run { try operation(self) }
+        try await NativePreparation.run {
+            try self.resolver.withCachedLookups { try operation(self) }
+        }
     }
 
-    /// Releases this runtime's resolver indexes, Swift type cache, and completed Swift resolutions.
+    /// Releases all of this runtime's removable caches.
     ///
-    /// File-path acquisitions are invalidated synchronously. Call this after changing a managed library file or symbolic link when subsequent lookups must use the new target without waiting for file notifications.
-    ///
-    /// Existing image, symbol, and callable handles remain valid, and in-progress resolutions may finish. Subsequent lookups rebuild the required indexes. This does not clear the process-shared call-interface cache or the native image catalog.
+    /// Existing handles remain valid. Use ``removeCachedResults(in:)`` to retain unselected caches.
     public nonisolated func removeCachedResults() {
-        swiftResolutionCache.removeCachedResults()
-        swiftTypeCache.removeCachedResults()
-        resolver.removeCachedResults()
+        removeCachedResults(in: Set(Cache.allCases))
+    }
+
+    /// Releases the selected caches.
+    ///
+    /// Removing `.symbolLookup` invalidates file-path acquisitions synchronously. Select it after changing a managed library file or symbolic link when subsequent lookups must use the new target without waiting for file notifications.
+    ///
+    /// Existing image, symbol, and callable handles remain valid, and in-progress resolutions may finish. Subsequent lookups rebuild only the removed caches. This does not clear the process-shared call-interface cache or the native image catalog.
+    ///
+    /// Use `[.symbolLookup]` to release search indexes while retaining prepared Swift calls and types.
+    /// Passing an empty set leaves all caches intact.
+    /// - Parameter caches: The caches to remove.
+    public nonisolated func removeCachedResults(in caches: Set<Cache>) {
+        if caches.contains(.swiftResolutions) || caches.contains(.swiftTypes) {
+            swiftResolutionCache.removeCachedResults(in: caches)
+        }
+        if caches.contains(.swiftTypes) { swiftTypeCache.removeCachedResults() }
+        if caches.contains(.symbolLookup) { resolver.removeCachedResults() }
     }
 
 }
