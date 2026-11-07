@@ -192,6 +192,18 @@ final class SymbolResolver: Sendable {
             try RuntimeSymbolResolver.shared.withCachedLookups(operation)
         }
     }
+
+    func withCachedLookups<Value>(
+        isolation: isolated (any Actor)? = #isolation,
+        _ operation: () async throws -> Value
+    ) async rethrows -> Value {
+        try await runtime.withCachedLookups(isolation: isolation) {
+            try await RuntimeSymbolResolver.shared.withCachedLookups(
+                isolation: isolation,
+                operation
+            )
+        }
+    }
     func importIndex(for image: NativeImage) throws -> ImportIndex {
         try withRuntimeErrors { ImportIndex(try runtime.importIndex(for: image.runtimeValue)) }
     }

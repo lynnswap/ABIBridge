@@ -180,6 +180,7 @@ private struct IndirectBlock: ABIBridgeSwiftValue {
     static var swiftABIType: NativeType { try! .opaque(named: "IndirectBlock") }
 }
 
+@Suite(LookupBatch())
 struct SwiftFunctionInvocationTests {
     #if os(macOS)
     @Test func completeNamesKeepTheRoleOfEachResultAddress() async throws {

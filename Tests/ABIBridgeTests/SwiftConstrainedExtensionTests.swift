@@ -95,6 +95,7 @@ extension ConstrainedOuter.Inner where First == Int, Second == String {
     @inline(never) @_optimize(none) func nested() -> String { "nested" }
 }
 
+@Suite(LookupBatch())
 struct SwiftConstrainedExtensionTests {
     @Test func objectiveCClassesAndProtocolsKeepDistinctSameTypeIdentities() async throws {
         let runtime = ABIRuntime.shared

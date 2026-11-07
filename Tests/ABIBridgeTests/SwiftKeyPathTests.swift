@@ -12,6 +12,7 @@ import ManagedSwiftFixtures
 import Synchronization
 import Testing
 
+@Suite(LookupBatch())
 struct SwiftKeyPathTests {
     @MainActor @Test func explicitObjectiveCKeySurvivesExtractionAndSupportsObservation()
         async throws

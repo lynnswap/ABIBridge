@@ -58,6 +58,7 @@ extension GenericReceiver where Value == ReceiverNumber {
 private final class InheritedGenericReceiver: GenericReceiver<ReceiverNumber> {}
 private enum ReceiverFailure: Error { case rejected }
 
+@Suite(LookupBatch())
 struct SwiftGenericReceiverTests {
     @MainActor @Test func classReceiversFulfillNestedGenericRequirements() async throws {
         let receiver = GenericSourceNested(GenericSourceBox(GenericSourceValue(39)))

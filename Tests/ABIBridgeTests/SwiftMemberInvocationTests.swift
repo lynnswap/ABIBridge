@@ -202,6 +202,7 @@ extension NativeValue {
     public var bridgeExtensionSize: Int { type.size }
 }
 
+@Suite(LookupBatch())
 struct SwiftMemberInvocationTests {
     #if os(macOS)
     @Test func protocolExtensionReceiversPassRepresentationsAsIndirectSelf() async throws {

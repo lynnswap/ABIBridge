@@ -46,7 +46,7 @@ private final class GenericCaptureState: Sendable {
     let deaths = Mutex(0)
 }
 
-@Suite(.serialized)
+@Suite(.serialized, LookupBatch())
 struct SwiftGenericCallTests {
     @Test func extensionNestedTypesKeepTheirDeclaringModules() async throws {
         typealias Other = SupportExtensionIdentity

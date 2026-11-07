@@ -38,7 +38,7 @@ extension CFStringCompareFlags: ABIBridgeSwiftValue {
 /// Values whose conventions inference cannot establish fail during
 /// preparation, naming the type, the missing evidence or unsupported kind, and
 /// the explicit ABI that describes them instead.
-@Suite(.serialized)
+@Suite(.serialized, LookupBatch())
 struct SwiftInferredValueTests {
     private let runtime = ABIRuntime()
 

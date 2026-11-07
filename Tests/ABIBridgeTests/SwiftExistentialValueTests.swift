@@ -10,6 +10,7 @@ import ABIBridgeCore.Backend
 import Foundation
 import Testing
 
+@Suite(LookupBatch())
 struct SwiftExistentialValueTests {
     @Test func erasedProtocolGetterResultsResolveFromTheirDescriptors() async throws {
         let runtime = ABIRuntime()

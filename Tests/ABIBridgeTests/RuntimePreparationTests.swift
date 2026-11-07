@@ -1,12 +1,41 @@
 import ABIBridgeTestSupport
-#if os(macOS)
 import ABIBridge
 import Foundation
 import Synchronization
 import Testing
 
+struct LookupBatch: TestTrait, SuiteTrait, TestScoping {
+    var isRecursive: Bool { true }
+
+    func provideScope(
+        for test: Test,
+        testCase: Test.Case?,
+        performing function: @concurrent @Sendable () async throws -> Void
+    ) async throws {
+        try await ABIRuntime.shared.prepare { _ in try await function() }
+    }
+}
+
+#if os(macOS)
 @Suite(.serialized)
 struct RuntimePreparationTests {
+    @MainActor @Test func asynchronousPreparationPreservesIsolationAndCachedHandles() async throws {
+        let runtime = ABIRuntime()
+        let receiver = SwiftPreparationReceiver()
+        let request = NativeRequest.swift(.type("ABIBridgeTests.SwiftPreparationReceiver"))
+        let (type, value) = try await runtime.prepare { runtime in
+            MainActor.assertIsolated()
+            let type = try await runtime.resolve(request)
+            await Task.yield()
+            MainActor.assertIsolated()
+            receiver.raw = 43
+            return (type, receiver)
+        }
+        #expect(value === receiver)
+        #expect(receiver.raw == 43)
+        #expect(try await runtime.resolve(request) === type)
+    }
+
     @Test func unrelatedImageLoadsPreservePreparedSwiftCalls() async throws {
         let libraries = try (0..<3).map { index in
             try FixtureLibrary(

@@ -99,6 +99,18 @@ Use the same runtime for preparation and lookup so both share indexes and call l
 
 For symbol-only lookup, `resolve(request)` returns a ``ResolvedSymbol``. `resolve(requests)` preserves order and partial success with one `Result` per input. Both honor scopes, aliases, fallbacks, and loading policy. Use `prepare { ... }` to group synchronous lookups or prepare call signatures ahead of time.
 
+When preparation already uses asynchronous lookup or actor-isolated values, use an asynchronous closure. It keeps the caller's isolation and shares search indexes until the batch finishes:
+
+```swift
+let (type, render) = try await runtime.prepare { runtime in
+    let type = try await runtime.resolve(.swift(.type("Example.Renderer")))
+    let render = try await type.resolve(.swift(.method("render()", as: (() -> String).self)))
+    return (type, render)
+}
+```
+
+The asynchronous closure stays on the caller's actor; each `resolve` still performs its search on a worker. Use a batch for related preparation, and invoke the returned handles when needed. Both overloads release their search indexes after the last overlapping batch or lookup finishes, including on error, while retaining completed resolutions for later requests.
+
 ## Describe the declaration
 
 Use a language-qualified symbol request, such as `.cxx(.symbol("Example::Math::add(int, int)"))`, for a single lookup. ``NativeSymbolLookupRequest`` records its name form and required storage kind; the outer language factory selects its source language:

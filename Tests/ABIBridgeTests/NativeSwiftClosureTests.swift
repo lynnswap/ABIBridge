@@ -55,6 +55,7 @@ private final class NestedClosureCapture: @unchecked Sendable {
     var asyncValue: NativeSwiftClosure<nonisolated(nonsending) (Int64) async -> Int64>?
 }
 
+@Suite(LookupBatch())
 struct NativeSwiftClosureTests {
     @MainActor @Test func resolvedMainActorClosurePreservesIsolationAcrossNativeParameters()
         async throws

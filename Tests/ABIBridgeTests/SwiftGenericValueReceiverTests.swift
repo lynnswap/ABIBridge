@@ -22,7 +22,7 @@ extension GenericValueBox: ABIBridgeSwiftValue {
     }
 }
 
-@Suite(.serialized)
+@Suite(.serialized, LookupBatch())
 struct SwiftGenericValueReceiverTests {
     @MainActor @Test func subscriptAccessorsPreserveIndicesAndOwnership() async throws {
         let runtime = ABIRuntime.shared
