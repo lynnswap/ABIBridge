@@ -22,7 +22,8 @@ if [[ "$task_suite" == api && "${ABI_TEST_PARALLEL_API:-0}" == 1 ]]; then
     task_suites=(SwiftImportedFunctionHookTests SwiftGenericBindingTests
         SwiftConstrainedExtensionTests SymbolResolutionTests
         SwiftExistentialValueTests SwiftMemberInvocationTests
-        ConformanceMatrixTests SwiftGenericCallTests)
+        ConformanceMatrixTests SwiftGenericCallTests SwiftGenericReceiverTests
+        SwiftInferredValueTests SwiftOpaqueResultTests)
     task_only=()
     task_skip=()
     for task_name in "${task_suites[@]}"; do
