@@ -8,6 +8,17 @@ import Foundation
 ///
 /// See <doc:SymbolLookup> for search scopes and the raw-address contract.
 public actor ABIRuntime {
+    /// Independently removable caches owned by a runtime.
+    public enum Cache: CaseIterable, Hashable, Sendable {
+        /// Symbol indexes, parsed declarations, image acquisitions, and symbol lookup results.
+        /// Removing this cache preserves prepared Swift calls and types.
+        case symbolLookup
+        /// Completed Swift function, member, and key-path resolutions.
+        case swiftResolutions
+        /// Resolved Swift type handles.
+        case swiftTypes
+    }
+
     /// A runtime whose indexes and completed Swift resolutions are shared across callers in this process.
     public static let shared = ABIRuntime(resolver: .shared, resolutionCache: .shared)
 
@@ -158,15 +169,28 @@ public actor ABIRuntime {
         try await NativePreparation.run { try operation(self) }
     }
 
-    /// Releases this runtime's resolver indexes, Swift type cache, and completed Swift resolutions.
+    /// Releases all of this runtime's removable caches.
     ///
-    /// File-path acquisitions are invalidated synchronously. Call this after changing a managed library file or symbolic link when subsequent lookups must use the new target without waiting for file notifications.
-    ///
-    /// Existing image, symbol, and callable handles remain valid, and in-progress resolutions may finish. Subsequent lookups rebuild the required indexes. This does not clear the process-shared call-interface cache or the native image catalog.
+    /// Existing handles remain valid. Use ``removeCachedResults(in:)`` to retain unselected caches.
     public nonisolated func removeCachedResults() {
-        swiftResolutionCache.removeCachedResults()
-        swiftTypeCache.removeCachedResults()
-        resolver.removeCachedResults()
+        removeCachedResults(in: Set(Cache.allCases))
+    }
+
+    /// Releases the selected caches.
+    ///
+    /// Removing `.symbolLookup` invalidates file-path acquisitions synchronously. Select it after changing a managed library file or symbolic link when subsequent lookups must use the new target without waiting for file notifications.
+    ///
+    /// Existing image, symbol, and callable handles remain valid, and in-progress resolutions may finish. Subsequent lookups rebuild only the removed caches. This does not clear the process-shared call-interface cache or the native image catalog.
+    ///
+    /// Use `[.symbolLookup]` to release search indexes while retaining prepared Swift calls and types.
+    /// Passing an empty set leaves all caches intact.
+    /// - Parameter caches: The caches to remove.
+    public nonisolated func removeCachedResults(in caches: Set<Cache>) {
+        if caches.contains(.swiftResolutions) || caches.contains(.swiftTypes) {
+            swiftResolutionCache.removeCachedResults(in: caches)
+        }
+        if caches.contains(.swiftTypes) { swiftTypeCache.removeCachedResults() }
+        if caches.contains(.symbolLookup) { resolver.removeCachedResults() }
     }
 
 }
