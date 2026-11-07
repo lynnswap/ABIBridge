@@ -136,7 +136,9 @@ struct RuntimePreparationTests {
     }
 
     @Test(arguments: ABIRuntime.Cache.allCases)
-    func clearingDuringSwiftPreparationOnlyPreventsSelectedPublication(cache: ABIRuntime.Cache) throws {
+    func clearingDuringSwiftPreparationOnlyPreventsSelectedPublication(
+        cache: ABIRuntime.Cache
+    ) throws {
         let runtime = ABIRuntime()
         let type = try runtime.resolveAndWait(
             .swift(.type("ABIBridgeTests.SwiftPreparationReceiver"))

@@ -150,7 +150,9 @@ final class SwiftResolutionCache: Sendable {
             slot: capturedSlot(value)
         )
         let (selected, displaced) = state.withLock { state -> (Entry, Entry?) in
-            guard state.generations[key.cache, default: 0] == generation else { return (entry, nil) }
+            guard state.generations[key.cache, default: 0] == generation else {
+                return (entry, nil)
+            }
             if let existing = state.entries[key], existing.dependency == entry.dependency,
                 existing.slot == entry.slot, existing.retainsOwners(of: arguments)
             {
@@ -183,7 +185,7 @@ extension SymbolResolver {
         capturedSlot: (Value) -> SwiftCapturedSlot? = { _ in nil },
         prepare: () throws -> Value
     ) throws -> Value {
-        guard let resolutionCache else { return try prepare() }
+        guard let resolutionCache else { return try withCachedLookups(prepare) }
         return try withCachedLookups {
             try resolutionCache.resolve(
                 key,

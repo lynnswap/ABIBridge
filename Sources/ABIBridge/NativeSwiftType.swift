@@ -91,7 +91,7 @@ struct SwiftMetadataResponse: BitwiseCopyable, ABIBridgeValue {
 
 /// A concrete Swift type and its retained implementation images.
 ///
-/// Type lookup requests complete metadata without constructing an instance. Generic arguments are validated by the Swift runtime. Member lookups reuse completed resolutions in the same runtime and the image's symbol index. See <doc:SwiftMemberInvocation> for lookup and invocation conventions.
+/// Type lookup requests complete metadata without constructing an instance. Generic arguments are validated by the Swift runtime. Member lookups reuse completed resolutions in the same runtime; active batches also share working symbol indexes. See <doc:SwiftMemberInvocation> for lookup and invocation conventions.
 ///
 /// Protocol-qualified names, such as `Module.Protocol.member()` or a complete `(extension in Module):Module.Protocol.member() -> ...` declaration, bind Self to this concrete type for methods, accessors, subscripts, static members, and initializers. A requirement runs through the protocol's dispatch thunk or the witness of this type's conformance, never an extension member. genericArguments supplies only the type parameters introduced by the member.
 public actor NativeSwiftType: Hashable {
@@ -1340,7 +1340,7 @@ extension ABIRuntime {
     /// index. The result retains that image and its metadata dependencies.
     /// - Parameters:
     ///   - request: A module-qualified type, optional specialization and representation.
-    ///   - image: The image whose symbol index is reused.
+    ///   - image: The retained image to search.
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Throws: A lookup error or unavailable/unsupported metadata.
     public nonisolated func resolveAndWait(

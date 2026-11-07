@@ -198,9 +198,11 @@ enum SwiftInferredValue {
         let key = ObjectIdentifier(metadata)
         if let cached = classifications.withLock({ $0[key] }) { return cached }
         guard let memo = currentMemo else {
-            let result = $currentMemo.withValue(InferenceMemo()) {
-                Result { () throws(InferenceFailure) -> Classification in
-                    try Self.classification(of: metadata)
+            let result = RuntimeSymbolResolver.shared.withCachedLookups {
+                $currentMemo.withValue(InferenceMemo()) {
+                    Result { () throws(InferenceFailure) -> Classification in
+                        try Self.classification(of: metadata)
+                    }
                 }
             }
             return try result.get()

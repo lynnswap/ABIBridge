@@ -19,14 +19,14 @@ public actor ABIRuntime {
         case swiftTypes
     }
 
-    /// A runtime whose indexes and completed Swift resolutions are shared across callers in this process.
+    /// A runtime whose completed resolutions are shared across callers in this process.
     public static let shared = ABIRuntime(resolver: .shared, resolutionCache: .shared)
 
     nonisolated let resolver: SymbolResolver
     nonisolated let swiftTypeCache = SwiftTypeCache()
     nonisolated let swiftResolutionCache: SwiftResolutionCache
 
-    /// Creates a runtime with independent indexes and completed Swift resolutions.
+    /// Creates a runtime with independent resolution caches.
     public init() {
         let cache = SwiftResolutionCache()
         swiftResolutionCache = cache
@@ -83,7 +83,7 @@ public actor ABIRuntime {
     ///
     /// - Parameters:
     ///   - request: A language-qualified source-level or exact name and storage requirement.
-    ///   - image: The retained image whose index can be reused.
+    ///   - image: The retained image to search.
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Returns: A resolved symbol retaining that image.
     /// - Throws: ``ABIResolutionError`` when the declaration cannot be resolved
@@ -109,7 +109,7 @@ public actor ABIRuntime {
 
     /// Resolves independent requirements, preserving input order and partial success.
     ///
-    /// Retained images for each scope are reused within this batch, and symbol indexes use this runtime's existing cache. Results are independent; the batch is not an atomic snapshot of loader activity.
+    /// Retained images and working symbol indexes are reused within this batch. Results are independent; the batch is not an atomic snapshot of loader activity.
     /// - Parameter requests: Requirements to resolve, or an empty array.
     /// - Returns: One owned symbol or lookup error for each input requirement.
     public nonisolated func resolveAndWait(

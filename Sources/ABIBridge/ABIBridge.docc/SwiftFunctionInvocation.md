@@ -18,7 +18,7 @@ A label-only name selects the declaration with those labels whose native paramet
 
 For a label-only name, a class argument can be a subclass of the native parameter's class, including when that parameter is `Optional`, and a class result can be requested as a superclass or `AnyObject`, also wrapped in `Optional`. These conversions apply only to the call's own arguments and result, not to `inout` values, tuple fields, or closure signatures. A handle selected through such a conversion cannot install hooks, because a hook would have to pass values back as the native types.
 
-The framework/path and retained-image overloads use the same symbol indexes as other runtime lookups. Explicit targets are acquired by default; `loading: .loadedOnly` opts out. See <doc:ImageLoading>.
+The framework/path and retained-image overloads share working symbol indexes with other active lookups. Explicit targets are acquired by default; `loading: .loadedOnly` opts out. See <doc:ImageLoading>.
 
 ### Use a wrapper with a complete declaration
 
@@ -56,7 +56,7 @@ Requests are reusable values and are `Sendable` when their declaration is `Senda
 
 ## Await lookup and preparation
 
-`resolve` searches and prepares the call interface on a worker queue while the caller suspends. `resolveAndWait` performs that work synchronously and can block the caller, including inside an async function. Both reuse completed resolutions, symbol indexes, and prepared layouts, and join any preparation already running for the required work.
+`resolve` searches and prepares the call interface on a worker queue while the caller suspends. `resolveAndWait` performs that work synchronously and can block the caller, including inside an async function. Both reuse completed resolutions and prepared layouts, and share working symbol indexes while lookups are active.
 
 From `MainActor`, await `resolve` to keep lookup and preparation from blocking the actor:
 

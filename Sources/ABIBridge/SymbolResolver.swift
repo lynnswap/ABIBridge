@@ -188,7 +188,9 @@ final class SymbolResolver: Sendable {
     }
     func removeCachedResults() { runtime.removeCachedResults() }
     func withCachedLookups<Value>(_ operation: () throws -> Value) rethrows -> Value {
-        try runtime.withCachedLookups(operation)
+        try runtime.withCachedLookups {
+            try RuntimeSymbolResolver.shared.withCachedLookups(operation)
+        }
     }
     func importIndex(for image: NativeImage) throws -> ImportIndex {
         try withRuntimeErrors { ImportIndex(try runtime.importIndex(for: image.runtimeValue)) }

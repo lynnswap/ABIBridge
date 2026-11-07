@@ -428,7 +428,7 @@ extension ABIRuntime {
     /// - Parameters:
     ///   - storage: A live object or caller-adjusted subobject view.
     ///   - typeName: The qualified C++ class name.
-    ///   - image: The image whose symbol index can be reused.
+    ///   - image: The retained image to search.
     ///   - loading: Whether direct member resolution may ask dyld to acquire
     ///     and initialize the image.
     /// - Returns: A receiver scope retaining its storage and image.

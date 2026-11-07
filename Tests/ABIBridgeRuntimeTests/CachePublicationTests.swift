@@ -6,9 +6,72 @@ import Synchronization
 import Testing
 
 private final class CachedImageTestClass {}
+private let initializingImageLookup = Mutex<(@Sendable () -> Void)?>(nil)
 
 @Suite(.serialized)
 struct CachePublicationTests {
+    @Test func retainedLeasesDoNotExposeAnInitializingImageToAnotherThread() throws {
+        let callback: @convention(c) () -> Void = {
+            initializingImageLookup.withLock { $0 }?()
+        }
+        let address = unsafe UInt(bitPattern: unsafeBitCast(callback, to: UnsafeRawPointer.self))
+        let fixture = try FixtureLibrary(
+            load: false,
+            cxxSource: """
+                extern "C" int ABICacheInitializingValue = 42;
+                __attribute__((constructor)) static void initialize() {
+                    reinterpret_cast<void (*)()>(\(address))();
+                }
+                """
+        )
+        defer { fixture.cleanup() }
+        let path = fixture.libraryURL.path
+        let scope = RuntimeImageSelector.path(fixture.libraryURL)
+        let declaration = RuntimeDeclaration(
+            name: "ABICacheInitializingValue",
+            language: .c,
+            kind: .data
+        )
+        let resolver = RuntimeSymbolResolver()
+        let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+        let finished = DispatchGroup()
+        let initialLookup = Mutex<Result<RuntimeSymbol, any Error>?>(nil)
+        let loaded = Mutex<Result<RuntimeImage, any Error>?>(nil)
+        initializingImageLookup.withLock {
+            $0 = {
+                let result = Result {
+                    try resolver.resolve(declaration, in: scope, loading: .loadedOnly)
+                }
+                initialLookup.withLock { $0 = result }
+                entered.signal()
+                #expect(release.wait(timeout: .now() + 30) == .success)
+            }
+        }
+        finished.enter()
+        Thread {
+            let result = Result { try RuntimeImage.opening(path: path) }
+            loaded.withLock { $0 = result }
+            finished.leave()
+        }.start()
+        defer {
+            release.signal()
+            #expect(finished.wait(timeout: .now() + 30) == .success)
+            initializingImageLookup.withLock { $0 = nil }
+        }
+        try #require(entered.wait(timeout: .now() + 30) == .success)
+        let original = try #require(initialLookup.withLock { $0 }).get()
+        #expect(throws: RuntimeResolutionError.imageUnavailable) {
+            try resolver.resolve(declaration, in: scope, loading: .loadedOnly)
+        }
+        release.signal()
+        try #require(finished.wait(timeout: .now() + 30) == .success)
+        _ = try #require(loaded.withLock { $0 }).get()
+        #expect(
+            try resolver.resolve(declaration, in: scope, loading: .loadedOnly).address
+                == original.address
+        )
+    }
+
     @Test func fileNotificationsInvalidateNestedSymbolicLinks() async throws {
         let first = try FixtureLibrary(), second = try FixtureLibrary()
         defer { first.cleanup(); second.cleanup() }
