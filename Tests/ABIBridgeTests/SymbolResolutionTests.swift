@@ -45,6 +45,41 @@ struct SymbolResolutionTests {
         let explicit = try await runtime.resolve(request, in: .path(second.libraryURL))
         #expect(explicit.image != prepared.image)
     }
+
+    @MainActor @Test func completedSwiftLookupDoesNotWaitForAnotherImagesIndexRead() async throws {
+        let module = "CompletedType_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let fixture = try FixtureLibrary(swiftModule: module, swiftSource: "public struct Value {}")
+        let gated = try FixtureLibrary()
+        defer { fixture.cleanup(); gated.cleanup() }
+        let gatedIdentity = try #require(
+            try RuntimeSymbolResolver().images(matching: .path(gated.libraryURL)).first
+        ).identity
+        let armed = Mutex(false), released = Mutex(false)
+        let entered = AsyncStream<Void>.makeStream()
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        let backend = RuntimeSymbolResolver(whileReadingIndex: { image in
+            guard image.identity == gatedIdentity, armed.withLock({ $0 }) else { return }
+            entered.continuation.yield(())
+            _ = release.wait(timeout: .now() + 10)
+            released.withLock { $0 = true }
+        })
+        let runtime = ABIRuntime(resolver: SymbolResolver(backend))
+        let request = NativeRequest.swift(NativeSwiftTypeRequest.type(module + ".Value"))
+        let type = try runtime.resolveAndWait(request)
+        armed.withLock { $0 = true }
+        let function = NativeRequest.cxx(
+            .function(gated.namespace + "::add(int, int)", as: ((Int32, Int32) -> Int32).self)
+        )
+        let scope = ImageSelector.path(gated.libraryURL)
+        let blocked = Task.detached { try runtime.resolveAndWait(function, in: scope) }
+        var reads = entered.stream.makeAsyncIterator()
+        _ = await reads.next()
+        #expect(try runtime.resolveAndWait(request) === type)
+        #expect(!released.withLock { $0 })
+        release.signal()
+        #expect(try await unsafe blocked.value.unsafeInvoke(19, 23) == 42)
+    }
     #endif
 
     @Test func preparedTypesDistinguishCanonicallyEquivalentUTF8() async throws {

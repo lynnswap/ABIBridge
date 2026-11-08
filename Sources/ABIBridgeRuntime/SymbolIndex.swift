@@ -4,8 +4,9 @@ import Foundation
 import Darwin
 import MachO
 import MachOKit
+import Synchronization
 
-package struct IndexedSymbol: Hashable {
+package struct IndexedSymbol: Hashable, Sendable {
     package let name: String
     package let address: UInt64
     package let source: RuntimeSymbol.Source
@@ -415,9 +416,252 @@ package struct CXXSymbolFilter {
     }
 }
 
-package final class SymbolIndex {
+/// One image's symbol tables, built on demand and shared by overlapping lookups.
+///
+/// Lookups of the same image wait for each other's table construction; other
+/// images remain available. Construction only reads the retained image, so no
+/// loader, runtime metadata, or resolver work runs behind this lock.
+package final class SymbolIndex: Sendable {
     package let image: RuntimeImage
-    package let sections: [SymbolSection]
+    // Retirement frees the tables after their owner releases the image.
+    private final class Storage: RetiredSymbolTables {
+        let tables = Mutex<SymbolTables?>(nil)
+        func freeTables() { tables.withLock { $0 = nil } }
+    }
+    private let storage = Storage()
+    private let retirement: SymbolTableRetirement?
+    #if DEBUG
+    private let reading: (@Sendable (RuntimeImage) -> Void)?
+    private let freed: (@Sendable () -> Void)?
+    #endif
+
+    /// - Parameter retirement: Releases the tables after the index; without
+    ///   one, the thread that releases the index also frees its tables.
+    package init(image: RuntimeImage, retirement: SymbolTableRetirement? = nil) {
+        self.image = image
+        self.retirement = retirement
+        #if DEBUG
+        reading = nil
+        freed = nil
+        #endif
+    }
+
+    #if DEBUG
+    /// - Parameters:
+    ///   - reading: Called while the lookup holds this index's tables.
+    ///   - freed: Called by the tables' deinitializer.
+    init(
+        image: RuntimeImage,
+        retirement: SymbolTableRetirement?,
+        whileReading reading: (@Sendable (RuntimeImage) -> Void)?,
+        whenTablesAreFreed freed: (@Sendable () -> Void)?
+    ) {
+        self.image = image
+        self.retirement = retirement
+        self.reading = reading
+        self.freed = freed
+    }
+
+    package var hasSharedCacheWaiters: Bool {
+        storage.tables.withLock { $0?.hasSharedCacheWaiters ?? false }
+    }
+    #endif
+
+    deinit {
+        guard let retirement else { return }
+        let weight = storage.tables.withLock { $0?.weight ?? 0 }
+        // Tables that hold no symbols cost no more to free than to retire.
+        if weight > 0 { retirement.retire(storage, weight: weight) }
+    }
+
+    private func withTables<Result: Sendable, Failure: Error>(
+        _ body: (SymbolTables) throws(Failure) -> Result
+    ) throws(Failure) -> Result {
+        let (result, grew) = try storage.tables.withLock {
+            tables throws(Failure) -> (Result, Bool) in
+            #if DEBUG
+            reading?(image)
+            #endif
+            let current = tables ?? SymbolTables(identity: image.identity)
+            #if DEBUG
+            if tables == nil { current.freed = freed }
+            #endif
+            tables = current
+            let weight = current.weight
+            return (try body(current), current.weight > weight)
+        }
+        if grew { retirement?.relieve() }
+        return result
+    }
+
+    package var hasSharedSwiftFallback: Bool { withTables { $0.hasSharedSwiftFallback } }
+
+    package func hasSharedCacheSymbols(for query: SymbolQuery) -> Bool {
+        withTables { $0.hasSharedCacheSymbols(for: query) }
+    }
+
+    /// The scan that reads `sources` for the query, or nil when this index
+    /// already holds the shared cache's symbols for it.
+    package func sharedCacheScan(
+        for query: SymbolQuery,
+        source: SharedCacheSymbols.Source,
+        includingSwiftFallback: Bool,
+        capturing sources: SharedCacheSymbols.CapturedSymbols,
+        relatedQueries: [SymbolQuery] = []
+    ) -> SharedCacheSymbolScan? {
+        withTables { tables in
+            if tables.hasSharedCacheSymbols(for: query) { return nil }
+            return tables.sharedCacheScan(
+                for: query,
+                source: source,
+                includingSwiftFallback: includingSwiftFallback,
+                capturing: sources,
+                relatedQueries: relatedQueries
+            )
+        }
+    }
+
+    /// Adds a completed shared-cache read unless another lookup already
+    /// added the query's symbols, and returns the query's retired scans.
+    package func publishSharedCacheSymbols(
+        _ symbols: [IndexedSymbol],
+        matching coveredQueries: [SymbolQuery],
+        for query: SymbolQuery
+    ) -> [SharedCacheSymbolScan] {
+        withTables { tables in
+            if !tables.hasSharedCacheSymbols(for: query) {
+                tables.appendSharedCacheSymbols(symbols, matching: coveredQueries)
+            }
+            return tables.removeSharedCacheScans(for: query)
+        }
+    }
+
+    package func appendSharedCacheSymbols(_ more: [IndexedSymbol], matching query: SymbolQuery) {
+        withTables { $0.appendSharedCacheSymbols(more, matching: [query]) }
+    }
+
+    package func appendSharedCacheSymbols(_ more: [IndexedSymbol], matching queries: [SymbolQuery])
+    {
+        withTables { $0.appendSharedCacheSymbols(more, matching: queries) }
+    }
+
+    package func exportedSymbols(withPrefix prefix: String) -> [IndexedSymbol] {
+        withTables { $0.exportedSymbols(withPrefix: prefix) }
+    }
+
+    package func exportedSwiftTypeDeclaration(at address: UInt64) -> String? {
+        withTables { $0.exportedSwiftTypeDeclaration(at: address) }
+    }
+
+    package func swiftTypeDeclaration(at address: UInt64) -> String? {
+        withTables { $0.swiftTypeDeclaration(at: address) }
+    }
+
+    package func hasTrivialStoredVariableDescriptor(declaredBy module: String) -> Bool {
+        withTables { $0.hasTrivialStoredVariableDescriptor(declaredBy: module) }
+    }
+
+    package func swiftPropertyDeclarations(ofTypeAt address: UInt64) -> [String: Bool] {
+        withTables { $0.swiftPropertyDeclarations(ofTypeAt: address) }
+    }
+
+    package func matches(_ declaration: RuntimeDeclaration) -> [IndexedSymbol] {
+        withTables { $0.matches(SymbolQuery(declaration)) }
+    }
+
+    package func swiftDeclarationCandidates(
+        _ query: SymbolQuery,
+        source: RuntimeSymbol.Source,
+        extensionsOnly: Bool
+    ) -> [RuntimeSwiftCandidate] {
+        guard let match = SwiftMemberMatch(declaration: query.declaration.name) else { return [] }
+        return swiftDeclarationCandidates(
+            match,
+            query: query,
+            source: source,
+            extensionsOnly: extensionsOnly
+        )
+    }
+
+    package func swiftDeclarationCandidates(
+        _ match: SwiftMemberMatch,
+        query: SymbolQuery,
+        source: RuntimeSymbol.Source,
+        extensionsOnly: Bool
+    ) -> [RuntimeSwiftCandidate] {
+        withTables {
+            $0.swiftDeclarationCandidates(
+                match,
+                query: query,
+                source: source,
+                extensionsOnly: extensionsOnly,
+                image: image
+            )
+        }
+    }
+
+    package func swiftWitnesses(ofConformanceAt descriptor: UInt64) -> [RuntimeSwiftCandidate] {
+        withTables { $0.swiftWitnesses(ofConformanceAt: descriptor, image: image) }
+    }
+
+    package func swiftConformanceDescriptor(named name: String) -> UInt64? {
+        withTables { $0.swiftConformanceDescriptor(named: name) }
+    }
+
+    package func swiftMethodDescriptorRequirements(at address: UInt64) -> Set<String> {
+        withTables { $0.swiftMethodDescriptorRequirements(at: address) }
+    }
+
+    package func swiftNominalTypeName(
+        at address: UInt64,
+        matching query: SymbolQuery,
+        source: RuntimeSymbol.Source
+    ) throws -> String? {
+        try withTables { try $0.swiftNominalTypeName(at: address, matching: query, source: source) }
+    }
+
+    package func resolve(
+        _ declaration: RuntimeDeclaration,
+        source: RuntimeSymbol.Source
+    ) throws -> RuntimeSymbol? {
+        try resolve(SymbolQuery(declaration), source: source)
+    }
+
+    package func resolve(
+        _ query: SymbolQuery,
+        source: RuntimeSymbol.Source
+    ) throws -> RuntimeSymbol? {
+        switch try resolveCandidate(query, source: source) {
+        case .missing: return nil
+        case .kindMismatch: throw RuntimeResolutionError.invalidAddress
+        case .symbol(let symbol): return symbol
+        }
+    }
+
+    enum Resolution {
+        case missing
+        case kindMismatch
+        case symbol(RuntimeSymbol)
+    }
+
+    func resolveCandidate(
+        _ query: SymbolQuery,
+        source: RuntimeSymbol.Source
+    ) throws -> Resolution {
+        try withTables { try $0.resolveCandidate(query, source: source, image: image) }
+    }
+}
+
+final class SymbolTables {
+    let identity: RuntimeImageIdentity
+    let sections: [SymbolSection]
+    /// The symbols and entries stored so far. Replaced tables keep their
+    /// count, so the weight only grows with the work that built the tables.
+    private(set) var weight = 0
+    #if DEBUG
+    var freed: (@Sendable () -> Void)?
+    deinit { freed?() }
+    #endif
     private let macho: MachOImage
     private lazy var exportTrie = macho.exportTrie
     private var localSymbols: [IndexedSymbol] = []
@@ -467,20 +711,26 @@ package final class SymbolIndex {
     }
     private var swiftMembers: [SwiftMemberScope: SwiftMemberIndex] = [:]
     private var swiftRecords: [IndexedSymbol: RuntimeSwiftDeclaration?] = [:]
-    private var resolutions:
-        [RuntimeDeclaration: [RuntimeSymbol.Source: Result<Resolution, RuntimeResolutionError>]] =
-            [:]
+    // The owner supplies the image when a cached result is returned, so tables
+    // released after the owner never retain a loader reference.
+    private enum CachedResolution {
+        case missing
+        case kindMismatch
+        case symbol(Range<UInt64>, RuntimeSymbol.Source, UInt64, String)
+    }
+    private typealias CachedResult = Result<CachedResolution, RuntimeResolutionError>
+    private var resolutions: [RuntimeDeclaration: [RuntimeSymbol.Source: CachedResult]] = [:]
 
-    package init(image: RuntimeImage) {
-        self.image = image
+    init(identity: RuntimeImageIdentity) {
+        self.identity = identity
         let macho = MachOImage(
-            ptr: UnsafePointer<mach_header>(bitPattern: UInt(image.identity.headerAddress))!
+            ptr: UnsafePointer<mach_header>(bitPattern: UInt(identity.headerAddress))!
         )
         self.macho = macho
-        let slide = image.identity.slide
+        let slide = identity.slide
         sections = macho.sections.compactMap { section in
             guard section.address >= 0, section.size > 0,
-                let start = Self.slid(UInt64(section.address), by: slide),
+                let start = SymbolIndex.slid(UInt64(section.address), by: slide),
                 UInt64(section.size) <= UInt64.max - start
             else { return nil }
             let threadLocal: Bool
@@ -547,7 +797,7 @@ package final class SymbolIndex {
             sources: sources,
             query: query,
             includingSwiftFallback: includingSwiftFallback,
-            relatedQueries: sources.imageIdentity == image.identity ? relatedQueries : []
+            relatedQueries: sources.imageIdentity == identity ? relatedQueries : []
         )
         sharedCacheScans[key] = scan
         return scan
@@ -592,6 +842,7 @@ package final class SymbolIndex {
             swiftMembers.filter { $0.key.symbols == Self.swiftFallbackScope }
         )
         localSymbols += additions
+        weight += additions.count
         sourceSymbols.removeAll()
         decoded.removeAll()
         swiftMembers.removeAll()
@@ -604,7 +855,7 @@ package final class SymbolIndex {
     }
 
     private func imageSymbol(name: String, offset: Int) -> IndexedSymbol? {
-        let base = image.identity.headerAddress
+        let base = identity.headerAddress
         guard offset >= 0, UInt64(offset) <= UInt64.max - base else { return nil }
         return IndexedSymbol(name: name, address: base + UInt64(offset), source: .image)
     }
@@ -679,6 +930,7 @@ package final class SymbolIndex {
             swiftTableIndices = indexes
             swiftFallbackTableIndices = fallbackIndexes
             swiftDescriptorTableIndices = descriptors
+            weight += indexes.count
         }
         let selected: [Int]
         if let descriptorKind {
@@ -715,9 +967,11 @@ package final class SymbolIndex {
                 matches.append(symbol)
             }
             imageLinkerNames[key] = matches
+            weight += 1 + matches.count
         }
         matches += localSymbols.filter { $0.name.utf8.elementsEqual(key) }
         linkerNames[key] = matches
+        weight += 1 + matches.count
         return matches
     }
 
@@ -846,17 +1100,23 @@ package final class SymbolIndex {
         }
     }
 
-    private lazy var exportedTypeDescriptors = TypeDescriptorSymbols(
-        exportedSymbols(withPrefix: "_$s")
-    )
+    private lazy var exportedTypeDescriptors: TypeDescriptorSymbols = {
+        let descriptors = TypeDescriptorSymbols(exportedSymbols(withPrefix: "_$s"))
+        weight += descriptors.names.count
+        return descriptors
+    }()
 
     // Only the names that end in `Mn` become strings.
-    private lazy var tableTypeDescriptors = TypeDescriptorSymbols(
-        swiftSymbols { name in
-            let count = strlen(name)
-            return count > 2 && name[count - 2] == 77 && name[count - 1] == 110
-        }
-    )
+    private lazy var tableTypeDescriptors: TypeDescriptorSymbols = {
+        let descriptors = TypeDescriptorSymbols(
+            swiftSymbols { name in
+                let count = strlen(name)
+                return count > 2 && name[count - 2] == 77 && name[count - 1] == 110
+            }
+        )
+        weight += descriptors.names.count
+        return descriptors
+    }()
 
     // MARK: Stored properties
 
@@ -876,6 +1136,7 @@ package final class SymbolIndex {
                 == ABISwiftStoredPropertyVar
         }
         trivialStoredVariableModules[module] = found
+        weight += 1
         return found
     }
 
@@ -883,8 +1144,9 @@ package final class SymbolIndex {
 
     // Swift mangles a property descriptor with the suffix `MV`. A trivial
     // descriptor's first word, its key-path component header, is 0.
-    private lazy var trivialPropertyDescriptors: [RuntimeSwiftPropertySymbol] =
-        swiftSymbols(endingWith: (77, 86)).compactMap { symbol in
+    private lazy var trivialPropertyDescriptors: [RuntimeSwiftPropertySymbol] = {
+        let properties = swiftSymbols(endingWith: (77, 86)).compactMap {
+            symbol -> RuntimeSwiftPropertySymbol? in
             guard symbol.name.hasSuffix("vpMV"),
                 let descriptor = UnsafeRawPointer(bitPattern: UInt(symbol.address)),
                 descriptor.loadUnaligned(as: UInt32.self) == 0,
@@ -893,6 +1155,9 @@ package final class SymbolIndex {
             else { return nil }
             return property
         }
+        weight += properties.count
+        return properties
+    }()
 
     /// The instance properties of the struct, enum, or class whose nominal
     /// type descriptor is at `address` that a symbol in this image's exports
@@ -920,6 +1185,7 @@ package final class SymbolIndex {
             }
         }
         propertyDeclarations[address] = result
+        weight += 1 + result.count
         return result
     }
 
@@ -969,6 +1235,7 @@ package final class SymbolIndex {
                 )
             }
             imageSymbols[scope] = symbols
+            weight += 1 + symbols.count
         }
         symbols += localSymbols.filter { $0.name.withCString(accepts) }
         // Definitions commonly occur in both nlist and the export trie.
@@ -976,6 +1243,7 @@ package final class SymbolIndex {
         var seen = Set<IndexedSymbol>()
         symbols = symbols.filter { seen.insert($0).inserted }
         sourceSymbols[scope] = symbols
+        weight += 1 + symbols.count
         return symbols
     }
 
@@ -1023,11 +1291,7 @@ package final class SymbolIndex {
         return symbols
     }
 
-    package func matches(_ declaration: RuntimeDeclaration) -> [IndexedSymbol] {
-        matches(SymbolQuery(declaration))
-    }
-
-    private func matches(_ query: SymbolQuery) -> [IndexedSymbol] {
+    func matches(_ query: SymbolQuery) -> [IndexedSymbol] {
         let declaration = query.declaration
         if let name = query.exactName {
             return exactSymbols(named: name, key: query.key)
@@ -1044,7 +1308,7 @@ package final class SymbolIndex {
                 let candidates =
                     symbols(for: query, swiftBucket: .knownModule, descriptorKind: descriptor)
                     + symbols(for: query, swiftBucket: .fallback, descriptorKind: descriptor)
-                return Self.matching(candidates, query: query)
+                return SymbolIndex.matching(candidates, query: query)
             }
             return indexedMatches(query, swiftBucket: .knownModule)
                 + indexedMatches(query, swiftBucket: .fallback)
@@ -1076,8 +1340,8 @@ package final class SymbolIndex {
                 else { continue }
                 var names = [name]
                 if declaration.language == .swift {
-                    if let alias = Self.operatorAlias(name) { names.append(alias) }
-                    names += Self.nominalDescriptorAliases(name)
+                    if let alias = SymbolIndex.operatorAlias(name) { names.append(alias) }
+                    names += SymbolIndex.nominalDescriptorAliases(name)
                 }
                 for name in names {
                     index[
@@ -1087,25 +1351,12 @@ package final class SymbolIndex {
                         default: []
                     ].append(symbol)
                 }
+                weight += names.count
             }
             decoded[scope] = index
+            weight += 1
         }
-        return Self.matching(decoded[scope]?[query.fingerprint] ?? [], query: query)
-    }
-
-    /// The candidates of the member that the query's declaration spells.
-    package func swiftDeclarationCandidates(
-        _ query: SymbolQuery,
-        source: RuntimeSymbol.Source,
-        extensionsOnly: Bool
-    ) -> [RuntimeSwiftCandidate] {
-        guard let match = SwiftMemberMatch(declaration: query.declaration.name) else { return [] }
-        return swiftDeclarationCandidates(
-            match,
-            query: query,
-            source: source,
-            extensionsOnly: extensionsOnly
-        )
+        return SymbolIndex.matching(decoded[scope]?[query.fingerprint] ?? [], query: query)
     }
 
     // A dispatch thunk is keyed by the member it dispatches, so one query
@@ -1113,11 +1364,12 @@ package final class SymbolIndex {
     // witness is keyed by the requirement it serves. The syntax supplies the
     // coarse member key; only matching members need complete declaration records
     // and demangled spellings to verify their owners and calling conventions.
-    package func swiftDeclarationCandidates(
+    func swiftDeclarationCandidates(
         _ match: SwiftMemberMatch,
         query: SymbolQuery,
         source: RuntimeSymbol.Source,
-        extensionsOnly: Bool
+        extensionsOnly: Bool,
+        image: RuntimeImage
     ) -> [RuntimeSwiftCandidate] {
         var symbols: [IndexedSymbol] = []
         for bucket in [SwiftBucket.knownModule, .fallback] {
@@ -1141,7 +1393,7 @@ package final class SymbolIndex {
                         guard let record = record(of: symbol), let name = memberName(of: symbol)
                         else { continue }
                         var spellingKeys: Set<[UInt8]> = []
-                        for name in [name, Self.operatorAlias(name)].compactMap({ $0 }) {
+                        for name in [name, SymbolIndex.operatorAlias(name)].compactMap({ $0 }) {
                             if let path = SwiftMemberPath(declaration: name) {
                                 spellingKeys.insert(path.member)
                             }
@@ -1158,8 +1410,10 @@ package final class SymbolIndex {
                     for key in keys {
                         members[key, default: []].append(symbol)
                     }
+                    weight += keys.count
                 }
                 swiftMembers[memberScope] = SwiftMemberIndex(members: members)
+                weight += 1
             }
             if let cached = swiftMembers[memberScope]?.matches[match] {
                 symbols += cached
@@ -1175,6 +1429,7 @@ package final class SymbolIndex {
                         == match.path.owner
                 }
                 swiftMembers[memberScope]?.matches[match] = selected
+                weight += 1 + selected.count
                 symbols += selected
             }
         }
@@ -1203,14 +1458,18 @@ package final class SymbolIndex {
                 name: name,
                 spelling: spelling,
                 section: section,
-                kind: query.declaration.kind
+                kind: query.declaration.kind,
+                image: image
             )
         }
     }
 
     /// The witnesses that this image's symbol table holds for the
     /// conformance whose descriptor is at `descriptor`.
-    package func swiftWitnesses(ofConformanceAt descriptor: UInt64) -> [RuntimeSwiftCandidate] {
+    func swiftWitnesses(
+        ofConformanceAt descriptor: UInt64,
+        image: RuntimeImage
+    ) -> [RuntimeSwiftCandidate] {
         guard let names = conformanceDescriptors.byAddress[descriptor] else { return [] }
         // Swift mangles a witness with the suffix `TW`.
         let symbols = swiftSymbols { name in
@@ -1230,7 +1489,8 @@ package final class SymbolIndex {
                 record: record,
                 name: name,
                 spelling: spelling,
-                section: section
+                section: section,
+                image: image
             )
         }
     }
@@ -1262,6 +1522,7 @@ package final class SymbolIndex {
                 result.byName[name] = symbol.address
                 result.byAddress[symbol.address, default: []].insert(name)
             }
+            weight += result.byName.count
             return result
         }()
 
@@ -1275,6 +1536,7 @@ package final class SymbolIndex {
             else { continue }
             result[symbol.address, default: []].insert(requirement)
         }
+        weight += result.count
         return result
     }()
 
@@ -1298,7 +1560,8 @@ package final class SymbolIndex {
         name: String,
         spelling: String,
         section: SymbolSection,
-        kind: RuntimeSymbolKind = .function
+        kind: RuntimeSymbolKind = .function,
+        image: RuntimeImage
     ) -> RuntimeSwiftCandidate {
         RuntimeSwiftCandidate(
             symbol: RuntimeSymbol(
@@ -1311,7 +1574,7 @@ package final class SymbolIndex {
             ),
             record: record,
             declaration: .init(name: name, language: .swift),
-            memberName: Self.extensionMemberName(name) ?? name
+            memberName: SymbolIndex.extensionMemberName(name) ?? name
         )
     }
 
@@ -1319,6 +1582,7 @@ package final class SymbolIndex {
         if let cached = swiftRecords[symbol] { return cached }
         let record = RuntimeSwiftDeclaration(linkageName: symbol.name)
         swiftRecords[symbol] = record
+        weight += 1
         return record
     }
 
@@ -1345,6 +1609,124 @@ package final class SymbolIndex {
         return DeclarationKey.demangle(mangled, language: .swift)
     }
 
+    package func swiftNominalTypeName(
+        at address: UInt64,
+        matching query: SymbolQuery,
+        source: RuntimeSymbol.Source
+    ) throws -> String? {
+        let candidates =
+            query.swiftModule == nil
+            ? symbols(for: query, swiftBucket: nil, descriptorKind: .nominalType)
+            : symbols(for: query, swiftBucket: .knownModule, descriptorKind: .nominalType)
+                + symbols(for: query, swiftBucket: .fallback, descriptorKind: .nominalType)
+        let marker = "nominal type descriptor for "
+        var names = Set<String>()
+        for candidate in candidates where candidate.address == address && candidate.source == source
+        {
+            guard let name = DeclarationKey.demangle(candidate.name, language: .swift),
+                name.hasPrefix(marker)
+            else { continue }
+            names.insert(String(name.dropFirst(marker.count)))
+        }
+        guard names.count <= 1 else {
+            throw RuntimeResolutionError.ambiguousDeclaration(
+                query.declaration,
+                candidates: names.sorted()
+            )
+        }
+        return names.first
+    }
+
+    func resolveCandidate(
+        _ query: SymbolQuery,
+        source: RuntimeSymbol.Source,
+        image: RuntimeImage
+    ) throws -> SymbolIndex.Resolution {
+        let result: CachedResult
+        if let cached = resolutions[query.declaration]?[source] {
+            result = cached
+        } else {
+            do {
+                result = .success(try findCandidate(query, source: source, image: image))
+            } catch let failure as RuntimeResolutionError {
+                result = .failure(failure)
+            }
+            resolutions[query.declaration, default: [:]][source] = result
+            weight += 1
+        }
+        switch try result.get() {
+        case .missing: return .missing
+        case .kindMismatch: return .kindMismatch
+        case .symbol(let sectionRange, let source, let address, let linkageName):
+            return .symbol(
+                RuntimeSymbol(
+                    declaration: query.declaration,
+                    image: image,
+                    sectionRange: sectionRange,
+                    source: source,
+                    address: address,
+                    linkageName: linkageName
+                )
+            )
+        }
+    }
+
+    private func findCandidate(
+        _ query: SymbolQuery,
+        source: RuntimeSymbol.Source,
+        image: RuntimeImage
+    ) throws -> CachedResolution {
+        let declaration = query.declaration
+        let candidates = matches(query).filter { $0.source == source }
+        guard !candidates.isEmpty else { return .missing }
+        var addresses: [UInt64: (IndexedSymbol, SymbolSection)] = [:]
+        var hasInvalidAddress = false
+        for candidate in candidates {
+            guard candidate.address != 0,
+                let section = sections.first(where: { $0.range.contains(candidate.address) })
+            else {
+                hasInvalidAddress = true
+                continue
+            }
+            if section.accepts(declaration.kind) {
+                addresses[candidate.address] = (candidate, section)
+            }
+        }
+        guard !addresses.isEmpty else {
+            if hasInvalidAddress { throw RuntimeResolutionError.invalidAddress }
+            return .kindMismatch
+        }
+        let definitions = addresses.sorted { $0.key < $1.key }.map { address, match in
+            RuntimeSymbol(
+                declaration: declaration,
+                image: image,
+                sectionRange: match.1.range,
+                source: match.0.source,
+                address: address,
+                linkageName: match.0.name
+            )
+        }
+        let definition: RuntimeSymbol
+        if definitions.count == 1 {
+            definition = definitions[0]
+        } else if let representative = try RuntimeUniquedRecord.representative(of: definitions) {
+            definition = representative
+        } else {
+            throw RuntimeResolutionError.ambiguousDeclaration(
+                declaration,
+                candidates: candidates.map(\.name).sorted()
+            )
+        }
+        return .symbol(
+            definition.sectionRange,
+            definition.source,
+            definition.address,
+            definition.linkageName
+        )
+    }
+}
+
+extension SymbolIndex {
     // Fingerprints keep the index compact; the full normalized spelling is
     // always checked before a candidate can affect resolution or ambiguity.
     package static func matching(
@@ -1417,117 +1799,6 @@ package final class SymbolIndex {
         name.withCString { start in
             marker.withCString { marker in strstr(start, marker).map { start.distance(to: $0) } }
         }
-    }
-
-    package func swiftNominalTypeName(
-        at address: UInt64,
-        matching query: SymbolQuery,
-        source: RuntimeSymbol.Source
-    ) throws -> String? {
-        let candidates =
-            query.swiftModule == nil
-            ? symbols(for: query, swiftBucket: nil, descriptorKind: .nominalType)
-            : symbols(for: query, swiftBucket: .knownModule, descriptorKind: .nominalType)
-                + symbols(for: query, swiftBucket: .fallback, descriptorKind: .nominalType)
-        let marker = "nominal type descriptor for "
-        var names = Set<String>()
-        for candidate in candidates where candidate.address == address && candidate.source == source
-        {
-            guard let name = DeclarationKey.demangle(candidate.name, language: .swift),
-                name.hasPrefix(marker)
-            else { continue }
-            names.insert(String(name.dropFirst(marker.count)))
-        }
-        guard names.count <= 1 else {
-            throw RuntimeResolutionError.ambiguousDeclaration(
-                query.declaration,
-                candidates: names.sorted()
-            )
-        }
-        return names.first
-    }
-
-    package func resolve(
-        _ declaration: RuntimeDeclaration,
-        source: RuntimeSymbol.Source
-    ) throws -> RuntimeSymbol? {
-        try resolve(SymbolQuery(declaration), source: source)
-    }
-
-    package func resolve(
-        _ query: SymbolQuery,
-        source: RuntimeSymbol.Source
-    ) throws -> RuntimeSymbol? {
-        switch try resolveCandidate(query, source: source) {
-        case .missing: return nil
-        case .kindMismatch: throw RuntimeResolutionError.invalidAddress
-        case .symbol(let symbol): return symbol
-        }
-    }
-
-    enum Resolution {
-        case missing
-        case kindMismatch
-        case symbol(RuntimeSymbol)
-    }
-
-    func resolveCandidate(
-        _ query: SymbolQuery,
-        source: RuntimeSymbol.Source
-    ) throws -> Resolution {
-        if let cached = resolutions[query.declaration]?[source] { return try cached.get() }
-        let result: Result<Resolution, RuntimeResolutionError>
-        do {
-            result = .success(try findCandidate(query, source: source))
-        } catch let failure as RuntimeResolutionError {
-            result = .failure(failure)
-        }
-        resolutions[query.declaration, default: [:]][source] = result
-        return try result.get()
-    }
-
-    private func findCandidate(
-        _ query: SymbolQuery,
-        source: RuntimeSymbol.Source
-    ) throws -> Resolution {
-        let declaration = query.declaration
-        let candidates = matches(query).filter { $0.source == source }
-        guard !candidates.isEmpty else { return .missing }
-        var addresses: [UInt64: (IndexedSymbol, SymbolSection)] = [:]
-        var hasInvalidAddress = false
-        for candidate in candidates {
-            guard candidate.address != 0,
-                let section = sections.first(where: { $0.range.contains(candidate.address) })
-            else {
-                hasInvalidAddress = true
-                continue
-            }
-            if section.accepts(declaration.kind) {
-                addresses[candidate.address] = (candidate, section)
-            }
-        }
-        guard !addresses.isEmpty else {
-            if hasInvalidAddress { throw RuntimeResolutionError.invalidAddress }
-            return .kindMismatch
-        }
-        let definitions = addresses.sorted { $0.key < $1.key }.map { address, match in
-            RuntimeSymbol(
-                declaration: declaration,
-                image: image,
-                sectionRange: match.1.range,
-                source: match.0.source,
-                address: address,
-                linkageName: match.0.name
-            )
-        }
-        guard definitions.count > 1 else { return .symbol(definitions[0]) }
-        if let definition = try RuntimeUniquedRecord.representative(of: definitions) {
-            return .symbol(definition)
-        }
-        throw RuntimeResolutionError.ambiguousDeclaration(
-            declaration,
-            candidates: candidates.map(\.name).sorted()
-        )
     }
 
     package static func slid(_ value: UInt64, by slide: Int64) -> UInt64? {

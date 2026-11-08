@@ -2,6 +2,7 @@ import ABIBridgeTestSupport
 #if os(macOS) && DEBUG
 @testable import ABIBridgeRuntime
 import Foundation
+import Synchronization
 import Testing
 
 @Suite(.serialized)
@@ -78,6 +79,60 @@ struct AutomaticLookupCacheTests {
         #expect(reused.address == retained.address)
         #expect(reused.image.lease === retained.image.lease)
         #expect(resolver.cachedSymbolIndexes.isEmpty)
+    }
+
+    @Test func retiredTablesAreFreedOnTheWorker() throws {
+        let fixture = try FixtureLibrary()
+        defer { fixture.cleanup() }
+        let caller = UInt(bitPattern: pthread_self())
+        let freedOnCaller = Mutex<[Bool]>([])
+        let holder = Mutex<SymbolTableRetirement?>(nil)
+        // The worker finishes before the ending thread drops its own reference.
+        let retirement = SymbolTableRetirement(limit: .max, afterRetiring: {
+            holder.withLock { $0 }?.waitForWorker()
+        })
+        holder.withLock { $0 = retirement }
+        defer { holder.withLock { $0 = nil } }
+        let resolver = RuntimeSymbolResolver(retiringTablesWith: retirement) {
+            freedOnCaller.withLock { $0.append(UInt(bitPattern: pthread_self()) == caller) }
+        }
+        _ = try resolver.resolve(
+            RuntimeDeclaration(name: fixture.namespace + "::add(int, int)", language: .cxx),
+            in: .path(fixture.libraryURL)
+        )
+        retirement.waitForWorker()
+        #expect(freedOnCaller.withLock { $0 } == [false])
+    }
+
+    @Test func tableBuildsFreeADelayedWorkersBacklog() throws {
+        let first = try FixtureLibrary(), second = try FixtureLibrary()
+        defer { first.cleanup(); second.cleanup() }
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        let freed = Mutex(0)
+        let retirement = SymbolTableRetirement(limit: 0, beforeReleasing: {
+            _ = release.wait(timeout: .now() + 30)
+        })
+        let resolver = RuntimeSymbolResolver(retiringTablesWith: retirement) {
+            freed.withLock { $0 += 1 }
+        }
+        func add(in fixture: FixtureLibrary) throws {
+            _ = try resolver.resolve(
+                RuntimeDeclaration(name: fixture.namespace + "::add(int, int)", language: .cxx),
+                in: .path(fixture.libraryURL)
+            )
+        }
+        try add(in: first)
+        #expect(resolver.cachedSymbolIndexes.isEmpty)
+        #expect(freed.withLock { $0 } == 0)
+        try resolver.withCachedLookups {
+            try add(in: second)
+            // Building the second image's tables freed the first's.
+            #expect(freed.withLock { $0 } == 1)
+        }
+        release.signal()
+        retirement.waitForWorker()
+        #expect(freed.withLock { $0 } == 2)
     }
 
     @Test func wrongKindLocalSymbolsDoNotHideFunctionsInOtherImages() throws {

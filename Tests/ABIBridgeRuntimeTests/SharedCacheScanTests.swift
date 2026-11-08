@@ -513,6 +513,53 @@ struct SharedCacheScanTests {
         #expect(gate.readCount == 1)
     }
 
+    @Test func otherImagesAndCacheClearingDoNotWaitForIndexRead() throws {
+        let gated = try FixtureLibrary(), other = try FixtureLibrary()
+        defer { gated.cleanup(); other.cleanup() }
+        let gatedIdentity = try #require(
+            try RuntimeSymbolResolver().images(matching: .path(gated.libraryURL)).first
+        ).identity
+        let gate = SharedCacheScanGate()
+        let resolver = RuntimeSymbolResolver(whileReadingIndex: { image in
+            if image.identity == gatedIdentity { gate.read() }
+        })
+        let gatedAdd = RuntimeDeclaration(name: gated.namespace + "::add(int, int)", language: .cxx)
+        let otherAdd = RuntimeDeclaration(name: other.namespace + "::add(int, int)", language: .cxx)
+        let counter = RuntimeDeclaration(
+            name: other.namespace + "::counter",
+            language: .cxx,
+            kind: .data
+        )
+        let gatedScope = RuntimeImageSelector.path(gated.libraryURL)
+        let otherScope = RuntimeImageSelector.path(other.libraryURL)
+        let warm = try resolver.resolve(otherAdd, in: otherScope, loading: .loadedOnly)
+        let deadline = DispatchTime.now() + 30
+        let blocked = SharedCacheScanWorker("Gated index read") {
+            try resolver.resolve(gatedAdd, in: gatedScope, loading: .loadedOnly)
+        }
+        defer { gate.release.signal(); blocked.waitForCleanup() }
+        try gate.waitUntilEntered(until: deadline)
+        let unrelated = SharedCacheScanWorker("Lookups in another image") {
+            let reused = try resolver.resolve(otherAdd, in: otherScope, loading: .loadedOnly)
+            let scanned = try resolver.resolve(counter, in: otherScope, loading: .loadedOnly)
+            resolver.removeCachedResults()
+            return [reused.address, scanned.address]
+        }
+        defer { gate.release.signal(); unrelated.waitForCleanup() }
+        #expect(
+            try unrelated.value(until: deadline)
+                == [warm.address, UInt64(try other.address(kind: 1))]
+        )
+        gate.release.signal()
+        let expected = UInt64(try gated.address(kind: 0))
+        #expect(try blocked.value(until: deadline).address == expected)
+        // The read that the clear interrupted must not publish its symbol.
+        #expect(
+            try resolver.resolve(gatedAdd, in: gatedScope, loading: .loadedOnly).address == expected
+        )
+        #expect(gate.readCount == 2)
+    }
+
     @Test func cacheClearDetachesRunningScan() throws {
         let fixture = try FixtureLibrary()
         defer { fixture.cleanup() }

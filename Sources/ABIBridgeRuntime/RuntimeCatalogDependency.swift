@@ -31,6 +31,10 @@ package struct RuntimeCatalogDependency: Equatable, Sendable {
 
         static func == (lhs: Observation, rhs: Observation) -> Bool { lhs === rhs }
 
+        func isUnchanged(in catalog: RuntimeImageCatalogSnapshot) -> Bool {
+            state.withLock { $0.revision } == catalog.revision
+        }
+
         func isCurrent(in catalog: RuntimeImageCatalogSnapshot) -> Bool {
             let previous = state.withLock { $0 }
             if previous.revision == catalog.revision { return true }
@@ -119,5 +123,14 @@ package struct RuntimeCatalogDependency: Equatable, Sendable {
         guard !observations.isEmpty else { return true }
         guard let catalog = try? RuntimeImageSnapshot.catalog() else { return false }
         return observations.allSatisfy { $0.isCurrent(in: catalog) }
+    }
+
+    /// Whether no image was added or removed since the result was last
+    /// validated, so ``isCurrent`` holds without searching any image.
+    package var isUnchanged: Bool {
+        guard !unstable else { return false }
+        guard !observations.isEmpty else { return true }
+        guard let catalog = try? RuntimeImageSnapshot.catalog() else { return false }
+        return observations.allSatisfy { $0.isUnchanged(in: catalog) }
     }
 }
