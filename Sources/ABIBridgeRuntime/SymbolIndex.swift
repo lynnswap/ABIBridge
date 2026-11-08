@@ -423,41 +423,75 @@ package struct CXXSymbolFilter {
 /// loader, runtime metadata, or resolver work runs behind this lock.
 package final class SymbolIndex: Sendable {
     package let image: RuntimeImage
-    private let tables = Mutex<SymbolTables?>(nil)
+    // Retirement frees the tables after their owner releases the image.
+    private final class Storage: RetiredSymbolTables {
+        let tables = Mutex<SymbolTables?>(nil)
+        func freeTables() { tables.withLock { $0 = nil } }
+    }
+    private let storage = Storage()
+    private let retirement: SymbolTableRetirement?
     #if DEBUG
     private let reading: (@Sendable (RuntimeImage) -> Void)?
+    private let freed: (@Sendable () -> Void)?
     #endif
 
-    package init(image: RuntimeImage) {
+    /// - Parameter retirement: Releases the tables after the index; without
+    ///   one, the thread that releases the index also frees its tables.
+    package init(image: RuntimeImage, retirement: SymbolTableRetirement? = nil) {
         self.image = image
+        self.retirement = retirement
         #if DEBUG
         reading = nil
+        freed = nil
         #endif
     }
 
     #if DEBUG
-    /// - Parameter reading: Called while the lookup holds this index's tables.
-    init(image: RuntimeImage, whileReading reading: @escaping @Sendable (RuntimeImage) -> Void) {
+    /// - Parameters:
+    ///   - reading: Called while the lookup holds this index's tables.
+    ///   - freed: Called by the tables' deinitializer.
+    init(
+        image: RuntimeImage,
+        retirement: SymbolTableRetirement?,
+        whileReading reading: (@Sendable (RuntimeImage) -> Void)?,
+        whenTablesAreFreed freed: (@Sendable () -> Void)?
+    ) {
         self.image = image
+        self.retirement = retirement
         self.reading = reading
+        self.freed = freed
     }
 
     package var hasSharedCacheWaiters: Bool {
-        tables.withLock { $0?.hasSharedCacheWaiters ?? false }
+        storage.tables.withLock { $0?.hasSharedCacheWaiters ?? false }
     }
     #endif
+
+    deinit {
+        guard let retirement else { return }
+        let weight = storage.tables.withLock { $0?.weight ?? 0 }
+        // Tables that hold no symbols cost no more to free than to retire.
+        if weight > 0 { retirement.retire(storage, weight: weight) }
+    }
 
     private func withTables<Result: Sendable, Failure: Error>(
         _ body: (SymbolTables) throws(Failure) -> Result
     ) throws(Failure) -> Result {
-        try tables.withLock { tables throws(Failure) -> Result in
+        let (result, grew) = try storage.tables.withLock {
+            tables throws(Failure) -> (Result, Bool) in
             #if DEBUG
             reading?(image)
             #endif
             let current = tables ?? SymbolTables(identity: image.identity)
+            #if DEBUG
+            if tables == nil { current.freed = freed }
+            #endif
             tables = current
-            return try body(current)
+            let weight = current.weight
+            return (try body(current), current.weight > weight)
         }
+        if grew { retirement?.relieve() }
+        return result
     }
 
     package var hasSharedSwiftFallback: Bool { withTables { $0.hasSharedSwiftFallback } }
@@ -621,6 +655,13 @@ package final class SymbolIndex: Sendable {
 final class SymbolTables {
     let identity: RuntimeImageIdentity
     let sections: [SymbolSection]
+    /// The symbols and entries stored so far. Replaced tables keep their
+    /// count, so the weight only grows with the work that built the tables.
+    private(set) var weight = 0
+    #if DEBUG
+    var freed: (@Sendable () -> Void)?
+    deinit { freed?() }
+    #endif
     private let macho: MachOImage
     private lazy var exportTrie = macho.exportTrie
     private var localSymbols: [IndexedSymbol] = []
@@ -801,6 +842,7 @@ final class SymbolTables {
             swiftMembers.filter { $0.key.symbols == Self.swiftFallbackScope }
         )
         localSymbols += additions
+        weight += additions.count
         sourceSymbols.removeAll()
         decoded.removeAll()
         swiftMembers.removeAll()
@@ -888,6 +930,7 @@ final class SymbolTables {
             swiftTableIndices = indexes
             swiftFallbackTableIndices = fallbackIndexes
             swiftDescriptorTableIndices = descriptors
+            weight += indexes.count
         }
         let selected: [Int]
         if let descriptorKind {
@@ -924,9 +967,11 @@ final class SymbolTables {
                 matches.append(symbol)
             }
             imageLinkerNames[key] = matches
+            weight += 1 + matches.count
         }
         matches += localSymbols.filter { $0.name.utf8.elementsEqual(key) }
         linkerNames[key] = matches
+        weight += 1 + matches.count
         return matches
     }
 
@@ -1055,17 +1100,23 @@ final class SymbolTables {
         }
     }
 
-    private lazy var exportedTypeDescriptors = TypeDescriptorSymbols(
-        exportedSymbols(withPrefix: "_$s")
-    )
+    private lazy var exportedTypeDescriptors: TypeDescriptorSymbols = {
+        let descriptors = TypeDescriptorSymbols(exportedSymbols(withPrefix: "_$s"))
+        weight += descriptors.names.count
+        return descriptors
+    }()
 
     // Only the names that end in `Mn` become strings.
-    private lazy var tableTypeDescriptors = TypeDescriptorSymbols(
-        swiftSymbols { name in
-            let count = strlen(name)
-            return count > 2 && name[count - 2] == 77 && name[count - 1] == 110
-        }
-    )
+    private lazy var tableTypeDescriptors: TypeDescriptorSymbols = {
+        let descriptors = TypeDescriptorSymbols(
+            swiftSymbols { name in
+                let count = strlen(name)
+                return count > 2 && name[count - 2] == 77 && name[count - 1] == 110
+            }
+        )
+        weight += descriptors.names.count
+        return descriptors
+    }()
 
     // MARK: Stored properties
 
@@ -1085,6 +1136,7 @@ final class SymbolTables {
                 == ABISwiftStoredPropertyVar
         }
         trivialStoredVariableModules[module] = found
+        weight += 1
         return found
     }
 
@@ -1092,8 +1144,9 @@ final class SymbolTables {
 
     // Swift mangles a property descriptor with the suffix `MV`. A trivial
     // descriptor's first word, its key-path component header, is 0.
-    private lazy var trivialPropertyDescriptors: [RuntimeSwiftPropertySymbol] =
-        swiftSymbols(endingWith: (77, 86)).compactMap { symbol in
+    private lazy var trivialPropertyDescriptors: [RuntimeSwiftPropertySymbol] = {
+        let properties = swiftSymbols(endingWith: (77, 86)).compactMap {
+            symbol -> RuntimeSwiftPropertySymbol? in
             guard symbol.name.hasSuffix("vpMV"),
                 let descriptor = UnsafeRawPointer(bitPattern: UInt(symbol.address)),
                 descriptor.loadUnaligned(as: UInt32.self) == 0,
@@ -1102,6 +1155,9 @@ final class SymbolTables {
             else { return nil }
             return property
         }
+        weight += properties.count
+        return properties
+    }()
 
     /// The instance properties of the struct, enum, or class whose nominal
     /// type descriptor is at `address` that a symbol in this image's exports
@@ -1129,6 +1185,7 @@ final class SymbolTables {
             }
         }
         propertyDeclarations[address] = result
+        weight += 1 + result.count
         return result
     }
 
@@ -1178,6 +1235,7 @@ final class SymbolTables {
                 )
             }
             imageSymbols[scope] = symbols
+            weight += 1 + symbols.count
         }
         symbols += localSymbols.filter { $0.name.withCString(accepts) }
         // Definitions commonly occur in both nlist and the export trie.
@@ -1185,6 +1243,7 @@ final class SymbolTables {
         var seen = Set<IndexedSymbol>()
         symbols = symbols.filter { seen.insert($0).inserted }
         sourceSymbols[scope] = symbols
+        weight += 1 + symbols.count
         return symbols
     }
 
@@ -1292,8 +1351,10 @@ final class SymbolTables {
                         default: []
                     ].append(symbol)
                 }
+                weight += names.count
             }
             decoded[scope] = index
+            weight += 1
         }
         return SymbolIndex.matching(decoded[scope]?[query.fingerprint] ?? [], query: query)
     }
@@ -1349,8 +1410,10 @@ final class SymbolTables {
                     for key in keys {
                         members[key, default: []].append(symbol)
                     }
+                    weight += keys.count
                 }
                 swiftMembers[memberScope] = SwiftMemberIndex(members: members)
+                weight += 1
             }
             if let cached = swiftMembers[memberScope]?.matches[match] {
                 symbols += cached
@@ -1366,6 +1429,7 @@ final class SymbolTables {
                         == match.path.owner
                 }
                 swiftMembers[memberScope]?.matches[match] = selected
+                weight += 1 + selected.count
                 symbols += selected
             }
         }
@@ -1458,6 +1522,7 @@ final class SymbolTables {
                 result.byName[name] = symbol.address
                 result.byAddress[symbol.address, default: []].insert(name)
             }
+            weight += result.byName.count
             return result
         }()
 
@@ -1471,6 +1536,7 @@ final class SymbolTables {
             else { continue }
             result[symbol.address, default: []].insert(requirement)
         }
+        weight += result.count
         return result
     }()
 
@@ -1516,6 +1582,7 @@ final class SymbolTables {
         if let cached = swiftRecords[symbol] { return cached }
         let record = RuntimeSwiftDeclaration(linkageName: symbol.name)
         swiftRecords[symbol] = record
+        weight += 1
         return record
     }
 
@@ -1585,6 +1652,7 @@ final class SymbolTables {
                 result = .failure(failure)
             }
             resolutions[query.declaration, default: [:]][source] = result
+            weight += 1
         }
         switch try result.get() {
         case .missing: return .missing

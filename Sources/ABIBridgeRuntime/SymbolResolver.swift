@@ -5,14 +5,23 @@ import Darwin
 // may reenter the native API while dyld holds its own lock.
 package final class RuntimeSymbolResolver: Sendable {
     package init() {
+        retirement = SymbolTableRetirement(limit: Self.retiredTableLimit)
         #if DEBUG
         sharedCacheCapture = nil
         beforeCachePublication = nil
         indexReading = nil
+        tablesFreed = nil
         #endif
     }
     package static let shared = RuntimeSymbolResolver()
     private let state = Mutex(ResolutionState())
+    private let retirement: SymbolTableRetirement
+    // One batch that searches every image of a 395-image process retires
+    // tables weighing about 300,000, Foundation's about 90,000. The worker
+    // normally frees them long before this limit; table builds take over
+    // when about three such batches are pending. Concurrent builds can each
+    // add tables before freeing, so the limit is not a memory bound.
+    private static let retiredTableLimit = 1 << 20
     private let pathObservations = RuntimePathObservation.Pool()
 
     #if DEBUG
@@ -33,6 +42,7 @@ package final class RuntimeSymbolResolver: Sendable {
         )?
 
     private let indexReading: (@Sendable (RuntimeImage) -> Void)?
+    private let tablesFreed: (@Sendable () -> Void)?
 
     package init(
         capturingSharedCacheSymbols capture:
@@ -40,9 +50,11 @@ package final class RuntimeSymbolResolver: Sendable {
                 RuntimeImage, RuntimeDeclaration, SharedCacheSymbols.Source
             ) -> SharedCacheSymbols.CapturedSymbols?
     ) {
+        retirement = SymbolTableRetirement(limit: Self.retiredTableLimit)
         sharedCacheCapture = capture
         beforeCachePublication = nil
         indexReading = nil
+        tablesFreed = nil
     }
 
     package init(
@@ -51,17 +63,33 @@ package final class RuntimeSymbolResolver: Sendable {
                 CachePublication, RuntimeSymbolResolver
             ) -> Void
     ) {
+        retirement = SymbolTableRetirement(limit: Self.retiredTableLimit)
         sharedCacheCapture = nil
         beforeCachePublication = callback
         indexReading = nil
+        tablesFreed = nil
     }
 
     /// - Parameter reading: Called while a lookup holds an image's symbol
     ///   tables, before it reads them.
     package init(whileReadingIndex reading: @escaping @Sendable (RuntimeImage) -> Void) {
+        retirement = SymbolTableRetirement(limit: Self.retiredTableLimit)
         sharedCacheCapture = nil
         beforeCachePublication = nil
         indexReading = reading
+        tablesFreed = nil
+    }
+
+    /// - Parameter freed: Called when an index's symbol tables are freed.
+    package init(
+        retiringTablesWith retirement: SymbolTableRetirement,
+        whenTablesAreFreed freed: @escaping @Sendable () -> Void
+    ) {
+        self.retirement = retirement
+        sharedCacheCapture = nil
+        beforeCachePublication = nil
+        indexReading = nil
+        tablesFreed = freed
     }
 
     package var hasSharedCacheWaiters: Bool {
@@ -1154,9 +1182,16 @@ package final class RuntimeSymbolResolver: Sendable {
 
     private func makeIndex(for image: RuntimeImage) -> SymbolIndex {
         #if DEBUG
-        if let indexReading { return SymbolIndex(image: image, whileReading: indexReading) }
+        if indexReading != nil || tablesFreed != nil {
+            return SymbolIndex(
+                image: image,
+                retirement: retirement,
+                whileReading: indexReading,
+                whenTablesAreFreed: tablesFreed
+            )
+        }
         #endif
-        return SymbolIndex(image: image)
+        return SymbolIndex(image: image, retirement: retirement)
     }
 
     private func loadSharedCacheSymbols(
