@@ -122,11 +122,9 @@ final class SwiftResolutionCache: Sendable {
         let (cached, generation) = state.withLock {
             ($0.entries[key], $0.generations[key.cache, default: 0])
         }
-        if let cached, cached.retainsOwners(of: arguments),
-            cached.dependency.isCurrent, cached.slot?.isCurrent != false,
-            let value = cached.value as? Value
+        if let cached,
+            let value: Value = value(of: cached, arguments: arguments, current: \.isCurrent)
         {
-            cached.dependency.record()
             return value
         }
         if let cached {
@@ -165,6 +163,32 @@ final class SwiftResolutionCache: Sendable {
         return selected.value as? Value ?? value
     }
 
+    /// The completed result for `key` when validating it searches no image.
+    func unchangedValue<Value: Sendable>(
+        _ key: SwiftResolutionKey,
+        owner: NativeSwiftType? = nil,
+        arguments: [NativeSwiftGenericArgument] = []
+    ) -> Value? {
+        guard let cached = state.withLock({ $0.entries[key] }) else { return nil }
+        return value(
+            of: cached,
+            arguments: (owner?.genericArguments ?? []) + arguments,
+            current: \.isUnchanged
+        )
+    }
+
+    private func value<Value>(
+        of entry: Entry,
+        arguments: [NativeSwiftGenericArgument],
+        current: (RuntimeCatalogDependency) -> Bool
+    ) -> Value? {
+        guard entry.retainsOwners(of: arguments), current(entry.dependency),
+            entry.slot?.isCurrent != false, let value = entry.value as? Value
+        else { return nil }
+        entry.dependency.record()
+        return value
+    }
+
     func removeCachedResults(in caches: Set<ABIRuntime.Cache>) {
         let removed = state.withLock { state in
             for cache in caches { state.generations[cache, default: 0] &+= 1 }
@@ -186,6 +210,15 @@ extension SymbolResolver {
         prepare: () throws -> Value
     ) throws -> Value {
         guard let resolutionCache else { return try withCachedLookups(prepare) }
+        // Without an image search, a completed result needs no lookup batch,
+        // so returning it takes no resolver lock and releases no index.
+        if let value: Value = resolutionCache.unchangedValue(
+            key,
+            owner: owner,
+            arguments: arguments
+        ) {
+            return value
+        }
         return try withCachedLookups {
             try resolutionCache.resolve(
                 key,
