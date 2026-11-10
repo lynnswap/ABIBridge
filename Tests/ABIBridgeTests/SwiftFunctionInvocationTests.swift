@@ -313,7 +313,7 @@ struct SwiftFunctionInvocationTests {
                         as: ((EmptyArgument) -> Int32).self
                     )
                 ),
-                in: symbol.image
+                in: .image(symbol.image)
             )
             #expect(try unsafe empty.unsafeInvoke(()) == swiftABIVoid(()))
             let store = try await runtime.resolve(

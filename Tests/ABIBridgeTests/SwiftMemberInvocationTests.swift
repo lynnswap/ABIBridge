@@ -2116,7 +2116,7 @@ struct SwiftMemberInvocationTests {
             #expect(value?.text.count == 100)
             let rawType = try await runtime.resolve(
                 .swift(.type(type.name, as: UnsafeRawPointer.self)),
-                in: type.image
+                in: .image(type.image)
             )
             let rawConsume = try await rawType.resolve(
                 .swift(
@@ -2185,7 +2185,7 @@ struct SwiftMemberInvocationTests {
             let member = "typedFailure() throws(ABIBridgeTests.SwiftMemberFailure) -> Swift.Int"
             _ = try runtime.resolveAndWait(
                 .swift(.symbol(type.name + "." + member)),
-                in: type.image
+                in: .image(type.image)
             )
             do {
                 _ = try await type.resolve(.swift(.method(member, as: (() -> Int).self)))
@@ -2201,7 +2201,7 @@ struct SwiftMemberInvocationTests {
                             as: (() -> Int).self
                         )
                     ),
-                    in: type.image
+                    in: .image(type.image)
                 )
                 Issue.record("Typed-throwing free functions need a throwing function metatype")
             } catch let ABIResolutionError.signatureMismatch(mismatch) {
@@ -2211,7 +2211,7 @@ struct SwiftMemberInvocationTests {
                 "init(borrowedChild: __shared ABIBridgeTests.SwiftMemberRenderer) -> ABIBridgeTests.SwiftMemberRenderer"
             _ = try runtime.resolveAndWait(
                 .swift(.symbol(type.name + ".__allocating_" + initializer)),
-                in: type.image
+                in: .image(type.image)
             )
             let make = try await type.resolve(
                 .swift(
@@ -2745,11 +2745,14 @@ struct SwiftMemberInvocationTests {
         for expected in known {
             let qualified = String(reflecting: expected)
             let first = try await runtime.resolve(.swift(.type(qualified)))
-            let second = try await runtime.resolve(.swift(.type(qualified)), in: first.image)
+            let second = try await runtime.resolve(
+                .swift(.type(qualified)),
+                in: .image(first.image)
+            )
             #expect(first === second)
             #expect(first.name == qualified)
             runtime.removeCachedResults()
-            let next = try await runtime.resolve(.swift(.type(qualified)), in: first.image)
+            let next = try await runtime.resolve(.swift(.type(qualified)), in: .image(first.image))
             #expect(next !== first && next.image == first.image)
         }
     }

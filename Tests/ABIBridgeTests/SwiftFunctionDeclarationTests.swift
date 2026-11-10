@@ -44,7 +44,7 @@ struct SwiftFunctionDeclarationTests {
                         as: ((Int64, Int64) -> Int64).self
                     )
                 ),
-                in: function.symbol.image
+                in: .image(function.symbol.image)
             )
             #expect(try unsafe complete.unsafeInvoke(35, 7) == expected)
             let method = try await type.resolve(

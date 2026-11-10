@@ -1334,54 +1334,6 @@ extension ABIRuntime {
         }
     }
 
-    /// Resolves a concrete Swift type within an already retained image.
-    ///
-    /// Search and preparation run on the caller's thread, reusing the image's
-    /// index. The result retains that image and its metadata dependencies.
-    /// - Parameters:
-    ///   - request: A module-qualified type, optional specialization and representation.
-    ///   - image: The retained image to search.
-    ///   - loading: Whether to ask dyld to acquire and initialize the image.
-    /// - Throws: A lookup error or unavailable/unsupported metadata.
-    public func resolveAndWait(
-        _ request: NativeRequest<NativeSwiftTypeRequest>,
-        in image: NativeImage,
-        loading: ImageLoadingPolicy = .ifNeeded
-    ) throws -> NativeSwiftType {
-        let specification = request.declaration
-        let revision = swiftTypeCache.revision
-        let descriptor = try resolver.resolve(
-            .init(
-                name: "nominal type descriptor for " + specification.name,
-                language: .swift,
-                kind: .data
-            ),
-            in: image,
-            loading: loading
-        )
-        return try makeSwiftType(
-            named: specification.name,
-            descriptor: descriptor,
-            representation: specification.representation,
-            genericArguments: specification.genericArguments,
-            revision: revision
-        )
-    }
-
-    /// Resolves a Swift type in a retained image on a worker queue.
-    ///
-    /// This has the same specialization, representation, ownership and failure
-    /// contract as synchronous resolution in that image.
-    public func resolve(
-        _ request: NativeRequest<NativeSwiftTypeRequest>,
-        in image: NativeImage,
-        loading: ImageLoadingPolicy = .ifNeeded
-    ) async throws -> NativeSwiftType {
-        try await prepare { runtime in
-            try runtime.resolveAndWait(request, in: image, loading: loading)
-        }
-    }
-
     private func makeSwiftType(
         named name: String,
         descriptor: ResolvedSymbol,

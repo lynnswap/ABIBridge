@@ -120,7 +120,7 @@ struct SwiftGenericCallTests {
                     genericArguments: [.type(Int64.self)]
                 )
             ),
-            in: array.symbol.image
+            in: .image(array.symbol.image)
         )
         #expect(try unsafe retainedImage.unsafeInvoke([35, 7]) == labelLookupGeneric([Int64(35), 7]))
 
@@ -168,7 +168,7 @@ struct SwiftGenericCallTests {
                     valueABIs: [type: abi]
                 )
             ),
-            in: type.image
+            in: .image(type.image)
         )
         for value in [
             try unsafe make.unsafeInvoke(35, 7), try unsafe retainedImage.unsafeInvoke(35, 7),

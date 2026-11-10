@@ -9,7 +9,7 @@ Type and writable-key-path lookup now use the same `resolve` and `resolveAndWait
 | Before | After |
 | --- | --- |
 | `runtime.resolveSwiftType(named: n, in: scope, genericArguments: args)` | `runtime.resolve(.swift(.type(n, genericArguments: args)), in: scope)` |
-| `runtime.resolveSwiftTypeAndWait(named: n, as: adapter, in: image)` | `runtime.resolveAndWait(.swift(.type(n, as: adapter)), in: image)` |
+| `runtime.resolveSwiftTypeAndWait(named: n, as: adapter, in: image)` | `runtime.resolveAndWait(.swift(.type(n, as: adapter)), in: .image(image))` |
 | `type.resolveWritableKeyPath(named: n, valueType: value, keyValueCodingKey: key)` | `type.resolve(.swift(.writableKeyPath(n, valueType: value, keyValueCodingKey: key)))` |
 | `runtime.resolve(NativeDeclaration(name: n, language: .cxx))` | `runtime.resolve(.cxx(.symbol(n)))` |
 | `runtime.resolveAndWait(NativeDeclaration(linkerName: n, language: .swift, kind: .data))` | `runtime.resolveAndWait(.swift(.symbol(linkerName: n, kind: .data)))` |
@@ -74,10 +74,10 @@ Replace C and C++ free-function factories with `resolve` or `resolveAndWait` and
 | --- | --- |
 | `runtime.resolveCFunction(named: n, as: t, variadicFrom: v, in: scope, loading: l)` | `runtime.resolve(.c(.function(n, as: t, variadicFrom: v)), in: scope, loading: l)` |
 | `runtime.resolveCXXFunction(named: n, as: t, variadicFrom: v, in: scope, loading: l)` | `runtime.resolve(.cxx(.function(n, as: t, variadicFrom: v)), in: scope, loading: l)` |
-| `runtime.resolveCFunctionAndWait(named: n, signature: s, in: image)` | `runtime.resolveAndWait(.c(.function(n, signature: s)), in: image)` |
-| `runtime.resolveCXXFunctionAndWait(named: n, signature: s, in: image)` | `runtime.resolveAndWait(.cxx(.function(n, signature: s)), in: image)` |
+| `runtime.resolveCFunctionAndWait(named: n, signature: s, in: image)` | `runtime.resolveAndWait(.c(.function(n, signature: s)), in: .image(image))` |
+| `runtime.resolveCXXFunctionAndWait(named: n, signature: s, in: image)` | `runtime.resolveAndWait(.cxx(.function(n, signature: s)), in: .image(image))` |
 
-The same mapping applies to both scope overloads (`ImageSelector` and `NativeImage`), to typed and dynamic signatures, and to synchronous `AndWait` or async resolution. The old per-language callable factories are removed without compatibility aliases. C++ static functions also use `.cxx(.function(...))` without a receiver.
+The same mapping applies to every scope, to typed and dynamic signatures, and to synchronous `AndWait` or async resolution. A retained `NativeImage` is a scope too: pass `.image(image)`. The separate `in: NativeImage` overloads of `resolve`, `resolveAndWait`, and `cxxObject` are removed. The old per-language callable factories are removed without compatibility aliases. C++ static functions also use `.cxx(.function(...))` without a receiver.
 
 Move `named:` to the inner factory's unlabeled name. Keep `as:` and typed `variadicFrom:` inside `.function`, or use `signature:` with a `NativeSignature` that already includes its dynamic variadic boundary. Keep `in:` and `loading:` outside the request. The default scope remains `.automatic` and loading remains `.ifNeeded`.
 

@@ -104,6 +104,11 @@ package final class RuntimeImportedFunctionSelection: @unchecked Sendable {
                         URL(fileURLWithPath: $0).resolvingSymlinksInPath()
                             == url.resolvingSymlinksInPath()
                     } ?? false
+                case .image(let image):
+                    return reference.libraryName.map {
+                        URL(fileURLWithPath: $0).resolvingSymlinksInPath()
+                            == URL(fileURLWithPath: image.path).resolvingSymlinksInPath()
+                    } ?? false
                 case .framework(let name):
                     return reference.libraryName.map { path in
                         let url = URL(fileURLWithPath: path)

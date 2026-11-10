@@ -809,7 +809,7 @@ struct SymbolResolutionTests {
 
         let function = try runtime.resolveAndWait(
             .cxx(.symbol("\(fixture.namespace)::add(int, int)")),
-            in: image
+            in: .image(image)
         )
         let expected = try fixture.address(kind: 0)
         let actual = unsafe function.withUnsafeAddress { UInt(bitPattern: $0) }
@@ -818,16 +818,26 @@ struct SymbolResolutionTests {
 
         let data = try runtime.resolveAndWait(
             .cxx(.symbol("\(fixture.namespace)::counter", kind: .data)),
-            in: image
+            in: .image(image)
         )
         #expect(unsafe data.withUnsafeAddress { $0.load(as: Int32.self) } == 42)
+        // A retained image is a scope wherever a selector is accepted.
+        #expect(try runtime.resolveImagesAndWait(matching: .image(image)) == [image])
+        let requested = try runtime.resolveAndWait(
+            NativeSymbolRequest(
+                .init(name: "\(fixture.namespace)::counter", language: .cxx, kind: .data),
+                in: [.image(image)],
+                loading: .loadedOnly
+            )
+        )
+        #expect(requested.image == image)
         let vtable = try runtime.resolveAndWait(
             .cxx(.symbol(vtableFor: "\(fixture.namespace)::Counter")),
-            in: image
+            in: .image(image)
         )
         let legacyVTable = try runtime.resolveAndWait(
             .cxx(.symbol("vtable for \(fixture.namespace)::Counter", kind: .vtable)),
-            in: image
+            in: .image(image)
         )
         var failure: OpaquePointer?
         let nativeRuntime = try #require(ABICreateSymbolRuntime())
@@ -855,19 +865,19 @@ struct SymbolResolutionTests {
         #expect(unsafe vtable.withUnsafeAddress { UInt(bitPattern: $0) } == expectedVTable)
         let member = try runtime.resolveAndWait(
             .cxx(.symbol("\(fixture.namespace)::Counter::value() const")),
-            in: image
+            in: .image(image)
         )
         #expect(unsafe member.withUnsafeAddress { UInt(bitPattern: $0) } != expectedVTable)
 
         let again = try runtime.resolveAndWait(
             .cxx(.symbol(function.declaration.name, kind: function.declaration.kind)),
-            in: image
+            in: .image(image)
         )
         #expect(unsafe again.withUnsafeAddress { UInt(bitPattern: $0) } == actual)
         runtime.removeCachedResults()
         let rebuilt = try runtime.resolveAndWait(
             .cxx(.symbol(function.declaration.name, kind: function.declaration.kind)),
-            in: image
+            in: .image(image)
         )
         #expect(unsafe rebuilt.withUnsafeAddress { UInt(bitPattern: $0) } == actual)
         #expect(rebuilt.image.identity == image.identity)
@@ -885,11 +895,11 @@ struct SymbolResolutionTests {
         let image = function.symbol.image
         let again = try runtime.resolveAndWait(
             .cxx(.function(name, as: ((Int32, Int32) -> Int32).self)),
-            in: image
+            in: .image(image)
         )
         let address = try runtime.resolveAndWait(
             .c(.function("ABIFixtureAddress", as: ((Int32) -> UInt).self)),
-            in: image
+            in: .image(image)
         )
         let expectedAddress = try fixture.address(kind: 0)
         #expect(try unsafe address.unsafeInvoke(0) == expectedAddress)

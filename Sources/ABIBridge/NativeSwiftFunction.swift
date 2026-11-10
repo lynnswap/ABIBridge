@@ -545,26 +545,6 @@ extension ABIRuntime {
         try await prepare { try $0.resolveAndWait(request, in: scope, loading: loading) }
     }
 
-    /// Resolves a Swift free function in an already retained image.
-    ///
-    /// Search and preparation run synchronously on the caller's thread.
-    ///
-    /// - Parameters:
-    ///   - request: The function and its lookup options.
-    ///   - image: The retained image to search.
-    ///   - loading: Whether to ask dyld to acquire and initialize the image.
-    /// - Returns: A reusable handle retaining its image and prepared Swift
-    ///   ABI.
-    /// - Throws: A resolution, unsupported representation, or call
-    ///   preparation error.
-    public func resolveAndWait<Signature>(
-        _ request: NativeRequest<NativeSwiftFunctionRequest<Signature>>,
-        in image: NativeImage,
-        loading: ImageLoadingPolicy = .ifNeeded
-    ) throws -> NativeSwiftFunction<Signature> {
-        try resolveSwiftFunction(request, in: [loading == .ifNeeded ? try image.opened() : image])
-    }
-
     private func resolveSwiftFunction<Signature>(
         _ request: NativeRequest<NativeSwiftFunctionRequest<Signature>>,
         in images: [NativeImage]
@@ -589,24 +569,5 @@ extension ABIRuntime {
                 )
             }
         }
-    }
-
-    /// Resolves a Swift free function in a retained image without blocking
-    /// the caller's executor.
-    ///
-    /// - Parameters:
-    ///   - request: The function and its lookup options.
-    ///   - image: The retained image to search.
-    ///   - loading: Whether to ask dyld to acquire and initialize the image.
-    /// - Returns: A reusable handle retaining its image and prepared Swift
-    ///   ABI.
-    /// - Throws: The same resolution, representation, and preparation errors
-    ///   as synchronous resolution.
-    public func resolve<Signature>(
-        _ request: NativeRequest<NativeSwiftFunctionRequest<Signature>>,
-        in image: NativeImage,
-        loading: ImageLoadingPolicy = .ifNeeded
-    ) async throws -> NativeSwiftFunction<Signature> {
-        try await prepare { try $0.resolveAndWait(request, in: image, loading: loading) }
     }
 }

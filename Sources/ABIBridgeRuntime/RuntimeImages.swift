@@ -8,10 +8,11 @@ package enum RuntimeImageSelector: Hashable, Sendable {
     case framework(named: String)
     case path(URL)
     case installName(String)
+    case image(RuntimeImage)
 
     package func validateTarget() throws {
         switch self {
-        case .automatic: return
+        case .automatic, .image: return
         case .framework(let name):
             guard !name.isEmpty, !name.utf8.contains(0), !name.contains("/"), name != ".",
                 name != ".."
@@ -160,6 +161,7 @@ package struct RuntimeImageSnapshot: Sendable {
     ) throws -> [Self] {
         switch selector {
         case .automatic: return snapshots
+        case .image(let image): return snapshots.filter { $0.identity == image.identity }
         case .installName(let name):
             guard !name.isEmpty, !name.utf8.contains(0) else {
                 throw RuntimeResolutionError.invalidImageTarget(name)

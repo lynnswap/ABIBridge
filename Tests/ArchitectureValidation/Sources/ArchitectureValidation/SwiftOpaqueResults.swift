@@ -42,7 +42,7 @@ private struct ScopedNumber: ~Copyable { let value: Int64 }
     }
     let underlyingType = try await runtime.resolve(
         .swift(.type(stored!.type.name)),
-        in: stored!.type.image
+        in: .image(stored!.type.image)
     )
     try check(
         underlyingType.image.identity == stored!.type.image.identity,

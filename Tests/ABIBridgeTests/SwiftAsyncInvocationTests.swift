@@ -129,7 +129,7 @@ struct SwiftAsyncInvocationTests {
                     as: (nonisolated(nonsending) (Int64) async -> Int64).self
                 )
             ),
-            in: immediate.symbol.image
+            in: .image(immediate.symbol.image)
         )
         #expect(try unsafe await inImage.unsafeInvoke(9) == 10)
         let explicitConvention = try await runtime.resolve(

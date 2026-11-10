@@ -47,7 +47,7 @@ func prepare(_ path: String, extensionPath: String) async throws -> [NativeBound
 
     let pointType = try await runtime.resolve(
         .swift(.type("SwiftFunctionFixture.Point", as: ForeignPoint.self)),
-        in: type.image
+        in: .image(type.image)
     )
     let pointInitializer = try await pointType.resolve(
         .swift(

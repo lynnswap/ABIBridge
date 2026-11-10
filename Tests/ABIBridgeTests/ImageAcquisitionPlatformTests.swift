@@ -16,7 +16,7 @@ struct ImageAcquisitionPlatformTests {
         #expect(try unsafe function.unsafeInvoke() == CFRunLoopGetTypeID())
         let fromLease = try runtime.resolveAndWait(
             .c(.function("CFRunLoopGetTypeID", as: (() -> UInt).self)),
-            in: image
+            in: .image(image)
         )
         #expect(fromLease.symbol.image.identity == image.identity)
         #expect(try unsafe fromLease.unsafeInvoke() == CFRunLoopGetTypeID())
