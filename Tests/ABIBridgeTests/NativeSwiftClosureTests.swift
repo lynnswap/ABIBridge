@@ -1957,7 +1957,6 @@ struct NativeSwiftClosureTests {
         let saved = SavedIncomingIntegerClosure()
         let hook = try unsafe await function.hookImportedCalls(
             in: fixture.callerScope,
-            using: fixture.runtime,
             onFailure: { Issue.record($0) }
         ) { call, body, value in
             saved.value = body

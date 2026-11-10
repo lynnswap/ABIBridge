@@ -97,6 +97,9 @@ public struct NativeSwiftFunction<Signature>: Sendable {
     let call: SwiftCallablePlan
     private let context: UInt
     private let typeOwner: NativeSwiftType?
+    /// The resolver of the runtime that selected this function, whose import
+    /// indexes its hooks and replacements read.
+    let resolver: SymbolResolver
     let consumesArguments: Bool
     let isGeneric: Bool
     var errorPlan: SwiftErrorPlan? { call.errorPlan }
@@ -139,6 +142,7 @@ public struct NativeSwiftFunction<Signature>: Sendable {
         isGeneric = generic?.binding.declaration.parameters.isEmpty == false
         context = metadata.map { unsafeBitCast($0, to: UInt.self) } ?? 0
         typeOwner = owner
+        self.resolver = resolver ?? owner?.resolver ?? .shared
         call = try SwiftCallablePlan(
             signature: Signature.self,
             entry: entry,

@@ -104,7 +104,6 @@ struct SwiftArgumentConventionTests {
         let failures = Mutex(0)
         let hook = try unsafe await target.hookImportedCalls(
             in: .path(caller.libraryURL),
-            using: runtime,
             onFailure: { error in
                 #expect(error is ArgumentEncodingFailure)
                 failures.withLock { $0 += 1 }

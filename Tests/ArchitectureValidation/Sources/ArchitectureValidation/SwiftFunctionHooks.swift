@@ -42,7 +42,7 @@ import Synchronization
         in: path("SwiftImportCaller")
     )
     do {
-        let hook = try await unsafe target.hookImportedCalls(in: path("SwiftImportCaller"), using: runtime,
+        let hook = try await unsafe target.hookImportedCalls(in: path("SwiftImportCaller"),
             onFailure: failure) { call, value in try call.proceed(value + 1) + 10 }
         try check(try unsafe normal.unsafeInvoke(40) == 52, "Normal import accepts a typed Swift closure")
         hook.invalidate()
@@ -67,11 +67,11 @@ import Synchronization
         ),
         in: control
     )
-    let first = try await unsafe target.hookImportedCalls(in: control, using: runtime, onFailure: failure) { call, value in
+    let first = try await unsafe target.hookImportedCalls(in: control, onFailure: failure) { call, value in
         try call.proceed(value + 1) + 10
     }
     defer { first.invalidate() }
-    let second = try await unsafe target.hookImportedCalls(in: control, using: runtime, onFailure: failure) { call, value in
+    let second = try await unsafe target.hookImportedCalls(in: control, onFailure: failure) { call, value in
         try call.proceed(value * 2) + 100
     }
     defer { second.invalidate() }
@@ -100,7 +100,7 @@ import Synchronization
         ),
         in: control
     )
-    let opaqueScalarHook = try await unsafe opaqueScalar.hookImportedCalls(in: control, using: runtime,
+    let opaqueScalarHook = try await unsafe opaqueScalar.hookImportedCalls(in: control,
         onFailure: failure) { call, value in try call.proceed(value + 1) + 10 }
     defer { opaqueScalarHook.invalidate() }
     try check(try unsafe opaqueScalarCaller.unsafeInvoke(40) == 52,
@@ -127,7 +127,7 @@ import Synchronization
         ),
         in: control
     )
-    let opaqueTextHook = try await unsafe opaqueText.hookImportedCalls(in: control, using: runtime,
+    let opaqueTextHook = try await unsafe opaqueText.hookImportedCalls(in: control,
         onFailure: failure) { call, value in
             _ = try call.proceed(value + " discarded")
             return try call.proceed(value + " edited") + " returned"
@@ -162,7 +162,7 @@ import Synchronization
         ),
         in: control
     )
-    let textHook = try await unsafe text.hookImportedCalls(in: control, using: runtime, onFailure: failure) { call, value in
+    let textHook = try await unsafe text.hookImportedCalls(in: control, onFailure: failure) { call, value in
         _ = try call.proceed(value + " discarded")
         return try call.proceed(value + " edited") + " returned"
     }
@@ -195,7 +195,7 @@ import Synchronization
         ),
         in: control
     )
-    let payloadHook = try await unsafe payload.hookImportedCalls(in: control, using: runtime, onFailure: failure) { call, value in
+    let payloadHook = try await unsafe payload.hookImportedCalls(in: control, onFailure: failure) { call, value in
         var result = try call.proceed(value + 1)
         result.a += 100
         return result
@@ -272,14 +272,14 @@ import Synchronization
         in: control
     )
     _ = try unsafe integerCaller.unsafeInvoke(40)
-    let integerHook = try unsafe await genericInteger.hookImportedCalls(in: control, using: runtime,
+    let integerHook = try unsafe await genericInteger.hookImportedCalls(in: control,
         onFailure: failure) { call, value in try call.proceed(value + 1) + 10 }
     defer { integerHook.invalidate() }
-    let stringHook = try unsafe await genericText.hookImportedCalls(in: control, using: runtime,
+    let stringHook = try unsafe await genericText.hookImportedCalls(in: control,
         onFailure: failure) { call, value in try call.proceed(value + " hook") }
     defer { stringHook.invalidate() }
     let objectCalls = Mutex(0)
-    let objectHook = try unsafe await genericObject.hookImportedCalls(in: control, using: runtime,
+    let objectHook = try unsafe await genericObject.hookImportedCalls(in: control,
         onFailure: failure) { call, value in
             objectCalls.withLock { $0 += 1 }
             return try call.proceed(value)
@@ -313,7 +313,7 @@ import Synchronization
         in: control
     )
     _ = try unsafe factoryCaller.unsafeInvoke(40)
-    let factoryHook = try unsafe await genericFactory.hookImportedCalls(in: control, using: runtime,
+    let factoryHook = try unsafe await genericFactory.hookImportedCalls(in: control,
         onFailure: failure) { call, value in try call.proceed(value + 1) }
     defer { factoryHook.invalidate() }
     try check(try unsafe factoryCaller.unsafeInvoke(40) == 41, "Returned generic closures preserve their declared ABI and pointer authentication")
@@ -338,7 +338,7 @@ import Synchronization
         in: control
     )
     _ = try unsafe throwingCaller.unsafeInvoke(40)
-    let throwingHook = try unsafe await throwing.hookImportedCalls(in: control, using: runtime,
+    let throwingHook = try unsafe await throwing.hookImportedCalls(in: control,
         onFailure: failure) { call, value in
             if value == 99 { throw NSError(domain: "callback-hook", code: 99) }
             return try call.proceed(value) + 10
@@ -430,7 +430,7 @@ private struct RuntimeHookProbeError: Error {}
     let state = RuntimeHookOwnershipState()
     let failures = Mutex(0)
     var checks: [String] = []
-    let first = try unsafe await consume.hookImportedCalls(in: caller, using: runtime, onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value in
+    let first = try unsafe await consume.hookImportedCalls(in: caller, onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value in
         state.input = value.value
         do {
             _ = try unsafe consume.unsafeInvoke(value)
@@ -444,7 +444,7 @@ private struct RuntimeHookProbeError: Error {}
     }
     checks.append("Runtime hook inputs reserve recovery ownership and proceed consumes every saved alias")
     first.invalidate()
-    let second = try unsafe await move.hookImportedCalls(in: caller, using: runtime, onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value in
+    let second = try unsafe await move.hookImportedCalls(in: caller, onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value in
         state.output = try call.proceed(value)
         do {
             _ = try unsafe consume.unsafeInvoke(NativeSwiftConsuming(state.output!))
@@ -458,7 +458,7 @@ private struct RuntimeHookProbeError: Error {}
     }
     checks.append("Noncopyable hook results share native publication ownership without an extra copy")
     second.invalidate()
-    let third = try unsafe await move.hookImportedCalls(in: caller, using: runtime, onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value in
+    let third = try unsafe await move.hookImportedCalls(in: caller, onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value in
         state.output = try call.proceed(value)
         throw RuntimeHookProbeError()
     }
@@ -468,7 +468,7 @@ private struct RuntimeHookProbeError: Error {}
     }
     checks.append("A body failure preserves the latest noncopyable native result and executes its effects once")
     third.invalidate()
-    let fourth = try unsafe await consume.hookImportedCalls(in: caller, using: runtime, onFailure: { _ in failures.withLock { $0 += 1 } }) { _, value in
+    let fourth = try unsafe await consume.hookImportedCalls(in: caller, onFailure: { _ in failures.withLock { $0 += 1 } }) { _, value in
         state.input = value.value
         throw RuntimeHookProbeError()
     }
@@ -532,7 +532,7 @@ private struct RuntimeHookProbeError: Error {}
         ),
         in: caller
     )
-    let asyncHook = try unsafe await asyncMove.hookImportedCalls(in: caller, using: runtime,
+    let asyncHook = try unsafe await asyncMove.hookImportedCalls(in: caller,
         onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value in
             state.input = value.value
             await Task.yield()
@@ -565,7 +565,7 @@ private struct RuntimeHookProbeError: Error {}
         ),
         in: caller
     )
-    let objectHook = try unsafe await objectTarget.hookImportedCalls(in: caller, using: runtime,
+    let objectHook = try unsafe await objectTarget.hookImportedCalls(in: caller,
         onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value in try call.proceed(value) }
     defer { objectHook.invalidate() }
     weak var observedObject: NSObject?
@@ -597,7 +597,7 @@ private struct RuntimeHookProbeError: Error {}
         ),
         in: caller
     )
-    let optionalHook = try unsafe await optionalTarget.hookImportedCalls(in: caller, using: runtime,
+    let optionalHook = try unsafe await optionalTarget.hookImportedCalls(in: caller,
         onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value in try call.proceed(value) }
     defer { optionalHook.invalidate() }
     let pointer = UnsafeMutableRawPointer.allocate(byteCount: 1, alignment: 1)
@@ -626,7 +626,7 @@ private struct RuntimeHookProbeError: Error {}
         ),
         in: caller
     )
-    let borrowingHook = try unsafe await borrowingTarget.hookImportedCalls(in: caller, using: runtime,
+    let borrowingHook = try unsafe await borrowingTarget.hookImportedCalls(in: caller,
         onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value in try call.proceed(value) }
     defer { borrowingHook.invalidate() }
     guard try unsafe borrowingCaller.unsafeInvoke(pointer) == pointer else {
@@ -655,7 +655,7 @@ private struct RuntimeHookProbeError: Error {}
         ),
         in: caller
     )
-    let writebackHook = try unsafe await writebackTarget.hookImportedCalls(in: caller, using: runtime,
+    let writebackHook = try unsafe await writebackTarget.hookImportedCalls(in: caller,
         onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value, body, borrowed in
             state.output = try call.proceed(value, body, borrowed)
             body.value = borrowed
@@ -688,7 +688,7 @@ private struct RuntimeHookProbeError: Error {}
         ),
         in: caller
     )
-    let asyncWritebackHook = try unsafe await asyncWritebackTarget.hookImportedCalls(in: caller, using: runtime,
+    let asyncWritebackHook = try unsafe await asyncWritebackTarget.hookImportedCalls(in: caller,
         onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value, body, borrowed in
             state.output = try await call.proceed(value, body, borrowed)
             body.value = borrowed
@@ -718,7 +718,7 @@ private struct RuntimeHookProbeError: Error {}
         ),
         in: caller
     )
-    let closureHook = try unsafe await closureTarget.hookImportedCalls(in: caller, using: runtime,
+    let closureHook = try unsafe await closureTarget.hookImportedCalls(in: caller,
         onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value in
             state.input = value.value
             return try call.proceed(value)
@@ -752,7 +752,7 @@ private struct RuntimeHookProbeError: Error {}
         ),
         in: caller
     )
-    let asyncClosureHook = try unsafe await asyncClosureTarget.hookImportedCalls(in: caller, using: runtime,
+    let asyncClosureHook = try unsafe await asyncClosureTarget.hookImportedCalls(in: caller,
         onFailure: { _ in failures.withLock { $0 += 1 } }) { call, value in
             state.input = value.value
             return try await call.proceed(value)

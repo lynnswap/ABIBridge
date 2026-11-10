@@ -39,13 +39,13 @@ struct SwiftAsyncHookTests {
             in: fixture.callerScope
         )
         #expect(try unsafe await oracle.unsafeInvoke(1) == 2)
-        let first = try unsafe await function.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+        let first = try unsafe await function.hookImportedCalls(in: fixture.callerScope,
             onFailure: { Issue.record($0) }) { call, value in
                 await Task.yield()
                 return try await call.proceed(value + 10) * 2
             }
         defer { first.invalidate() }
-        let second = try unsafe await function.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+        let second = try unsafe await function.hookImportedCalls(in: fixture.callerScope,
             onFailure: { Issue.record($0) }) { call, value in
                 try await call.proceed(value + 3) + 5
             }
@@ -107,11 +107,11 @@ struct SwiftAsyncHookTests {
         )
         #expect(try unsafe await integerOracle.unsafeInvoke(1) == 1)
         #expect(try unsafe await textOracle.unsafeInvoke("native") == "native")
-        let first = try unsafe await integer.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+        let first = try unsafe await integer.hookImportedCalls(in: fixture.callerScope,
             onFailure: { Issue.record($0) }) { call, value in try await call.proceed(value + 10) }
         defer { first.invalidate() }
         #expect(try unsafe await textOracle.unsafeInvoke("unmatched") == "unmatched")
-        let second = try unsafe await text.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+        let second = try unsafe await text.hookImportedCalls(in: fixture.callerScope,
             onFailure: { Issue.record($0) }) { call, value in
                 await Task.yield()
                 return try await call.proceed(value + "-hook")
@@ -319,7 +319,6 @@ struct SwiftAsyncHookTests {
         let failures = Mutex(0)
         let hook = try unsafe await function.hookImportedCalls(
             in: fixture.callerScope,
-            using: fixture.runtime,
             onFailure: { _ in failures.withLock { $0 += 1 } }
         ) { call, value, count in
             if value == 99 { throw NSError(domain: "async-hook", code: 99) }
@@ -383,7 +382,7 @@ struct SwiftAsyncHookTests {
         let hook: NativeSwiftImportedFunctionHook
         do {
             let capture = AsyncHookCapture { releases.withLock { $0 += 1 } }
-            hook = try unsafe await function.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+            hook = try unsafe await function.hookImportedCalls(in: fixture.callerScope,
                 onFailure: { Issue.record($0) }) { call, value in
                     saved.value = call
                     #expect(AsyncHookTaskValues.marker == 42)
@@ -439,7 +438,7 @@ struct SwiftAsyncHookTests {
             in: fixture.callerScope
         )
         _ = try unsafe await actorOracle.unsafeInvoke(1)
-        let hook = try unsafe await actor.hookMainActorImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+        let hook = try unsafe await actor.hookMainActorImportedCalls(in: fixture.callerScope,
             onFailure: { Issue.record($0) }) { call, value in
                 MainActor.preconditionIsolated()
                 await Task.yield()
@@ -468,7 +467,7 @@ struct SwiftAsyncHookTests {
             in: fixture.callerScope
         )
         _ = try unsafe await inheritedOracle.unsafeInvoke(1)
-        let callerHook = try unsafe await inherited.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+        let callerHook = try unsafe await inherited.hookImportedCalls(in: fixture.callerScope,
             onFailure: { Issue.record($0) }) { call, value in
                 MainActor.preconditionIsolated()
                 let result = try await call.proceed(value)
@@ -517,7 +516,7 @@ struct SwiftAsyncHookTests {
         let input = LargeFailure(token)
         #expect(try unsafe await oracle.unsafeInvoke(input, false).token === token)
         let failures = Mutex(0)
-        let hook = try unsafe await function.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+        let hook = try unsafe await function.hookImportedCalls(in: fixture.callerScope,
             onFailure: { _ in failures.withLock { $0 += 1 } }) { call, error, fail in
                 do {
                     _ = try await call.proceed(error, false)
@@ -560,7 +559,7 @@ struct SwiftAsyncHookTests {
             in: fixture.callerScope
         )
         _ = try unsafe await oracle.unsafeInvoke(1)
-        let hook = try unsafe await function.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+        let hook = try unsafe await function.hookImportedCalls(in: fixture.callerScope,
             onFailure: { Issue.record($0) }) { call, value in
                 let saved = SavedAsyncHookInvocation<Signature>()
                 saved.value = call
@@ -619,7 +618,7 @@ struct SwiftAsyncHookTests {
             in: fixture.callerScope
         )
         #expect(try unsafe await caller.unsafeInvoke(10, 2) == 1212)
-        let hook = try unsafe await method.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+        let hook = try unsafe await method.hookImportedCalls(in: fixture.callerScope,
             onFailure: { Issue.record($0) }) { call, delta in
                 #expect(try call.receiver(as: Int64.self) == 10)
                 let result = try await call.proceed(delta + 1)
@@ -674,7 +673,7 @@ struct SwiftAsyncHookTests {
             in: fixture.callerScope
         )
         #expect(try unsafe await caller.unsafeInvoke() == 82.5)
-        let hook = try unsafe await function.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+        let hook = try unsafe await function.hookImportedCalls(in: fixture.callerScope,
             onFailure: { Issue.record($0) }) { call, a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, t in
                 await Task.yield()
                 return try await call.proceed(a, b, c, d, e, f, g, h, i, j + 10, k, l, m, n, o, p, q, r, s, t + 1.5) * 2
@@ -727,7 +726,7 @@ struct SwiftAsyncHookTests {
         defer { deaths.deinitialize(count: 1); deaths.deallocate() }
         #expect(try unsafe await caller.unsafeInvoke(deaths) == 13)
         #expect(deaths.pointee == 1)
-        let hook = try unsafe await method.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+        let hook = try unsafe await method.hookImportedCalls(in: fixture.callerScope,
             onFailure: { Issue.record($0) }) { call in
                 let first = try await call.proceed()
                 let second = try await call.proceed()
@@ -736,7 +735,7 @@ struct SwiftAsyncHookTests {
         #expect(try unsafe await caller.unsafeInvoke(deaths) == 26)
         #expect(deaths.pointee == 2)
         hook.invalidate()
-        let skipping = try unsafe await method.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+        let skipping = try unsafe await method.hookImportedCalls(in: fixture.callerScope,
             onFailure: { Issue.record($0) }) { _ in
                 await Task.yield()
                 return Int64(99)
@@ -800,7 +799,7 @@ struct SwiftAsyncHookTests {
             in: fixture.callerScope
         )
         _ = try unsafe await one.unsafeInvoke(1)
-        let hook = try unsafe await function.hookImportedCalls(in: fixture.callerScope, using: fixture.runtime,
+        let hook = try unsafe await function.hookImportedCalls(in: fixture.callerScope,
             onFailure: { Issue.record($0) }) { call, value in try await call.proceed(value + 10) }
         defer { hook.invalidate() }
         #expect(try unsafe await one.unsafeInvoke(1) == 11)

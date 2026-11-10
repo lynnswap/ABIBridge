@@ -123,7 +123,6 @@ struct SwiftHookDeclarationTests {
         #expect(try unsafe call.unsafeInvoke(true, 40) == 42)
         let hook = try await unsafe value.hookImportedCalls(
             in: fixture.callerScope,
-            using: fixture.runtime,
             onFailure: { Issue.record($0) }
         ) { call, x in try call.proceed(x) * 10 }
         #expect(try unsafe call.unsafeInvoke(false, 40) == 410)
@@ -142,8 +141,7 @@ struct SwiftHookDeclarationTests {
         )
         let plan = try await unsafe value.prepareImportedReplacement(
             with: patched,
-            in: fixture.callerScope,
-            using: fixture.runtime
+            in: fixture.callerScope
         )
         try unsafe plan.install()
         defer { try? plan.restore() }
@@ -188,7 +186,6 @@ struct SwiftHookDeclarationTests {
         #expect(try unsafe call.unsafeInvoke(true) == 2)
         let hook = try await unsafe requirement.hookImportedCalls(
             in: fixture.callerScope,
-            using: fixture.runtime,
             onFailure: { Issue.record($0) }
         ) { call in try call.proceed() + 10 }
         defer { hook.invalidate() }
@@ -371,8 +368,7 @@ struct SwiftHookDeclarationTests {
         for (type, factor) in [("ScaledValue", Int64(3)), ("ScaledChoice", 4)] {
             let plan = try unsafe identity.prepareImportedReplacementAndWait(
                 with: try await scaled(type),
-                in: callerScope,
-                using: runtime
+                in: callerScope
             )
             try unsafe plan.install()
             #expect(try unsafe call.unsafeInvoke(20) == 20 * factor, "\(type)")
@@ -383,8 +379,7 @@ struct SwiftHookDeclarationTests {
         #expect {
             _ = try unsafe identity.prepareImportedReplacementAndWait(
                 with: classScaled,
-                in: callerScope,
-                using: runtime
+                in: callerScope
             )
         } throws: { error in
             guard case ABIResolutionError.signatureMismatch(let mismatch) = error else {
@@ -459,8 +454,7 @@ struct SwiftHookDeclarationTests {
         #expect(try unsafe call.unsafeInvoke() == 11)
         let plan = try unsafe await advance("IntegerFirst").prepareImportedReplacementAndWait(
             with: try await advance("FloatingFirst"),
-            in: callerScope,
-            using: runtime
+            in: callerScope
         )
         try unsafe plan.install()
         #expect(try unsafe call.unsafeInvoke() == 99)

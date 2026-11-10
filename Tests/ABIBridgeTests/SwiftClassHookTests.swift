@@ -62,7 +62,6 @@ struct SwiftClassHookTests {
         if imported {
             let hook = try unsafe await method.hookMainActorImportedCalls(
                 in: fixture.callerScope,
-                using: fixture.runtime,
                 onFailure: { Issue.record($0) },
                 body: body
             )
@@ -492,13 +491,11 @@ struct SwiftClassHookTests {
         }
         let instanceHook = try await unsafe instance.hookImportedCalls(
             in: fixture.callerScope,
-            using: fixture.runtime,
             onFailure: { Issue.record("Unexpected: \($0)") }
         ) { call in try call.proceed() + 100 }
         defer { instanceHook.invalidate() }
         let staticHook = try await unsafe metatype.hookImportedCalls(
             in: fixture.callerScope,
-            using: fixture.runtime,
             onFailure: { Issue.record("Unexpected: \($0)") }
         ) { call in try call.proceed() + 200 }
         defer { staticHook.invalidate() }
@@ -626,7 +623,6 @@ struct SwiftClassHookTests {
         )
         let hook = try await unsafe method.hookImportedCalls(
             in: fixture.callerScope,
-            using: fixture.runtime,
             onFailure: { Issue.record("Unexpected: \($0)") }
         ) { call, value in
             let receiver = try call.receiver(as: NSObject.self)
@@ -932,7 +928,6 @@ struct SwiftClassHookTests {
         defer { virtual.invalidate() }
         let imported = try await unsafe method.hookImportedCalls(
             in: fixture.callerScope,
-            using: fixture.runtime,
             onFailure: { Issue.record("Unexpected: \($0)") }
         ) { call, value in try call.proceed(value + "I") + "i" }
         defer { imported.invalidate() }
