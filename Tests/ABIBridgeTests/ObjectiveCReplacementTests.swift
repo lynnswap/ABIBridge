@@ -380,7 +380,7 @@ struct ObjectiveCReplacementTests {
         let receiver = ABIReplacementFixture()
         #expect(ABIReplacementCallAdd(imp, receiver, 20, 21) == 42)
         let expired = try #require(saved.read())
-        #expect(throws: NativeObjCMethodHookError.expiredInvocation) { try expired.proceed(1, 2) }
+        #expect(throws: NativeHookInvocationError.expiredInvocation) { try expired.proceed(1, 2) }
         entry = nil
         #expect(observed == nil)
         #expect(ABIReplacementCallAdd(imp, receiver, 20, 22) == 42)
@@ -461,7 +461,7 @@ struct ObjectiveCReplacementTests {
             defer { resume.signal(); finished.wait() }
             started.wait()
             let invocation = try #require(saved.read())
-            #expect(throws: NativeObjCMethodHookError.wrongThread) { try invocation.proceed(1, 2) }
+            #expect(throws: NativeHookInvocationError.wrongThread) { try invocation.proceed(1, 2) }
             entry.invalidate()
             #expect(observed != nil)
             resume.signal()

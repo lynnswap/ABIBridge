@@ -319,7 +319,7 @@ struct VirtualHookTests {
             saved.call = call
             let done = DispatchSemaphore(value: 0)
             DispatchQueue.global().async {
-                #expect(throws: NativeVirtualInvocationError.wrongThread) {
+                #expect(throws: NativeHookInvocationError.wrongThread) {
                     try saved.call!.proceed(value)
                 }
                 done.signal()
@@ -329,7 +329,7 @@ struct VirtualHookTests {
         }
         #expect(fixture.oracle(0, 2) == 42)
         #expect(saved.call?.description.contains("Swift.Int32") == true)
-        #expect(throws: NativeVirtualInvocationError.expiredInvocation) {
+        #expect(throws: NativeHookInvocationError.expiredInvocation) {
             try saved.call!.proceed(2)
         }
         hook.invalidate()

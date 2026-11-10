@@ -2,21 +2,19 @@
 ///
 /// The stable dispatcher and its code/metadata owners remain process-lived. Invalidation releases user captures after in-flight snapshots finish. Saved pointers and subclass metadata that copied this dispatcher share its chain.
 public final class NativeSwiftVirtualHook: Sendable {
-    /// The same logical and pointer-observation states as imported Swift hooks.
-    public typealias Status = NativeSwiftImportedFunctionHook.Status
     private let registration: NativeSwiftImportedFunctionHook
     init(_ registration: NativeSwiftImportedFunctionHook) { self.registration = registration }
     private var slot: NativeSwiftImportedFunctionHook.Slot { registration.slots[0] }
     /// Address of the selected class or witness-table slot.
     public var address: UInt { slot.address }
     /// Logical state and the currently observed pointer ownership.
-    public var status: Status { slot.status }
+    public var status: NativeHookSlotStatus { slot.status }
     /// Physical publication performed by this registration, if any.
-    public var mutation: NativeSwiftReplacementMutation? { slot.mutation }
+    public var mutation: NativePointerSlotMutation? { slot.mutation }
     /// Latest rollback following failed installation.
-    public var rollback: NativeSwiftReplacementMutation? { slot.rollback }
+    public var rollback: NativePointerSlotMutation? { slot.rollback }
     /// Latest repair of protections left by a failed operation.
-    public var protectionRecovery: NativeSwiftReplacementMutation? { slot.protectionRecovery }
+    public var protectionRecovery: NativePointerSlotMutation? { slot.protectionRecovery }
     /// Removes this callback without overwriting the method pointer or blocking active calls.
     public func invalidate() { registration.invalidate() }
     /// Retries physical rollback still owned by this failed installation.

@@ -22,11 +22,11 @@ public final class NativeSwiftVirtualReplacement<Implementation> {
     /// Logical state together with the current pointer observation.
     public var status: Status { plan.slots[0].status }
     /// Most recent publication result, including any partial write.
-    public var mutation: NativeSwiftReplacementMutation? { plan.slots[0].mutation }
+    public var mutation: NativePointerSlotMutation? { plan.slots[0].mutation }
     /// Most recent restoration or rollback result.
-    public var restoration: NativeSwiftReplacementMutation? { plan.slots[0].restoration }
+    public var restoration: NativePointerSlotMutation? { plan.slots[0].restoration }
     /// Most recent repair of protections left by a partial mutation.
-    public var protectionRecovery: NativeSwiftReplacementMutation? {
+    public var protectionRecovery: NativePointerSlotMutation? {
         plan.slots[0].protectionRecovery
     }
 

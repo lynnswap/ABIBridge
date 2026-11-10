@@ -444,7 +444,7 @@ struct ObjectiveCMethodHookTests {
         let hook = try unsafe runtime.object(object).hookMainActorCalls(
             .objc(.method("add:to:", as: ((Int32, Int32) -> Int32).self)),
             onFailure: { error in
-                #expect(error as? NativeObjCMethodHookError == .wrongThread)
+                #expect(error as? NativeHookInvocationError == .wrongThread)
                 errors.update { $0 += 1 }
             }
         ) { call, a, b in

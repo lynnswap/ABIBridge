@@ -30,7 +30,7 @@ The closure receives ordinary Swift arguments. Reference arguments keep their id
 
 `NativeSwiftFunctionInvocation<Signature>` preserves the complete signature. Its diagnostic properties identify the registration and remain usable after return; see <doc:HookArguments>.
 
-`proceed` follows the captured chain, including any earlier interposer, without repeating lookup. It is valid until callback completion, on the entering thread for sync calls or the same Swift task for async calls. Expired, cross-thread, or cross-task use throws `NativeSwiftHookInvocationError`.
+`proceed` follows the captured chain, including any earlier interposer, without repeating lookup. It is valid until callback completion, on the entering thread for sync calls or the same Swift task for async calls. Expired, cross-thread, or cross-task use throws `NativeHookInvocationError`.
 
 ## Await an asynchronous predecessor
 

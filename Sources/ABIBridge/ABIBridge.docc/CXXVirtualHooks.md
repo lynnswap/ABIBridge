@@ -59,7 +59,7 @@ Keep the ``NativeVirtualHook`` owner while interception is required. Later regis
 
 Published dispatchers, original table/implementation image leases and explicit table-storage and code-owner keepalives remain allocated for process lifetime. A pointer captured after publication therefore remains callable after invalidation and passes through to its predecessor. Keep resources that should release on invalidation in callback captures instead of table-storage owners; callback captures release after the last active snapshot ends.
 
-Callbacks run synchronously on the incoming thread. Swift bodies and failure handlers are `@Sendable`; they must also respect the native receiver's thread and lifetime rules. A continuation cannot escape to another thread or outlive its callback. Swift reports those uses as ``NativeVirtualInvocationError``; C/C++ callers must not access an expired invocation view.
+Callbacks run synchronously on the incoming thread. Swift bodies and failure handlers are `@Sendable`; they must also respect the native receiver's thread and lifetime rules. A continuation cannot escape to another thread or outlive its callback. Swift reports those uses as ``NativeHookInvocationError``; C/C++ callers must not access an expired invocation view.
 
 ## Handle failure
 

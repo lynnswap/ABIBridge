@@ -77,7 +77,7 @@ The token filters weakly by identity on the object's current class, leaving isa 
 
 ## MainActor methods
 
-Use `hookMainActorCalls` on `ABIRuntime` or `NativeObject` only when the native method has a known MainActor calling contract. The body is MainActor-isolated and executes synchronously without an actor hop. Background entry reports ``NativeObjCMethodHookError/wrongThread`` and continues to the next hook before decoding Swift arguments. Its `onFailure` closure therefore remains Sendable and must handle background calls.
+Use `hookMainActorCalls` on `ABIRuntime` or `NativeObject` only when the native method has a known MainActor calling contract. The body is MainActor-isolated and executes synchronously without an actor hop. Background entry reports ``NativeHookInvocationError/wrongThread`` and continues to the next hook before decoding Swift arguments. Its `onFailure` closure therefore remains Sendable and must handle background calls.
 
 Installing an ordinary hook from MainActor does not give its future callbacks MainActor isolation. General synchronous dispatch onto an arbitrary actor is not provided.
 

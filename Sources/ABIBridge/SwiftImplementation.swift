@@ -122,33 +122,6 @@ public struct NativeSwiftMethodImplementation<Signature>: Sendable {
     }
 }
 
-/// Publication or restoration results from a compiled Swift replacement.
-public struct NativeSwiftReplacementMutation: Sendable {
-    /// The pointer-slot operation status. Zero means the operation completed.
-    public let status: Int32
-    /// Whether the pointer was written, including a partial protection failure.
-    public let didWrite: Bool
-    /// The pointer bits observed by the operation, when available.
-    public let observed: UInt
-    /// The original Mach error, or zero.
-    public let systemErrorCode: Int32
-    /// Errors restoring current and maximum protections, respectively.
-    public let restoreProtectionError: Int32
-    public let restoreMaximumError: Int32
-    /// Original page protections and VM flags.
-    public let protectionBefore: Int32
-    public let maximumBefore: Int32
-    public let regionFlags: UInt32
-    init(_ value: ABIPointerSlotResult) {
-        status = value.status; didWrite = value.didWrite; observed = value.observed
-        systemErrorCode = value.systemErrorCode
-        restoreProtectionError = value.restoreProtectionError;
-        restoreMaximumError = value.restoreMaximumError
-        protectionBefore = value.protectionBefore; maximumBefore = value.maximumBefore;
-        regionFlags = value.regionFlags
-    }
-}
-
 /// A compiled replacement could not complete every requested pointer operation. The plan remains available for inspecting each slot and retrying restoration.
 public struct NativeSwiftReplacementError: Error, Sendable {
     /// Which explicit operation failed.
@@ -192,9 +165,9 @@ final class SwiftReplacementStorage: @unchecked Sendable {
         let original: SwiftImplementation?
         var pending = false
         var wasPublished = false
-        var mutation: NativeSwiftReplacementMutation?
-        var restoration: NativeSwiftReplacementMutation?
-        var protectionRecovery: NativeSwiftReplacementMutation?
+        var mutation: NativePointerSlotMutation?
+        var restoration: NativePointerSlotMutation?
+        var protectionRecovery: NativePointerSlotMutation?
         var desiredProtection: Int32?
         var desiredMaximum: Int32?
         var needsRepair: Bool { desiredProtection != nil || desiredMaximum != nil }
@@ -315,7 +288,7 @@ final class SwiftReplacementStorage: @unchecked Sendable {
             for index in state.slots.indices {
                 let slot = state.slots[index]
                 let result = transport.exchange(slot.address, slot.before, slot.after)
-                state.slots[index].mutation = NativeSwiftReplacementMutation(result)
+                state.slots[index].mutation = NativePointerSlotMutation(result)
                 state.slots[index].restoration = nil
                 state.slots[index].protectionRecovery = nil
                 state.slots[index].recordProtectionFailure(result)
@@ -350,7 +323,7 @@ final class SwiftReplacementStorage: @unchecked Sendable {
         for index in state.slots.indices.reversed() where state.slots[index].pending {
             let slot = state.slots[index]
             let result = transport.exchange(slot.address, slot.after, slot.before)
-            state.slots[index].restoration = NativeSwiftReplacementMutation(result)
+            state.slots[index].restoration = NativePointerSlotMutation(result)
             state.slots[index].recordProtectionFailure(result)
             if result.didWrite
                 || (result.status == ABIPointerSlotDisplaced && result.observed == slot.before)
@@ -368,7 +341,7 @@ final class SwiftReplacementStorage: @unchecked Sendable {
                 slot.desiredProtection != nil,
                 slot.desiredMaximum != nil
             )
-            state.slots[index].protectionRecovery = NativeSwiftReplacementMutation(result)
+            state.slots[index].protectionRecovery = NativePointerSlotMutation(result)
             if result.status == ABIPointerSlotComplete {
                 state.slots[index].desiredProtection = nil
                 state.slots[index].desiredMaximum = nil
