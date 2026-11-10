@@ -15,7 +15,7 @@ public enum ImageSelector: Hashable, Sendable {
     case path(URL)
     /// A dyld path spelling, including @rpath, @loader_path, or @executable_path. Relative loader paths use the image containing ABIBridge's native loader call, not the source location of an async Swift caller.
     case installName(String)
-    /// An image the caller already retains. Only this load of the image is searched; the loading policy decides whether dyld is asked to acquire and initialize it again.
+    /// An image the caller already retains. Only this load of the image is searched; the loading policy decides whether dyld is asked to acquire and initialize it again. A hook's `from:` filter rejects it, because an importer records its dependency by name.
     case image(NativeImage)
 
     func validateTarget() throws { try withRuntimeErrors { try runtimeValue.validateTarget() } }

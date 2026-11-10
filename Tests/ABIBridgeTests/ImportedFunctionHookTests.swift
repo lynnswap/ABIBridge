@@ -77,6 +77,22 @@ struct ImportedFunctionHookTests {
         #expect(errors.withLock { $0.isEmpty })
     }
 
+    @Test func providerFiltersRejectRetainedImages() async throws {
+        let fixture = try ImportHookFixture(); defer { fixture.cleanup() }
+        let runtime = ABIRuntime()
+        let provider = try #require(
+            runtime.resolveImagesAndWait(matching: .path(fixture.provider.libraryURL)).first
+        )
+        await #expect(throws: ABIResolutionError.self) {
+            try await unsafe runtime.hookImportedCalls(
+                .cxx(.function(fixture.declaration.name, as: ((Int32, Int32) -> Int32).self)),
+                in: fixture.scope,
+                from: .image(provider),
+                onFailure: { Issue.record($0) }
+            ) { call, a, b in try call.proceed(a, b) }
+        }
+    }
+
     @Test func errorsPreserveLatestProceedAndDoNotRepeatNativeSideEffects() async throws {
         let fixture = try ImportHookFixture(); defer { fixture.cleanup() }
         let runtime = ABIRuntime(), call = try await fixture.call(ABIRuntime())
