@@ -21,7 +21,7 @@ extension ABIRuntime {
     ///   - after: Processes the actual initialized result. Defaults to no action.
     /// - Returns: A registration removed by token invalidation or destruction.
     /// - Throws: A lookup, signature, ownership, preparation, or displacement error.
-    @unsafe public nonisolated func hookInitializer<Result, each Argument>(
+    @unsafe public func hookInitializer<Result, each Argument>(
         _ request: NativeRequest<NativeObjCMethodRequest<Result, repeat each Argument>>,
         on type: AnyClass,
         retaining owner: Any? = nil,

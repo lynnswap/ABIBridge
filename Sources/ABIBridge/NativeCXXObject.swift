@@ -408,7 +408,7 @@ extension ABIRuntime {
     ///   - loading: Whether direct member resolution may acquire and initialize
     ///     an explicit image.
     /// - Returns: A receiver scope using this runtime's shared indexes.
-    public nonisolated func cxxObject(
+    public func cxxObject(
         _ storage: NativeValue,
         typeNamed typeName: String,
         in scope: ImageSelector = .automatic,
@@ -432,7 +432,7 @@ extension ABIRuntime {
     ///   - loading: Whether direct member resolution may ask dyld to acquire
     ///     and initialize the image.
     /// - Returns: A receiver scope retaining its storage and image.
-    public nonisolated func cxxObject(
+    public func cxxObject(
         _ storage: NativeValue,
         typeNamed typeName: String,
         in image: NativeImage,

@@ -323,7 +323,7 @@ extension ABIRuntime {
     ///   failed index, phase, and any invalidated partial registrations.
     ///
     /// Per-request unsafe ownership/lifetime contracts and external-writer coordination still apply. See <doc:CoordinatedObjectiveCHooks>.
-    @unsafe public nonisolated func installHooks(_ requests: [NativeObjCHookRequest]) throws -> [NativeObjCMethodHook] {
+    @unsafe public func installHooks(_ requests: [NativeObjCHookRequest]) throws -> [NativeObjCMethodHook] {
         var validations: [ObjCHookValidation] = []
         var contracts: [ObjCHookValidation.Key: (retained: Bool, consumed: Bool, arguments: Set<Int>)] = [:]
         for (index, request) in requests.enumerated() {

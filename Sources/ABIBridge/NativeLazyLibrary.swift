@@ -46,7 +46,7 @@ extension ABIRuntime {
     /// - Parameter image: The loaded image declaring the dependencies.
     /// - Returns: Commands in load-command order, or an empty array if none exist.
     /// - Throws: `ABIResolutionError.metadataUnavailable` if the header or command table cannot be read.
-    public nonisolated func resolveLazyLibrariesAndWait(
+    public func resolveLazyLibrariesAndWait(
         in image: NativeImage
     ) throws -> [NativeLazyLibrary] {
         try withRuntimeErrors {
@@ -62,7 +62,7 @@ extension ABIRuntime {
     /// - Parameter url: A thin Mach-O file, which is read into owned storage.
     /// - Returns: One diagnostic value per lazy-load command, including malformed payloads.
     /// - Throws: The file-reading error, or `ABIResolutionError.metadataUnavailable` for an invalid container.
-    public nonisolated func resolveLazyLibrariesAndWait(
+    public func resolveLazyLibrariesAndWait(
         inFileAt url: URL
     ) throws -> [NativeLazyLibrary] {
         try withRuntimeErrors { try LazyLibraryReader.read(file: url).map(NativeLazyLibrary.init) }
@@ -73,14 +73,14 @@ extension ABIRuntime {
     /// Copies lazy-load dependency diagnostics on a worker queue.
     ///
     /// This has the same observation and ownership contract as `resolveLazyLibrariesAndWait(in:)`. No dependency is loaded by this inspection.
-    public nonisolated func resolveLazyLibraries(
+    public func resolveLazyLibraries(
         in image: NativeImage
     ) async throws -> [NativeLazyLibrary] {
         try await NativePreparation.run { try self.resolveLazyLibrariesAndWait(in: image) }
     }
 
     /// Reads lazy-load metadata from a thin Mach-O file on a worker queue.
-    public nonisolated func resolveLazyLibraries(
+    public func resolveLazyLibraries(
         inFileAt url: URL
     ) async throws -> [NativeLazyLibrary] {
         try await NativePreparation.run { try self.resolveLazyLibrariesAndWait(inFileAt: url) }

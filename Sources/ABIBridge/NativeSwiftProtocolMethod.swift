@@ -108,7 +108,7 @@ extension ABIRuntime {
     ///
     /// This has the same requirement, isolation and lifetime contracts as
     /// `makeSwiftProtocolValue(_:methods:in:loading:valueABIs:)`.
-    public nonisolated func makeSwiftProtocolValueAndWait(
+    public func makeSwiftProtocolValueAndWait(
         _ protocolName: String,
         methods: [NativeSwiftProtocolMethod],
         in selector: ImageSelector = .automatic,

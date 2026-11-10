@@ -7,7 +7,7 @@ import Foundation
 /// Searches prepare indexes on demand. Async resolution moves search and call preparation to a worker; bound Objective-C receiver callbacks and C++ virtual-slot capture stay on the caller's executor. `resolve…AndWait` factories run on the caller's thread and wait for any required work already in progress. Use `prepare(_:)` to start that work early without occupying the caller's actor.
 ///
 /// See <doc:SymbolLookup> for search scopes and the raw-address contract.
-public actor ABIRuntime {
+public final class ABIRuntime: Sendable {
     /// Independently removable caches owned by a runtime.
     public enum Cache: CaseIterable, Hashable, Sendable {
         /// Symbol indexes, parsed declarations, image acquisitions, and symbol lookup results.
@@ -22,9 +22,9 @@ public actor ABIRuntime {
     /// A runtime whose completed resolutions are shared across callers in this process.
     public static let shared = ABIRuntime(resolver: .shared, resolutionCache: .shared)
 
-    nonisolated let resolver: SymbolResolver
-    nonisolated let swiftTypeCache = SwiftTypeCache()
-    nonisolated let swiftResolutionCache: SwiftResolutionCache
+    let resolver: SymbolResolver
+    let swiftTypeCache = SwiftTypeCache()
+    let swiftResolutionCache: SwiftResolutionCache
 
     /// Creates a runtime with independent resolution caches.
     public init() {
@@ -45,7 +45,7 @@ public actor ABIRuntime {
     /// - Returns: Retained matching images, or an empty array when none are available.
     /// - Throws: A catalog error, or imageUnavailable if an explicitly selected
     ///   registered image cannot currently be retained.
-    public nonisolated func resolveImagesAndWait(
+    public func resolveImagesAndWait(
         matching selector: ImageSelector = .automatic
     ) throws -> [NativeImage] {
         try resolver.images(matching: selector)
@@ -54,7 +54,7 @@ public actor ABIRuntime {
     /// Returns retained handles for matching loaded images on a worker queue.
     ///
     /// This has the same scope and ownership contract as `resolveImagesAndWait(matching:)`. The caller suspends while image enumeration runs independently of its actor.
-    public nonisolated func resolveImages(
+    public func resolveImages(
         matching selector: ImageSelector = .automatic
     ) async throws -> [NativeImage] {
         try await NativePreparation.run { try self.resolveImagesAndWait(matching: selector) }
@@ -71,7 +71,7 @@ public actor ABIRuntime {
     /// - Returns: A symbol retaining its containing image.
     /// - Throws: ``ABIResolutionError`` for unavailable images, missing or
     ///   ambiguous declarations, unsupported languages, or invalid storage.
-    public nonisolated func resolveAndWait(
+    public func resolveAndWait(
         _ request: NativeRequest<NativeSymbolLookupRequest>,
         in selector: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
@@ -88,7 +88,7 @@ public actor ABIRuntime {
     /// - Returns: A resolved symbol retaining that image.
     /// - Throws: ``ABIResolutionError`` when the declaration cannot be resolved
     ///   unambiguously in the requested storage.
-    public nonisolated func resolveAndWait(
+    public func resolveAndWait(
         _ request: NativeRequest<NativeSymbolLookupRequest>,
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
@@ -102,8 +102,7 @@ public actor ABIRuntime {
     /// - Parameter request: The declarations and ordered image scopes to search.
     /// - Returns: The first found declaration's symbol, retaining its image.
     /// - Throws: The lookup failure; ambiguity and invalid storage stop fallback.
-    public nonisolated func resolveAndWait(_ request: NativeSymbolRequest) throws -> ResolvedSymbol
-    {
+    public func resolveAndWait(_ request: NativeSymbolRequest) throws -> ResolvedSymbol {
         try resolver.resolve(request)
     }
 
@@ -112,7 +111,7 @@ public actor ABIRuntime {
     /// Retained images and working symbol indexes are reused within this batch. Results are independent; the batch is not an atomic snapshot of loader activity.
     /// - Parameter requests: Requirements to resolve, or an empty array.
     /// - Returns: One owned symbol or lookup error for each input requirement.
-    public nonisolated func resolveAndWait(
+    public func resolveAndWait(
         _ requests: [NativeSymbolRequest]
     ) -> [Result<ResolvedSymbol, any Error>] {
         resolver.resolve(requests)
@@ -121,7 +120,7 @@ public actor ABIRuntime {
     /// Finds a declaration on a worker, performing or joining its required preparation.
     ///
     /// This has the same resolution and image-retention contract as `resolveAndWait(_:in:loading:)`. Search, image acquisition, and index preparation run independently of the caller's actor.
-    public nonisolated func resolve(
+    public func resolve(
         _ request: NativeRequest<NativeSymbolLookupRequest>,
         in selector: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
@@ -132,7 +131,7 @@ public actor ABIRuntime {
     }
 
     /// Finds a declaration in a retained image on a worker queue.
-    public nonisolated func resolve(
+    public func resolve(
         _ request: NativeRequest<NativeSymbolLookupRequest>,
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
@@ -143,14 +142,14 @@ public actor ABIRuntime {
     }
 
     /// Resolves aliases and ordered image fallback on a worker queue.
-    public nonisolated func resolve(_ request: NativeSymbolRequest) async throws -> ResolvedSymbol {
+    public func resolve(_ request: NativeSymbolRequest) async throws -> ResolvedSymbol {
         try await NativePreparation.run { try self.resolveAndWait(request) }
     }
 
     /// Resolves independent requirements on a worker, preserving order and partial success.
     ///
     /// Each result retains its image. The batch is not an atomic snapshot of loader activity, and other searches join only their required preparation.
-    public nonisolated func resolve(
+    public func resolve(
         _ requests: [NativeSymbolRequest]
     ) async -> [Result<ResolvedSymbol, any Error>] {
         await NativePreparation.run { self.resolveAndWait(requests) }
@@ -163,7 +162,7 @@ public actor ABIRuntime {
     /// - Parameter operation: Synchronous lookups to start before their results are needed.
     /// - Returns: The prepared value, which can be retained for later calls.
     /// - Throws: The operation's error. Failure does not disable later lookups.
-    public nonisolated func prepare<Value: Sendable>(
+    public func prepare<Value: Sendable>(
         _ operation: @escaping @Sendable (ABIRuntime) throws -> Value
     ) async throws -> Value {
         try await NativePreparation.run {
@@ -195,7 +194,7 @@ public actor ABIRuntime {
     /// Releases all of this runtime's removable caches.
     ///
     /// Existing handles remain valid. Use ``removeCachedResults(in:)`` to retain unselected caches.
-    public nonisolated func removeCachedResults() {
+    public func removeCachedResults() {
         removeCachedResults(in: Set(Cache.allCases))
     }
 
@@ -208,7 +207,7 @@ public actor ABIRuntime {
     /// Use `[.symbolLookup]` to release search indexes while retaining prepared Swift calls and types.
     /// Passing an empty set leaves all caches intact.
     /// - Parameter caches: The caches to remove.
-    public nonisolated func removeCachedResults(in caches: Set<Cache>) {
+    public func removeCachedResults(in caches: Set<Cache>) {
         if caches.contains(.swiftResolutions) || caches.contains(.swiftTypes) {
             swiftResolutionCache.removeCachedResults(in: caches)
         }

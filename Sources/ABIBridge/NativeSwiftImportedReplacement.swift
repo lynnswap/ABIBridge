@@ -73,7 +73,7 @@ extension NativeSwiftImportedReplacement: @unchecked Sendable where Implementati
 extension ABIRuntime {
     /// Captures the importing references to the code that calls of `target`
     /// run, to publish `replacement`'s code in their place.
-    nonisolated func prepareSwiftImportReplacementAndWait(
+    func prepareSwiftImportReplacementAndWait(
         target: SwiftEntry,
         replacement: SwiftEntry,
         importer: ImageSelector,

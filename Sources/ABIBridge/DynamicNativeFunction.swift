@@ -132,7 +132,7 @@ extension ABIRuntime {
     ///   - loading: Whether to acquire and initialize an explicit image.
     /// - Returns: A reusable function retaining its image and prepared signature.
     /// - Throws: A resolution error, unsupported representation, or call preparation error.
-    public nonisolated func resolveAndWait(
+    public func resolveAndWait(
         _ request: NativeRequest<DynamicNativeFunctionRequest>,
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
@@ -157,7 +157,7 @@ extension ABIRuntime {
     ///
     /// - Returns: A reusable function retaining its image and prepared signature.
     /// - Throws: The same errors as synchronous resolution.
-    public nonisolated func resolve(
+    public func resolve(
         _ request: NativeRequest<DynamicNativeFunctionRequest>,
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
@@ -180,7 +180,7 @@ extension ABIRuntime {
     ///   - loading: Whether to acquire and initialize an explicit image.
     /// - Returns: A reusable function retaining its image and prepared signature.
     /// - Throws: A resolution error, unsupported representation, or call preparation error.
-    public nonisolated func resolveAndWait(
+    public func resolveAndWait(
         _ request: NativeRequest<DynamicNativeFunctionRequest>,
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
@@ -205,7 +205,7 @@ extension ABIRuntime {
     ///
     /// - Returns: A reusable function retaining its image and prepared signature.
     /// - Throws: The same errors as synchronous resolution.
-    public nonisolated func resolve(
+    public func resolve(
         _ request: NativeRequest<DynamicNativeFunctionRequest>,
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded

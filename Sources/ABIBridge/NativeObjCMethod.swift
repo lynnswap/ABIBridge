@@ -97,7 +97,7 @@ extension ABIRuntime {
     ///   - owner: An optional lifetime owner for generated classes or code.
     /// - Returns: A reusable message that takes its receiver at each call.
     /// - Throws: A lookup, signature, or image error.
-    public nonisolated func resolveAndWait<Result, each Argument>(
+    public func resolveAndWait<Result, each Argument>(
         _ request: NativeRequest<NativeObjCMethodRequest<Result, repeat each Argument>>,
         on type: AnyClass,
         classMethod: Bool = false,
@@ -145,7 +145,7 @@ extension ABIRuntime {
         )
     }
 
-    private nonisolated func prepareObjCMethod<Result, each Argument>(
+    private func prepareObjCMethod<Result, each Argument>(
         _ query: ObjCMessageQuery,
         on type: AnyClass,
         classMethod: Bool

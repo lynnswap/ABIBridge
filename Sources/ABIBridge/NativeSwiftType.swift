@@ -94,13 +94,13 @@ struct SwiftMetadataResponse: BitwiseCopyable, ABIBridgeValue {
 /// Type lookup requests complete metadata without constructing an instance. Generic arguments are validated by the Swift runtime. Member lookups reuse completed resolutions in the same runtime; active batches also share working symbol indexes. See <doc:SwiftMemberInvocation> for lookup and invocation conventions.
 ///
 /// Protocol-qualified names, such as `Module.Protocol.member()` or a complete `(extension in Module):Module.Protocol.member() -> ...` declaration, bind Self to this concrete type for methods, accessors, subscripts, static members, and initializers. A requirement runs through the protocol's dispatch thunk or the witness of this type's conformance, never an extension member. genericArguments supplies only the type parameters introduced by the member.
-public actor NativeSwiftType: Hashable {
+public final class NativeSwiftType: Sendable, Hashable {
     /// Type handles compare by their concrete Swift metadata identity.
-    public nonisolated static func == (lhs: NativeSwiftType, rhs: NativeSwiftType) -> Bool {
+    public static func == (lhs: NativeSwiftType, rhs: NativeSwiftType) -> Bool {
         lhs.metadata == rhs.metadata
     }
 
-    public nonisolated func hash(into hasher: inout Hasher) {
+    public func hash(into hasher: inout Hasher) {
         hasher.combine(ObjectIdentifier(metadata))
     }
 
@@ -115,7 +115,7 @@ public actor NativeSwiftType: Hashable {
     /// Use this value for an explicit metatype parameter, independently of
     /// binding a generic parameter with `genericArguments`. Creation runs on
     /// the caller's thread without symbol lookup or call preparation.
-    public nonisolated func makeMetatypeValue() throws -> NativeSwiftValue {
+    public func makeMetatypeValue() throws -> NativeSwiftValue {
         let value = unsafeBitCast(metadata, to: UnsafeRawPointer.self)
         let metatype = ABISwiftMetatypeMetadata(value)!
         let valueType = try swiftRuntimeValueType(
@@ -134,7 +134,7 @@ public actor NativeSwiftType: Hashable {
     /// - Parameter caseName: The unqualified case name, without argument labels or backticks.
     /// - Returns: A newly initialized value with this concrete enum type.
     /// - Throws: `NativeSwiftValueError` for an unknown or ambiguous name or a case requiring a payload; `ABIResolutionError` for an unsupported type or unavailable metadata.
-    public nonisolated func makeEnumCase(named caseName: String) throws -> NativeSwiftValue {
+    public func makeEnumCase(named caseName: String) throws -> NativeSwiftValue {
         let enumeration = try withRuntimeErrors { try RuntimeEnumMetadata(metadata) }
         let index = try enumeration.caseIndex(named: caseName)
         guard !enumeration.cases[index].hasPayload else {
@@ -191,7 +191,7 @@ public actor NativeSwiftType: Hashable {
     /// Creates an owned enum value synchronously on the caller's thread.
     ///
     /// This has the same payload and ownership contract as `makeEnumCase(named:payload:valueABIs:)`. It performs or joins required ABI preparation before returning, which can block the caller's thread.
-    public nonisolated func makeEnumCaseAndWait(
+    public func makeEnumCaseAndWait(
         named caseName: String,
         payload: NativeSwiftValue,
         valueABIs: [NativeSwiftType: NativeType] = [:]
@@ -237,7 +237,7 @@ public actor NativeSwiftType: Hashable {
     /// Creates an owned enum value from its associated values synchronously on the caller's thread.
     ///
     /// This has the same value and ownership contract as `makeEnumCase(named:associatedValues:_:valueABIs:)`. It performs or joins required ABI preparation before returning, which can block the caller's thread.
-    public nonisolated func makeEnumCaseAndWait<First, each Rest>(
+    public func makeEnumCaseAndWait<First, each Rest>(
         named caseName: String,
         associatedValues first: First,
         _ rest: repeat each Rest,
@@ -253,7 +253,7 @@ public actor NativeSwiftType: Hashable {
 
     /// - Parameter payloadType: The type of a value supplying the whole
     ///   payload, or nil when associated values supply it.
-    private nonisolated func prepareEnumCase(
+    private func prepareEnumCase(
         named caseName: String,
         payloadType: NativeSwiftType?,
         valueABIs: [NativeSwiftType: NativeType]
@@ -294,7 +294,7 @@ public actor NativeSwiftType: Hashable {
         )
     }
 
-    private nonisolated func initializeEnumCase(
+    private func initializeEnumCase(
         payload: NativeSwiftValue,
         prepared: (Int, Any.Type, SwiftRuntimeValueProjectionPlan),
         valueABIs: [NativeSwiftType: NativeType]
@@ -326,7 +326,7 @@ public actor NativeSwiftType: Hashable {
         )
     }
 
-    private nonisolated func initializeEnumCase(
+    private func initializeEnumCase(
         associatedValues values: [SwiftEnumAssociatedValue],
         prepared: (Int, Any.Type, SwiftRuntimeValueProjectionPlan),
         valueABIs: [NativeSwiftType: NativeType]
@@ -406,7 +406,7 @@ public actor NativeSwiftType: Hashable {
 
     /// Initializes the case at `index` with the payload in `scratch`, which
     /// holds owned runtime values, and returns the enum value.
-    private nonisolated func initializeEnumCase(
+    private func initializeEnumCase(
         at index: Int,
         taking scratch: NativeValueStorage,
         payloadType: Any.Type,
@@ -437,21 +437,21 @@ public actor NativeSwiftType: Hashable {
     }
 
     /// The qualified type name. Runtime values can include instantiated generic arguments.
-    public nonisolated let name: String
+    public let name: String
     /// An image retained with this type's metadata and implementations.
-    public nonisolated let image: NativeImage
+    public let image: NativeImage
 
     let metadata: Any.Type
     let representation: Any.Type?
     let resolver: SymbolResolver
     let genericMetadata: SwiftGenericTypeMetadata?
-    nonisolated let codeLifetime: SwiftValueCodeLifetime
-    nonisolated var codeImages: [NativeImage] { codeLifetime.images }
-    nonisolated var genericArguments: [NativeSwiftGenericArgument] {
+    let codeLifetime: SwiftValueCodeLifetime
+    var codeImages: [NativeImage] { codeLifetime.images }
+    var genericArguments: [NativeSwiftGenericArgument] {
         genericMetadata?.arguments ?? []
     }
-    private nonisolated let cachedReceiver = Mutex<SwiftHostConversion?>(nil)
-    private nonisolated let cachedDeclarationName = Mutex<String?>(nil)
+    private let cachedReceiver = Mutex<SwiftHostConversion?>(nil)
+    private let cachedDeclarationName = Mutex<String?>(nil)
 
     init(
         name: String,
@@ -472,7 +472,7 @@ public actor NativeSwiftType: Hashable {
             codeLifetime ?? SwiftValueCodeLifetime([image] + (genericMetadata?.images ?? []))
     }
 
-    nonisolated func retainingCode(_ lifetime: SwiftValueCodeLifetime) -> NativeSwiftType {
+    func retainingCode(_ lifetime: SwiftValueCodeLifetime) -> NativeSwiftType {
         NativeSwiftType(
             name: name,
             image: image,
@@ -484,7 +484,7 @@ public actor NativeSwiftType: Hashable {
         )
     }
 
-    nonisolated func declarationName() throws -> String {
+    func declarationName() throws -> String {
         if let cached = cachedDeclarationName.withLock({ $0 }) { return cached }
         // Runtime value construction retains metadata without scanning symbols.
         // A member lookup needs the declaration's uninstantiated owner name.
@@ -501,7 +501,7 @@ public actor NativeSwiftType: Hashable {
         }
     }
 
-    nonisolated func receiverPlan(
+    func receiverPlan(
         mutating isMutating: Bool?,
         consuming isConsuming: Bool = false,
         generic: SwiftGenericCallPlan? = nil,
@@ -522,7 +522,7 @@ public actor NativeSwiftType: Hashable {
         return plan
     }
 
-    private nonisolated func prepareReceiverPlan(
+    private func prepareReceiverPlan(
         mutating isMutating: Bool?,
         consuming isConsuming: Bool,
         generic: SwiftGenericCallPlan?,
@@ -605,7 +605,7 @@ public actor NativeSwiftType: Hashable {
     /// Optional's metadata sizes it. By value, its components must match the
     /// Optional's storage. receiverABI states the convention of other self
     /// values, and of an Optional self whose convention is not established.
-    private nonisolated func checkOptionalReceiverABI(
+    private func checkOptionalReceiverABI(
         _ plan: SwiftReceiverPlan,
         generic: SwiftGenericCallPlan?,
         isMutating: Bool?,
@@ -660,7 +660,7 @@ public actor NativeSwiftType: Hashable {
     /// where this type's metadata does not establish it, because receiverABI
     /// describes native self values rather than a representation. A class
     /// receiver is a reference, which SwiftReceiverPlan checks.
-    private nonisolated func checkReceiverRepresentation(
+    private func checkReceiverRepresentation(
         _ representation: Any.Type,
         formalSelf: SwiftValueSchema?
     ) throws {
@@ -697,7 +697,7 @@ public actor NativeSwiftType: Hashable {
     ///
     /// - Parameter asynchronous: The requested effect. A slot
     ///   with another effect does not apply to the request.
-    private nonisolated func dispatchedEntry(
+    private func dispatchedEntry(
         _ candidate: SwiftCandidate,
         asynchronous: Bool
     ) throws -> SwiftEntry {
@@ -752,7 +752,7 @@ public actor NativeSwiftType: Hashable {
     /// candidate, decide whether a symbol declares the member. The name
     /// supplies only its owner, base name, and argument labels, and, when
     /// complete, the spelling that selects among overloads.
-    private nonisolated func resolveMember(
+    private func resolveMember(
         _ query: SwiftMemberQuery,
         signature: Any.Type,
         genericArguments: [NativeSwiftGenericArgument],
@@ -1028,7 +1028,7 @@ public actor NativeSwiftType: Hashable {
     /// - Returns: A reusable method with an explicit receiver, retaining this
     ///   type and the member's implementation images.
     /// - Throws: A lookup, representation, or preparation error.
-    public nonisolated func resolveAndWait<Signature>(
+    public func resolveAndWait<Signature>(
         _ request: NativeRequest<NativeSwiftInstanceMemberRequest<Signature>>
     ) throws -> NativeSwiftMethod<Signature> {
         let declaration = request.declaration
@@ -1068,7 +1068,7 @@ public actor NativeSwiftType: Hashable {
     /// - Returns: A reusable method with an explicit receiver.
     /// - Throws: The same lookup, representation, and preparation errors as
     ///   synchronous resolution.
-    public nonisolated func resolve<Signature>(
+    public func resolve<Signature>(
         _ request: NativeRequest<NativeSwiftInstanceMemberRequest<Signature>>
     ) async throws -> NativeSwiftMethod<Signature> {
         try await NativePreparation.run { try self.resolveAndWait(request) }
@@ -1091,7 +1091,7 @@ public actor NativeSwiftType: Hashable {
     /// - Returns: A reusable function retaining this type and the member's
     ///   implementation images.
     /// - Throws: A lookup, representation, or preparation error.
-    public nonisolated func resolveAndWait<Signature>(
+    public func resolveAndWait<Signature>(
         _ request: NativeRequest<NativeSwiftTypeMemberRequest<Signature>>
     ) throws -> NativeSwiftFunction<Signature> {
         let declaration = request.declaration
@@ -1135,14 +1135,14 @@ public actor NativeSwiftType: Hashable {
     ///   implementation images.
     /// - Throws: The same lookup, representation, and preparation errors as
     ///   synchronous resolution.
-    public nonisolated func resolve<Signature>(
+    public func resolve<Signature>(
         _ request: NativeRequest<NativeSwiftTypeMemberRequest<Signature>>
     ) async throws -> NativeSwiftFunction<Signature> {
         try await NativePreparation.run { try self.resolveAndWait(request) }
     }
 
     /// Selects the member that `request` names and prepares its call plan.
-    private nonisolated func resolveMember(
+    private func resolveMember(
         _ request: SwiftMemberRequest,
         signature: Any.Type
     ) throws -> ResolvedMember {
@@ -1159,7 +1159,7 @@ public actor NativeSwiftType: Hashable {
         )
     }
 
-    private nonisolated func prepareMethod<Signature>(
+    private func prepareMethod<Signature>(
         _ member: ResolvedMember,
         receiver: SwiftReceiverPlan,
         consumesArguments: Bool
@@ -1174,7 +1174,7 @@ public actor NativeSwiftType: Hashable {
         )
     }
 
-    private nonisolated func prepareFunction<Signature>(
+    private func prepareFunction<Signature>(
         _ member: ResolvedMember,
         consumesArguments: Bool,
         classReceiver: Bool
@@ -1226,7 +1226,7 @@ func swiftTypeDeclarationName(
 }
 
 extension ABIRuntime {
-    nonisolated func swiftType(for objectType: AnyClass) throws -> NativeSwiftType {
+    func swiftType(for objectType: AnyClass) throws -> NativeSwiftType {
         let revision = swiftTypeCache.revision
         let (runtimeName, image) = try swiftTypeImage(for: objectType)
         let key = SwiftTypeCacheKey.metadata(ObjectIdentifier(objectType), image: image.identity)
@@ -1239,7 +1239,7 @@ extension ABIRuntime {
         return swiftTypeCache.insert(type, for: key, revision: revision)
     }
 
-    private nonisolated func swiftTypeImage(
+    private func swiftTypeImage(
         for objectType: AnyClass
     ) throws -> (String, NativeImage) {
         let runtimeName = try swiftFunctionTypeName(objectType)
@@ -1247,7 +1247,7 @@ extension ABIRuntime {
         return (runtimeName, image)
     }
 
-    private nonisolated func prepareSwiftType(
+    private func prepareSwiftType(
         for objectType: AnyClass,
         in image: NativeImage,
         suggestedName: String
@@ -1281,7 +1281,7 @@ extension ABIRuntime {
     ///   - loading: Whether an explicit target may be acquired and initialized.
     /// - Returns: A reusable type handle retaining its defining images.
     /// - Throws: A lookup error or unavailable/unsupported metadata.
-    public nonisolated func resolveAndWait(
+    public func resolveAndWait(
         _ request: NativeRequest<NativeSwiftTypeRequest>,
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
@@ -1324,7 +1324,7 @@ extension ABIRuntime {
     ///
     /// Image acquisition, search, and metadata discovery run on a worker. The
     /// scope, ownership and errors match synchronous resolution.
-    public nonisolated func resolve(
+    public func resolve(
         _ request: NativeRequest<NativeSwiftTypeRequest>,
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
@@ -1343,7 +1343,7 @@ extension ABIRuntime {
     ///   - image: The retained image to search.
     ///   - loading: Whether to ask dyld to acquire and initialize the image.
     /// - Throws: A lookup error or unavailable/unsupported metadata.
-    public nonisolated func resolveAndWait(
+    public func resolveAndWait(
         _ request: NativeRequest<NativeSwiftTypeRequest>,
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
@@ -1372,7 +1372,7 @@ extension ABIRuntime {
     ///
     /// This has the same specialization, representation, ownership and failure
     /// contract as synchronous resolution in that image.
-    public nonisolated func resolve(
+    public func resolve(
         _ request: NativeRequest<NativeSwiftTypeRequest>,
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
@@ -1382,7 +1382,7 @@ extension ABIRuntime {
         }
     }
 
-    private nonisolated func makeSwiftType(
+    private func makeSwiftType(
         named name: String,
         descriptor: ResolvedSymbol,
         representation: Any.Type?,
@@ -1412,7 +1412,7 @@ extension ABIRuntime {
         )
     }
 
-    private nonisolated func prepareSwiftType(
+    private func prepareSwiftType(
         named name: String,
         descriptor: ResolvedSymbol,
         representation: Any.Type?,
@@ -1440,7 +1440,7 @@ extension ABIRuntime {
 
 extension NativeSwiftType {
 
-    private nonisolated func validateGetterSignature(_ signature: Any.Type) throws {
+    private func validateGetterSignature(_ signature: Any.Type) throws {
         let description = try SwiftFunctionSignature(signature)
         guard description.parameters.isEmpty else {
             throw ABIResolutionError.signatureMismatch(

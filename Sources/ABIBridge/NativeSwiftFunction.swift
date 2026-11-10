@@ -419,7 +419,7 @@ extension ABIRuntime {
     // selects candidates and the requested types may adapt them. A label-only
     // name selects the candidates whose native signatures the requested
     // types are compatible with.
-    private nonisolated func prepareSwiftFunction<Signature>(
+    private func prepareSwiftFunction<Signature>(
         _ request: NativeSwiftFunctionRequest<Signature>,
         candidates: (
             _ declaration: NativeDeclaration, _ extensionsOnly: Bool, _ includingSharedCache: Bool
@@ -489,7 +489,7 @@ extension ABIRuntime {
     ///   ABI.
     /// - Throws: A resolution, unsupported representation, or call
     ///   preparation error.
-    public nonisolated func resolveAndWait<Signature>(
+    public func resolveAndWait<Signature>(
         _ request: NativeRequest<NativeSwiftFunctionRequest<Signature>>,
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
@@ -537,7 +537,7 @@ extension ABIRuntime {
     ///   ABI.
     /// - Throws: The same resolution, representation, and preparation errors
     ///   as synchronous resolution.
-    public nonisolated func resolve<Signature>(
+    public func resolve<Signature>(
         _ request: NativeRequest<NativeSwiftFunctionRequest<Signature>>,
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
@@ -557,7 +557,7 @@ extension ABIRuntime {
     ///   ABI.
     /// - Throws: A resolution, unsupported representation, or call
     ///   preparation error.
-    public nonisolated func resolveAndWait<Signature>(
+    public func resolveAndWait<Signature>(
         _ request: NativeRequest<NativeSwiftFunctionRequest<Signature>>,
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
@@ -565,7 +565,7 @@ extension ABIRuntime {
         try resolveSwiftFunction(request, in: [loading == .ifNeeded ? try image.opened() : image])
     }
 
-    private nonisolated func resolveSwiftFunction<Signature>(
+    private func resolveSwiftFunction<Signature>(
         _ request: NativeRequest<NativeSwiftFunctionRequest<Signature>>,
         in images: [NativeImage]
     ) throws -> NativeSwiftFunction<Signature> {
@@ -602,7 +602,7 @@ extension ABIRuntime {
     ///   ABI.
     /// - Throws: The same resolution, representation, and preparation errors
     ///   as synchronous resolution.
-    public nonisolated func resolve<Signature>(
+    public func resolve<Signature>(
         _ request: NativeRequest<NativeSwiftFunctionRequest<Signature>>,
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded

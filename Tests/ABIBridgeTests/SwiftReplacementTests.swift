@@ -95,7 +95,7 @@ final class CompiledSwiftReplacementFixture {
             .swift(.symbol("nominal type descriptor for " + type.name, kind: .data)),
             in: providerScope
         )
-        let metadata = unsafeBitCast(await type.metadata, to: UnsafeMutableRawPointer.self)
+        let metadata = unsafeBitCast(type.metadata, to: UnsafeMutableRawPointer.self)
         try unsafe descriptor.withUnsafeAddress { descriptor in
             // This layout is limited to the fixture's nongeneric root class,
             // with no superclass descriptor or stored properties.
