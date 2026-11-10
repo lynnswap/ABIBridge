@@ -91,7 +91,7 @@ let values = [
 let sum = try unsafe add.unsafeInvoke(with: values).read(as: Int32.self)
 ```
 
-The same form works with `.c(.function(..., signature: ...))`. Runtime signatures describe the C-compatible layouts explicitly; they do not infer a native ABI from a declaration name. See <doc:NativeValueAdapters> for custom value storage.
+The same form works with `.c(.function(..., signature: ...))`. Use `.function(linkerName:signature:)` or `.function(machOName:signature:)` to select an exact native spelling, as `as:` requests do. Runtime signatures describe the C-compatible layouts explicitly; they do not infer a native ABI from a declaration name. See <doc:NativeValueAdapters> for custom value storage.
 
 ## Call a variadic function
 
