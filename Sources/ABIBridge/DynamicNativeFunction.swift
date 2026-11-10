@@ -81,6 +81,7 @@ public struct DynamicNativeFunction: Sendable {
 /// validate native layouts; resolution prepares the call and retains its image.
 public struct DynamicNativeFunctionRequest: Sendable {
     let name: String
+    let nameForm: NativeSymbolNameForm
     var language: NativeLanguage
     let signature: NativeSignature
 
@@ -94,7 +95,28 @@ public struct DynamicNativeFunctionRequest: Sendable {
         _ name: String,
         signature: NativeSignature
     ) -> Self {
-        Self(name: name, language: .c, signature: signature)
+        Self(name: name, nameForm: .source, language: .c, signature: signature)
+    }
+
+    /// Describes a function by its exact linker spelling, without normalization.
+    /// Mach-O's leading underscore is added exactly once.
+    public static func function(
+        linkerName: String,
+        signature: NativeSignature
+    ) -> Self {
+        Self(name: linkerName, nameForm: .linker, language: .c, signature: signature)
+    }
+
+    /// Describes a function by its literal Mach-O symbol-table spelling.
+    public static func function(
+        machOName: String,
+        signature: NativeSignature
+    ) -> Self {
+        Self(name: machOName, nameForm: .machO, language: .c, signature: signature)
+    }
+
+    var nativeDeclaration: NativeDeclaration {
+        .init(name: name, language: language, kind: .function, nameForm: nameForm)
     }
 }
 
@@ -140,7 +162,7 @@ extension ABIRuntime {
         let declaration = request.declaration
         return try DynamicNativeFunction(
             symbol: resolver.resolve(
-                .init(name: declaration.name, language: declaration.language),
+                declaration.nativeDeclaration,
                 in: scope,
                 loading: loading
             ),
