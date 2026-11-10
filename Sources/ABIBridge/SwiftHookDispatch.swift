@@ -78,7 +78,7 @@ private final class SwiftHookExecution: @unchecked Sendable {
         let arguments = try signature.receivingForwardedArguments(arguments)
         let handler = handlers[count - 1]
         if handler.requiresMainActor && !Thread.isMainThread {
-            handler.failure(NativeSwiftHookInvocationError.wrongThread)
+            handler.failure(NativeHookInvocationError.wrongThread)
             return try invoke(count - 1, arguments: arguments, recovery: recovery)
         }
         let recovery = SwiftHookRecoveryScope(
@@ -245,7 +245,7 @@ final class SwiftHookDispatcher: Sendable {
         do {
             for (signature, handler) in nodes where try signature.matchesIncoming(call) {
                 if handler.requiresMainActor && !Thread.isMainThread {
-                    handler.failure(NativeSwiftHookInvocationError.wrongThread)
+                    handler.failure(NativeHookInvocationError.wrongThread)
                     continue
                 }
                 selected = signature; snapshot.append(handler)

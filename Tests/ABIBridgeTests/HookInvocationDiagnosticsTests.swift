@@ -73,7 +73,7 @@ struct HookInvocationDiagnosticsTests {
             call.description.contains("DiagnosticRequest")
                 && call.description.contains("Swift.Int32")
         )
-        #expect(throws: NativeObjCMethodHookError.expiredInvocation) { try call.proceed(request) }
+        #expect(throws: NativeHookInvocationError.expiredInvocation) { try call.proceed(request) }
         let copied = DispatchQueue.global().sync { saved.get()?.description }
         #expect(copied == description.get())
     }

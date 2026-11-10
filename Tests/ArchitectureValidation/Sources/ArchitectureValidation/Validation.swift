@@ -197,7 +197,7 @@ private final class ArchitectureHookErrors: @unchecked Sendable {
             } catch let error as NativeVirtualHookInstallationError {
                 let mutation = error.registration.slot?.mutation
                 guard !nativePublished, let mutation, !mutation.didWrite,
-                    mutation.status == ABIPointerSlotProtectFailed,
+                    mutation.outcome == .protectFailed,
                     mutation.systemErrorCode == KERN_NOT_SUPPORTED,
                     mutation.regionFlags & UInt32(VM_REGION_FLAG_TPRO_ENABLED) != 0
                 else { throw error }

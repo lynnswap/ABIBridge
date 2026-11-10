@@ -1007,10 +1007,10 @@ struct SwiftClassHookTests {
         #expect(try unsafe oracle.unsafeInvoke(object!, 40) == 43)
         #expect(proceeded.withLock { $0 } == 1 && failures.withLock { $0 } == ["afterProceed"])
         let escaped = try #require(saved.value)
-        #expect(throws: NativeSwiftHookInvocationError.expiredInvocation) {
+        #expect(throws: NativeHookInvocationError.expiredInvocation) {
             try escaped.receiver(as: AnyObject.self)
         }
-        #expect(throws: NativeSwiftHookInvocationError.expiredInvocation) { try escaped.proceed(1) }
+        #expect(throws: NativeHookInvocationError.expiredInvocation) { try escaped.proceed(1) }
         object = nil
         #expect(observed == nil)
         #expect(escaped.description.contains("scalar"))

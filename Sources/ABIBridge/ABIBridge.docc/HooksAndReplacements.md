@@ -12,6 +12,12 @@ Choose the dispatch path you need to intercept: imported function references, Ob
 
 - <doc:HookArguments>
 
+### Shared outcomes
+
+- ``NativeHookInvocationError``
+- ``NativeHookSlotStatus``
+- ``NativePointerSlotMutation``
+
 ### Imported C and C++ functions
 
 - <doc:ImportedFunctionHooks>
@@ -20,7 +26,6 @@ Choose the dispatch path you need to intercept: imported function references, Ob
 - ``NativeImportedImageUpdate``
 - ``NativeImportedFunctionInvocation``
 - ``NativeImportedHookInstallationError``
-- ``NativeImportedInvocationError``
 
 ### Imported Swift functions
 
@@ -28,7 +33,6 @@ Choose the dispatch path you need to intercept: imported function references, Ob
 - ``NativeSwiftImportedFunctionHook``
 - ``NativeSwiftFunctionInvocation``
 - ``NativeSwiftHookInstallationError``
-- ``NativeSwiftHookInvocationError``
 
 ### Objective-C methods and initializers
 
@@ -54,7 +58,6 @@ Choose the dispatch path you need to intercept: imported function references, Ob
 - ``NativeVirtualHook``
 - ``NativeVirtualInvocation``
 - ``NativeVirtualHookInstallationError``
-- ``NativeVirtualInvocationError``
 
 ### Compiled Swift replacements
 
@@ -64,7 +67,6 @@ Choose the dispatch path you need to intercept: imported function references, Ob
 - ``NativeSwiftVirtualReplacement``
 - ``NativeSwiftFunctionImplementation``
 - ``NativeSwiftMethodImplementation``
-- ``NativeSwiftReplacementMutation``
 - ``NativeSwiftReplacementError``
 
 ## See Also

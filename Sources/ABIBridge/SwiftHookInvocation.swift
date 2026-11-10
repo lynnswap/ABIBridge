@@ -5,16 +5,6 @@ import Foundation
 import Darwin
 import ObjectiveC
 
-/// A Swift hook continuation was used outside its active invocation.
-public enum NativeSwiftHookInvocationError: Error, Sendable {
-    /// The callback that provided the continuation has returned.
-    case expiredInvocation
-    /// A synchronous continuation or MainActor callback entered from another thread.
-    case wrongThread
-    /// An asynchronous continuation was used by another Swift task.
-    case wrongTask
-}
-
 // Only the scoped operation owns the execution snapshot. Expiry drops it even
 // when a consumer saves the public invocation for later diagnostics.
 final class SwiftHookFrame {
@@ -51,15 +41,15 @@ final class SwiftHookFrame {
     private func current() throws -> Operations {
         lock.lock()
         guard let operations else {
-            lock.unlock(); throw NativeSwiftHookInvocationError.expiredInvocation
+            lock.unlock(); throw NativeHookInvocationError.expiredInvocation
         }
         if operations.invokeAsync != nil {
             guard task == ABISwiftCurrentTask() else {
-                lock.unlock(); throw NativeSwiftHookInvocationError.wrongTask
+                lock.unlock(); throw NativeHookInvocationError.wrongTask
             }
         } else {
             guard pthread_equal(thread, pthread_self()) != 0 else {
-                lock.unlock(); throw NativeSwiftHookInvocationError.wrongThread
+                lock.unlock(); throw NativeHookInvocationError.wrongThread
             }
         }
         lock.unlock()

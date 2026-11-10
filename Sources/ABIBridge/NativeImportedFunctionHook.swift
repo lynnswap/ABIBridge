@@ -3,9 +3,6 @@ import ABIBridgeCore.Backend
 import Foundation
 import Darwin
 
-/// A scoped imported-function continuation was used after return or on another thread.
-public enum NativeImportedInvocationError: Error, Sendable { case expiredInvocation, wrongThread }
-
 /// A continuation valid only during this callback and on its incoming thread. `proceed` calls the next registered callback and then this slot's predecessor; it does not call the imported symbol again. Escaping this value does not keep its invocation alive. Native arguments and pointer results remain borrowed.
 public struct NativeImportedFunctionInvocation<Result, each Argument>: CustomStringConvertible {
     fileprivate let frame: FunctionCallbackFrame
@@ -25,44 +22,26 @@ public struct NativeImportedFunctionInvocation<Result, each Argument>: CustomStr
     /// Calls the next implementation with the supplied arguments. A later callback error preserves the most recently completed continuation result.
     public func proceed(_ values: repeat each Argument) throws -> Result {
         do { return try frame.use { try callSignature.proceed($0,repeat each values) } }
-        catch FunctionCallbackFrameError.expiredInvocation { throw NativeImportedInvocationError.expiredInvocation }
-        catch FunctionCallbackFrameError.wrongThread { throw NativeImportedInvocationError.wrongThread }
+        catch FunctionCallbackFrameError.expiredInvocation { throw NativeHookInvocationError.expiredInvocation }
+        catch FunctionCallbackFrameError.wrongThread { throw NativeHookInvocationError.wrongThread }
     }
 }
 
 /// Owns an imported-function registration across the selected loaded images. Later registrations wrap earlier ones. In-flight calls retain snapshots; invalidation affects future calls and never overwrites another writer. Published entries and their image/code leases remain process-lived, including empty pass-through entries. Callback captures are released independently.
 public final class NativeImportedFunctionHook: @unchecked Sendable {
-    /// Logical registration state and a snapshot of the slot's current contents.
-    public enum Status: Sendable { case invalidated, active, displaced, unreadable }
-    /// A copied publication or physical rollback result.
-    public struct Mutation: Sendable {
-        /// Native mutation status; zero is complete, other values identify failure.
-        public let status: Int32
-        /// Whether this operation published its pointer, including partial failure.
-        public let didWrite: Bool
-        /// Original native Mach failure code, or zero.
-        public let systemErrorCode: Int32
-        /// Failure restoring current and maximum protections, respectively.
-        public let restoreProtectionError: Int32
-        public let restoreMaximumError: Int32
-        init(_ value: ABIPointerSlotResult) {
-            status=value.status; didWrite=value.didWrite; systemErrorCode=value.systemErrorCode
-            restoreProtectionError=value.restoreProtectionError; restoreMaximumError=value.restoreMaximumError
-        }
-    }
     /// A slot's copied state and installation/rollback outcomes.
     public struct Slot: Sendable {
         public let address: UInt
-        public let status: Status
-        public let mutation: Mutation
-        public let rollback: Mutation
+        public let status: NativeHookSlotStatus
+        public let mutation: NativePointerSlotMutation
+        public let rollback: NativePointerSlotMutation
     }
     let handle: OpaquePointer
     init(_ handle: OpaquePointer) { self.handle=handle }
     /// Snapshots remain available after invalidation or external displacement.
     public var slots: [Slot] {
         (0..<ABIImportedHookGetSlotCount(handle)).map { index in
-            let status: Status
+            let status: NativeHookSlotStatus
             switch ABIImportedHookGetSlotStatus(handle, index) {
             case 0: status = .invalidated;
             case 1: status = .active;
@@ -72,8 +51,8 @@ public final class NativeImportedFunctionHook: @unchecked Sendable {
             return Slot(
                 address: ABIImportedHookGetSlot(handle, index),
                 status: status,
-                mutation: Mutation(ABIImportedHookGetMutation(handle, index)),
-                rollback: Mutation(ABIImportedHookGetRollback(handle, index))
+                mutation: NativePointerSlotMutation(ABIImportedHookGetMutation(handle, index)),
+                rollback: NativePointerSlotMutation(ABIImportedHookGetRollback(handle, index))
             )
         }
     }

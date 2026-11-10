@@ -38,9 +38,9 @@ final class SwiftHookGroup: @unchecked Sendable {
 
 final class SwiftHookSlotRecord: Sendable {
     struct Outcomes: Sendable {
-        var mutation: NativeSwiftReplacementMutation?
-        var rollback: NativeSwiftReplacementMutation?
-        var protectionRecovery: NativeSwiftReplacementMutation?
+        var mutation: NativePointerSlotMutation?
+        var rollback: NativePointerSlotMutation?
+        var protectionRecovery: NativePointerSlotMutation?
     }
     let group: SwiftHookGroup
     let outcomes = Mutex(Outcomes())
@@ -56,29 +56,18 @@ final class SwiftHookSlotRecord: Sendable {
 ///
 /// Later registrations wrap earlier ones. Published dispatcher code and its importing/provider image leases remain process-lived, including when empty; copied native pointers can still call the captured predecessor.
 public final class NativeSwiftImportedFunctionHook: @unchecked Sendable {
-    /// Logical registration state and current pointer observation.
-    public enum Status: Sendable {
-        /// This callback is inactive, regardless of the physical pointer contents.
-        case invalidated
-        /// The callback is active and the observed pointer selects its dispatcher.
-        case active
-        /// Another writer changed the pointer while this callback remains registered.
-        case displaced
-        /// The registered pointer could not be read for this observation.
-        case unreadable
-    }
     /// One selected reference and this registration's physical operation outcomes.
     public struct Slot: Sendable {
         /// Address of the importing reference, not its current code target.
         public let address: UInt
         /// Logical state combined with a current, non-atomic pointer observation.
-        public let status: Status
+        public let status: NativeHookSlotStatus
         /// Nil when this registration reused an already installed dispatcher.
-        public let mutation: NativeSwiftReplacementMutation?
+        public let mutation: NativePointerSlotMutation?
         /// Latest physical rollback attempted after this registration failed.
-        public let rollback: NativeSwiftReplacementMutation?
+        public let rollback: NativePointerSlotMutation?
         /// Latest attempt to repair page protections left by a failed operation.
-        public let protectionRecovery: NativeSwiftReplacementMutation?
+        public let protectionRecovery: NativePointerSlotMutation?
     }
     let node: SwiftHookNode
     let records: [SwiftHookSlotRecord]
@@ -87,7 +76,7 @@ public final class NativeSwiftImportedFunctionHook: @unchecked Sendable {
     public var slots: [Slot] {
         let active = node.snapshot() != nil
         return records.map { record in
-            let status: Status
+            let status: NativeHookSlotStatus
             if !active { status = .invalidated }
             else if let bits = record.group.bits() { status = bits == record.group.storage.snapshots()[0].after ? .active : .displaced }
             else { status = .unreadable }

@@ -111,7 +111,7 @@ The callback applies to every receiver reaching that dispatcher. It is not filte
 
 ## Preserve ownership and isolation
 
-Receiver reads and continuations are valid while their callback is active. Synchronous access stays on the entering thread; asynchronous access stays on the same Swift task. Expired, cross-thread, or cross-task access throws `NativeSwiftHookInvocationError`. A copied class reference or managed value snapshot has its normal Swift ownership and can outlive the callback; a pointer adapter keeps its declared pointee-lifetime obligations. Saving the invocation itself does not retain the receiver instance or callback captures after return.
+Receiver reads and continuations are valid while their callback is active. Synchronous access stays on the entering thread; asynchronous access stays on the same Swift task. Expired, cross-thread, or cross-task access throws `NativeHookInvocationError`. A copied class reference or managed value snapshot has its normal Swift ownership and can outlive the callback; a pointer adapter keeps its declared pointee-lifetime obligations. Saving the invocation itself does not retain the receiver instance or callback captures after return.
 
 Getter results and setter arguments keep their ownership conventions. Resolve a setter with a `setter` request to establish its consumed explicit argument independently of receiver ownership.
 

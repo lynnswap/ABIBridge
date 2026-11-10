@@ -20,10 +20,10 @@ public final class NativeSwiftImportedReplacement<Implementation> {
         public let original: Implementation?
         public let status: Status
         /// Last installation and subsequent restoration/rollback results.
-        public let mutation: NativeSwiftReplacementMutation?
-        public let restoration: NativeSwiftReplacementMutation?
+        public let mutation: NativePointerSlotMutation?
+        public let restoration: NativePointerSlotMutation?
         /// Latest attempt to repair protections left by a partial pointer operation.
-        public let protectionRecovery: NativeSwiftReplacementMutation?
+        public let protectionRecovery: NativePointerSlotMutation?
     }
     private let storage: SwiftReplacementStorage
     private let originals: [Implementation?]
