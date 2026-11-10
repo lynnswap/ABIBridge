@@ -43,7 +43,7 @@ func validateAsyncFunctionHooks(runtime: ABIRuntime, provider: ImageSelector, ca
         in: caller
     )
     _ = try unsafe await integer.unsafeInvoke(1)
-    let hook = try unsafe await function.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call, value in
+    let hook = try unsafe await function.hookImportedCalls(in: caller, onFailure: failure) { call, value in
         await Task.yield()
         return try await call.proceed(value + 10) + 100
     }
@@ -73,7 +73,7 @@ func validateAsyncFunctionHooks(runtime: ABIRuntime, provider: ImageSelector, ca
         in: caller
     )
     _ = try unsafe await throwingCaller.unsafeInvoke(1)
-    let throwingHook = try unsafe await throwing.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call, value in
+    let throwingHook = try unsafe await throwing.hookImportedCalls(in: caller, onFailure: failure) { call, value in
         if value == 99 { throw NSError(domain: "callback-async-hook", code: 99) }
         let result = try await call.proceed(value)
         if value == 98 { throw AsyncHookValidationFailure.callback }
@@ -111,7 +111,7 @@ func validateAsyncFunctionHooks(runtime: ABIRuntime, provider: ImageSelector, ca
         in: caller
     )
     _ = try unsafe await actorCaller.unsafeInvoke(1)
-    let actorHook = try unsafe await actor.hookMainActorImportedCalls(in: caller, using: runtime, onFailure: failure) { call, value in
+    let actorHook = try unsafe await actor.hookMainActorImportedCalls(in: caller, onFailure: failure) { call, value in
         MainActor.preconditionIsolated()
         let result = try await call.proceed(value + 10)
         MainActor.preconditionIsolated()

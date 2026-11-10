@@ -30,7 +30,7 @@ private func prepareSwiftImportedHandler<Signature, Result, each Argument>(
     }
 }
 
-extension ABIRuntime {
+extension SymbolResolver {
     /// The importing references to the code that calls of `entry` run.
     func swiftHookSelection(
         entry: SwiftEntry,
@@ -39,7 +39,7 @@ extension ABIRuntime {
     ) async throws -> ImportedFunctionSelection {
         try await NativePreparation.run {
             try ImportedFunctionSelection(
-                resolver: self.resolver,
+                resolver: self,
                 declaration: entry.declaration,
                 symbols: entry.importedSymbols,
                 importer: importer,
@@ -65,7 +65,6 @@ extension NativeSwiftFunction {
     /// - Parameters:
     ///   - importer: Loaded images containing the references to change.
     ///   - provider: Optional filter on the recorded dependency, including reexports.
-    ///   - runtime: Runtime whose import indexes are reused.
     ///   - owner: Keeps generated predecessor code outside loader images alive. Published code can retain this owner for process lifetime.
     ///   - onFailure: A thread-safe observer of callback and conversion failures.
     ///   - body: A synchronous callback with typed arguments and a scoped `proceed` continuation; it may replace arguments and transform results.
@@ -76,7 +75,6 @@ extension NativeSwiftFunction {
     public nonisolated(nonsending) func hookImportedCalls<Result, Failure: Error, each Argument>(
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body:
@@ -87,7 +85,6 @@ extension NativeSwiftFunction {
         try await _hookImportedCalls(
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner,
             onFailure: onFailure,
             body: body
@@ -99,7 +96,6 @@ extension NativeSwiftFunction {
     public nonisolated(nonsending) func hookImportedCalls<Result, Failure: Error, each Argument>(
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body:
@@ -110,7 +106,6 @@ extension NativeSwiftFunction {
         try await _hookImportedCalls(
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner,
             onFailure: onFailure,
             body: body
@@ -125,7 +120,6 @@ extension NativeSwiftFunction {
     public func hookMainActorImportedCalls<Result, Failure: Error, each Argument>(
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body:
@@ -137,7 +131,6 @@ extension NativeSwiftFunction {
         try await _hookMainActorImportedCalls(
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner,
             onFailure: onFailure,
             body: body
@@ -149,7 +142,6 @@ extension NativeSwiftFunction {
     public func hookMainActorImportedCalls<Result, Failure: Error, each Argument>(
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body:
@@ -161,7 +153,6 @@ extension NativeSwiftFunction {
         try await _hookMainActorImportedCalls(
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner,
             onFailure: onFailure,
             body: body
@@ -200,11 +191,10 @@ extension NativeSwiftFunction {
     private nonisolated(nonsending) func installImportedHook(
         in importer: ImageSelector,
         from provider: ImageSelector?,
-        using runtime: ABIRuntime,
         retaining owner: (any Sendable)?,
         prepared: (signature: SwiftHookSignature, handler: SwiftHookHandler)
     ) async throws -> NativeSwiftImportedFunctionHook {
-        let selection = try await runtime.swiftHookSelection(
+        let selection = try await resolver.swiftHookSelection(
             entry: entry,
             importer: importer,
             provider: provider
@@ -220,7 +210,6 @@ extension NativeSwiftFunction {
     @usableFromInline nonisolated(nonsending) func _hookImportedCalls<Result, each Argument>(
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body:
@@ -235,7 +224,6 @@ extension NativeSwiftFunction {
         return try await installImportedHook(
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner,
             prepared: prepared
         )
@@ -244,7 +232,6 @@ extension NativeSwiftFunction {
     @usableFromInline @MainActor func _hookMainActorImportedCalls<Result, each Argument>(
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body:
@@ -264,7 +251,6 @@ extension NativeSwiftFunction {
         return try await installImportedHook(
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner,
             prepared: prepared
         )
@@ -279,7 +265,6 @@ extension NativeSwiftFunction {
     public nonisolated(nonsending) func hookImportedCalls<Result, Failure: Error, each Argument>(
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body:
@@ -290,7 +275,6 @@ extension NativeSwiftFunction {
         try await _hookImportedCalls(
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner,
             onFailure: onFailure,
             body: body
@@ -302,7 +286,6 @@ extension NativeSwiftFunction {
     public nonisolated(nonsending) func hookImportedCalls<Result, Failure: Error, each Argument>(
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body:
@@ -313,7 +296,6 @@ extension NativeSwiftFunction {
         try await _hookImportedCalls(
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner,
             onFailure: onFailure,
             body: body
@@ -325,7 +307,6 @@ extension NativeSwiftFunction {
     public nonisolated(nonsending) func hookImportedCalls<Result, Failure: Error, each Argument>(
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body:
@@ -336,7 +317,6 @@ extension NativeSwiftFunction {
         try await _hookImportedCalls(
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner,
             onFailure: onFailure,
             body: body
@@ -348,7 +328,6 @@ extension NativeSwiftFunction {
     public nonisolated(nonsending) func hookImportedCalls<Result, Failure: Error, each Argument>(
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body:
@@ -360,7 +339,6 @@ extension NativeSwiftFunction {
         try await _hookImportedCalls(
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner,
             onFailure: onFailure,
             body: body
@@ -370,7 +348,6 @@ extension NativeSwiftFunction {
     @usableFromInline nonisolated(nonsending) func _hookImportedCalls<Result, each Argument>(
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body:
@@ -384,7 +361,6 @@ extension NativeSwiftFunction {
         return try await installImportedHook(
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner,
             prepared: prepared
         )
@@ -395,7 +371,6 @@ extension NativeSwiftFunction {
     public func hookMainActorImportedCalls<Result, Failure: Error, each Argument>(
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body:
@@ -407,7 +382,6 @@ extension NativeSwiftFunction {
         try await _hookMainActorImportedCalls(
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner,
             onFailure: onFailure,
             body: body
@@ -419,7 +393,6 @@ extension NativeSwiftFunction {
     public func hookMainActorImportedCalls<Result, Failure: Error, each Argument>(
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body:
@@ -431,7 +404,6 @@ extension NativeSwiftFunction {
         try await _hookMainActorImportedCalls(
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner,
             onFailure: onFailure,
             body: body
@@ -443,7 +415,6 @@ extension NativeSwiftFunction {
     public func hookMainActorImportedCalls<Result, Failure: Error, each Argument>(
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body:
@@ -455,7 +426,6 @@ extension NativeSwiftFunction {
         try await _hookMainActorImportedCalls(
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner,
             onFailure: onFailure,
             body: body
@@ -467,7 +437,6 @@ extension NativeSwiftFunction {
     public func hookMainActorImportedCalls<Result, Failure: Error, each Argument>(
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body:
@@ -480,7 +449,6 @@ extension NativeSwiftFunction {
         try await _hookMainActorImportedCalls(
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner,
             onFailure: onFailure,
             body: body
@@ -490,7 +458,6 @@ extension NativeSwiftFunction {
     @usableFromInline @MainActor func _hookMainActorImportedCalls<Result, each Argument>(
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil,
         onFailure: @escaping @Sendable (any Error) -> Void,
         body:
@@ -512,7 +479,6 @@ extension NativeSwiftFunction {
         return try await installImportedHook(
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner,
             prepared: prepared
         )

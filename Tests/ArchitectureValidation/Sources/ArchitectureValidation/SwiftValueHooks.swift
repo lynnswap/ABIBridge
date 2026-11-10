@@ -38,7 +38,7 @@ private enum ValueHookProbeFailure: Error { case afterProceed }
         ),
         in: caller
     )
-    let addHook = try await unsafe adding.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call, value in
+    let addHook = try await unsafe adding.hookImportedCalls(in: caller, onFailure: failure) { call, value in
         guard try call.receiver(as: Int64.self) == 40 else { throw ArchitectureValidationFailure(description: "Register self snapshot") }
         return try call.proceed(value + 1) + 100
     }
@@ -65,7 +65,7 @@ private enum ValueHookProbeFailure: Error { case afterProceed }
         ),
         in: caller
     )
-    let incrementHook = try await unsafe increment.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call, delta in
+    let incrementHook = try await unsafe increment.hookImportedCalls(in: caller, onFailure: failure) { call, delta in
         let before = try call.receiver(as: Int64.self)
         let result = try call.proceed(delta + 1)
         guard try call.receiver(as: Int64.self) == before + delta + 1 else { throw ArchitectureValidationFailure(description: "Mutating self snapshot") }
@@ -102,7 +102,7 @@ private enum ValueHookProbeFailure: Error { case afterProceed }
             ),
             in: caller
         )
-        let hook = try await unsafe method.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call, value in
+        let hook = try await unsafe method.hookImportedCalls(in: caller, onFailure: failure) { call, value in
             let receiver = try call.receiver(as: VirtualPayload.self)
             guard receiver.a == 40 && receiver.e == 44 else { throw ArchitectureValidationFailure(description: "Indirect self snapshot") }
             _ = try call.proceed(value + 1)
@@ -129,7 +129,7 @@ private enum ValueHookProbeFailure: Error { case afterProceed }
         ),
         in: caller
     )
-    let consumed = try await unsafe consume.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call in
+    let consumed = try await unsafe consume.hookImportedCalls(in: caller, onFailure: failure) { call in
         let value = try call.receiver(as: String.self)
         if value == "skip" { return "skipped" }
         _ = try call.proceed()
@@ -167,7 +167,7 @@ private enum ValueHookProbeFailure: Error { case afterProceed }
         ),
         in: caller
     )
-    let appendHook = try await unsafe append.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call, suffix in
+    let appendHook = try await unsafe append.hookImportedCalls(in: caller, onFailure: failure) { call, suffix in
         let before = try call.receiver(as: String.self)
         let result = try call.proceed(suffix + " edited")
         guard try call.receiver(as: String.self) == before + suffix + " edited" else { throw ArchitectureValidationFailure(description: "String writeback snapshot") }
@@ -198,7 +198,7 @@ private enum ValueHookProbeFailure: Error { case afterProceed }
         ),
         in: caller
     )
-    let stacked = try await unsafe stack.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call,a,b,c,d,e,f,g,h,i,j,k,l in
+    let stacked = try await unsafe stack.hookImportedCalls(in: caller, onFailure: failure) { call,a,b,c,d,e,f,g,h,i,j,k,l in
         guard try call.receiver(as: Int64.self) == 40 else { throw ArchitectureValidationFailure(description: "Stack self snapshot") }
         return try call.proceed(a+1,b,c,d,e,f,g,h,i,j,k,l+100)
     }

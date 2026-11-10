@@ -265,8 +265,7 @@ struct SwiftImportedReplacementTests {
         )
         let plan = try await unsafe target.prepareImportedReplacement(
             with: replacement,
-            in: fixture.callerScope,
-            using: runtime
+            in: fixture.callerScope
         )
         #expect(plan.slots.count == 1 && plan.slots[0].status == .prepared)
         let original = try #require(plan.slots[0].original)
@@ -556,8 +555,7 @@ struct SwiftImportedReplacementTests {
             generation = replacement.symbol.image.identity.loadGeneration
             let plan = try await unsafe target.prepareImportedReplacement(
                 with: replacement,
-                in: fixture.callerScope,
-                using: runtime
+                in: fixture.callerScope
             )
             slot = plan.slots[0].address
             before = UnsafeRawPointer(bitPattern: slot)!.load(as: UInt.self)

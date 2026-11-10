@@ -76,7 +76,7 @@ import Synchronization
         ),
         in: caller
     )
-    let imported = try await unsafe direct.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call, value in
+    let imported = try await unsafe direct.hookImportedCalls(in: caller, onFailure: failure) { call, value in
         guard ObjectIdentifier(try call.receiver(as: AnyObject.self)) == identity else {
             throw ArchitectureValidationFailure(description: "Imported receiver identity")
         }
@@ -168,7 +168,7 @@ import Synchronization
     )
     let virtualChild = try await unsafe childText.hookVirtualCalls(onFailure: failure) { call, value in try call.proceed(value + "V") + "v" }
     defer { virtualChild.invalidate() }
-    let importedChild = try await unsafe childText.hookImportedCalls(in: caller, using: runtime, onFailure: failure) { call, value in try call.proceed(value + "I") + "i" }
+    let importedChild = try await unsafe childText.hookImportedCalls(in: caller, onFailure: failure) { call, value in try call.proceed(value + "I") + "i" }
     defer { importedChild.invalidate() }
     try check(importedChild.slots.contains { $0.address == virtualChild.address && $0.mutation == nil },
         "Import and class metadata selection share the same authenticated inherited entry")

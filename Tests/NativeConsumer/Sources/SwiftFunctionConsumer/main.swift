@@ -67,7 +67,6 @@ func validateHooks(providerPath: String, callerPath: String) async throws {
     let failure: @Sendable (any Error) -> Void = { _ in failures.withLock { $0 += 1 } }
     let intHook = try unsafe await integer.hookImportedCalls(
         in: importer,
-        using: runtime,
         onFailure: failure
     ) {
         (call: NativeSwiftFunctionInvocation<(Int64) -> Int64>, value) in
@@ -76,7 +75,6 @@ func validateHooks(providerPath: String, callerPath: String) async throws {
     defer { intHook.invalidate() }
     let textHook = try unsafe await text.hookImportedCalls(
         in: importer,
-        using: runtime,
         onFailure: failure
     ) {
         (call: NativeSwiftFunctionInvocation<(String) -> String>, value) in
@@ -110,7 +108,6 @@ func validateHooks(providerPath: String, callerPath: String) async throws {
     check(try unsafe throwingCaller.unsafeInvoke(1) == 2)
     let errorHook = try unsafe await throwing.hookImportedCalls(
         in: importer,
-        using: runtime,
         onFailure: failure
     ) {
         (call: NativeSwiftFunctionInvocation<(Int64) throws(NSError) -> Int64>, value) in
@@ -180,7 +177,6 @@ func validateAsyncHooks(providerPath: String, callerPath: String) async throws {
     check(try unsafe await integerCaller.unsafeInvoke(1) == 1)
     let integerHook = try unsafe await integer.hookImportedCalls(
         in: importer,
-        using: runtime,
         onFailure: failure
     ) {
         (call: NativeSwiftFunctionInvocation<Echo>, value) in
@@ -214,7 +210,6 @@ func validateAsyncHooks(providerPath: String, callerPath: String) async throws {
     _ = try unsafe await throwingCaller.unsafeInvoke(1)
     let errorHook = try unsafe await throwing.hookImportedCalls(
         in: importer,
-        using: runtime,
         onFailure: failure
     ) { call, value in
         let result = try await call.proceed(value)

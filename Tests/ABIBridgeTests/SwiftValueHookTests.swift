@@ -506,7 +506,6 @@ struct SwiftValueHookTests {
         #expect(try unsafe oracle.unsafeInvoke(1) == [1, 2, 3, 4, 5, 6, 7])
         let hook = try unsafe await function.hookImportedCalls(
             in: fixture.callerScope,
-            using: fixture.runtime,
             onFailure: { Issue.record($0) }
         ) { call, seed in
             let (a, b, c, d, e, f, g) = try call.proceed(seed + 100)

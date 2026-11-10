@@ -1142,7 +1142,7 @@ let ticketCounts = try await runtime.resolve(
     in: providerScope
 )
 private let hookState = State()
-let runtimeHook = try unsafe await ticketMove.hookImportedCalls(in: callerScope, using: runtime,
+let runtimeHook = try unsafe await ticketMove.hookImportedCalls(in: callerScope,
     onFailure: { hookState.error = $0 }) { call, value in
         let result = try call.proceed(value)
         hookState.owned = result

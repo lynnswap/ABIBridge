@@ -70,7 +70,7 @@ public final class NativeSwiftImportedReplacement<Implementation> {
 
 extension NativeSwiftImportedReplacement: @unchecked Sendable where Implementation: Sendable {}
 
-extension ABIRuntime {
+extension SymbolResolver {
     /// Captures the importing references to the code that calls of `target`
     /// run, to publish `replacement`'s code in their place.
     func prepareSwiftImportReplacementAndWait(
@@ -81,7 +81,7 @@ extension ABIRuntime {
         owner: (any Sendable)?
     ) throws -> SwiftReplacementStorage {
         let selection = try ImportedFunctionSelection(
-            resolver: resolver,
+            resolver: self,
             declaration: target.declaration,
             symbols: target.importedSymbols,
             importer: importer,
@@ -110,7 +110,6 @@ extension NativeSwiftFunction {
     ///   - replacement: Compiled code, not a capturing Swift closure.
     ///   - importer: Explicit scope of images containing references to change.
     ///   - provider: Optional filter on the dependency recorded in each binding.
-    ///   - runtime: Runtime whose import indexes are reused.
     ///   - owner: Additional lifetime owner for previously generated code outside
     ///     loader images. Keep such code alive yourself if no owner is supplied.
     /// - Returns: A plan whose typed originals are available before publication.
@@ -128,7 +127,6 @@ extension NativeSwiftFunction {
         >,
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil
     ) async throws -> NativeSwiftImportedReplacement<NativeSwiftFunctionImplementation<Signature>>
     where Signature == (repeat each Argument) throws(Failure) -> Result {
@@ -136,7 +134,6 @@ extension NativeSwiftFunction {
             with: replacement,
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner
         )
     }
@@ -157,7 +154,6 @@ extension NativeSwiftFunction {
         >,
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil
     ) throws -> NativeSwiftImportedReplacement<NativeSwiftFunctionImplementation<Signature>>
     where Signature == (repeat each Argument) throws(Failure) -> Result {
@@ -165,7 +161,6 @@ extension NativeSwiftFunction {
             with: replacement,
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner
         )
     }
@@ -183,7 +178,6 @@ extension NativeSwiftFunction {
         >,
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil
     ) async throws -> NativeSwiftImportedReplacement<NativeSwiftFunctionImplementation<Signature>>
     where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
@@ -191,7 +185,6 @@ extension NativeSwiftFunction {
             with: replacement,
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner
         )
     }
@@ -209,7 +202,6 @@ extension NativeSwiftFunction {
         >,
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil
     ) throws -> NativeSwiftImportedReplacement<NativeSwiftFunctionImplementation<Signature>>
     where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
@@ -217,7 +209,6 @@ extension NativeSwiftFunction {
             with: replacement,
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner
         )
     }
@@ -235,7 +226,6 @@ extension NativeSwiftFunction {
         >,
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil
     ) async throws -> NativeSwiftImportedReplacement<NativeSwiftFunctionImplementation<Signature>>
     where Signature == (repeat each Argument) throws(Failure) -> Result {
@@ -243,7 +233,6 @@ extension NativeSwiftFunction {
             with: replacement,
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner
         )
     }
@@ -261,7 +250,6 @@ extension NativeSwiftFunction {
         >,
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil
     ) throws -> NativeSwiftImportedReplacement<NativeSwiftFunctionImplementation<Signature>>
     where Signature == (repeat each Argument) throws(Failure) -> Result {
@@ -269,7 +257,6 @@ extension NativeSwiftFunction {
             with: replacement,
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner
         )
     }
@@ -287,7 +274,6 @@ extension NativeSwiftFunction {
         >,
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil
     ) async throws -> NativeSwiftImportedReplacement<NativeSwiftFunctionImplementation<Signature>>
     where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
@@ -295,7 +281,6 @@ extension NativeSwiftFunction {
             with: replacement,
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner
         )
     }
@@ -313,7 +298,6 @@ extension NativeSwiftFunction {
         >,
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil
     ) throws -> NativeSwiftImportedReplacement<NativeSwiftFunctionImplementation<Signature>>
     where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
@@ -321,7 +305,6 @@ extension NativeSwiftFunction {
             with: replacement,
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner
         )
     }
@@ -330,7 +313,6 @@ extension NativeSwiftFunction {
         with replacement: NativeSwiftFunction<ReplacementSignature>,
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil
     ) throws -> NativeSwiftImportedReplacement<NativeSwiftFunctionImplementation<Signature>> {
         guard !isGeneric, !replacement.isGeneric else {
@@ -339,7 +321,7 @@ extension NativeSwiftFunction {
             )
         }
         try requireReplacement(replacement)
-        let storage = try runtime.prepareSwiftImportReplacementAndWait(
+        let storage = try resolver.prepareSwiftImportReplacementAndWait(
             target: entry,
             replacement: replacement.entry,
             importer: importer,
@@ -356,7 +338,6 @@ extension NativeSwiftFunction {
         with replacement: NativeSwiftFunction<ReplacementSignature>,
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil
     ) async throws -> NativeSwiftImportedReplacement<NativeSwiftFunctionImplementation<Signature>> {
         try await NativePreparation.run { [self] in
@@ -364,7 +345,6 @@ extension NativeSwiftFunction {
                 with: replacement,
                 in: importer,
                 from: provider,
-                using: runtime,
                 retaining: owner
             )
         }
@@ -388,7 +368,6 @@ extension NativeSwiftMethod {
         >,
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil
     ) async throws -> NativeSwiftImportedReplacement<NativeSwiftMethodImplementation<Signature>>
     where Signature == (repeat each Argument) throws(Failure) -> Result {
@@ -396,7 +375,6 @@ extension NativeSwiftMethod {
             with: replacement,
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner
         )
     }
@@ -414,7 +392,6 @@ extension NativeSwiftMethod {
         >,
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil
     ) throws -> NativeSwiftImportedReplacement<NativeSwiftMethodImplementation<Signature>>
     where Signature == (repeat each Argument) throws(Failure) -> Result {
@@ -422,7 +399,6 @@ extension NativeSwiftMethod {
             with: replacement,
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner
         )
     }
@@ -440,7 +416,6 @@ extension NativeSwiftMethod {
         >,
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil
     ) async throws -> NativeSwiftImportedReplacement<NativeSwiftMethodImplementation<Signature>>
     where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
@@ -448,7 +423,6 @@ extension NativeSwiftMethod {
             with: replacement,
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner
         )
     }
@@ -466,7 +440,6 @@ extension NativeSwiftMethod {
         >,
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil
     ) throws -> NativeSwiftImportedReplacement<NativeSwiftMethodImplementation<Signature>>
     where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
@@ -474,7 +447,6 @@ extension NativeSwiftMethod {
             with: replacement,
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner
         )
     }
@@ -492,7 +464,6 @@ extension NativeSwiftMethod {
         >,
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil
     ) async throws -> NativeSwiftImportedReplacement<NativeSwiftMethodImplementation<Signature>>
     where Signature == (repeat each Argument) throws(Failure) -> Result {
@@ -500,7 +471,6 @@ extension NativeSwiftMethod {
             with: replacement,
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner
         )
     }
@@ -518,7 +488,6 @@ extension NativeSwiftMethod {
         >,
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil
     ) throws -> NativeSwiftImportedReplacement<NativeSwiftMethodImplementation<Signature>>
     where Signature == (repeat each Argument) throws(Failure) -> Result {
@@ -526,7 +495,6 @@ extension NativeSwiftMethod {
             with: replacement,
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner
         )
     }
@@ -544,7 +512,6 @@ extension NativeSwiftMethod {
         >,
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil
     ) async throws -> NativeSwiftImportedReplacement<NativeSwiftMethodImplementation<Signature>>
     where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
@@ -552,7 +519,6 @@ extension NativeSwiftMethod {
             with: replacement,
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner
         )
     }
@@ -570,7 +536,6 @@ extension NativeSwiftMethod {
         >,
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil
     ) throws -> NativeSwiftImportedReplacement<NativeSwiftMethodImplementation<Signature>>
     where Signature == @Sendable (repeat each Argument) throws(Failure) -> Result {
@@ -578,7 +543,6 @@ extension NativeSwiftMethod {
             with: replacement,
             in: importer,
             from: provider,
-            using: runtime,
             retaining: owner
         )
     }
@@ -587,12 +551,11 @@ extension NativeSwiftMethod {
         with replacement: NativeSwiftMethod<ReplacementSignature>,
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil
     ) throws -> NativeSwiftImportedReplacement<NativeSwiftMethodImplementation<Signature>> {
         try requireOrdinaryCalls()
         try requireReplacement(replacement)
-        let storage = try runtime.prepareSwiftImportReplacementAndWait(
+        let storage = try type.resolver.prepareSwiftImportReplacementAndWait(
             target: entry,
             replacement: replacement.entry,
             importer: importer,
@@ -609,7 +572,6 @@ extension NativeSwiftMethod {
         with replacement: NativeSwiftMethod<ReplacementSignature>,
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
-        using runtime: ABIRuntime = .shared,
         retaining owner: (any Sendable)? = nil
     ) async throws -> NativeSwiftImportedReplacement<NativeSwiftMethodImplementation<Signature>> {
         try await NativePreparation.run { [self] in
@@ -617,7 +579,6 @@ extension NativeSwiftMethod {
                 with: replacement,
                 in: importer,
                 from: provider,
-                using: runtime,
                 retaining: owner
             )
         }
