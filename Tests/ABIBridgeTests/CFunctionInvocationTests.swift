@@ -144,6 +144,20 @@ struct CFunctionInvocationTests {
         #expect(try unsafe call.unsafeInvoke(with: values).read(as: Double.self) == 210)
     }
 
+    @Test func runtimeSignaturesResolveExactNames() throws {
+        let runtime = ABIRuntime()
+        let signature = NativeSignature(parameters: [], returns: .int32)
+        let linker = try runtime.resolveAndWait(
+            .c(.function(linkerName: "ABICAnswer", signature: signature))
+        )
+        #expect(try unsafe linker.unsafeInvoke(with: []).read(as: Int32.self) == ABICAnswer())
+        let machO = try runtime.resolveAndWait(
+            .c(.function(machOName: "_ABICAnswer", signature: signature)),
+            in: linker.symbol.image
+        )
+        #expect(try unsafe machO.unsafeInvoke(with: []).read(as: Int32.self) == ABICAnswer())
+    }
+
     @Test func wideAggregateResultsPreserveEveryField() async throws {
         let result = try NativeType.structure(
             named: "ABICWideResult",
