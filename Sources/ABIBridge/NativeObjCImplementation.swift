@@ -178,7 +178,7 @@ extension ABIRuntime {
     ///   instance.
     /// - Throws: A lookup, signature, unsupported-implementation, or image
     ///   error.
-    public nonisolated func resolveAndWait<Result, each Argument>(
+    public func resolveAndWait<Result, each Argument>(
         _ request: NativeRequest<NativeObjCImplementationRequest<Result, repeat each Argument>>,
         on type: AnyClass,
         classMethod: Bool = false,
@@ -237,7 +237,7 @@ extension ABIRuntime {
         )
     }
 
-    private nonisolated func prepareObjCImplementation<Result, each Argument>(
+    private func prepareObjCImplementation<Result, each Argument>(
         _ query: ObjCMessageQuery,
         on type: AnyClass,
         classMethod: Bool

@@ -84,7 +84,7 @@ private func withSwiftVirtualCallback(
         .swift(.symbol(type.name + "." + method)),
         in: fixture.providerScope
     )
-    let entry = try await SwiftClassDispatch(
+    let entry = try SwiftClassDispatch(
         metadata: type.metadata,
         entry: SwiftEntry(symbol: symbol),
         resolver: type.resolver,

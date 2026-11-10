@@ -196,7 +196,7 @@ extension ABIRuntime {
     ///   preserving partial publication and rollback failures.
     ///
     /// Registration preparation runs on a worker without blocking the caller's executor. The request must describe a fixed signature.
-    @unsafe public nonisolated func hookImportedCalls<Result, each Argument>(
+    @unsafe public func hookImportedCalls<Result, each Argument>(
         _ request: NativeRequest<NativeFunctionRequest<Result, repeat each Argument>>,
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
@@ -221,7 +221,7 @@ extension ABIRuntime {
     ///
     /// Image selection, incoming-thread callbacks, lifetime, and failures follow
     /// `hookImportedCalls`. The provider filters import records without being loaded or resolved.
-    @unsafe public nonisolated func hookImportedCallsAndWait<Result, each Argument>(
+    @unsafe public func hookImportedCallsAndWait<Result, each Argument>(
         _ request: NativeRequest<NativeFunctionRequest<Result, repeat each Argument>>,
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,

@@ -17,7 +17,7 @@ Enumeration includes only loaded images that can currently be retained. dyld can
 
 A `NativeImage` retains its loaded image. Reuse that handle to resolve several declarations in the same scope. The runtime caches raw symbol data and decoded declaration indexes; C++ members with a plain qualified owner reuse that owner's index.
 
-Lookup automatically prepares its indexes, and callable factories return handles ready for invocation. Synchronous `AndWait` factories are `nonisolated` on `ABIRuntime` and `NativeSwiftType`: they perform missing work or block while required preparation finishes, including on `MainActor`.
+Lookup automatically prepares its indexes, and callable factories return handles ready for invocation. Synchronous `AndWait` factories on `ABIRuntime` and `NativeSwiftType` perform missing work or block while required preparation finishes, including on `MainActor`.
 
 Factories named `resolve…` perform symbol, image, function, type, and member lookup on a worker queue while the caller suspends. Their `AndWait` counterparts select synchronous lookup in either a synchronous or async context. Bound factories keep receivers in the caller's isolation domain. Receiver-specific Objective-C dynamic resolution and forwarding-signature callbacks stay on the caller's executor while image and call preparation run on the worker. See <doc:CFunctionInvocation>, <doc:ObjectiveCInvocation>, and <doc:SwiftMemberInvocation> for examples.
 

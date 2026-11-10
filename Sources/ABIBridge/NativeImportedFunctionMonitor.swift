@@ -96,7 +96,7 @@ extension ABIRuntime {
     /// Invocation callbacks and `onFailure` retain the calling-thread and C ABI contracts of `hookImportedCalls`. Constructor calls and calls made before asynchronous application completes are not guaranteed interception. An unresolved lazy import can fail its one attempt for that generation; bind it normally before creating a new monitor to retry.
     ///
     /// Registration preparation runs on a worker without blocking the caller's executor. The request must describe a fixed signature.
-    @unsafe public nonisolated func monitorImportedCalls<Result, each Argument>(
+    @unsafe public func monitorImportedCalls<Result, each Argument>(
         _ request: NativeRequest<NativeFunctionRequest<Result, repeat each Argument>>,
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,
@@ -123,7 +123,7 @@ extension ABIRuntime {
     ///
     /// Image selection, incoming-thread callbacks, lifetime, and failures follow
     /// `monitorImportedCalls`. Returning does not wait for asynchronous image application.
-    @unsafe public nonisolated func monitorImportedCallsAndWait<Result, each Argument>(
+    @unsafe public func monitorImportedCallsAndWait<Result, each Argument>(
         _ request: NativeRequest<NativeFunctionRequest<Result, repeat each Argument>>,
         in importer: ImageSelector,
         from provider: ImageSelector? = nil,

@@ -214,7 +214,7 @@ extension ABIRuntime {
     ///   - loading: Whether to acquire and initialize an explicit image.
     /// - Returns: A reusable function retaining its image and prepared signature.
     /// - Throws: A resolution error, unsupported representation, or call preparation error.
-    public nonisolated func resolveAndWait<Result, each Argument>(
+    public func resolveAndWait<Result, each Argument>(
         _ request: NativeRequest<NativeFunctionRequest<Result, repeat each Argument>>,
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
@@ -239,7 +239,7 @@ extension ABIRuntime {
     ///
     /// - Returns: A reusable function retaining its image and prepared signature.
     /// - Throws: The same errors as synchronous resolution.
-    public nonisolated func resolve<Result, each Argument>(
+    public func resolve<Result, each Argument>(
         _ request: NativeRequest<NativeFunctionRequest<Result, repeat each Argument>>,
         in scope: ImageSelector = .automatic,
         loading: ImageLoadingPolicy = .ifNeeded
@@ -262,7 +262,7 @@ extension ABIRuntime {
     ///   - loading: Whether to acquire and initialize an explicit image.
     /// - Returns: A reusable function retaining its image and prepared signature.
     /// - Throws: A resolution error, unsupported representation, or call preparation error.
-    public nonisolated func resolveAndWait<Result, each Argument>(
+    public func resolveAndWait<Result, each Argument>(
         _ request: NativeRequest<NativeFunctionRequest<Result, repeat each Argument>>,
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded
@@ -287,7 +287,7 @@ extension ABIRuntime {
     ///
     /// - Returns: A reusable function retaining its image and prepared signature.
     /// - Throws: The same errors as synchronous resolution.
-    public nonisolated func resolve<Result, each Argument>(
+    public func resolve<Result, each Argument>(
         _ request: NativeRequest<NativeFunctionRequest<Result, repeat each Argument>>,
         in image: NativeImage,
         loading: ImageLoadingPolicy = .ifNeeded

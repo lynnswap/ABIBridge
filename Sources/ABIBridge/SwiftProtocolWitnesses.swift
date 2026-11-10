@@ -33,7 +33,7 @@ struct SwiftRequirementCandidates {
 extension NativeSwiftType {
     /// The descriptor of the protocol named `protocolName`, nil when no
     /// loaded image declares a protocol with that name.
-    nonisolated func protocolDescriptor(
+    func protocolDescriptor(
         named protocolName: String
     ) throws
         -> ResolvedSymbol?
@@ -55,7 +55,7 @@ extension NativeSwiftType {
 
     /// This type's conformance to the protocol whose descriptor is at
     /// `protocolDescriptor`, nil when it does not conform.
-    nonisolated func conformance(
+    func conformance(
         to protocolDescriptor: UnsafeRawPointer
     ) throws
         -> SwiftConformance?
@@ -107,7 +107,7 @@ extension NativeSwiftType {
     ///   module's search.
     ///
     /// - Parameter protocolName: The protocol that declares the requirement.
-    nonisolated func witnesses(
+    func witnesses(
         of requirement: SwiftMemberMatch,
         in protocolName: String,
         through conformance: SwiftConformance,
@@ -143,7 +143,7 @@ extension NativeSwiftType {
     /// as it does for a thunk. A requirement whose witnesses all serve other
     /// conformances keeps one of them in `others`, which shows that the
     /// protocol declares it.
-    nonisolated func servingWitnesses(
+    func servingWitnesses(
         _ candidates: [SwiftCandidate]
     ) throws
         -> SwiftRequirementCandidates
@@ -254,7 +254,7 @@ extension NativeSwiftType {
     ///     witnesses can name the requirements.
     ///   - accepts: Whether the request names the requirement that a
     ///     witness serves.
-    nonisolated func checkRequirements(
+    func checkRequirements(
         excluding query: SwiftMemberQuery,
         match: SwiftMemberMatch,
         displayed: NativeDeclaration,

@@ -324,7 +324,7 @@ extension ABIRuntime {
     ///
     /// - Parameter receiver: An object whose Objective-C or Swift methods will be called.
     /// - Returns: A handle retaining the receiver in the caller's isolation domain.
-    public nonisolated func object(_ receiver: AnyObject) -> NativeObject {
+    public func object(_ receiver: AnyObject) -> NativeObject {
         NativeObject(receiver, runtime: self)
     }
 }

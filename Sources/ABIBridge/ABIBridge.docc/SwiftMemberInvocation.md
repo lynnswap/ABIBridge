@@ -199,7 +199,7 @@ Lookup checks the native conformance before invocation and retains the protocol 
 
 ## Await type and member preparation
 
-Types and objects resolve member requests with async `resolve` and synchronous `resolveAndWait`. `ABIRuntime` uses the same pair for `.swift(.type(...))` requests. Async lookup moves search, metadata, and call preparation to a worker queue while the caller suspends. `AndWait` runs on the caller's thread or blocks while joining required work already running. Both reuse completed resolutions and call layouts; working indexes are shared while lookups are active. `ABIRuntime` and `NativeSwiftType` are actors.
+Types and objects resolve member requests with async `resolve` and synchronous `resolveAndWait`. `ABIRuntime` uses the same pair for `.swift(.type(...))` requests. Async lookup moves search, metadata, and call preparation to a worker queue while the caller suspends. `AndWait` runs on the caller's thread or blocks while joining required work already running. Both reuse completed resolutions and call layouts; working indexes are shared while lookups are active. `ABIRuntime` and `NativeSwiftType` are `Sendable` classes and do not isolate their callers.
 
 Use async resolution on `MainActor` without an earlier `prepare` call:
 

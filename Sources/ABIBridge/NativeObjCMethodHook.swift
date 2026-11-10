@@ -139,7 +139,7 @@ extension ABIRuntime {
     ///   - body: Produces a result, optionally invoking the scoped next implementation.
     /// - Returns: A token keeping this registration active until invalidated or released.
     /// - Throws: A lookup, signature, ownership, preparation, or displaced-entry error.
-    @unsafe public nonisolated func hookCalls<Result, each Argument>(
+    @unsafe public func hookCalls<Result, each Argument>(
         _ request: NativeRequest<NativeObjCMethodRequest<Result, repeat each Argument>>,
         on type: AnyClass,
         classMethod: Bool = false,

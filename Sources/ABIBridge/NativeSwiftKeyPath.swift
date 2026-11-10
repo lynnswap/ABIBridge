@@ -36,7 +36,7 @@ extension NativeSwiftType {
     ///
     /// This has the same property, type, and ownership contract as
     /// the asynchronous key path request resolution. Lookup and preparation can block.
-    public nonisolated func resolveAndWait(
+    public func resolveAndWait(
         _ request: NativeRequest<NativeSwiftWritableKeyPathRequest>
     ) throws -> NativeSwiftValue {
         let valueType = request.declaration.valueType
@@ -44,7 +44,7 @@ extension NativeSwiftType {
         return try makeWritableKeyPath(prepared, valueType: valueType)
     }
 
-    private nonisolated func prepareWritableKeyPath(
+    private func prepareWritableKeyPath(
         _ request: NativeRequest<NativeSwiftWritableKeyPathRequest>
     ) throws -> (plan: RuntimeWritableKeyPathPlan, image: NativeImage) {
         let declaration = request.declaration
@@ -67,7 +67,7 @@ extension NativeSwiftType {
         }
     }
 
-    private nonisolated func prepareWritableKeyPath(
+    private func prepareWritableKeyPath(
         named name: String,
         valueType: NativeSwiftType,
         keyValueCodingKey: String?
@@ -196,7 +196,7 @@ extension NativeSwiftType {
         return (plan, descriptor.image)
     }
 
-    private nonisolated func makeWritableKeyPath(
+    private func makeWritableKeyPath(
         _ prepared: (plan: RuntimeWritableKeyPathPlan, image: NativeImage),
         valueType: NativeSwiftType
     ) throws -> NativeSwiftValue {

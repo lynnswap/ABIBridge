@@ -64,7 +64,7 @@ extension ABIRuntime {
     /// - Parameter image: The loaded image to inspect.
     /// - Returns: Copied metadata with section and function-start addresses relocated into the current process.
     /// - Throws: `ABIResolutionError.metadataUnavailable` when required metadata is unreadable, malformed, or cannot be represented as process addresses. A malformed function-start table fails the entire operation; an absent command remains nil in the result.
-    public nonisolated func resolveImageMetadataAndWait(
+    public func resolveImageMetadataAndWait(
         in image: NativeImage
     ) throws -> NativeImageMetadata {
         try withRuntimeErrors {
@@ -75,7 +75,7 @@ extension ABIRuntime {
     /// Copies loaded-image metadata on a worker queue while the caller suspends.
     ///
     /// This has the same ownership and failure contract as `resolveImageMetadataAndWait(in:)`. Neither form requires earlier preparation.
-    public nonisolated func resolveImageMetadata(
+    public func resolveImageMetadata(
         in image: NativeImage
     ) async throws -> NativeImageMetadata {
         try await NativePreparation.run { try self.resolveImageMetadataAndWait(in: image) }

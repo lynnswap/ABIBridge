@@ -374,7 +374,7 @@ struct SwiftGenericBindingTests {
             .swift(.type(module + ".View")),
             in: .path(fixture.libraryURL)
         )
-        let metadata = await type.metadata
+        let metadata = type.metadata
         #expect(SwiftCopyability.accepts(metadata))
         #expect(!SwiftEscapability.accepts(metadata))
         for name in ["save", "explicit"] {
@@ -1476,7 +1476,7 @@ struct SwiftGenericBindingTests {
         ]
         for (name, arguments, expected) in cases {
             let type = try await runtime.resolve(.swift(.type(name, genericArguments: arguments)))
-            let metadata = await type.metadata
+            let metadata = type.metadata
             #expect(ObjectIdentifier(metadata) == ObjectIdentifier(expected), "\(name)")
             let again = try await runtime.resolve(
                 .swift(.type(name, genericArguments: arguments)),
@@ -1520,8 +1520,8 @@ struct SwiftGenericBindingTests {
         let second = try await runtime.resolve(
             .swift(.type("Swift.Array", genericArguments: [.type(Int.self)]))
         )
-        let firstMetadata = await first.metadata
-        let secondMetadata = await second.metadata
+        let firstMetadata = first.metadata
+        let secondMetadata = second.metadata
         #expect(first !== second && firstMetadata != secondMetadata)
     }
 
@@ -1562,8 +1562,8 @@ struct SwiftGenericBindingTests {
             result = try runtime.resolveAndWait(
                 .swift(.type(name, genericArguments: [.type(argument)]))
             )
-            let metadata = await result!.metadata
-            let bareMetadata = await bare.metadata
+            let metadata = result!.metadata
+            let bareMetadata = bare.metadata
             #expect(ObjectIdentifier(metadata) == ObjectIdentifier(bareMetadata))
             runtime.removeCachedResults()
         }

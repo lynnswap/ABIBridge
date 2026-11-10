@@ -84,7 +84,7 @@ extension NativeVTable {
 }
 
 extension ABIRuntime {
-    nonisolated func virtualEntry(
+    func virtualEntry(
         named name: String,
         addressPoint: UInt,
         entryCount: Int

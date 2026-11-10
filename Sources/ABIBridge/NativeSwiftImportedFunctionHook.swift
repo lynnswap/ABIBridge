@@ -32,7 +32,7 @@ private func prepareSwiftImportedHandler<Signature, Result, each Argument>(
 
 extension ABIRuntime {
     /// The importing references to the code that calls of `entry` run.
-    nonisolated func swiftHookSelection(
+    func swiftHookSelection(
         entry: SwiftEntry,
         importer: ImageSelector,
         provider: ImageSelector?
