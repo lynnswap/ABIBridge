@@ -1988,7 +1988,7 @@ private final class NestedRuntimePackCopies: @unchecked Sendable {
                     as: ((HostCopy, String) throws -> String).self
                 )
             ),
-            in: type.image
+            in: .image(type.image)
         )
         #expect(try unsafe imageApply.unsafeInvoke(identity, "image") == "image")
         let host = RuntimeCallbackHost()

@@ -305,6 +305,7 @@ package final class RuntimeSymbolResolver: Sendable {
     ) throws -> [RuntimeImage] {
         switch selector {
         case .automatic: return try images(matching: selector)
+        case .image(let image): return [loading == .ifNeeded ? try image.opened() : image]
         case .installName(let name):
             guard loading == .ifNeeded else { return try images(matching: selector) }
             try selector.validateTarget()

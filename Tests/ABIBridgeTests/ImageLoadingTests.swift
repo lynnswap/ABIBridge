@@ -44,7 +44,7 @@ struct ImageLoadingTests {
         #expect(try unsafe first!.unsafeInvoke() == 42)
         var second: NativeFunction<Int32>? = try runtime.resolveAndWait(
             .cxx(.function(declaration.name, as: (() -> Int32).self)),
-            in: first!.symbol.image
+            in: .image(first!.symbol.image)
         )
         #expect(first!.symbol.image.identity == second!.symbol.image.identity)
         let originalGeneration = second!.symbol.image.identity.loadGeneration
@@ -88,7 +88,7 @@ struct ImageLoadingTests {
         #expect(inspected.map(\.identity) == [first.image.identity])
         let fromLease = try runtime.resolveAndWait(
             .cxx(.symbol(declaration.name, kind: declaration.kind)),
-            in: inspected[0]
+            in: .image(inspected[0])
         )
         #expect(fromLease.image.identity == first.image.identity)
         runtime.removeCachedResults()

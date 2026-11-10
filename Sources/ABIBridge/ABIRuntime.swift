@@ -79,23 +79,6 @@ public final class ABIRuntime: Sendable {
         try resolver.resolve(request.declaration.declaration, in: selector, loading: loading)
     }
 
-    /// Finds a declaration in an already retained image.
-    ///
-    /// - Parameters:
-    ///   - request: A language-qualified source-level or exact name and storage requirement.
-    ///   - image: The retained image to search.
-    ///   - loading: Whether to ask dyld to acquire and initialize the image.
-    /// - Returns: A resolved symbol retaining that image.
-    /// - Throws: ``ABIResolutionError`` when the declaration cannot be resolved
-    ///   unambiguously in the requested storage.
-    public func resolveAndWait(
-        _ request: NativeRequest<NativeSymbolLookupRequest>,
-        in image: NativeImage,
-        loading: ImageLoadingPolicy = .ifNeeded
-    ) throws -> ResolvedSymbol {
-        try resolver.resolve(request.declaration.declaration, in: image, loading: loading)
-    }
-
     /// Resolves a requirement with aliases and ordered image fallback.
     ///
     /// A later scope is tried only when an image or declaration is absent. Found aliases must agree on the address and image generation.
@@ -127,17 +110,6 @@ public final class ABIRuntime: Sendable {
     ) async throws -> ResolvedSymbol {
         try await NativePreparation.run {
             try self.resolveAndWait(request, in: selector, loading: loading)
-        }
-    }
-
-    /// Finds a declaration in a retained image on a worker queue.
-    public func resolve(
-        _ request: NativeRequest<NativeSymbolLookupRequest>,
-        in image: NativeImage,
-        loading: ImageLoadingPolicy = .ifNeeded
-    ) async throws -> ResolvedSymbol {
-        try await NativePreparation.run {
-            try self.resolveAndWait(request, in: image, loading: loading)
         }
     }
 

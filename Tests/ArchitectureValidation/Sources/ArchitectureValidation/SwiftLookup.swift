@@ -39,7 +39,7 @@ import SwiftReplacementFixtures
     let base = try await runtime.resolve(.swift(.type(module + ".ReplacementRenderer")))
     let child = try await runtime.resolve(
         .swift(.type(module + ".InheritedRenderer")),
-        in: base.image,
+        in: .image(base.image),
         loading: .loadedOnly
     )
     for (label, type, receiver) in [

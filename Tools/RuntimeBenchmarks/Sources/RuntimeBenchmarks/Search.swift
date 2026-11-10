@@ -110,7 +110,7 @@ struct SearchBenchmark {
                     for _ in 0..<1000 {
                         let symbol = try runtime.resolveAndWait(
                             declaration,
-                            in: initial.image,
+                            in: .image(initial.image),
                             loading: .loadedOnly
                         )
                         unsafe symbol.withUnsafeAddress { address in
@@ -132,7 +132,7 @@ struct SearchBenchmark {
                         do {
                             _ = try runtime.resolveAndWait(
                                 missing,
-                                in: initial.image,
+                                in: .image(initial.image),
                                 loading: .loadedOnly
                             )
                             preconditionFailure("Missing declaration unexpectedly resolved")

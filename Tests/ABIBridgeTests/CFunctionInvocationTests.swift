@@ -75,7 +75,7 @@ struct CFunctionInvocationTests {
                 try NativeValue(copying: Int32(23), as: .int32),
             ]
             #expect(try unsafe function.unsafeInvoke(with: arguments).read(as: Int32.self) == 42)
-            let retained = try await runtime.resolve(request, in: function.symbol.image)
+            let retained = try await runtime.resolve(request, in: .image(function.symbol.image))
             #expect(try unsafe retained.unsafeInvoke(with: arguments).read(as: Int32.self) == 42)
         } else {
             let request =
@@ -84,7 +84,7 @@ struct CFunctionInvocationTests {
                 : .c(.function(name, as: ((Int32, Int32) -> Int32).self))
             let function = try await runtime.resolve(request, in: scope)
             #expect(try unsafe function.unsafeInvoke(19, 23) == 42)
-            let retained = try await runtime.resolve(request, in: function.symbol.image)
+            let retained = try await runtime.resolve(request, in: .image(function.symbol.image))
             #expect(try unsafe retained.unsafeInvoke(19, 23) == 42)
         }
         MainActor.assertIsolated()
@@ -153,7 +153,7 @@ struct CFunctionInvocationTests {
         #expect(try unsafe linker.unsafeInvoke(with: []).read(as: Int32.self) == ABICAnswer())
         let machO = try runtime.resolveAndWait(
             .c(.function(machOName: "_ABICAnswer", signature: signature)),
-            in: linker.symbol.image
+            in: .image(linker.symbol.image)
         )
         #expect(try unsafe machO.unsafeInvoke(with: []).read(as: Int32.self) == ABICAnswer())
     }

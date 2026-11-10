@@ -1480,7 +1480,7 @@ struct SwiftGenericBindingTests {
             #expect(ObjectIdentifier(metadata) == ObjectIdentifier(expected), "\(name)")
             let again = try await runtime.resolve(
                 .swift(.type(name, genericArguments: arguments)),
-                in: type.image
+                in: .image(type.image)
             )
             #expect(type === again)
             var failure: OpaquePointer?

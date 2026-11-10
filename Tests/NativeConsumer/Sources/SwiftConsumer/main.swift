@@ -184,7 +184,7 @@ struct SwiftConsumer {
         guard let image = images.first else { throw Failure.missingImage }
         let add = try runtime.resolveAndWait(
             .cxx(.function("ABIBridgeFixture::add(int, int)", as: ((Int32, Int32) -> Int32).self)),
-            in: image
+            in: .image(image)
         )
         let cAdd = try runtime.resolveAndWait(
             .c(.function("ABIBridgeFixtureCAdd", as: ((Int32, Int32) -> Int32).self)),
@@ -200,7 +200,7 @@ struct SwiftConsumer {
         }
         let large = try runtime.resolveAndWait(
             .cxx(.function("ABIBridgeFixture::large(long)", as: ((Int) -> LargeValue).self)),
-            in: image
+            in: .image(image)
         )
         let dynamic = try runtime.resolveAndWait(
             .cxx(
@@ -209,7 +209,7 @@ struct SwiftConsumer {
                     signature: .init(parameters: [.int], returns: LargeValue.abiType)
                 )
             ),
-            in: image
+            in: .image(image)
         )
         let padded = try runtime.resolveAndWait(
             .cxx(
@@ -218,7 +218,7 @@ struct SwiftConsumer {
                     as: ((PaddedValue) -> PaddedValue).self
                 )
             ),
-            in: image
+            in: .image(image)
         )
         let paddedC = try runtime.resolveAndWait(
             .c(
@@ -230,7 +230,7 @@ struct SwiftConsumer {
                     )
                 )
             ),
-            in: image
+            in: .image(image)
         )
         let paddedResult = try unsafe padded.unsafeInvoke(PaddedValue(value: 2, tag: 3))
         let rawResult = try unsafe paddedC.unsafeInvoke(with: [

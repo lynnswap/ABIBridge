@@ -18,7 +18,7 @@ let hook = try await unsafe runtime.hookImportedCalls(
 hook.invalidate()
 ```
 
-`in` selects loaded callers by framework, path, or exact install name. Optional `from` filters the recorded dependency, preserving reexport facade names. These scopes do not acquire images. Explicit `.automatic` considers all loaded importers and fails when required metadata is unavailable, including unreadable system-cache metadata.
+`in` selects loaded callers by framework, path, or exact install name. Optional `from` filters the recorded dependency, preserving reexport facade names. It compares names, so it rejects `.image(_:)`: which loaded image a recorded name selects depends on the importer's loader context. These scopes do not acquire images. Explicit `.automatic` considers all loaded importers and fails when required metadata is unavailable, including unreadable system-cache metadata.
 
 Registration preparation runs on a worker; use `hookImportedCallsAndWait` to prepare synchronously on the caller's thread. A monitor also offers `monitorImportedCallsAndWait`, which completes registration preparation but does not wait for image application.
 

@@ -86,6 +86,7 @@ extension ImageSelector {
         case .path(let value): .path(value)
         case .framework(let name): .framework(named: name)
         case .installName(let value): .installName(value)
+        case .image(let image): .image(image.runtimeValue)
         }
     }
 }

@@ -24,6 +24,17 @@ package final class RuntimeImportedFunctionSelection: @unchecked Sendable {
         }
     }
 
+    /// An import records its dependency by name. Which loaded image that
+    /// name selects depends on the importer's loader context, which only dyld
+    /// knows, so a retained image cannot filter imports without guessing.
+    package static func validate(provider: RuntimeImageSelector?) throws {
+        if case .image = provider {
+            throw RuntimeResolutionError.unsupportedDeclaration(
+                "A provider filter matches the dependency name an importer records, which a retained image does not identify. Use an install name, framework name, or path."
+            )
+        }
+    }
+
     package convenience init(
         resolver: RuntimeSymbolResolver,
         declaration: RuntimeDeclaration,
@@ -89,6 +100,7 @@ package final class RuntimeImportedFunctionSelection: @unchecked Sendable {
             preconditionFailure("A selection names at least one symbol.")
         }
         for symbol in symbols { try Self.validate(symbol, language: language) }
+        try Self.validate(provider: provider)
         guard !images.isEmpty else { throw RuntimeResolutionError.imageNotLoaded }
         var found: [RuntimeImportedReference] = []
         for image in images {
@@ -104,6 +116,7 @@ package final class RuntimeImportedFunctionSelection: @unchecked Sendable {
                         URL(fileURLWithPath: $0).resolvingSymlinksInPath()
                             == url.resolvingSymlinksInPath()
                     } ?? false
+                case .image: return false
                 case .framework(let name):
                     return reference.libraryName.map { path in
                         let url = URL(fileURLWithPath: path)
@@ -177,6 +190,7 @@ package final class RuntimeImportedFunctionQuery {
         try RuntimeImportedFunctionSelection.validate(declaration)
         try importer.validateTarget()
         try provider?.validateTarget()
+        try RuntimeImportedFunctionSelection.validate(provider: provider)
         self.declaration = declaration
         self.importer = importer
         self.provider = provider

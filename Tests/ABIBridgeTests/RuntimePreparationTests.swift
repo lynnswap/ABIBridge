@@ -121,7 +121,7 @@ struct RuntimePreparationTests {
         )
         SwiftPreparationValue.preparationThreads.withLock { $0.removeAll() }
         _ = try await runtime.prepare { runtime in
-            if freeFunction { return try runtime.resolveAndWait(function, in: type.image) }
+            if freeFunction { return try runtime.resolveAndWait(function, in: .image(type.image)) }
             return try type.resolveAndWait(member)
         }
         let preparations = SwiftPreparationValue.preparationThreads.withLock { $0.count }
@@ -129,8 +129,8 @@ struct RuntimePreparationTests {
         let synchronous: NativeSwiftFunction<() -> SwiftPreparationValue>
         let asynchronous: NativeSwiftFunction<() -> SwiftPreparationValue>
         if freeFunction {
-            synchronous = try runtime.resolveAndWait(function, in: type.image)
-            asynchronous = try await runtime.resolve(function, in: type.image)
+            synchronous = try runtime.resolveAndWait(function, in: .image(type.image))
+            asynchronous = try await runtime.resolve(function, in: .image(type.image))
         } else {
             synchronous = try type.resolveAndWait(member)
             asynchronous = try await type.resolve(member)
@@ -141,12 +141,12 @@ struct RuntimePreparationTests {
         runtime.removeCachedResults(in: [.symbolLookup, .swiftTypes])
         _ =
             try freeFunction
-            ? runtime.resolveAndWait(function, in: type.image) : type.resolveAndWait(member)
+            ? runtime.resolveAndWait(function, in: .image(type.image)) : type.resolveAndWait(member)
         #expect(SwiftPreparationValue.preparationThreads.withLock { $0.count } == preparations)
         runtime.removeCachedResults(in: [.swiftResolutions])
         _ =
             try freeFunction
-            ? runtime.resolveAndWait(function, in: type.image) : type.resolveAndWait(member)
+            ? runtime.resolveAndWait(function, in: .image(type.image)) : type.resolveAndWait(member)
         #expect(SwiftPreparationValue.preparationThreads.withLock { $0.count } > preparations)
         #expect(try unsafe synchronous.unsafeInvoke().raw == 42)
     }
@@ -183,17 +183,17 @@ struct RuntimePreparationTests {
             $0 = { runtime.removeCachedResults(in: [cache]) }
         }
         defer { SwiftPreparationValue.preparationCallback.withLock { $0 = nil } }
-        let original = try runtime.resolveAndWait(request, in: type.image)
+        let original = try runtime.resolveAndWait(request, in: .image(type.image))
         let originalCount = SwiftPreparationValue.preparationThreads.withLock { $0.count }
         #expect(originalCount > 0)
-        _ = try runtime.resolveAndWait(request, in: type.image)
+        _ = try runtime.resolveAndWait(request, in: .image(type.image))
         let rebuiltCount = SwiftPreparationValue.preparationThreads.withLock { $0.count }
         if cache == .swiftResolutions {
             #expect(rebuiltCount > originalCount)
         } else {
             #expect(rebuiltCount == originalCount)
         }
-        _ = try runtime.resolveAndWait(request, in: type.image)
+        _ = try runtime.resolveAndWait(request, in: .image(type.image))
         #expect(SwiftPreparationValue.preparationThreads.withLock { $0.count } == rebuiltCount)
         #expect(try unsafe original.unsafeInvoke().raw == 42)
     }
@@ -445,7 +445,7 @@ struct RuntimePreparationTests {
             }
             let retained = try await runtime.resolve(
                 typeRequest,
-                in: type.image,
+                in: .image(type.image),
                 loading: .loadedOnly
             )
             #expect(type === retained)
@@ -455,7 +455,7 @@ struct RuntimePreparationTests {
             )
             let retainedRepresentation = try await runtime.resolve(
                 .swift(.type(typeName, as: AnyObject.self)),
-                in: type.image,
+                in: .image(type.image),
                 loading: .loadedOnly
             )
             #expect(represented === retainedRepresentation)
@@ -493,7 +493,7 @@ struct RuntimePreparationTests {
                     as: (() -> Int32).self
                 )
             ),
-            in: function.symbol.image,
+            in: .image(function.symbol.image),
             loading: .loadedOnly
         )
         #expect(retained.symbol.declaration == function.symbol.declaration)

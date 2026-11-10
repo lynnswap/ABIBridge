@@ -39,7 +39,7 @@ let first = try unsafe decorate.unsafeInvoke("Hello")
 let second = try unsafe decorate.unsafeInvoke("Again")
 ```
 
-Retain the handle for repeated calls. For other declarations in the same image, pass its retained `NativeImage` to an `in:` overload.
+Retain the handle for repeated calls. For other declarations in the same image, pass `.image(_:)` with its retained `NativeImage` as the `in:` scope.
 
 A Swift module name does not necessarily identify its containing framework: a statically linked module can live in the executable, and a framework can contain several modules. Select the image that actually supplies the declaration. An explicit framework scope does not search its dependencies or fall back to the whole process. If the provider can vary, list its possible frameworks in a ``NativeSymbolRequest``. Append `.automatic` only when a final process-wide search is needed.
 

@@ -106,11 +106,6 @@ extension NativeRequest {
     }
 }
 
-private enum CXXImageScope: Sendable {
-    case selector(ImageSelector)
-    case image(NativeImage)
-}
-
 private enum CXXCallTarget {
     case symbol(ResolvedSymbol)
     case virtual(VirtualCallTarget)
@@ -152,14 +147,14 @@ public final class NativeCXXObject {
     public let storage: NativeValue
 
     private let runtime: ABIRuntime
-    private let scope: CXXImageScope
+    private let scope: ImageSelector
     private let loading: ImageLoadingPolicy
 
     fileprivate init(
         runtime: ABIRuntime,
         storage: NativeValue,
         typeName: String,
-        scope: CXXImageScope,
+        scope: ImageSelector,
         loading: ImageLoadingPolicy
     ) {
         self.runtime = runtime
@@ -185,13 +180,7 @@ public final class NativeCXXObject {
     ) throws -> NativeBoundCXXMethod<Result, repeat each Argument> {
         let member = request.declaration
         let declaration = NativeDeclaration(name: typeName + "::" + member.name, language: .cxx)
-        let symbol: ResolvedSymbol
-        switch scope {
-        case .selector(let selector):
-            symbol = try runtime.resolver.resolve(declaration, in: selector, loading: loading)
-        case .image(let image):
-            symbol = try runtime.resolver.resolve(declaration, in: image, loading: loading)
-        }
+        let symbol = try runtime.resolver.resolve(declaration, in: scope, loading: loading)
         let method = try NativeCXXMethod<Result, repeat each Argument>(
             target: .symbol(symbol),
             adapter: member.adapter
@@ -213,13 +202,7 @@ public final class NativeCXXObject {
         let scope = scope
         let loading = loading
         let prepared = try await NativePreparation.run {
-            let symbol: ResolvedSymbol
-            switch scope {
-            case .selector(let selector):
-                symbol = try runtime.resolver.resolve(declaration, in: selector, loading: loading)
-            case .image(let image):
-                symbol = try runtime.resolver.resolve(declaration, in: image, loading: loading)
-            }
+            let symbol = try runtime.resolver.resolve(declaration, in: scope, loading: loading)
             let call: CFunctionCall<Result, repeat each Argument> = try prepareCXXCall(
                 adapter: member.adapter
             )
@@ -418,31 +401,7 @@ extension ABIRuntime {
             runtime: self,
             storage: storage,
             typeName: typeName,
-            scope: .selector(scope),
-            loading: loading
-        )
-    }
-
-    /// Creates a C++ receiver scope within an already retained image.
-    ///
-    /// - Parameters:
-    ///   - storage: A live object or caller-adjusted subobject view.
-    ///   - typeName: The qualified C++ class name.
-    ///   - image: The retained image to search.
-    ///   - loading: Whether direct member resolution may ask dyld to acquire
-    ///     and initialize the image.
-    /// - Returns: A receiver scope retaining its storage and image.
-    public func cxxObject(
-        _ storage: NativeValue,
-        typeNamed typeName: String,
-        in image: NativeImage,
-        loading: ImageLoadingPolicy = .ifNeeded
-    ) -> NativeCXXObject {
-        .init(
-            runtime: self,
-            storage: storage,
-            typeName: typeName,
-            scope: .image(image),
+            scope: scope,
             loading: loading
         )
     }

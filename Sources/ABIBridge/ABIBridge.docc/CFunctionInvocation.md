@@ -130,11 +130,11 @@ let images = try runtime.resolveImagesAndWait(matching: .framework(named: "Examp
 if let image = images.first {
     let start = try runtime.resolveAndWait(
         .c(.function("ExampleStart", as: (() -> Void).self)),
-        in: image
+        in: .image(image)
     )
     let stop = try runtime.resolveAndWait(
         .c(.function("ExampleStop", as: (() -> Void).self)),
-        in: image
+        in: .image(image)
     )
 }
 ```
