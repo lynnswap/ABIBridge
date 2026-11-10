@@ -401,7 +401,7 @@ struct SwiftAsyncHookTests {
         await gate.open()
         #expect(try await task.value == 1001)
         #expect(releases.withLock { $0 } == 1)
-        await #expect(throws: NativeSwiftHookInvocationError.expiredInvocation) { try await saved.value!.proceed(1) }
+        await #expect(throws: NativeHookInvocationError.expiredInvocation) { try await saved.value!.proceed(1) }
         #expect(try unsafe await oracle.unsafeInvoke(1) == 2)
     }
     @Test @MainActor func actorCallbacksResumeOnTheirDeclaredExecutor() async throws {
@@ -565,7 +565,7 @@ struct SwiftAsyncHookTests {
                 let saved = SavedAsyncHookInvocation<Signature>()
                 saved.value = call
                 _ = await Task.detached {
-                    await #expect(throws: NativeSwiftHookInvocationError.wrongTask) { try await saved.value!.proceed(value) }
+                    await #expect(throws: NativeHookInvocationError.wrongTask) { try await saved.value!.proceed(value) }
                 }.value
                 let nested = if value == 0 { Int64(0) } else { try unsafe await oracle.unsafeInvoke(value - 1) }
                 return nested + (try await call.proceed(value))

@@ -22,10 +22,10 @@ private final class ObjCReplacementFrame {
 
     func withCall<T>(_ body: (OpaquePointer) throws -> T) throws -> T {
         lock.lock()
-        guard let pointer else { lock.unlock(); throw NativeObjCMethodHookError.expiredInvocation }
+        guard let pointer else { lock.unlock(); throw NativeHookInvocationError.expiredInvocation }
         guard pthread_equal(thread, pthread_self()) != 0 else {
             lock.unlock()
-            throw NativeObjCMethodHookError.wrongThread
+            throw NativeHookInvocationError.wrongThread
         }
         lock.unlock()
         // Expiry runs only on this thread after the callback returns. Native
@@ -154,7 +154,7 @@ package final class ObjCReplacement<Result, each Argument> {
             signature: ((repeat each Argument) -> Result).self, unnamed: "<Objective-C method>")
         return ObjCReplacementCallback { pointer in
             guard !requiresMainThread || Thread.isMainThread else {
-                onFailure(NativeObjCMethodHookError.wrongThread)
+                onFailure(NativeHookInvocationError.wrongThread)
                 return
             }
             let frame = ObjCReplacementFrame(pointer)
@@ -224,7 +224,7 @@ package final class ObjCReplacement<Result, each Argument> {
     ) -> ObjCReplacementCallback {
         ObjCReplacementCallback { pointer in
             guard !requiresMainThread || Thread.isMainThread else {
-                onFailure(NativeObjCMethodHookError.wrongThread)
+                onFailure(NativeHookInvocationError.wrongThread)
                 return
             }
             do {

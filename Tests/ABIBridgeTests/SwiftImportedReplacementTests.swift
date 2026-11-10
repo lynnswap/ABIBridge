@@ -665,7 +665,7 @@ struct SwiftImportedReplacementTests {
         #expect(plan.slots[0].restoration?.didWrite == true)
         try plan.restore()
         #expect(plan.slots[0].status == .restored)
-        #expect(plan.slots[0].protectionRecovery?.status == Int32(ABIPointerSlotComplete))
+        #expect(plan.slots[0].protectionRecovery?.outcome == .complete)
         let originalBits = page.load(as: UInt.self)
         #expect(
             ABICompareExchangePointerSlot(page, originalBits, originalBits).protectionBefore

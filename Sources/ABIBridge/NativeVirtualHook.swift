@@ -1,9 +1,6 @@
 import ABIBridgeCore
 import Foundation
 
-/// A virtual continuation was used after return or on another thread.
-public enum NativeVirtualInvocationError: Error, Sendable { case expiredInvocation, wrongThread }
-
 /// The incoming subobject and a callback-scoped continuation. The receiver and other pointers remain borrowed; this value does not extend the native call.
 public struct NativeVirtualInvocation<Result, each Argument>: CustomStringConvertible {
     /// The source declaration used for named selection; nil for explicit adapter entries. It does not identify an already interposed predecessor and its copied value remains usable after the callback ends.
@@ -31,55 +28,26 @@ public struct NativeVirtualInvocation<Result, each Argument>: CustomStringConver
                 return try callSignature.proceed(pointer, prefix: [storage], repeat each values)
             }
         }
-        catch FunctionCallbackFrameError.expiredInvocation { throw NativeVirtualInvocationError.expiredInvocation }
-        catch FunctionCallbackFrameError.wrongThread { throw NativeVirtualInvocationError.wrongThread }
+        catch FunctionCallbackFrameError.expiredInvocation { throw NativeHookInvocationError.expiredInvocation }
+        catch FunctionCallbackFrameError.wrongThread { throw NativeHookInvocationError.wrongThread }
     }
 }
 
 /// Owns one shared-table callback. Copies of the reference share registration. Later callbacks wrap earlier ones. In-flight calls retain immutable snapshots. Published callable storage, image leases and table owners remain process-lived; invalidation releases callback captures after the last active snapshot ends.
 public final class NativeVirtualHook: @unchecked Sendable {
-    /// Logical registration state and observed contents of its shared slot.
-    public enum Status: Sendable { case invalidated, active, displaced, unreadable }
-    /// A copied publication or rollback outcome, including incomplete cleanup.
-    public struct Mutation: Sendable {
-        /// Native mutation status; zero is complete. Fields not reached by the operation remain zero; interpret them together with this status.
-        public let status: Int32
-        /// Whether this operation published its pointer, including partial failure.
-        public let didWrite: Bool
-        /// Stored pointer bits observed before the comparison, when read succeeded.
-        public let observed: UInt
-        /// Original Mach failure code, or zero.
-        public let systemErrorCode: Int32
-        /// Failure restoring the region's current page protection, or zero.
-        public let restoreProtectionError: Int32
-        /// Failure restoring the region's maximum page protection, or zero.
-        public let restoreMaximumError: Int32
-        /// Current page protection from the original region query.
-        public let protectionBefore: Int32
-        /// Maximum page protection from the original region query.
-        public let maximumBefore: Int32
-        /// VM region flags from the original region query.
-        public let regionFlags: UInt32
-        init(_ value: ABIPointerSlotResult) {
-            status = value.status; didWrite = value.didWrite; observed = value.observed
-            systemErrorCode = value.systemErrorCode
-            restoreProtectionError = value.restoreProtectionError; restoreMaximumError = value.restoreMaximumError
-            protectionBefore = value.protectionBefore; maximumBefore = value.maximumBefore; regionFlags = value.regionFlags
-        }
-    }
     /// The selected slot's state and immutable installation/rollback effects.
     public struct Slot: Sendable {
         public let address: UInt
-        public let status: Status
-        public let mutation: Mutation
-        public let rollback: Mutation
+        public let status: NativeHookSlotStatus
+        public let mutation: NativePointerSlotMutation
+        public let rollback: NativePointerSlotMutation
     }
     let handle: OpaquePointer
     init(_ handle: OpaquePointer) { self.handle = handle }
     /// Nil if preparation failed before selecting a slot. Remains available after invalidation or external displacement; status is a point-in-time observation.
     public var slot: Slot? {
         guard ABIVirtualHookHasEntry(handle) else { return nil }
-        let status: Status
+        let status: NativeHookSlotStatus
         switch ABIVirtualHookGetStatus(handle) {
         case 0: status = .invalidated
         case 1: status = .active
@@ -89,8 +57,8 @@ public final class NativeVirtualHook: @unchecked Sendable {
         return Slot(
             address: ABIVirtualHookGetSlot(handle),
             status: status,
-            mutation: Mutation(ABIVirtualHookGetMutation(handle)),
-            rollback: Mutation(ABIVirtualHookGetRollback(handle))
+            mutation: NativePointerSlotMutation(ABIVirtualHookGetMutation(handle)),
+            rollback: NativePointerSlotMutation(ABIVirtualHookGetRollback(handle))
         )
     }
     /// Removes this callback from future snapshots without waiting or restoring the slot. A pointer copied after publication stays callable as pass-through.

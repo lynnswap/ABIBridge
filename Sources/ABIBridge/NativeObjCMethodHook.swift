@@ -5,10 +5,6 @@ import ObjectiveC
 
 /// A failure in a managed Objective-C method hook.
 public enum NativeObjCMethodHookError: Error, Sendable, Equatable {
-    /// The invocation's callback has already returned.
-    case expiredInvocation
-    /// The continuation or MainActor callback was entered from the wrong thread.
-    case wrongThread
     /// Another writer replaced the managed entry, or changed it during preparation.
     case displaced
     /// The method does not satisfy the requested ordinary or initializer hook contract.

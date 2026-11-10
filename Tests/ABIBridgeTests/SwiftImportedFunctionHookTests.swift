@@ -261,7 +261,7 @@ struct SwiftImportedFunctionHookTests {
         }
         #expect(try unsafe caller.unsafeInvoke(44) == 100)
         #expect(!saved.input!.isConsumed)
-        #expect(throws: NativeSwiftHookInvocationError.expiredInvocation) {
+        #expect(throws: NativeHookInvocationError.expiredInvocation) {
             try saved.runtimeContinuation!.proceed(NativeSwiftConsuming(saved.input!))
         }
         #expect(try unsafe consume.unsafeInvoke(NativeSwiftConsuming(saved.input!)) == 44)
@@ -2757,7 +2757,7 @@ struct SwiftImportedFunctionHookTests {
         } catch let error as NativeSwiftHookInstallationError {
             let slot = try #require(error.registration.slots.first)
             #expect(slot.mutation?.didWrite == false)
-            #expect(slot.protectionRecovery?.status == Int32(ABIPointerSlotRestoreFailed))
+            #expect(slot.protectionRecovery?.outcome == .restoreFailed)
             #expect(try unsafe oracle.unsafeInvoke(40) == 41)
             if !retryRegistration { failedRegistration = error.registration }
         }
@@ -2776,10 +2776,7 @@ struct SwiftImportedFunctionHookTests {
                 node: ObjectIdentifier(failedRegistration.node),
                 records: failedRegistration.records
             )
-            #expect(
-                failedRegistration.slots[0].protectionRecovery?.status
-                    == Int32(ABIPointerSlotComplete)
-            )
+            #expect(failedRegistration.slots[0].protectionRecovery?.outcome == .complete)
         } else {
             let hook = try await registry.register(
                 selection: selection,
@@ -2827,7 +2824,7 @@ struct SwiftImportedFunctionHookTests {
         capture = nil
         #expect(try unsafe oracle.unsafeInvoke(40) == 41)
         let escaped = try #require(saved.value)
-        #expect(throws: NativeSwiftHookInvocationError.expiredInvocation) {
+        #expect(throws: NativeHookInvocationError.expiredInvocation) {
             try escaped.proceed(40)
         }
         #expect(!released.withLock { $0 })

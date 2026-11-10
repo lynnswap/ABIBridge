@@ -322,7 +322,7 @@ struct ObjectiveCInitializerHookTests {
             .objc(.method(selector, as: Signature.self)),
             on: ABIManagedInitializerFixture.self,
             onFailure: { error in
-                #expect(error as? NativeObjCMethodHookError == .wrongThread);
+                #expect(error as? NativeHookInvocationError == .wrongThread);
                 errors.update { $0 += 1 }
             },
             transformingArguments: { mode, value, object in

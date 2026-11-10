@@ -178,7 +178,7 @@ struct SwiftValueHookTests {
         defer { captured.invalidate() }
         #expect(try unsafe scalarCaller.unsafeInvoke(2) == 42)
         let expired = try #require(saved.value)
-        #expect(throws: NativeSwiftHookInvocationError.expiredInvocation) { try expired.receiver(as: Int64.self) }
+        #expect(throws: NativeHookInvocationError.expiredInvocation) { try expired.receiver(as: Int64.self) }
     }
 
     @Test func mutatingSelfUsesTheCallersAddressAndPreservesEffectsOnFailure() async throws {

@@ -170,7 +170,7 @@ struct ImportedFunctionHookTests {
             saved.call = invocation
             let finished = DispatchSemaphore(value: 0)
             Thread.detachNewThread {
-                #expect(throws: NativeImportedInvocationError.wrongThread) {
+                #expect(throws: NativeHookInvocationError.wrongThread) {
                     try saved.call!.proceed(a, b)
                 }
                 finished.signal()
@@ -179,7 +179,7 @@ struct ImportedFunctionHookTests {
             return try invocation.proceed(a, b)
         }
         #expect(try unsafe call.unsafeInvoke(20, 22) == 42)
-        #expect(throws: NativeImportedInvocationError.expiredInvocation) {
+        #expect(throws: NativeHookInvocationError.expiredInvocation) {
             try saved.call!.proceed(20, 22)
         }
         hook.invalidate()
