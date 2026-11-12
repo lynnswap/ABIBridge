@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 // Native values can share references, and a later call can install code-bearing
 // values through any alias. Their code dependencies must therefore grow together.
@@ -6,7 +7,11 @@ import Foundation
 final class SwiftValueCodeLifetime: @unchecked Sendable {
     @TaskLocal static var current: SwiftValueCodeLifetime?
     private static let lock = NSLock()
+    // Set once, with the lock held, when this lifetime's set joins another.
+    // The reference keeps the parent alive; the pointer lets a lookup follow
+    // it without the lock.
     private var parent: SwiftValueCodeLifetime?
+    private let parentPointer = Atomic<UnsafeRawPointer?>(nil)
     private var rank = 0
     private var retainedImages: [NativeImageIdentity: NativeImage]
 
@@ -48,10 +53,25 @@ final class SwiftValueCodeLifetime: @unchecked Sendable {
     // depth and the strong parent chain without introducing retention cycles.
     private var root: SwiftValueCodeLifetime { parent?.root ?? self }
 
+    // The root at some instant, found without the lock. Sets only grow, so
+    // lifetimes that shared a root stay connected.
+    private var observedRoot: SwiftValueCodeLifetime {
+        var lifetime = self
+        while let parent = lifetime.parentPointer.load(ordering: .acquiring) {
+            lifetime = Unmanaged<SwiftValueCodeLifetime>.fromOpaque(parent).takeUnretainedValue()
+        }
+        return lifetime
+    }
+
     @discardableResult
     static func connect(_ lifetimes: [SwiftValueCodeLifetime], retaining images: @autoclosure () -> [NativeImage]) -> SwiftValueCodeLifetime? {
         guard let first = lifetimes.first else { return nil }
         let additions = images()
+        if additions.isEmpty {
+            // Calls made inside a callback connect the same lifetimes again.
+            let root = first.observedRoot
+            if lifetimes.dropFirst().allSatisfy({ $0.observedRoot === root }) { return root }
+        }
         var released: [[NativeImageIdentity: NativeImage]] = []
         lock.lock()
         var root = first.root
@@ -66,6 +86,10 @@ final class SwiftValueCodeLifetime: @unchecked Sendable {
             released.append(other.retainedImages)
             other.retainedImages = [:]
             other.parent = root
+            other.parentPointer.store(
+                UnsafeRawPointer(Unmanaged.passUnretained(root).toOpaque()),
+                ordering: .releasing
+            )
         }
         for image in additions where root.retainedImages[image.identity] == nil {
             root.retainedImages[image.identity] = image
