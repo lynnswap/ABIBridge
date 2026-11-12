@@ -22,6 +22,46 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  prior-validation:
+    name: Look for a validated tree
+    # A pull request's run validates the tree that its merge produces. When the
+    # pull request was up to date, the push that follows the merge has that tree.
+    if: github.event_name != 'pull_request' || github.event.action != 'closed'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      validated: ${{ steps.lookup.outputs.validated }}
+    steps:
+      - name: Find the pull request run that validated this tree
+        id: lookup
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          # Any failed lookup leaves the tree unvalidated, so every job runs.
+          task_validated=false
+          if [[ "$EVENT_NAME" == push ]]; then
+            task_tree=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$GITHUB_SHA" --jq .tree.sha || true)
+            task_run=
+            if [[ -n "$task_tree" ]]; then
+              # A fork's run can upload an artifact under any name.
+              task_run=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=ci-validated-tree-$task_tree" \
+                --jq '[.artifacts[] | select(.expired == false and .workflow_run.repository_id == .workflow_run.head_repository_id)][0].workflow_run.id // empty' || true)
+            fi
+            if [[ -n "$task_run" ]]; then
+              task_state=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$task_run" \
+                --jq '"\(.event) \(.conclusion) \(.path)"' || true)
+              if [[ "$task_state" == "pull_request success .github/workflows/ci.yml" ]]; then
+                task_validated=true
+                echo "Run $task_run validated tree $task_tree."
+              fi
+            fi
+          fi
+          echo "validated=$task_validated" >> "$GITHUB_OUTPUT"
+
   release-tests:
     name: Release and CI automation tests
     if: github.event_name != 'pull_request' || github.event.action != 'closed'
@@ -37,7 +77,8 @@ jobs:
 
   runtime-tests:
     name: Runtime and consumers (Xcode ${{ matrix.xcode }})
-    if: github.event_name != 'pull_request' || github.event.action != 'closed'
+    needs: prior-validation
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.action != 'closed') && needs.prior-validation.outputs.validated != 'true' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
@@ -142,7 +183,8 @@ jobs:
 
   public-api-tests:
     name: Public API (Xcode 27.0)
-    if: github.event_name != 'pull_request' || github.event.action != 'closed'
+    needs: prior-validation
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.action != 'closed') && needs.prior-validation.outputs.validated != 'true' }}
     runs-on: xcode-27
     timeout-minutes: 40
     env:
@@ -179,7 +221,8 @@ jobs:
 
   platform-builds:
     name: Apple device SDK builds (${{ matrix.platforms }}, Xcode 27.0)
-    if: github.event_name != 'pull_request' || github.event.action != 'closed'
+    needs: prior-validation
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.action != 'closed') && needs.prior-validation.outputs.validated != 'true' }}
     runs-on: xcode-27
     timeout-minutes: 40
     env:
@@ -261,4 +304,26 @@ jobs:
             ${{ runner.temp }}/SimulatorResults
             ${{ runner.temp }}/DerivedData/Logs/Test
           if-no-files-found: warn
+          retention-days: 7
+
+  validated-tree:
+    name: Record the validated tree
+    needs: [release-tests, runtime-tests, public-api-tests, platform-builds]
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Name the tree this run validated
+        id: tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          task_tree=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$GITHUB_SHA" --jq .tree.sha)
+          echo "$task_tree" > "$RUNNER_TEMP/validated-tree"
+          echo "sha=$task_tree" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-validated-tree-${{ steps.tree.outputs.sha }}
+          path: ${{ runner.temp }}/validated-tree
+          overwrite: true
           retention-days: 7
