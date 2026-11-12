@@ -1135,12 +1135,14 @@ package final class RuntimeSymbolResolver: Sendable {
         withIndex(for: image) { $0.swiftPropertyDeclarations(ofTypeAt: address) }
     }
 
-    /// The symbols `image` exports with names starting with `prefix`.
+    /// The symbols `image` exports with names starting with `prefix` and,
+    /// unless `suffixes` is empty, ending with one of them.
     package func exportedSymbols(
         withPrefix prefix: String,
+        endingWith suffixes: [String] = [],
         in image: RuntimeImage
     ) -> [IndexedSymbol] {
-        withIndex(for: image) { $0.exportedSymbols(withPrefix: prefix) }
+        withIndex(for: image) { $0.exportedSymbols(withPrefix: prefix, endingWith: suffixes) }
     }
 
     package func swiftNominalTypeName(

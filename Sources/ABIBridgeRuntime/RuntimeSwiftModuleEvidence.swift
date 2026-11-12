@@ -37,7 +37,11 @@ extension RuntimeSymbolResolver {
     ) -> Bool {
         let key = LibraryEvolutionKey(image: image.identity, module: module)
         if let cached = Self.libraryEvolutionSymbols.withLock({ $0[key] }) { return cached }
-        let exports = exportedSymbols(withPrefix: "_$s" + module, in: image).contains { symbol in
+        let exports = exportedSymbols(
+            withPrefix: "_$s" + module,
+            endingWith: ["WC", "Tj", "Mu", "vpMV"],
+            in: image
+        ).contains { symbol in
             let symbolName = symbol.name
             if symbolName.hasSuffix("WC") || symbolName.hasSuffix("Tj")
                 || symbolName.hasSuffix("Mu")
@@ -89,7 +93,11 @@ extension RuntimeSymbolResolver {
             descriptor.hasPrefix(marker)
         else { return false }
         let prefix = "enum case for " + descriptor.dropFirst(marker.count) + "."
-        return exportedSymbols(withPrefix: "_$s" + declaration, in: image).contains { symbol in
+        return exportedSymbols(
+            withPrefix: "_$s" + declaration,
+            endingWith: ["WC"],
+            in: image
+        ).contains { symbol in
             guard symbol.name.hasSuffix("WC"),
                 let name = DeclarationKey.demangle(symbol.name, language: .swift),
                 name.hasPrefix(prefix)

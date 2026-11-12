@@ -545,8 +545,11 @@ package final class SymbolIndex: Sendable {
         withTables { $0.appendSharedCacheSymbols(more, matching: queries) }
     }
 
-    package func exportedSymbols(withPrefix prefix: String) -> [IndexedSymbol] {
-        withTables { $0.exportedSymbols(withPrefix: prefix) }
+    package func exportedSymbols(
+        withPrefix prefix: String,
+        endingWith suffixes: [String] = []
+    ) -> [IndexedSymbol] {
+        withTables { $0.exportedSymbols(withPrefix: prefix, endingWith: suffixes) }
     }
 
     package func exportedSwiftTypeDeclaration(at address: UInt64) -> String? {
@@ -1003,41 +1006,114 @@ final class SymbolTables {
         return nil
     }
 
-    /// The symbols this image exports with names starting with `prefix`. The
-    /// walk visits only the trie's subtree for the prefix, such as one Swift
-    /// declaration or module context.
-    package func exportedSymbols(withPrefix prefix: String) -> [IndexedSymbol] {
-        guard let trie = exportTrie else { return [] }
-        let prefix = Array(prefix.utf8)
+    /// The symbols this image exports with names starting with `prefix` and,
+    /// unless `suffixes` is empty, ending with one of them. The walk visits
+    /// only the trie's subtree for the prefix, such as one Swift declaration
+    /// or module context, and makes a string only for the names it returns.
+    package func exportedSymbols(
+        withPrefix prefix: String,
+        endingWith suffixes: [String] = []
+    ) -> [IndexedSymbol] {
+        let suffixes = suffixes.map { Array($0.utf8) }
         var symbols: [IndexedSymbol] = []
-        var pending: [(name: [UInt8], offset: Int)] = [([], 0)]
-        while let entry = pending.popLast() {
-            var offset = entry.offset
+        forEachExport(withPrefix: Array(prefix.utf8)) { name, offset in
             guard
-                let node = TrieNode<ExportTrieNodeContent>.readNext(
-                    basePointer: trie.basePointer.assumingMemoryBound(to: UInt8.self),
-                    trieSize: trie.exportSize,
-                    nextOffset: &offset
-                )
-            else { continue }
-            if entry.name.count >= prefix.count, let value = node.content?.symbolOffset,
+                suffixes.isEmpty
+                    || suffixes.contains(where: {
+                        name.count >= $0.count && name.suffix($0.count).elementsEqual($0)
+                    }),
                 let symbol = imageSymbol(
-                    name: String(decoding: entry.name, as: UTF8.self),
-                    offset: Int(bitPattern: value)
+                    name: String(decoding: name, as: UTF8.self),
+                    offset: offset
                 )
-            {
-                symbols.append(symbol)
-            }
-            for child in node.children {
-                let name = entry.name + child.label.utf8
-                let shared = min(name.count, prefix.count)
-                guard name[..<shared].elementsEqual(prefix[..<shared]),
-                    let next = Int(exactly: child.offset)
-                else { continue }
-                pending.append((name, next))
-            }
+            else { return }
+            symbols.append(symbol)
         }
         return symbols
+    }
+
+    /// Calls `visit` with the name and image offset of each symbol this image
+    /// exports under `prefix`. One buffer holds the name of the node being
+    /// visited and is cut back to the parent's length before each sibling, as
+    /// LLVM's `ExportEntry` does, so the walk copies no name per node. Names
+    /// are the trie's bytes: an edge can split a UTF-8 sequence.
+    /// https://github.com/llvm/llvm-project/blob/main/llvm/lib/Object/MachOObjectFile.cpp
+    private func forEachExport(
+        withPrefix prefix: [UInt8],
+        _ visit: (_ name: UnsafeBufferPointer<UInt8>, _ offset: Int) -> Void
+    ) {
+        guard let trie = exportTrie else { return }
+        let base = trie.basePointer.assumingMemoryBound(to: UInt8.self)
+        let size = trie.exportSize
+        func readULEB128(at offset: inout Int) -> UInt? {
+            var value: UInt = 0
+            var shift = 0
+            while offset < size {
+                let byte = base[offset]
+                offset += 1
+                value |= UInt(byte & 0x7f) << shift
+                shift += 7
+                if byte < 0x80 { return value }
+            }
+            return nil
+        }
+        struct Edge {
+            let node: Int
+            let label: Int
+            let labelCount: Int
+            let parentCount: Int
+        }
+        var name: [UInt8] = []
+        var pending = [Edge(node: 0, label: 0, labelCount: 0, parentCount: 0)]
+        while let edge = pending.popLast() {
+            name.removeSubrange(edge.parentCount...)
+            name.append(
+                contentsOf: UnsafeBufferPointer(start: base + edge.label, count: edge.labelCount)
+            )
+            var offset = edge.node
+            guard let terminalSize = readULEB128(at: &offset),
+                let terminalCount = Int(exactly: terminalSize)
+            else { continue }
+            if terminalCount != 0, name.count >= prefix.count {
+                // A re-export or a stub with a resolver has no address in this image.
+                var content = offset
+                if let flags = readULEB128(at: &content),
+                    flags
+                        & UInt(EXPORT_SYMBOL_FLAGS_REEXPORT | EXPORT_SYMBOL_FLAGS_STUB_AND_RESOLVER)
+                        == 0,
+                    let value = readULEB128(at: &content)
+                {
+                    name.withUnsafeBufferPointer { visit($0, Int(bitPattern: value)) }
+                }
+            }
+            var child = offset.addingReportingOverflow(terminalCount)
+            guard !child.overflow, child.partialValue < size else { continue }
+            let childCount = base[child.partialValue]
+            child.partialValue += 1
+            for _ in 0..<childCount where child.partialValue < size {
+                let label = child.partialValue
+                while child.partialValue < size, base[child.partialValue] != 0 {
+                    child.partialValue += 1
+                }
+                let labelCount = child.partialValue - label
+                child.partialValue += 1
+                guard let target = readULEB128(at: &child.partialValue) else { break }
+                // The parent's name already agrees with the prefix.
+                var index = name.count
+                var agrees = true
+                while index < prefix.count, index - name.count < labelCount {
+                    if base[label + index - name.count] != prefix[index] {
+                        agrees = false
+                        break
+                    }
+                    index += 1
+                }
+                guard agrees, let node = Int(exactly: target) else { continue }
+                pending.append(
+                    Edge(node: node, label: label, labelCount: labelCount, parentCount: name.count)
+                )
+            }
+        }
     }
 
     /// The declaration, such as `8ProbeLib5PointV`, under which this image
@@ -1101,7 +1177,9 @@ final class SymbolTables {
     }
 
     private lazy var exportedTypeDescriptors: TypeDescriptorSymbols = {
-        let descriptors = TypeDescriptorSymbols(exportedSymbols(withPrefix: "_$s"))
+        let descriptors = TypeDescriptorSymbols(
+            exportedSymbols(withPrefix: "_$s", endingWith: ["Mn"])
+        )
         weight += descriptors.names.count
         return descriptors
     }()
@@ -1547,9 +1625,10 @@ final class SymbolTables {
             let length = strlen(name)
             return length > 2 && name[length - 2] == suffix.0 && name[length - 1] == suffix.1
         }
-        let exports = exportedSymbols(withPrefix: "_$s").filter {
-            $0.name.utf8.suffix(2).elementsEqual([UInt8(suffix.0), UInt8(suffix.1)])
-        }
+        let exports = exportedSymbols(
+            withPrefix: "_$s",
+            endingWith: [String(decoding: [UInt8(suffix.0), UInt8(suffix.1)], as: UTF8.self)]
+        )
         var seen = Set<IndexedSymbol>()
         return (table + exports).filter { seen.insert($0).inserted }
     }
