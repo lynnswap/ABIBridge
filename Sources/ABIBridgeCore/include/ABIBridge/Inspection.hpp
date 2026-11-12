@@ -296,7 +296,7 @@ class runtime final {
 public:
     runtime() : handle_(ABICreateSymbolRuntime(), ABIReleaseSymbolRuntime) {}
     /// Shares the process-wide resolver cache with Swift's ABIRuntime.shared.
-    static runtime current() { return runtime(ABICopySharedSymbolRuntime()); }
+    static runtime shared() { return runtime(ABICopySharedSymbolRuntime()); }
     explicit operator bool() const noexcept { return bool(handle_); }
     /// Borrows this resolver's C reference; keep the runtime alive during use.
     ABISymbolRuntime *native_handle() const noexcept { return handle_.get(); }

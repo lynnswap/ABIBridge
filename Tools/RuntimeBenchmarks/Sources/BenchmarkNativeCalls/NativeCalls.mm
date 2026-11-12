@@ -36,7 +36,7 @@ template <class F> void measure(const char *label, F body) {
 }
 extern "C" void ABIPerfRunNative() {
   @autoreleasepool {
-    auto runtime = abi_bridge::InvocationRuntime::current();
+    auto runtime = abi_bridge::InvocationRuntime::shared();
     auto c = runtime.c_function<int32_t(int32_t, int32_t)>("ABIPerfCAdd");
     auto cpp = runtime.cxx_function<int(int, int)>(
         abi_bridge::declaration("ABIPerf::add(int, int)"));

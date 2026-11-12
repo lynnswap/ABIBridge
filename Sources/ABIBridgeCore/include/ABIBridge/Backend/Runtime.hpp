@@ -29,7 +29,7 @@ struct call_plan final {
 class InvocationRuntime final {
 public:
     InvocationRuntime() = default;
-    static InvocationRuntime current() { return InvocationRuntime(runtime::current()); }
+    static InvocationRuntime shared() { return InvocationRuntime(runtime::shared()); }
     resolved_symbol resolve(const declaration& query, const image_selector& scope = {},
                             image_loading loading = image_loading::if_needed) const {
         return runtime_.resolve(query, scope, loading);
