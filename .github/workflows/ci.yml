@@ -81,11 +81,66 @@ jobs:
       - run: python3 -m unittest discover -s scripts -p 'test_*.py' -v
 
   runtime-tests:
-    name: Runtime and consumers (Xcode ${{ matrix.xcode }})
+    name: Runtime and compiler codegen (Xcode ${{ matrix.xcode }})
     needs: prior-validation
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.action != 'closed') && needs.prior-validation.outputs.validated != 'true' }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: ${{ matrix.developer_dir }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - xcode: '26.6'
+            runner: macos-26
+            developer_dir: /Applications/Xcode_26.6.app/Contents/Developer
+          - xcode: '27.0'
+            runner: xcode-27
+            developer_dir: /Applications/Xcode_27.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          xcrun swift --version
+          echo "ABI_TEST_BUILD_DIR=$RUNNER_TEMP/DerivedData" >> "$GITHUB_ENV"
+      - name: Test Core and Runtime on macOS
+        if: ${{ !cancelled() }}
+        timeout-minutes: 25
+        run: |
+          if [[ -d Sources/ABIBridgeRuntime ]]; then
+            bash scripts/test-package.sh runtime
+          else
+            # Older release targets keep their original package suite.
+            xcodebuild test -scheme ABIBridge \
+              -destination 'platform=macOS,arch=arm64' \
+              -derivedDataPath "$ABI_TEST_BUILD_DIR"
+          fi
+      - name: Check Swift compiler codegen
+        # Release targets can predate the codegen runner.
+        if: ${{ !cancelled() && hashFiles('scripts/test-codegen.sh') != '' }}
+        timeout-minutes: 20
+        run: bash scripts/test-codegen.sh
+      - name: Preserve failed test diagnostics
+        if: always() && (failure() || cancelled())
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: runtime-tests-xcode-${{ matrix.xcode }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/DerivedData/Logs/Test
+          if-no-files-found: warn
+          retention-days: 7
+
+  consumer-tests:
+    name: Consumers (Xcode ${{ matrix.xcode }})
+    needs: prior-validation
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.action != 'closed') && needs.prior-validation.outputs.validated != 'true' }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
     env:
       DEVELOPER_DIR: ${{ matrix.developer_dir }}
     strategy:
@@ -110,18 +165,6 @@ jobs:
           xcrun swift --version
           echo "ABI_TEST_BUILD_DIR=$RUNNER_TEMP/DerivedData" >> "$GITHUB_ENV"
           echo "ABI_CONSUMER_BUILD_DIR=$RUNNER_TEMP/NativeConsumer" >> "$GITHUB_ENV"
-      - name: Test Core and Runtime on macOS
-        if: ${{ !cancelled() }}
-        timeout-minutes: 25
-        run: |
-          if [[ -d Sources/ABIBridgeRuntime ]]; then
-            bash scripts/test-package.sh runtime
-          else
-            # Older release targets keep their original package suite.
-            xcodebuild test -scheme ABIBridge \
-              -destination 'platform=macOS,arch=arm64' \
-              -derivedDataPath "$ABI_TEST_BUILD_DIR"
-          fi
       - name: Test public compiler boundaries and optimized native linkage
         if: ${{ !cancelled() && matrix.xcode == '27.0' }}
         timeout-minutes: 25
@@ -131,11 +174,6 @@ jobs:
           else
             bash scripts/test-native-consumer.sh
           fi
-      - name: Check Swift compiler codegen
-        # Release targets can predate the codegen runner.
-        if: ${{ !cancelled() && hashFiles('scripts/test-codegen.sh') != '' }}
-        timeout-minutes: 20
-        run: bash scripts/test-codegen.sh
       - name: Test SwiftUI public consumer
         if: ${{ !cancelled() && matrix.xcode == '27.0' && hashFiles('Sources/ABIBridgeRuntime/*.swift') != '' }}
         timeout-minutes: 10
@@ -178,7 +216,7 @@ jobs:
         if: always() && (failure() || cancelled())
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: runtime-tests-xcode-${{ matrix.xcode }}-${{ github.run_attempt }}
+          name: consumer-tests-xcode-${{ matrix.xcode }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/SimulatorResults
             ${{ runner.temp }}/DerivedData/Logs/Test
@@ -187,13 +225,17 @@ jobs:
           retention-days: 7
 
   public-api-tests:
-    name: Public API (Xcode 27.0)
+    name: Public API (Xcode 27.0, part ${{ matrix.part }})
     needs: prior-validation
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.action != 'closed') && needs.prior-validation.outputs.validated != 'true' }}
     runs-on: xcode-27
     timeout-minutes: 40
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -206,6 +248,7 @@ jobs:
           xcrun swift --version
           echo "ABI_TEST_BUILD_DIR=$RUNNER_TEMP/DerivedData" >> "$GITHUB_ENV"
       - name: Check whitespace and manifest
+        if: matrix.part == 1
         run: |
           git diff --check HEAD^ HEAD
           xcrun swift package dump-package
@@ -214,12 +257,13 @@ jobs:
         timeout-minutes: 25
         env:
           ABI_TEST_PARALLEL_API: '1'
+          ABI_TEST_API_PART: ${{ matrix.part }}
         run: bash scripts/test-package.sh api
       - name: Preserve failed test diagnostics
         if: always() && (failure() || cancelled())
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: api-tests-xcode-27.0-${{ github.run_attempt }}
+          name: api-tests-xcode-27.0-part-${{ matrix.part }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/DerivedData/Logs/Test
           if-no-files-found: warn
           retention-days: 7
@@ -236,11 +280,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - platforms: iOS tvOS
-            simulator: false
-          - platforms: visionOS watchOS
-            simulator: true
+        platforms: [iOS tvOS, visionOS watchOS]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -283,8 +323,26 @@ jobs:
             echo "::endgroup::"
           done
           exit "$task_status"
+
+  simulator-tests:
+    name: iOS Simulator (Xcode 27.0)
+    needs: prior-validation
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.action != 'closed') && needs.prior-validation.outputs.validated != 'true' }}
+    runs-on: xcode-27
+    timeout-minutes: 40
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+          persist-credentials: false
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          xcrun swift --version
       - name: Test Core and Runtime on iOS Simulator
-        if: ${{ !cancelled() && matrix.simulator && hashFiles('scripts/test-simulators.py') != '' }}
+        if: ${{ !cancelled() && hashFiles('scripts/test-simulators.py') != '' }}
         timeout-minutes: 35
         run: |
           task_options=()
@@ -301,7 +359,7 @@ jobs:
             python3 scripts/test-simulators.py --cleanup --result-dir "$RUNNER_TEMP/SimulatorResults"
           fi
       - name: Preserve failed Simulator diagnostics
-        if: always() && (failure() || cancelled()) && matrix.simulator
+        if: always() && (failure() || cancelled())
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: simulator-tests-xcode-27.0-${{ github.run_attempt }}
@@ -313,7 +371,7 @@ jobs:
 
   validated-tree:
     name: Record the validated tree
-    needs: [release-tests, runtime-tests, public-api-tests, platform-builds]
+    needs: [release-tests, runtime-tests, consumer-tests, public-api-tests, platform-builds, simulator-tests]
     if: github.event_name == 'pull_request' && github.event.action != 'closed'
     runs-on: ubuntu-24.04
     timeout-minutes: 5

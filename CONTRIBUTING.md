@@ -52,13 +52,15 @@ Each selection uses its own directory under `.build/package-tests`. Set `ABI_TES
 
 The Runtime and public API schemes disable parallel tests because fixtures load and unload libraries in the process-wide image catalog. Individual tests still exercise concurrency. A suite's `serialized` trait does not isolate it from unrelated suites; see [Swift Testing parallelization](https://developer.apple.com/documentation/testing/parallelization).
 
-To run the full public API suite in two independent processes, as CI does:
+To run the full public API suite in four independent processes:
 
 ```sh
 ABI_TEST_PARALLEL_API=1 bash scripts/test-package.sh api
 ```
 
-The helper builds once, then runs complementary groups with `test-without-building`. Tests remain sequential within each process. Both groups must finish successfully, and each saves a separate `.xcresult` bundle under the build directory's `Logs/Test`. This mode manages test filters and result paths; use the default mode when passing `-only-testing`, `-skip-testing`, or `-resultBundlePath`.
+The helper builds once, then runs four complementary groups with `test-without-building`. Three groups name their suites and the fourth takes every other suite. Tests remain sequential within each process. Every group must finish successfully, and each saves a separate `.xcresult` bundle under the build directory's `Logs/Test`. This mode manages test filters and result paths; use the default mode when passing `-only-testing`, `-skip-testing`, or `-resultBundlePath`.
+
+CI runs the groups two at a time in two jobs. Set `ABI_TEST_API_PART` to `1` or `2` to run one job's pair.
 
 During development, select a single suite:
 
@@ -151,17 +153,23 @@ Older `actionlint` versions do not recognize GitHub's [official `xcode-27` runne
 
 ## What CI runs
 
-[CI](.github/workflows/ci.yml) uses five macOS jobs:
+[CI](.github/workflows/ci.yml) uses nine macOS jobs, each sized to take about ten minutes:
 
 | Job | Xcode | Runner | Checks |
 | --- | --- | --- | --- |
-| Runtime and consumers | 26.6 | `macos-26` | macOS Core and Runtime, then focused external consumers and iOS Simulator Core and Runtime in parallel |
-| Runtime and consumers | 27.0 | `xcode-27` | macOS Core and Runtime, then focused external and SwiftUI consumers |
-| Public API | 27.0 | `xcode-27` | Manifest and whitespace checks, then the complete public API suite in two processes |
+| Runtime and compiler codegen | 26.6 | `macos-26` | macOS Core and Runtime, then the compiler codegen checks |
+| Runtime and compiler codegen | 27.0 | `xcode-27` | macOS Core and Runtime, then the compiler codegen checks |
+| Consumers | 26.6 | `macos-26` | Focused external consumers and iOS Simulator Core and Runtime in parallel |
+| Consumers | 27.0 | `xcode-27` | Focused external consumers, then the SwiftUI consumer |
+| Public API, part 1 | 27.0 | `xcode-27` | Manifest and whitespace checks, then two of the four public API groups in two processes |
+| Public API, part 2 | 27.0 | `xcode-27` | The other two public API groups in two processes |
 | iOS and tvOS SDKs | 27.0 | `xcode-27` | Both products for iOS and tvOS; Release build of the arm64 validation app for iOS |
-| Other SDKs and iOS Simulator | 27.0 | `xcode-27` | Both products for visionOS and watchOS, then iOS Simulator Core and Runtime |
+| visionOS and watchOS SDKs | 27.0 | `xcode-27` | Both products for visionOS and watchOS |
+| iOS Simulator | 27.0 | `xcode-27` | iOS Simulator Core and Runtime |
 
 The jobs run independently. Package and SDK builds reuse one build directory within each job; focused and SwiftUI consumers share a separate consumer build directory. Release and CI automation tests run in a separate Linux job.
+
+A run on `main` skips the macOS jobs when a pull request's run already validated the same tree, which is the case after merging an up-to-date pull request with a merge commit.
 
 Timing loops, stress tests, full external consumer combinations, and architecture probes run locally.
 

@@ -14,38 +14,56 @@ esac
 
 task_build_dir=${ABI_TEST_BUILD_DIR:-$task_root/.build/package-tests/$task_suite}
 if [[ "$task_suite" == api && "${ABI_TEST_PARALLEL_API:-0}" == 1 ]]; then
+    case "${ABI_TEST_API_PART:-all}" in
+        all) task_groups=(1 2 3 4) ;;
+        1) task_groups=(1 2) ;;
+        2) task_groups=(3 4) ;;
+        *) echo "ABI_TEST_API_PART must be 1 or 2." >&2; exit 2 ;;
+    esac
     task_options=(-workspace "$task_root/ABIBridge.xcworkspace" -scheme ABIBridge
         -destination 'platform=macOS,arch=arm64' -derivedDataPath "$task_build_dir")
     xcodebuild build-for-testing "${task_options[@]}" "$@"
 
-    # The complementary filters include new suites without maintaining a second list.
-    task_suites=(SwiftImportedFunctionHookTests SwiftGenericBindingTests
-        SwiftConstrainedExtensionTests SymbolResolutionTests
-        SwiftExistentialValueTests SwiftMemberInvocationTests
-        ConformanceMatrixTests SwiftGenericCallTests SwiftGenericReceiverTests
-        SwiftInferredValueTests SwiftOpaqueResultTests
-        SwiftRuntimeValueTests SwiftRuntimeValueProjectionTests)
-    task_only=()
-    task_skip=()
-    for task_name in "${task_suites[@]}"; do
-        task_only+=("-only-testing:ABIBridgeTests/$task_name")
-        task_skip+=("-skip-testing:ABIBridgeTests/$task_name")
-    done
+    # Three groups name suites that take about as long together as each other
+    # group. The fourth takes every other suite, so a new suite needs no entry.
+    task_group_1=(SwiftOpaqueResultTests SwiftRuntimeValueProjectionTests
+        SwiftRuntimeValueTests SwiftExistentialValueTests
+        SwiftFunctionInvocationTests SwiftWitnessDispatchTests
+        SymbolResolutionTests SwiftVirtualReplacementTests)
+    task_group_2=(SwiftMemberInvocationTests ResolutionRequestTests
+        RuntimePreparationTests SwiftGenericCallTests SwiftGenericReceiverTests
+        SwiftClassHookTests SwiftGenericBindingTests SwiftCallbackTests)
+    task_group_3=(SwiftConstrainedExtensionTests ConformanceMatrixTests
+        SwiftImportedFunctionHookTests NativeSwiftClosureTests
+        SwiftInferredValueTests SwiftSignatureCompatibilityTests
+        SwiftRuntimeCollectionTests SwiftGenericValueReceiverTests)
 
     mkdir -p "$task_build_dir/Logs/Test"
     task_results=$(mktemp -d "$task_build_dir/Logs/Test/api-parallel.XXXXXX")
-    xcodebuild test-without-building "${task_options[@]}" "$@" \
-        -parallel-testing-enabled NO -resultBundlePath "$task_results/selected.xcresult" \
-        "${task_only[@]}" &
-    task_selected_pid=$!
-    xcodebuild test-without-building "${task_options[@]}" "$@" \
-        -parallel-testing-enabled NO -resultBundlePath "$task_results/remaining.xcresult" \
-        "${task_skip[@]}" &
-    task_remaining_pid=$!
+    task_pids=()
+    for task_group in "${task_groups[@]}"; do
+        task_filters=()
+        if [[ "$task_group" == 4 ]]; then
+            for task_name in "${task_group_1[@]}" "${task_group_2[@]}" "${task_group_3[@]}"; do
+                task_filters+=("-skip-testing:ABIBridgeTests/$task_name")
+            done
+        else
+            task_names="task_group_$task_group[@]"
+            for task_name in "${!task_names}"; do
+                task_filters+=("-only-testing:ABIBridgeTests/$task_name")
+            done
+        fi
+        xcodebuild test-without-building "${task_options[@]}" "$@" \
+            -parallel-testing-enabled NO \
+            -resultBundlePath "$task_results/group-$task_group.xcresult" \
+            "${task_filters[@]}" &
+        task_pids+=($!)
+    done
 
     task_status=0
-    if ! wait "$task_selected_pid"; then task_status=1; fi
-    if ! wait "$task_remaining_pid"; then task_status=1; fi
+    for task_pid in "${task_pids[@]}"; do
+        if ! wait "$task_pid"; then task_status=1; fi
+    done
     exit "$task_status"
 fi
 
