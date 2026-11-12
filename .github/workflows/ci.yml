@@ -25,7 +25,7 @@ jobs:
   prior-validation:
     name: Look for a validated tree
     # A pull request's run validates the tree that its merge produces. When the
-    # pull request was up to date, the push that follows the merge has that tree.
+    # pull request was up to date, the merge commit pushed to main has that tree.
     if: github.event_name != 'pull_request' || github.event.action != 'closed'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -44,12 +44,17 @@ jobs:
           # Any failed lookup leaves the tree unvalidated, so every job runs.
           task_validated=false
           if [[ "$EVENT_NAME" == push ]]; then
-            task_tree=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$GITHUB_SHA" --jq .tree.sha || true)
+            task_commit=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$GITHUB_SHA" \
+              --jq '"\(.tree.sha) \(.parents[1].sha // "")"' || true)
+            read -r task_tree task_head <<< "$task_commit" || true
             task_run=
-            if [[ -n "$task_tree" ]]; then
-              # A fork's run can upload an artifact under any name.
+            if [[ -n "$task_tree" && -n "$task_head" ]]; then
+              # A run names the tree itself, so the record counts only from a
+              # run for the commit that this merge brought in: a pull request
+              # cannot vouch for a tree that its own merge did not produce.
               task_run=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=ci-validated-tree-$task_tree" \
-                --jq '[.artifacts[] | select(.expired == false and .workflow_run.repository_id == .workflow_run.head_repository_id)][0].workflow_run.id // empty' || true)
+                --jq '.artifacts[] | select(.expired == false and .workflow_run.repository_id == .workflow_run.head_repository_id) | "\(.workflow_run.head_sha) \(.workflow_run.id)"' \
+                | awk -v head="$task_head" '$1 == head { print $2; exit }' || true)
             fi
             if [[ -n "$task_run" ]]; then
               task_state=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$task_run" \
