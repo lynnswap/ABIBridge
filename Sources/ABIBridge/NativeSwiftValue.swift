@@ -371,7 +371,8 @@ struct SwiftRuntimeValuePlan: Sendable {
         plan.projection = .optional(
             payload: try swiftRuntimeValueType(
                 metadata: payloadType,
-                retaining: [valueType] + knownTypes
+                derivedFrom: valueType,
+                retaining: knownTypes
             )
         )
         return plan

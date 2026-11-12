@@ -31,7 +31,7 @@ final class SwiftOpaqueResultPlan: Sendable {
     static func make(
         for result: Any.Type,
         entry: SwiftEntry,
-        resolver: SymbolResolver?
+        resolver: SymbolResolver
     ) throws -> SwiftOpaqueResultPlan? {
         guard result == NativeSwiftValue.self || result == NativeSwiftBorrowedValue.self else {
             return nil
@@ -57,7 +57,7 @@ final class SwiftOpaqueResultPlan: Sendable {
 
     static func resolve(
         entry: SwiftEntry,
-        resolver: SymbolResolver?
+        resolver: SymbolResolver
     ) throws -> SwiftOpaqueResultPlan {
         let prepared = try prepare(entry: entry, resolver: resolver, indices: [0], binding: nil)
         return prepared[0]!
@@ -74,15 +74,10 @@ final class SwiftOpaqueResultPlan: Sendable {
 
     private static func prepare(
         entry: SwiftEntry,
-        resolver: SymbolResolver?,
+        resolver: SymbolResolver,
         indices: Set<Int>,
         binding: SwiftGenericBinding?
     ) throws -> [Int: SwiftOpaqueResultPlan] {
-        guard let resolver else {
-            throw ABIResolutionError.unsupportedDeclaration(
-                "Opaque results require source declaration lookup."
-            )
-        }
         guard var origin = DeclarationKey.demangle(entry.linkageName, language: .swift) else {
             throw ABIResolutionError.metadataUnavailable(
                 "The matched opaque declaration is unavailable."
@@ -109,7 +104,7 @@ final class SwiftOpaqueResultPlan: Sendable {
         )
         let function = try NativeSwiftFunction<
             (UInt, UnsafeRawPointer?, UnsafeRawPointer, UInt) -> SwiftMetadataResponse
-        >(runtimeSymbol: accessor)
+        >(runtimeSymbol: accessor, resolver: resolver)
         var results: [Int: SwiftOpaqueResultPlan] = [:]
         for index in indices.sorted() {
             guard index >= 0,

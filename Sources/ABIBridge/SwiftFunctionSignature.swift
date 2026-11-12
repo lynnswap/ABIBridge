@@ -128,7 +128,7 @@ enum SwiftCallablePlan: Sendable {
     init(
         signature: Any.Type,
         entry: SwiftEntry,
-        resolver: SymbolResolver?,
+        resolver: SymbolResolver,
         trailingType: CValueType? = nil,
         consumesArguments: Bool = false,
         generic: SwiftGenericCallPlan? = nil
@@ -144,11 +144,6 @@ enum SwiftCallablePlan: Sendable {
                 resolver: resolver
             )
         if description.isAsync {
-            guard let resolver else {
-                throw ABIResolutionError.metadataUnavailable(
-                    "Async calls require the native descriptor's resolver."
-                )
-            }
             self = .asynchronous(
                 try SwiftAsyncCall(
                     signature: signature,

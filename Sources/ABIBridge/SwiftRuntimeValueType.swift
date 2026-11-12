@@ -2,13 +2,17 @@ import ABIBridgeCore
 import ABIBridgeCore.Backend
 import ABIBridgeRuntime
 
+/// - Parameter origin: The type the value was reached from. The result uses
+///   its runtime's resolver.
 func swiftRuntimeValueType(
     metadata: Any.Type,
-    retaining types: [NativeSwiftType]
+    derivedFrom origin: NativeSwiftType,
+    retaining others: [NativeSwiftType] = []
 ) throws -> NativeSwiftType {
     try validateSwiftRuntimeValueStorage(metadata)
+    let types = [origin] + others
     if let type = types.first(where: { $0.metadata == metadata }) { return type }
-    let resolver = types.first?.resolver ?? .shared
+    let resolver = origin.resolver
     let images = types.flatMap(\.codeImages)
     let generic = try SwiftGenericTypeMetadata(metadata: metadata, retaining: images)
     let name = try swiftNativeTypeName(metadata)
@@ -22,7 +26,7 @@ func swiftRuntimeValueType(
             objectType,
             named: name,
             resolver: resolver,
-            retaining: types.first?.image
+            retaining: origin.image
         )
     } else if let owner = generic.images.first {
         image = owner

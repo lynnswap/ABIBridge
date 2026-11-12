@@ -120,7 +120,7 @@ public final class NativeSwiftType: Sendable, Hashable {
         let metatype = ABISwiftMetatypeMetadata(value)!
         let valueType = try swiftRuntimeValueType(
             metadata: unsafeBitCast(metatype, to: Any.Type.self),
-            retaining: [self]
+            derivedFrom: self
         )
         return try withUnsafePointer(to: value) {
             try NativeSwiftValue.copy(from: UnsafeRawPointer($0), type: valueType)
@@ -1185,6 +1185,7 @@ public final class NativeSwiftType: Sendable, Hashable {
             owner: self,
             consumesArguments: consumesArguments
                 || member.entry.record?.accessor == .setter,
+            resolver: resolver,
             generic: classReceiver
                 ? try member.generic.includingReceiver(.object) : member.generic
         )

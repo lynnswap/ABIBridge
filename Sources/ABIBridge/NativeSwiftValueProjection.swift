@@ -99,7 +99,8 @@ extension NativeSwiftValue {
         }
         let payloadType = try swiftRuntimeValueType(
             metadata: metadata,
-            retaining: [enumType] + Array(valueABIs.keys)
+            derivedFrom: enumType,
+            retaining: Array(valueABIs.keys)
         )
         let plan = try SwiftRuntimeValueProjectionPlan(
             enumType: enumType,
@@ -162,7 +163,7 @@ extension NativeSwiftValue {
             )
         }
         let element = tuple.elements[index]
-        let elementType = try swiftRuntimeValueType(metadata: element.type, retaining: [type])
+        let elementType = try swiftRuntimeValueType(metadata: element.type, derivedFrom: type)
         return try withExtendedLifetime(source) {
             try Self.copy(from: source.address.advanced(by: element.offset), type: elementType)
         }
@@ -187,7 +188,7 @@ extension NativeSwiftValue {
                     }
                 }
             }
-            let valueType = try swiftRuntimeValueType(metadata: underlyingType, retaining: [type])
+            let valueType = try swiftRuntimeValueType(metadata: underlyingType, derivedFrom: type)
             return try Self.copy(from: address, type: valueType)
         }
         return try withExtendedLifetime(source) {
