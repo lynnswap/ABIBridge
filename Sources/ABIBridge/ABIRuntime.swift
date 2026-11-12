@@ -2,7 +2,7 @@ import Foundation
 
 /// Resolves declarations using shared image and symbol indexes.
 ///
-/// Use ``shared`` to reuse completed resolutions across callers, or create a runtime with independent caches. Search indexes are shared by overlapping lookups and released when the last lookup or ``prepare(_:)`` batch finishes. Explicit scopes acquire images by default. Image and symbol handles retain their images until the last owner releases them.
+/// Use ``shared`` to reuse completed resolutions across callers, or create a runtime with independent caches. A runtime owns its resolution caches and the image leases they hold. Installed hooks, the image catalog, native call interfaces, and inferred Swift value conventions belong to the process and are the same for every runtime. Search indexes are shared by overlapping lookups and released when the last lookup or ``prepare(_:)`` batch finishes. Explicit scopes acquire images by default. Image and symbol handles retain their images until the last owner releases them.
 ///
 /// Searches prepare indexes on demand. Async resolution moves search and call preparation to a worker; bound Objective-C receiver callbacks and C++ virtual-slot capture stay on the caller's executor. `resolve…AndWait` factories run on the caller's thread and wait for any required work already in progress. Use `prepare(_:)` to start that work early without occupying the caller's actor.
 ///
@@ -27,6 +27,8 @@ public final class ABIRuntime: Sendable {
     let swiftResolutionCache: SwiftResolutionCache
 
     /// Creates a runtime with independent resolution caches.
+    ///
+    /// Every runtime finds the same declarations. Create one when a component needs to release its own cached results and image leases with ``removeCachedResults()`` while other callers keep theirs. Swift type and function handles keep using the runtime that resolved them when they look up members or install hooks.
     public init() {
         let cache = SwiftResolutionCache()
         swiftResolutionCache = cache
@@ -174,7 +176,7 @@ public final class ABIRuntime: Sendable {
     ///
     /// Removing `.symbolLookup` invalidates file-path acquisitions synchronously. Select it after changing a managed library file or symbolic link when subsequent lookups must use the new target without waiting for file notifications.
     ///
-    /// Existing image, symbol, and callable handles remain valid, and in-progress resolutions may finish. Subsequent lookups rebuild only the removed caches. This does not clear the process-shared call-interface cache or the native image catalog.
+    /// Existing image, symbol, and callable handles remain valid, and in-progress resolutions may finish. Subsequent lookups rebuild only the removed caches. This does not clear state that belongs to the process: the call-interface cache, the native image catalog, and inferred Swift value conventions. Installed hooks stay in place.
     ///
     /// Use `[.symbolLookup]` to release search indexes while retaining prepared Swift calls and types.
     /// Passing an empty set leaves all caches intact.

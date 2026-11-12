@@ -87,7 +87,7 @@ For an available C++ base declaration, Clang can acquire and authenticate its vp
 #include <cstdio>
 
 using namespace abi_bridge;
-auto runtime = runtime::current();
+auto runtime = runtime::shared();
 auto table = virtual_table::from(baseSubobject, layout.entryCount, storageOwner);
 auto entry = table.entry(runtime, "Example::Derived::value(int) const");
 auto hook = entry.hook_shared_calls<int(int)>(

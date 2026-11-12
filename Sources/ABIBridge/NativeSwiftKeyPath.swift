@@ -203,7 +203,8 @@ extension NativeSwiftType {
         var keyPath = prepared.plan.instantiate()
         let keyPathType = try swiftRuntimeValueType(
             metadata: Swift.type(of: keyPath),
-            retaining: [self, valueType]
+            derivedFrom: self,
+            retaining: [valueType]
         )
         SwiftValueCodeLifetime.connect([keyPathType.codeLifetime], retaining: [prepared.image])
         return try withUnsafePointer(to: &keyPath) {

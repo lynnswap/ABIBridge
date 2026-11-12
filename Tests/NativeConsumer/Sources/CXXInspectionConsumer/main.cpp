@@ -48,7 +48,7 @@ int main(int argc, char **argv) {
     checkMemoryReads();
     checkPointerSearch();
     using namespace abi_bridge;
-    abi_bridge::runtime::current().remove_cached_results();
+    abi_bridge::runtime::shared().remove_cached_results();
     void *library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
     assert(library);
     const auto scope = image_selector::path(argv[1]);

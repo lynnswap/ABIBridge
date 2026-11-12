@@ -20,14 +20,14 @@ static int observedValue;
 
 extern "C" __attribute__((used)) void ABIBridgeLoadingWillInitialize() {
     using namespace abi_bridge;
-    auto runtime = runtime::current();
+    auto runtime = runtime::shared();
     const declaration query("ABIBridgeLoadedValue", language::c);
     // Seed the path cache from inside the initializer. Other threads must still
     // let the loader finish initialization before reusing that acquisition.
     runtime.resolve(query, image_selector::path(loadingPath));
     initializationObserver = std::thread([] {
         observerStarted.release();
-        auto runtime = abi_bridge::runtime::current();
+        auto runtime = abi_bridge::runtime::shared();
         auto symbol = runtime.resolve({"ABIBridgeLoadedValue", abi_bridge::language::c},
                                       abi_bridge::image_selector::path(loadingPath));
         observedValue = abi_bridge::function<int()>(symbol).unsafe_invoke();
@@ -62,7 +62,7 @@ static void checkDuplicateInstallNames(const std::filesystem::path& directory) {
 extern "C" __attribute__((used)) void ABIBridgeLoadingDidInitialize() {
     // Reenter the same resolver while dyld is executing the new library's
     // constructor. Neither the catalog nor index lock may span dlopen.
-    auto runtime = abi_bridge::runtime::current();
+    auto runtime = abi_bridge::runtime::shared();
     auto pid = abi_bridge::function<pid_t()>(runtime.resolve({"getpid", abi_bridge::language::c}));
     assert(pid.unsafe_invoke() == getpid());
     runtime.remove_cached_results();
@@ -73,7 +73,7 @@ int main(int argc, char **argv) {
     assert(argc == 2);
     loadingPath = argv[1];
     using namespace abi_bridge;
-    auto runtime = abi_bridge::runtime::current();
+    auto runtime = abi_bridge::runtime::shared();
     const auto scope = image_selector::install_name("@rpath/libLoadingFixture.dylib");
     const declaration query("ABIBridgeLoadedValue", language::c);
     try {

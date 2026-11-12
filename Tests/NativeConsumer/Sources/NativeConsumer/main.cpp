@@ -24,7 +24,7 @@ int ABIBridgeLocalCounter::add(int delta) { return value += delta; }
 
 static bool unloadCallbackRan = false;
 static void onLibraryUnload() {
-    abi_bridge::InvocationRuntime::current().remove_cached_results();
+    abi_bridge::InvocationRuntime::shared().remove_cached_results();
     unloadCallbackRan = true;
 }
 
@@ -46,9 +46,9 @@ extern "C" void ABIBridgeTestConstructorEntered(const void *initializer) {
     }
     ABIReleaseImageList(images);
     assert(constructorGeneration != 0);
-    abi_bridge::InvocationRuntime::current().remove_cached_results();
+    abi_bridge::InvocationRuntime::shared().remove_cached_results();
     std::thread worker([] {
-        auto runtime = abi_bridge::InvocationRuntime::current();
+        auto runtime = abi_bridge::InvocationRuntime::shared();
         assert(runtime.c_function<pid_t()>("getpid").unsafe_invoke() == getpid());
         assert(runtime.cxx_function<int()>(abi_bridge::declaration("ABIBridgeReadinessFixture::shared()"))
                    .unsafe_invoke() == 41);
@@ -76,7 +76,7 @@ extern "C" void ABIBridgeTestConstructorEntered(const void *initializer) {
         abi_bridge::symbol_request alias{absent};
         alias.alternatives = {pid};
         abi_bridge::symbol_request unavailable{pending};
-        auto batch = abi_bridge::runtime::current().resolve(std::vector{available, alias, unavailable});
+        auto batch = abi_bridge::runtime::shared().resolve(std::vector{available, alias, unavailable});
         assert(std::holds_alternative<abi_bridge::resolved_symbol>(batch[0]));
         assert(std::holds_alternative<abi_bridge::resolved_symbol>(batch[1]));
         assert(std::get<abi_bridge::resolution_error>(batch[2]).code() == ABIFailureImageUnavailable);
@@ -90,7 +90,7 @@ int main(int argc, char** argv) {
     assert(argc == 3);
     const std::string path = argv[1];
     const auto scope = abi_bridge::image_selector::path(path);
-    auto runtime = abi_bridge::InvocationRuntime::current();
+    auto runtime = abi_bridge::InvocationRuntime::shared();
     auto pid = runtime.c_function<pid_t()>("getpid");
     assert(pid.unsafe_invoke() == getpid());
 

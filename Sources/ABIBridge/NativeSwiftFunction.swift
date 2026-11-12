@@ -106,8 +106,8 @@ public struct NativeSwiftFunction<Signature>: Sendable {
 
     /// Calls a Swift runtime entry point that has no source declaration, with
     /// the caller's signature as its ABI.
-    init(runtimeSymbol symbol: ResolvedSymbol) throws {
-        try self.init(entry: SwiftEntry(symbol: symbol), plan: nil)
+    init(runtimeSymbol symbol: ResolvedSymbol, resolver: SymbolResolver) throws {
+        try self.init(entry: SwiftEntry(symbol: symbol), resolver: resolver, plan: nil)
     }
 
     /// - Parameter generic: The selected declaration's call plan.
@@ -116,7 +116,7 @@ public struct NativeSwiftFunction<Signature>: Sendable {
         metadata: Any.Type? = nil,
         owner: NativeSwiftType? = nil,
         consumesArguments: Bool = false,
-        resolver: SymbolResolver? = nil,
+        resolver: SymbolResolver,
         generic: SwiftGenericCallPlan
     ) throws {
         try self.init(
@@ -134,7 +134,7 @@ public struct NativeSwiftFunction<Signature>: Sendable {
         metadata: Any.Type? = nil,
         owner: NativeSwiftType? = nil,
         consumesArguments: Bool = false,
-        resolver: SymbolResolver? = nil,
+        resolver: SymbolResolver,
         plan generic: SwiftGenericCallPlan?
     ) throws {
         self.entry = entry
@@ -142,11 +142,11 @@ public struct NativeSwiftFunction<Signature>: Sendable {
         isGeneric = generic?.binding.declaration.parameters.isEmpty == false
         context = metadata.map { unsafeBitCast($0, to: UInt.self) } ?? 0
         typeOwner = owner
-        self.resolver = resolver ?? owner?.resolver ?? .shared
+        self.resolver = resolver
         call = try SwiftCallablePlan(
             signature: Signature.self,
             entry: entry,
-            resolver: resolver ?? owner?.resolver,
+            resolver: resolver,
             consumesArguments: consumesArguments,
             generic: generic
         )

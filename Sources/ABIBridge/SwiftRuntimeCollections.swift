@@ -132,7 +132,8 @@ struct SwiftRuntimeCollectionPlan: @unchecked Sendable {
         ) throws {
             self.native = try swiftRuntimeValueType(
                 metadata: native,
-                retaining: [collection] + types
+                derivedFrom: collection,
+                retaining: types
             )
             host = SwiftHostElement(type)
             switch host {
@@ -147,7 +148,8 @@ struct SwiftRuntimeCollectionPlan: @unchecked Sendable {
                     )
                 }
                 payload = try swiftRuntimeValueType(metadata: unsafeBitCast(wrapped, to: Any.Type.self),
-                    retaining: [self.native] + types
+                    derivedFrom: self.native,
+                    retaining: types
                 )
             case .value(let type):
                 guard type == native else {
