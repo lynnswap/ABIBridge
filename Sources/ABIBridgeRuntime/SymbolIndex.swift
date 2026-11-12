@@ -1014,32 +1014,41 @@ final class SymbolTables {
         withPrefix prefix: String,
         endingWith suffixes: [String] = []
     ) -> [IndexedSymbol] {
+        let prefix = Array(prefix.utf8)
         let suffixes = suffixes.map { Array($0.utf8) }
         var symbols: [IndexedSymbol] = []
-        forEachExport(withPrefix: Array(prefix.utf8)) { name, offset in
-            guard
-                suffixes.isEmpty
-                    || suffixes.contains(where: {
-                        name.count >= $0.count && name.suffix($0.count).elementsEqual($0)
-                    }),
-                let symbol = imageSymbol(
-                    name: String(decoding: name, as: UTF8.self),
-                    offset: offset
-                )
-            else { return }
-            symbols.append(symbol)
-        }
+        forEachExport(
+            descendingInto: { name in
+                let shared = min(name.count, prefix.count)
+                return name.prefix(shared).elementsEqual(prefix.prefix(shared))
+            },
+            { name, offset in
+                guard name.count >= prefix.count,
+                    suffixes.isEmpty
+                        || suffixes.contains(where: {
+                            name.count >= $0.count && name.suffix($0.count).elementsEqual($0)
+                        }),
+                    let symbol = imageSymbol(
+                        name: String(decoding: name, as: UTF8.self),
+                        offset: offset
+                    )
+                else { return }
+                symbols.append(symbol)
+            }
+        )
         return symbols
     }
 
     /// Calls `visit` with the name and image offset of each symbol this image
-    /// exports under `prefix`. One buffer holds the name of the node being
-    /// visited and is cut back to the parent's length before each sibling, as
-    /// LLVM's `ExportEntry` does, so the walk copies no name per node. Names
-    /// are the trie's bytes: an edge can split a UTF-8 sequence.
+    /// exports, entering a child's subtree only when `enters` accepts the
+    /// child's name. One buffer holds the name being read and is cut back to
+    /// the parent's length before each sibling, as LLVM's `ExportEntry` does,
+    /// so the walk copies no name per node. Names are the trie's bytes, since
+    /// an edge can split a UTF-8 sequence, and a NUL follows each name so that
+    /// a C string filter can read it.
     /// https://github.com/llvm/llvm-project/blob/main/llvm/lib/Object/MachOObjectFile.cpp
     private func forEachExport(
-        withPrefix prefix: [UInt8],
+        descendingInto enters: (_ name: UnsafeBufferPointer<UInt8>) -> Bool,
         _ visit: (_ name: UnsafeBufferPointer<UInt8>, _ offset: Int) -> Void
     ) {
         guard let trie = exportTrie else { return }
@@ -1064,17 +1073,27 @@ final class SymbolTables {
             let parentCount: Int
         }
         var name: [UInt8] = []
+        func withTerminatedName<Result>(
+            _ body: (UnsafeBufferPointer<UInt8>) -> Result
+        ) -> Result {
+            name.append(0)
+            defer { name.removeLast() }
+            return name.withUnsafeBufferPointer {
+                body(UnsafeBufferPointer(rebasing: $0.dropLast()))
+            }
+        }
         var pending = [Edge(node: 0, label: 0, labelCount: 0, parentCount: 0)]
         while let edge = pending.popLast() {
             name.removeSubrange(edge.parentCount...)
             name.append(
                 contentsOf: UnsafeBufferPointer(start: base + edge.label, count: edge.labelCount)
             )
+            let count = name.count
             var offset = edge.node
             guard let terminalSize = readULEB128(at: &offset),
                 let terminalCount = Int(exactly: terminalSize)
             else { continue }
-            if terminalCount != 0, name.count >= prefix.count {
+            if terminalCount != 0 {
                 // A re-export or a stub with a resolver has no address in this image.
                 var content = offset
                 if let flags = readULEB128(at: &content),
@@ -1083,7 +1102,7 @@ final class SymbolTables {
                         == 0,
                     let value = readULEB128(at: &content)
                 {
-                    name.withUnsafeBufferPointer { visit($0, Int(bitPattern: value)) }
+                    withTerminatedName { visit($0, Int(bitPattern: value)) }
                 }
             }
             var child = offset.addingReportingOverflow(terminalCount)
@@ -1098,19 +1117,12 @@ final class SymbolTables {
                 let labelCount = child.partialValue - label
                 child.partialValue += 1
                 guard let target = readULEB128(at: &child.partialValue) else { break }
-                // The parent's name already agrees with the prefix.
-                var index = name.count
-                var agrees = true
-                while index < prefix.count, index - name.count < labelCount {
-                    if base[label + index - name.count] != prefix[index] {
-                        agrees = false
-                        break
-                    }
-                    index += 1
-                }
-                guard agrees, let node = Int(exactly: target) else { continue }
+                name.append(contentsOf: UnsafeBufferPointer(start: base + label, count: labelCount))
+                let entered = withTerminatedName(enters)
+                name.removeSubrange(count...)
+                guard entered, let node = Int(exactly: target) else { continue }
                 pending.append(
-                    Edge(node: node, label: label, labelCount: labelCount, parentCount: name.count)
+                    Edge(node: node, label: label, labelCount: labelCount, parentCount: count)
                 )
             }
         }
@@ -1303,15 +1315,12 @@ final class SymbolTables {
                 query.declaration.language == .swift
                 ? swiftSymbols(in: swiftBucket, descriptorKind: descriptorKind, matching: accepts)
                 : tableSymbols(matching: accepts)
-            if let trie = exportTrie {
-                symbols += filteredExports(
-                    in: trie,
-                    prefixes: prefixes,
-                    query: query,
-                    swiftBucket: swiftBucket,
-                    accepts: accepts
-                )
-            }
+            symbols += filteredExports(
+                prefixes: prefixes,
+                query: query,
+                swiftBucket: swiftBucket,
+                accepts: accepts
+            )
             imageSymbols[scope] = symbols
             weight += 1 + symbols.count
         }
@@ -1328,44 +1337,39 @@ final class SymbolTables {
     // An owner substring can occur later in a C++ name, so only Swift's proven
     // known module prefix may prune a subtree. Other filters apply at terminals.
     private func filteredExports(
-        in trie: MachOImage.ExportTrie,
         prefixes: [String],
         query: SymbolQuery,
         swiftBucket: SwiftBucket?,
         accepts: (UnsafePointer<CChar>) -> Bool
     ) -> [IndexedSymbol] {
+        let prefixes = prefixes.map { Array($0.utf8) }
         var symbols: [IndexedSymbol] = []
-        var pending = [(name: "", offset: 0)]
-        while let entry = pending.popLast() {
-            var offset = entry.offset
-            guard
-                let node = TrieNode<ExportTrieNodeContent>.readNext(
-                    basePointer: trie.basePointer.assumingMemoryBound(to: UInt8.self),
-                    trieSize: trie.exportSize,
-                    nextOffset: &offset
-                )
-            else { continue }
-            if let value = node.content?.symbolOffset,
-                entry.name.withCString(accepts),
-                let symbol = imageSymbol(name: entry.name, offset: Int(bitPattern: value))
-            {
-                symbols.append(symbol)
-            }
-            for child in node.children {
-                let name = entry.name + child.label
-                guard prefixes.contains(where: { name.hasPrefix($0) || $0.hasPrefix(name) }),
-                    name.withCString({ query.swiftModule?.matches($0, partial: true) ?? true }),
-                    let next = Int(exactly: child.offset)
-                else { continue }
+        func cString(_ name: UnsafeBufferPointer<UInt8>) -> UnsafePointer<CChar> {
+            UnsafeRawPointer(name.baseAddress!).assumingMemoryBound(to: CChar.self)
+        }
+        forEachExport(
+            descendingInto: { name in
+                guard prefixes.contains(where: { name.starts(with: $0) || $0.starts(with: name) }),
+                    query.swiftModule?.matches(cString(name), partial: true) ?? true
+                else { return false }
                 if let swiftBucket,
-                    let known = name.withCString(SwiftModuleFilter.knownModulePrefix),
+                    let known = SwiftModuleFilter.knownModulePrefix(cString(name)),
                     known != (swiftBucket == .knownModule)
                 {
-                    continue
+                    return false
                 }
-                pending.append((name, next))
+                return true
+            },
+            { name, offset in
+                guard accepts(cString(name)),
+                    let symbol = imageSymbol(
+                        name: String(decoding: name, as: UTF8.self),
+                        offset: offset
+                    )
+                else { return }
+                symbols.append(symbol)
             }
-        }
+        )
         return symbols
     }
 
