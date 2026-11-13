@@ -163,7 +163,7 @@ struct SharedCacheScanTests {
     @Test func overlappingBatchesKeepIndexesUntilTheLastBatchEnds() throws {
         let fixture = try FixtureLibrary()
         defer { fixture.cleanup() }
-        let resolver = RuntimeSymbolResolver()
+        let resolver = RuntimeSymbolResolver(keepingLookupIndexesFor: .zero)
         let declaration = RuntimeDeclaration(
             name: fixture.namespace + "::add(int, int)",
             language: .cxx

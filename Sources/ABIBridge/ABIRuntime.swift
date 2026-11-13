@@ -148,8 +148,8 @@ public final class ABIRuntime: Sendable {
     ///
     /// The closure keeps the caller's actor isolation, including access to values
     /// that are not Sendable. Use asynchronous resolution inside it to keep
-    /// symbol scanning off that actor. Indexes are released when the last
-    /// overlapping lookup or batch finishes, including after an error.
+    /// symbol scanning off that actor. Indexes are released one second after
+    /// the last overlapping lookup or batch finishes, including after an error.
     /// Completed resolutions remain available outside the batch.
     ///
     /// - Parameters:
