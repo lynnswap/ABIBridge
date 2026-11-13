@@ -14,12 +14,6 @@ esac
 
 task_build_dir=${ABI_TEST_BUILD_DIR:-$task_root/.build/package-tests/$task_suite}
 if [[ "$task_suite" == api && "${ABI_TEST_PARALLEL_API:-0}" == 1 ]]; then
-    case "${ABI_TEST_API_PART:-all}" in
-        all) task_groups=(1 2 3 4) ;;
-        1) task_groups=(1 2) ;;
-        2) task_groups=(3 4) ;;
-        *) echo "ABI_TEST_API_PART must be 1 or 2." >&2; exit 2 ;;
-    esac
     task_options=(-workspace "$task_root/ABIBridge.xcworkspace" -scheme ABIBridge
         -destination 'platform=macOS,arch=arm64' -derivedDataPath "$task_build_dir")
     xcodebuild build-for-testing "${task_options[@]}" "$@"
@@ -41,7 +35,7 @@ if [[ "$task_suite" == api && "${ABI_TEST_PARALLEL_API:-0}" == 1 ]]; then
     mkdir -p "$task_build_dir/Logs/Test"
     task_results=$(mktemp -d "$task_build_dir/Logs/Test/api-parallel.XXXXXX")
     task_pids=()
-    for task_group in "${task_groups[@]}"; do
+    for task_group in 1 2 3 4; do
         task_filters=()
         if [[ "$task_group" == 4 ]]; then
             for task_name in "${task_group_1[@]}" "${task_group_2[@]}" "${task_group_3[@]}"; do

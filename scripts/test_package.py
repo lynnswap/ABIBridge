@@ -30,7 +30,7 @@ class PackageTests(unittest.TestCase):
                 (root / 'build.json').write_text(json.dumps(args))
                 sys.exit(int(os.environ.get('STUB_BUILD_EXIT', '0')))
             group = Path(args[args.index('-resultBundlePath') + 1]).stem
-            groups = os.environ['STUB_GROUPS'].split()
+            groups = ['group-1', 'group-2', 'group-3', 'group-4']
             (root / (group + '.json')).write_text(json.dumps(args))
             (root / (group + '.started')).touch()
             deadline = time.monotonic() + 5
@@ -45,13 +45,13 @@ class PackageTests(unittest.TestCase):
         '''))
         self.stub.chmod(0o755)
 
-    def run_package(self, groups, **overrides):
+    def run_package(self, **overrides):
         for pattern in ['*.started', '*.finished']:
             for marker in self.root.glob(pattern):
                 marker.unlink()
         environment = dict(os.environ, PATH=str(self.root) + os.pathsep + os.environ['PATH'],
                            ABI_TEST_PARALLEL_API='1', ABI_TEST_BUILD_DIR=str(self.root / 'build'),
-                           STUB_LOG_DIR=str(self.root), STUB_GROUPS=' '.join(groups), **overrides)
+                           STUB_LOG_DIR=str(self.root), **overrides)
         return subprocess.run(
             ['bash', str(Path(__file__).with_name('test-package.sh')), 'api', '-configuration', 'Release'],
             env=environment, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
@@ -60,7 +60,7 @@ class PackageTests(unittest.TestCase):
         return json.loads((self.root / (name + '.json')).read_text())
 
     def test_build_is_reused_by_concurrent_complementary_groups(self):
-        self.assertEqual(self.run_package(self.GROUPS).returncode, 0)
+        self.assertEqual(self.run_package().returncode, 0)
         build = self.command('build')
         named = [self.command(group) for group in self.GROUPS[:3]]
         remaining = self.command(self.GROUPS[3])
@@ -88,21 +88,15 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(len(result_paths), 4)
         self.assertTrue(all(path.is_relative_to(self.root / 'build/Logs/Test') for path in result_paths))
 
-    def test_a_part_runs_its_two_groups(self):
-        for part, groups in [('1', self.GROUPS[:2]), ('2', self.GROUPS[2:])]:
-            with self.subTest(part=part):
-                self.assertEqual(self.run_package(groups, ABI_TEST_API_PART=part).returncode, 0)
-                self.assertEqual(sorted(marker.stem for marker in self.root.glob('*.started')), groups)
-
     def test_any_failure_is_reported_after_every_group_finishes(self):
         for group in self.GROUPS:
             with self.subTest(group=group):
-                self.assertNotEqual(self.run_package(self.GROUPS, STUB_FAILING_GROUP=group).returncode, 0)
+                self.assertNotEqual(self.run_package(STUB_FAILING_GROUP=group).returncode, 0)
                 for other in self.GROUPS:
                     self.assertTrue((self.root / (other + '.finished')).exists())
 
     def test_build_failure_does_not_start_test_processes(self):
-        self.assertNotEqual(self.run_package(self.GROUPS, STUB_BUILD_EXIT='65').returncode, 0)
+        self.assertNotEqual(self.run_package(STUB_BUILD_EXIT='65').returncode, 0)
         self.assertTrue((self.root / 'build.json').exists())
         self.assertFalse(list(self.root.glob('*.started')))
 

@@ -225,17 +225,13 @@ jobs:
           retention-days: 7
 
   public-api-tests:
-    name: Public API (Xcode 27.0, part ${{ matrix.part }})
+    name: Public API (Xcode 27.0)
     needs: prior-validation
     if: ${{ !cancelled() && (github.event_name != 'pull_request' || github.event.action != 'closed') && needs.prior-validation.outputs.validated != 'true' }}
     runs-on: xcode-27
     timeout-minutes: 40
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.app/Contents/Developer
-    strategy:
-      fail-fast: false
-      matrix:
-        part: [1, 2]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -248,7 +244,6 @@ jobs:
           xcrun swift --version
           echo "ABI_TEST_BUILD_DIR=$RUNNER_TEMP/DerivedData" >> "$GITHUB_ENV"
       - name: Check whitespace and manifest
-        if: matrix.part == 1
         run: |
           git diff --check HEAD^ HEAD
           xcrun swift package dump-package
@@ -257,7 +252,6 @@ jobs:
         timeout-minutes: 25
         env:
           ABI_TEST_PARALLEL_API: '1'
-          ABI_TEST_API_PART: ${{ matrix.part }}
         # Most of this suite's time is symbol lookup in ABIBridge itself, which
         # takes about twice as long unoptimized. The configuration stays Debug,
         # so testability and DEBUG-only hooks remain.
@@ -268,7 +262,7 @@ jobs:
         if: always() && (failure() || cancelled())
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: api-tests-xcode-27.0-part-${{ matrix.part }}-${{ github.run_attempt }}
+          name: api-tests-xcode-27.0-${{ github.run_attempt }}
           path: ${{ runner.temp }}/DerivedData/Logs/Test
           if-no-files-found: warn
           retention-days: 7
