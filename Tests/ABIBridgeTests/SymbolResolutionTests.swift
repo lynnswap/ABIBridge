@@ -1014,6 +1014,36 @@ struct SymbolResolutionTests {
         #expect(try unsafe original.unsafeInvoke() == 42)
     }
 
+    @Test func aLoadedImageFoundByItsPathDoesNotAnswerALoadOfTheFileThatReplacedIt() async throws {
+        let module = "ReplacedPath_" + UUID().uuidString.replacingOccurrences(of: "-", with: "_")
+        let first = try FixtureLibrary(
+            load: false,
+            swiftModule: module,
+            swiftSource: "public func answer() -> Int64 { 42 }"
+        )
+        let second = try FixtureLibrary(
+            load: false,
+            swiftModule: module,
+            swiftSource: "public func answer() -> Int64 { 84 }"
+        )
+        defer { first.cleanup(); second.cleanup() }
+        let path = first.directory.appendingPathComponent("current.dylib")
+        let request = NativeRequest.swift(.function(module + ".answer()", as: (() -> Int64).self))
+        try FileManager.default.copyItem(at: first.libraryURL, to: path)
+        let original = try ABIRuntime().resolveAndWait(request, in: .path(path))
+        try FileManager.default.removeItem(at: path)
+        try FileManager.default.copyItem(at: second.libraryURL, to: path)
+        // The first image is still loaded under the path, so a search of the loaded images finds it.
+        let runtime = ABIRuntime()
+        let found = try runtime.resolveAndWait(request, in: .path(path), loading: .loadedOnly)
+        #expect(found.symbol.image.identity == original.symbol.image.identity)
+        // The loader may be unable to tell the two images of one path apart, so the load can fail. It never
+        // returns the image of the file that is no longer there.
+        let replacement = try? runtime.resolveAndWait(request, in: .path(path))
+        #expect(replacement?.symbol.image.identity != original.symbol.image.identity)
+        #expect(try unsafe original.unsafeInvoke() == 42)
+    }
+
     @Test func lazyLibrarySnapshotsCopyMatchingDiagnostics() async throws {
         let fixture = try FixtureLibrary()
         defer { fixture.cleanup() }

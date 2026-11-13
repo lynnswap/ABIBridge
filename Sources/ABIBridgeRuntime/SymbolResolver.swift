@@ -108,17 +108,23 @@ package final class RuntimeSymbolResolver: Sendable {
     private final class PathImage: Sendable {
         let identity: RuntimeImagePathIdentity
         let image: RuntimeImage
+        /// Whether the loader opened the file at the path. An image that was
+        /// only found among the loaded ones can come from a file the path no
+        /// longer names, so it does not answer a request to load the path.
+        let isOpened: Bool
         let acquiringThread: UInt?
         let observation: RuntimePathObservation?
 
         init(
             identity: RuntimeImagePathIdentity,
             image: RuntimeImage,
+            isOpened: Bool,
             acquiringThread: UInt?,
             observation: RuntimePathObservation?
         ) {
             self.identity = identity
             self.image = image
+            self.isOpened = isOpened
             self.acquiringThread = acquiringThread
             self.observation = observation
         }
@@ -339,6 +345,7 @@ package final class RuntimeSymbolResolver: Sendable {
         let thread = UInt(bitPattern: pthread_self())
         let (cached, generation) = state.withLock { ($0.pathImages[key], $0.cacheGeneration) }
         if let cached, cached.observation?.isCurrent != false,
+            cached.isOpened || loading == .loadedOnly,
             cached.acquiringThread == nil || cached.acquiringThread == thread
         {
             return [cached.image]
@@ -350,10 +357,18 @@ package final class RuntimeSymbolResolver: Sendable {
             }
             withExtendedLifetime(retired) {}
         }
-        guard loading == .ifNeeded else { return try images(matching: selector) }
         let identity = RuntimeImagePathIdentity(path: path)
         let observation = identity == .sharedCache ? nil : pathObservations.observe(path)
-        let image = try RuntimeImage.opening(path: path)
+        let image: RuntimeImage
+        if loading == .ifNeeded {
+            image = try RuntimeImage.opening(path: path)
+        } else {
+            // Matching compares the path with every loaded image, so the one
+            // image it finds is remembered like an opened one.
+            let loaded = try images(matching: selector)
+            guard loaded.count == 1 else { return loaded }
+            image = loaded[0]
+        }
         // A path can change while dlopen runs constructors. Publish only the
         // file identity observed on both sides of that acquisition.
         guard let identity, identity == RuntimeImagePathIdentity(path: path) else {
@@ -368,13 +383,13 @@ package final class RuntimeSymbolResolver: Sendable {
             // Another thread's successful acquisition confirms initialization
             // before the cached lease becomes reusable on every thread.
             let previous = state.pathImages[key]
-            let verified =
-                previous?.identity == identity
-                && previous?.image.identity == image.identity
-                && previous?.acquiringThread != thread
+            let isSame =
+                previous?.identity == identity && previous?.image.identity == image.identity
+            let verified = isSame && previous?.acquiringThread != thread
             let candidate = PathImage(
                 identity: identity,
                 image: image,
+                isOpened: loading == .ifNeeded || (isSame && previous?.isOpened == true),
                 acquiringThread: verified ? nil : thread,
                 observation: observation
             )

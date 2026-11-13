@@ -320,8 +320,9 @@ package func runtimeClassImage(
         )
     }
     return try resolver.image(forSwiftClass: type) {
-        let images = try resolver.images(
-            matching: .path(URL(fileURLWithPath: String(cString: path)))
+        let images = try resolver.acquireImages(
+            .path(URL(fileURLWithPath: String(cString: path))),
+            loading: .loadedOnly
         )
         guard let image = images.first else { throw RuntimeResolutionError.imageNotLoaded }
         return image

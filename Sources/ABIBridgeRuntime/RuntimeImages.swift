@@ -141,10 +141,6 @@ package struct RuntimeImageCatalogSnapshot: Sendable {
 
 package struct RuntimeImageSnapshot: Sendable {
     private static let cachedCatalog = Mutex<RuntimeImageCatalogSnapshot?>(nil)
-    /// Each loaded image's path with its symlinks resolved, read once for that load. A path selector is
-    /// compared with every loaded image, and resolving a path asks the file system about each component.
-    /// A link that changes while its image stays loaded leaves the image at the file it was loaded from.
-    private static let resolvedPaths = Mutex<[RuntimeImageIdentity: URL]>([:])
     package let identity: RuntimeImageIdentity
     package let path: String
 
@@ -176,13 +172,8 @@ package struct RuntimeImageSnapshot: Sendable {
             } catch RuntimeResolutionError.imageNotLoaded { return [] }
         case .path(let url):
             let resolved = url.resolvingSymlinksInPath()
-            return resolvedPaths.withLock { paths in
-                snapshots.filter { snapshot in
-                    if let path = paths[snapshot.identity] { return path == resolved }
-                    let path = URL(fileURLWithPath: snapshot.path).resolvingSymlinksInPath()
-                    paths[snapshot.identity] = path
-                    return path == resolved
-                }
+            return snapshots.filter {
+                URL(fileURLWithPath: $0.path).resolvingSymlinksInPath() == resolved
             }
         case .framework(let name):
             return snapshots.filter {
@@ -223,12 +214,7 @@ package struct RuntimeImageSnapshot: Sendable {
             )
             // Another caller can have captured a newer native list before this
             // caller acquires the Swift lock. Its snapshot stays authoritative.
-            if cached == nil || cached!.revision < revision {
-                cached = snapshot
-                resolvedPaths.withLock { paths in
-                    paths = paths.filter { snapshot.imageIdentities.contains($0.key) }
-                }
-            }
+            if cached == nil || cached!.revision < revision { cached = snapshot }
             return snapshot
         }
     }
