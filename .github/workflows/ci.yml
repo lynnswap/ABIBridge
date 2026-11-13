@@ -258,7 +258,12 @@ jobs:
         env:
           ABI_TEST_PARALLEL_API: '1'
           ABI_TEST_API_PART: ${{ matrix.part }}
-        run: bash scripts/test-package.sh api
+        # Most of this suite's time is symbol lookup in ABIBridge itself, which
+        # takes about twice as long unoptimized. The configuration stays Debug,
+        # so testability and DEBUG-only hooks remain.
+        run: |
+          bash scripts/test-package.sh api \
+            SWIFT_OPTIMIZATION_LEVEL=-O GCC_OPTIMIZATION_LEVEL=s
       - name: Preserve failed test diagnostics
         if: always() && (failure() || cancelled())
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

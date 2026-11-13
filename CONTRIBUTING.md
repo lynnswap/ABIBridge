@@ -62,6 +62,15 @@ The helper builds once, then runs four complementary groups with `test-without-b
 
 CI runs the groups two at a time in two jobs. Set `ABI_TEST_API_PART` to `1` or `2` to run one job's pair.
 
+CI also builds this suite optimized in the Debug configuration, because most of its time is symbol lookup in ABIBridge itself:
+
+```sh
+ABI_TEST_PARALLEL_API=1 bash scripts/test-package.sh api \
+  SWIFT_OPTIMIZATION_LEVEL=-O GCC_OPTIMIZATION_LEVEL=s
+```
+
+The settings apply to every target, including the tests. CI's Runtime tests, consumer checks, and Simulator tests still run unoptimized; run this suite without the settings to cover it unoptimized too.
+
 During development, select a single suite:
 
 ```sh
