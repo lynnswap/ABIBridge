@@ -99,7 +99,7 @@ Use the same runtime for preparation and lookup so both share indexes and call l
 
 For symbol-only lookup, `resolve(request)` returns a ``ResolvedSymbol``. `resolve(requests)` preserves order and partial success with one `Result` per input. Both honor scopes, aliases, fallbacks, and loading policy. Use `prepare { ... }` to group synchronous lookups or prepare call signatures ahead of time.
 
-When preparation already uses asynchronous lookup or actor-isolated values, use an asynchronous closure. It keeps the caller's isolation and shares search indexes until the batch finishes:
+When preparation already uses asynchronous lookup or actor-isolated values, use an asynchronous closure. It keeps the caller's isolation and shares search indexes throughout the batch:
 
 ```swift
 let (type, render) = try await runtime.prepare { runtime in
@@ -217,7 +217,7 @@ See <doc:NativeInspection> for C++ adoption and retention. These operations keep
 
 ``ABIRuntime/shared`` keeps one set of caches for the whole process. A runtime created with ``ABIRuntime/init()`` finds the same declarations and keeps its own caches and the image leases they hold, so a component can release what it cached while other code keeps its results. Swift type and function handles keep using the runtime that resolved them when they look up members or install hooks.
 
-Search indexes and decoded symbol tables live only while lookups are active. Use `runtime.prepare { runtime in ... }` to share those indexes across a batch of resolutions. They are released when the last overlapping lookup or batch finishes, including when a batch throws; a worker then frees their tables, so the thread that ends the batch does not wait for that cleanup. Lookups of one image wait for each other while its tables are built, but lookups in other images, completed results, and cache removal do not. Completed symbol and Swift resolutions, type handles, and native call interfaces remain cached, so repeating the same request can reuse its result outside the batch. Image changes still invalidate affected results.
+Search indexes and decoded symbol tables live while lookups are active and for one second after the last one finishes. Use `runtime.prepare { runtime in ... }` to share those indexes across a batch of resolutions. A lookup or batch that starts within that second reuses them, so preparation split into several batches builds each image's tables once. They are released when no lookup has run for one second, including after a batch throws; a worker then frees their tables, so no lookup waits for that cleanup. Lookups of one image wait for each other while its tables are built, but lookups in other images, completed results, and cache removal do not. Completed symbol and Swift resolutions, type handles, and native call interfaces remain cached, so repeating the same request can reuse its result outside the batch. Image changes still invalidate affected results.
 
 Call `runtime.removeCachedResults()` to release that runtime's resolver indexes, Swift type cache, and completed Swift resolutions. Existing image, symbol, and callable handles stay valid, as do resolutions already in progress; subsequent lookups prepare new results. Results from an older cache generation are not republished after removal. The native call-interface cache, the image catalog, and inferred Swift value conventions belong to the process and remain available. Installed hooks stay in place. Known Swift classes reuse their defining image while it remains retained.
 

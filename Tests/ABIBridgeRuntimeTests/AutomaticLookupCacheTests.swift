@@ -38,7 +38,7 @@ struct AutomaticLookupCacheTests {
         enum BatchFailure: Error { case expected }
         let fixture = try FixtureLibrary()
         defer { fixture.cleanup() }
-        let resolver = RuntimeSymbolResolver()
+        let resolver = RuntimeSymbolResolver(keepingLookupIndexesFor: .zero)
         let declaration = RuntimeDeclaration(
             name: fixture.namespace + "::add(int, int)",
             language: .cxx
@@ -79,6 +79,29 @@ struct AutomaticLookupCacheTests {
         #expect(reused.address == retained.address)
         #expect(reused.image.lease === retained.image.lease)
         #expect(resolver.cachedSymbolIndexes.isEmpty)
+    }
+
+    @Test func lookupIndexesOutliveABatchForTheirRetention() async throws {
+        let fixture = try FixtureLibrary()
+        defer { fixture.cleanup() }
+        let declaration = RuntimeDeclaration(
+            name: fixture.namespace + "::add(int, int)",
+            language: .cxx
+        )
+        let kept = RuntimeSymbolResolver(keepingLookupIndexesFor: .seconds(3600))
+        _ = try kept.resolve(declaration, in: .path(fixture.libraryURL))
+        let index = try #require(kept.cachedSymbolIndexes.first)
+        try kept.withCachedLookups {
+            #expect(kept.cachedSymbolIndexes.first === index)
+        }
+
+        let released = RuntimeSymbolResolver(keepingLookupIndexesFor: .milliseconds(10))
+        _ = try released.resolve(declaration, in: .path(fixture.libraryURL))
+        let deadline = ContinuousClock.now + .seconds(30)
+        while !released.cachedSymbolIndexes.isEmpty, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(released.cachedSymbolIndexes.isEmpty)
     }
 
     @Test func retiredTablesAreFreedOnTheWorker() throws {

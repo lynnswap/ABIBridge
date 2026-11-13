@@ -1,10 +1,16 @@
 import Synchronization
 import Darwin
+import Dispatch
 
 // Loader operations run outside the index lock: constructors and destructors
 // may reenter the native API while dyld holds its own lock.
 package final class RuntimeSymbolResolver: Sendable {
-    package init() {
+    /// - Parameter retention: How long the lookup indexes stay after the last
+    ///   lookup or batch ends. Zero releases them as it ends.
+    package init(
+        keepingLookupIndexesFor retention: Duration = RuntimeSymbolResolver.lookupIndexRetention
+    ) {
+        lookupIndexRetention = retention
         retirement = SymbolTableRetirement(limit: Self.retiredTableLimit)
         #if DEBUG
         sharedCacheCapture = nil
@@ -16,6 +22,13 @@ package final class RuntimeSymbolResolver: Sendable {
     package static let shared = RuntimeSymbolResolver()
     private let state = Mutex(ResolutionState())
     private let retirement: SymbolTableRetirement
+    // A caller that prepares in several batches starts each one shortly after
+    // the last: a device connection in a 1,415-image process ran up to 29
+    // batches that each searched every image, less than a second apart.
+    // Keeping the indexes that long lets those batches share one build of
+    // the tables instead of building them again in each batch.
+    package static let lookupIndexRetention: Duration = .seconds(1)
+    private let lookupIndexRetention: Duration
     // One batch that searches every image of a 395-image process retires
     // tables weighing about 300,000, Foundation's about 90,000. The worker
     // normally frees them long before this limit; table builds take over
@@ -50,6 +63,7 @@ package final class RuntimeSymbolResolver: Sendable {
                 RuntimeImage, RuntimeDeclaration, SharedCacheSymbols.Source
             ) -> SharedCacheSymbols.CapturedSymbols?
     ) {
+        lookupIndexRetention = Self.lookupIndexRetention
         retirement = SymbolTableRetirement(limit: Self.retiredTableLimit)
         sharedCacheCapture = capture
         beforeCachePublication = nil
@@ -63,6 +77,7 @@ package final class RuntimeSymbolResolver: Sendable {
                 CachePublication, RuntimeSymbolResolver
             ) -> Void
     ) {
+        lookupIndexRetention = Self.lookupIndexRetention
         retirement = SymbolTableRetirement(limit: Self.retiredTableLimit)
         sharedCacheCapture = nil
         beforeCachePublication = callback
@@ -73,6 +88,7 @@ package final class RuntimeSymbolResolver: Sendable {
     /// - Parameter reading: Called while a lookup holds an image's symbol
     ///   tables, before it reads them.
     package init(whileReadingIndex reading: @escaping @Sendable (RuntimeImage) -> Void) {
+        lookupIndexRetention = Self.lookupIndexRetention
         retirement = SymbolTableRetirement(limit: Self.retiredTableLimit)
         sharedCacheCapture = nil
         beforeCachePublication = nil
@@ -80,11 +96,15 @@ package final class RuntimeSymbolResolver: Sendable {
         tablesFreed = nil
     }
 
+    /// Releases the lookup indexes as the last lookup or batch ends, so the
+    /// retirement receives their tables at that point.
+    ///
     /// - Parameter freed: Called when an index's symbol tables are freed.
     package init(
         retiringTablesWith retirement: SymbolTableRetirement,
         whenTablesAreFreed freed: @escaping @Sendable () -> Void
     ) {
+        lookupIndexRetention = .zero
         self.retirement = retirement
         sharedCacheCapture = nil
         beforeCachePublication = nil
@@ -859,8 +879,9 @@ package final class RuntimeSymbolResolver: Sendable {
         )
     }
 
-    /// Reuses lookup indexes for a synchronous batch. Overlapping batches share indexes
-    /// until the last active lookup ends; returned symbols retain their own images.
+    /// Reuses lookup indexes for a synchronous batch. Overlapping batches share
+    /// indexes, and so does a batch that starts within the retention of the last
+    /// one's end; returned symbols retain their own images.
     package func withCachedLookups<Value>(_ operation: () throws -> Value) rethrows -> Value {
         beginLookup()
         defer { endLookup() }
@@ -881,11 +902,40 @@ package final class RuntimeSymbolResolver: Sendable {
     }
 
     private func endLookup() {
-        let removed = state.withLock { state -> LookupIndexes? in
+        let retention = lookupIndexRetention
+        let (removed, release) = state.withLock {
+            state -> (LookupIndexes?, DispatchTime?) in
             state.activeLookups -= 1
-            return state.activeLookups == 0 ? state.removeLookupIndexes() : nil
+            guard state.activeLookups == 0, !state.lookups.isEmpty else { return (nil, nil) }
+            guard retention > .zero else { return (state.removeLookupIndexes(), nil) }
+            let release = DispatchTime.now() + .nanoseconds(Int(retention / .nanoseconds(1)))
+            // A release that is already scheduled waits for the new time.
+            defer { state.lookupIndexRelease = release }
+            return (nil, state.lookupIndexRelease == nil ? release : nil)
         }
         withExtendedLifetime(removed) {}
+        if let release { releaseLookupIndexes(at: release) }
+    }
+
+    /// Releases the lookup indexes once no lookup has run for the retention.
+    private func releaseLookupIndexes(at time: DispatchTime) {
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: time) { [weak self] in
+            guard let self else { return }
+            let (removed, later) = self.state.withLock {
+                state -> (LookupIndexes?, DispatchTime?) in
+                guard let release = state.lookupIndexRelease else { return (nil, nil) }
+                // The end of a running lookup schedules the release again.
+                guard state.activeLookups == 0 else {
+                    state.lookupIndexRelease = nil
+                    return (nil, nil)
+                }
+                guard DispatchTime.now() >= release else { return (nil, release) }
+                state.lookupIndexRelease = nil
+                return (state.removeLookupIndexes(), nil)
+            }
+            withExtendedLifetime(removed) {}
+            if let later { self.releaseLookupIndexes(at: later) }
+        }
     }
 
     package func removeCachedResults() {
@@ -1326,6 +1376,7 @@ package final class RuntimeSymbolResolver: Sendable {
     private struct LookupIndexes {
         var indexes: [RuntimeImageIdentity: SymbolIndex] = [:]
         var queries: [RuntimeDeclaration: SymbolQuery] = [:]
+        var isEmpty: Bool { indexes.isEmpty && queries.isEmpty }
     }
 
     private struct ResolutionState {
@@ -1333,6 +1384,9 @@ package final class RuntimeSymbolResolver: Sendable {
         var cacheGeneration: UInt64 = 0
         var activeLookups = 0
         var lookups = LookupIndexes()
+        /// When the scheduled release may remove `lookups`; nil while none
+        /// is scheduled.
+        var lookupIndexRelease: DispatchTime?
         var automatic: AutomaticScope?
         var classImages: [ObjectIdentifier: RuntimeImage] = [:]
         var pathImages: [[UInt8]: PathImage] = [:]
@@ -1354,6 +1408,7 @@ package final class RuntimeSymbolResolver: Sendable {
             self = Self()
             cacheGeneration = removed.cacheGeneration &+ 1
             activeLookups = removed.activeLookups
+            lookupIndexRelease = removed.lookupIndexRelease
             return removed
         }
 
