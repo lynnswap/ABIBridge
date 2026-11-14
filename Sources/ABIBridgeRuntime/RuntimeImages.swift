@@ -177,6 +177,10 @@ package struct RuntimeImageSnapshot: Sendable {
             }
         case .framework(let name):
             return snapshots.filter {
+                // Building a URL for every loaded image costs far more than
+                // this test, which only the paths that can match pass: a
+                // path that names a file ends with its last component.
+                guard $0.path.hasSuffix(name) || $0.path.hasSuffix("/") else { return false }
                 let url = URL(fileURLWithPath: $0.path)
                 return url.lastPathComponent == name
                     && url.pathComponents.contains("\(name).framework")
