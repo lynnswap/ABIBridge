@@ -172,15 +172,12 @@ package struct RuntimeImageSnapshot: Sendable {
             } catch RuntimeResolutionError.imageNotLoaded { return [] }
         case .path(let url):
             let resolved = url.resolvingSymlinksInPath()
-            let name = resolved.lastPathComponent
+            let name = Array(resolved.lastPathComponent.utf8)
             return snapshots.filter {
                 // Resolving every loaded image's path reads the file system
-                // once per path component. Resolution keeps a path's last
-                // component unless that component is itself a symlink, so
-                // only the paths that end with the selector's name, and the
-                // symlinks, can match.
-                guard $0.path.hasSuffix(name) || $0.path.hasSuffix("/") || Self.isSymlink($0.path)
-                else { return false }
+                // once per path component, so only the paths that can
+                // resolve to the selector's name are resolved.
+                guard Self.canResolve($0.path, toName: name) else { return false }
                 return URL(fileURLWithPath: $0.path).resolvingSymlinksInPath() == resolved
             }
         case .framework(let name):
@@ -196,7 +193,26 @@ package struct RuntimeImageSnapshot: Sendable {
         }
     }
 
-    private static func isSymlink(_ path: String) -> Bool {
+    /// Whether resolving the symlinks of `path` can give a path whose last
+    /// component is `name`.
+    ///
+    /// Resolution keeps a path's last component unless that component is a
+    /// symlink. A file system that ignores case or normalization can also
+    /// respell it, so names compare without ASCII case, and a name outside
+    /// ASCII always can.
+    private static func canResolve(_ path: String, toName name: [UInt8]) -> Bool {
+        let bytes = path.utf8
+        let separator = UInt8(ascii: "/")
+        guard let last = bytes.last, last != separator else { return true }
+        let start = bytes.lastIndex(of: separator).map(bytes.index(after:)) ?? bytes.startIndex
+        let component = bytes[start...]
+        func folded(_ byte: UInt8) -> UInt8 {
+            byte >= UInt8(ascii: "A") && byte <= UInt8(ascii: "Z") ? byte | 0x20 : byte
+        }
+        guard component.allSatisfy({ $0 < 0x80 }), name.allSatisfy({ $0 < 0x80 }) else {
+            return true
+        }
+        if component.elementsEqual(name, by: { folded($0) == folded($1) }) { return true }
         var information = stat()
         return path.withCString { lstat($0, &information) } == 0
             && information.st_mode & S_IFMT == S_IFLNK

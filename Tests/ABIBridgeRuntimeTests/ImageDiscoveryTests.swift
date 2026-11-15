@@ -24,9 +24,10 @@ struct ImageDiscoveryTests {
         #expect(FrameworkImages.candidates(named: name, bundleDirectories: roots).count == 2)
     }
 
-    /// The loader can name an image by the symlink it was loaded through,
-    /// whose last component differs from the file's.
-    @Test func pathSelectorMatchesAnImageNamedByASymlinkOfAnotherName() throws {
+    /// The loader names an image by the path it was loaded through, which can
+    /// be a symlink of another name or, where the file system ignores case,
+    /// another spelling of the file's name.
+    @Test func pathSelectorMatchesTheImagesWhosePathsResolveToIt() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
             UUID().uuidString
         )
@@ -44,11 +45,20 @@ struct ImageDiscoveryTests {
                 return RuntimeImageSnapshot(info)
             }
         }
+        let named = image(at: alias, generation: 1)
+        let unrelated = image(at: directory.appendingPathComponent("other.dylib"), generation: 2)
         let images = [
-            image(at: alias, generation: 1),
-            image(at: directory.appendingPathComponent("other.dylib"), generation: 2),
+            named, unrelated,
+            image(at: directory.appendingPathComponent("LIBRARY.DYLIB"), generation: 3),
         ]
+        // Whether the other spelling names the file depends on the volume.
+        let resolved = file.resolvingSymlinksInPath()
+        let resolving = images.filter {
+            URL(fileURLWithPath: $0.path).resolvingSymlinksInPath() == resolved
+        }
         let matched = try RuntimeImageSnapshot.matching(.path(file), in: images)
-        #expect(matched.map(\.identity) == [images[0].identity])
+        #expect(matched.map(\.identity) == resolving.map(\.identity))
+        #expect(matched.contains { $0.identity == named.identity })
+        #expect(!matched.contains { $0.identity == unrelated.identity })
     }
 }
