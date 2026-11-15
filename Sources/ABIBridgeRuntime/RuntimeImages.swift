@@ -172,8 +172,16 @@ package struct RuntimeImageSnapshot: Sendable {
             } catch RuntimeResolutionError.imageNotLoaded { return [] }
         case .path(let url):
             let resolved = url.resolvingSymlinksInPath()
+            let name = resolved.lastPathComponent
             return snapshots.filter {
-                URL(fileURLWithPath: $0.path).resolvingSymlinksInPath() == resolved
+                // Resolving every loaded image's path reads the file system
+                // once per path component. Resolution keeps a path's last
+                // component unless that component is itself a symlink, so
+                // only the paths that end with the selector's name, and the
+                // symlinks, can match.
+                guard $0.path.hasSuffix(name) || $0.path.hasSuffix("/") || Self.isSymlink($0.path)
+                else { return false }
+                return URL(fileURLWithPath: $0.path).resolvingSymlinksInPath() == resolved
             }
         case .framework(let name):
             return snapshots.filter {
@@ -186,6 +194,12 @@ package struct RuntimeImageSnapshot: Sendable {
                     && url.pathComponents.contains("\(name).framework")
             }
         }
+    }
+
+    private static func isSymlink(_ path: String) -> Bool {
+        var information = stat()
+        return path.withCString { lstat($0, &information) } == 0
+            && information.st_mode & S_IFMT == S_IFLNK
     }
 
     package func retain() throws -> RuntimeImage {
