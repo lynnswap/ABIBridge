@@ -136,6 +136,23 @@ struct SwiftCandidateSelection<Value> {
         declaration.name + ": " + reason
     }
 
+    /// A partial source signature cannot break a tie by eliminating a different
+    /// overload. Keep the ambiguity until every survivor has a verified signature.
+    func matchingDeclaredTypes() -> Self where Value == SwiftGenericCallPlan {
+        guard !accepted.contains(where: { $0.value.declaredTypeMatch == .unchecked }) else {
+            return self
+        }
+        var selection = self
+        selection.accepted = accepted.filter { candidate in
+            guard case .mismatch(let mismatch) = candidate.value.declaredTypeMatch else {
+                return true
+            }
+            selection.mismatches.append((candidate.entry.declaration, mismatch))
+            return false
+        }
+        return selection
+    }
+
     // A declaration's code and its dispatch thunk in one image share an identity.
     private static func distinct(_ candidates: [SwiftCandidate]) -> [SwiftCandidate] {
         let implemented = Set(candidates.lazy.filter(\.record.runsOwnCode).map(SwiftDeclarationKey.init))

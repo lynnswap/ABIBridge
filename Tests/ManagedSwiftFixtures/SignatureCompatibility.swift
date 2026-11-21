@@ -13,6 +13,32 @@ public final class CompatibilityDerived: CompatibilityBase {
     public override func name() -> String { "derived" }
 }
 
+@inline(never) public func compatibilityChoose<T>(_ first: T, _ second: T) -> Int64 { 1 }
+
+@inline(never) public func compatibilityChoose<T>(_ first: Int64, _ second: T) -> Int64 { 2 }
+
+@inline(never) public func compatibilityChoose<T>(
+    _ first: T,
+    _ type: Int64.Type,
+    _ last: T
+) -> Int64 { 1 }
+@inline(never) public func compatibilityChoose<T>(
+    _ first: Int64,
+    _ type: T.Type,
+    _ last: T
+) -> Int64 { 2 }
+
+@inline(never) public func compatibilityElements<T: Collection>(_ values: T) -> [T.Element]
+where T.Element == Int64 { Array(values) }
+
+@inline(never) public func compatibilityMarker<each First, each Last>(
+    _ first: repeat each First, marker: Int64, tail: repeat each Last
+) -> Int64 { marker }
+
+@inline(never) public func compatibilityExistentials() -> (Any, any Collection<Int>) {
+    (1, [2])
+}
+
 @inline(never) public func compatibilityMakeDerived() -> CompatibilityDerived { CompatibilityDerived() }
 
 @inline(never) public func compatibilityOpaqueCount() -> some Equatable { Int64(41) }

@@ -465,7 +465,7 @@ extension ABIRuntime {
                     try plan.check(description)
                 }
                 return plan
-            }
+            }.matchingDeclaredTypes()
         }
         var selection = try select(includingSharedCache: false)
         // The images can hold other overloads while only the shared cache's

@@ -18,6 +18,96 @@ struct SwiftSignatureCompatibilityTests {
         }
     }
 
+    @Test func declaredArgumentsDistinguishOverloadsBeforeSpecialization() async throws {
+        for (arguments, expected) in [("A, A", Int64(1)), ("Swift.Int64, A", 2)] {
+            let function = try await runtime.resolve(
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.compatibilityChoose(_:_:)",
+                        as: ((Int64, Int64) -> Int64).self,
+                        genericArguments: [.type(Int64.self)],
+                        declaredAs: "(\(arguments)) -> Swift.Int64"
+                    )
+                )
+            )
+            #expect(try unsafe function.unsafeInvoke(0, 0) == expected)
+        }
+    }
+
+    @Test func partialDeclaredTypeEvidenceKeepsOverloadsAmbiguous() async throws {
+        do {
+            _ = try await runtime.resolve(
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.compatibilityChoose(_:_:_:)",
+                        as: ((Int64, Int64.Type, Int64) -> Int64).self,
+                        genericArguments: [.type(Int64.self)],
+                        declaredAs: "(Swift.Int64, Swift.Int64.Type, A) -> Swift.Int64"
+                    )
+                )
+            )
+            Issue.record("Neither declaration has the requested formal signature")
+        } catch ABIResolutionError.ambiguousDeclaration(_, let candidates) {
+            #expect(candidates.count == 2)
+        }
+    }
+
+    @Test func declaredResultsAcceptEquivalentSourceTypes() async throws {
+        for element in ["A.Element", "A.Iterator.Element"] {
+            let elements = try await runtime.resolve(
+                .swift(
+                    .function(
+                        "ManagedSwiftFixtures.compatibilityElements(_:)",
+                        as: (([Int64]) -> [Int64]).self,
+                        genericArguments: [.type([Int64].self)],
+                        declaredAs: "(A) -> [\(element)]"
+                    )
+                )
+            )
+            #expect(try unsafe elements.unsafeInvoke([42]) == [42])
+        }
+
+        let existentials = try await runtime.resolve(
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.compatibilityExistentials()",
+                    as: (() -> (Any, any Collection<Int>)).self,
+                    declaredAs: "() -> (Any, any Swift.Collection<Swift.Int>)"
+                )
+            )
+        )
+        let (value, collection) = try unsafe existentials.unsafeInvoke()
+        #expect(value as? Int == 1 && collection.first == 2)
+    }
+
+    @Test func expandedPacksKeepTheFixedArgumentsPosition() async throws {
+        let function = try await runtime.resolve(
+            .swift(
+                .function(
+                    "ManagedSwiftFixtures.compatibilityMarker(_:marker:tail:)",
+                    as: ((Int64, String, String) -> Int64).self,
+                    genericArguments: [.pack([]), .pack([.type(String.self), .type(String.self)])],
+                    declaredAs: "(Swift.Int64, Swift.String, Swift.String) -> Swift.Int64"
+                )
+            )
+        )
+        #expect(try unsafe function.unsafeInvoke(42, "a", "b") == 42)
+    }
+
+    @Test func getterRejectsConflictingDeclaredResult() async throws {
+        let type = try await runtime.resolve(
+            .swift(.type("ManagedSwiftFixtures.CompatibilityCount"))
+        )
+        do {
+            _ = try await type.resolve(
+                .swift(.getter("value", as: (() -> Int64).self, declaredAs: "() -> Swift.String"))
+            )
+            Issue.record("The getter accepted a conflicting declared result")
+        } catch let ABIResolutionError.signatureMismatch(mismatch) {
+            #expect(mismatch.position == .result)
+        }
+    }
+
     @Test func resultsConvertToRequestedSuperclassesAndOptional() async throws {
         let base = try await runtime.resolve(
             .swift(

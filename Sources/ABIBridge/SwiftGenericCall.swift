@@ -628,7 +628,14 @@ final class SwiftGenericClosurePlan: Sendable {
     }
 }
 
+enum SwiftDeclaredTypeMatch: Equatable, Sendable {
+    case exact
+    case unchecked
+    case mismatch(ABIResolutionError.SignatureMismatch)
+}
+
 struct SwiftGenericCallPlan: Sendable {
+    private(set) var declaredTypeMatch = SwiftDeclaredTypeMatch.unchecked
     let binding: SwiftGenericBinding
     private(set) var metadata: SwiftGenericArgumentBuffer
     private let context: SwiftGenericTypeContext?
@@ -720,6 +727,9 @@ struct SwiftGenericCallPlan: Sendable {
                 }
                 return type
             }
+            declaredTypeMatch = binding.compareDeclaredTypes(
+                arguments: declaredArguments, result: result, failure: failure
+            )
             _ = try SwiftGenericParameters(
                 formal: declaredArguments,
                 actual: signature.parameters,
