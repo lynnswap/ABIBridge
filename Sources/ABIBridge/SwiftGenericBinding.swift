@@ -713,6 +713,94 @@ struct SwiftGenericBinding: Sendable {
         return origins == [qualifier]
     }
 
+    /// Formal identities from the provider, before substituting the caller's generic arguments.
+    func compareDeclaredTypes(
+        arguments: [SwiftFormalType],
+        result: SwiftFormalType,
+        failure: SwiftFormalType?
+    ) -> SwiftDeclaredTypeMatch {
+        var match = SwiftDeclaredTypeMatch.exact
+        func compare(
+            _ stated: SwiftFormalType,
+            _ native: SwiftFormalType,
+            at position: ABIResolutionError.SignatureMismatch.Position
+        ) {
+            if case .mismatch = match { return }
+            if case .named(let name, []) = stated, case .nominal(let provider, []) = native,
+                DeclarationKey.make(name) == DeclarationKey.make(provider)
+            {
+                return
+            }
+            guard let expected = declaredTypeName(stated), let found = declaredTypeName(native)
+            else {
+                match = .unchecked
+                return
+            }
+            if DeclarationKey.make(expected) != DeclarationKey.make(found) {
+                match = .mismatch(
+                    .init(position: position, expected: stated.spelling, found: [native.spelling])
+                )
+            }
+        }
+        // Expanded packs can shift even a fixed argument when the two counts agree.
+        if arguments.count == declaration.arguments.count,
+            !arguments.contains(where: isPack), !declaration.arguments.contains(where: isPack)
+        {
+            for index in arguments.indices {
+                compare(arguments[index], declaration.arguments[index], at: .argument(index))
+            }
+        } else {
+            match = .unchecked
+        }
+        compare(result, declaration.result, at: .result)
+        switch (failure, declaration.failure) {
+        case (let stated?, let native?): compare(stated, native, at: .signature)
+        case (nil, nil): break
+        default: if case .exact = match { match = .unchecked }
+        }
+        return match
+    }
+
+    private func declaredTypeName(_ type: SwiftFormalType) -> String? {
+        let formal: SwiftFormalType
+        if case .named(let name, []) = type, arguments[name] != nil {
+            guard let canonical = try? canonicalType(of: type) else { return nil }
+            formal = canonical
+        } else {
+            formal = type
+        }
+        switch formal {
+        case .tuple([], _): return "()"
+        case .nominal(let name, []) where name.contains("."): return name
+        case .named(let name, []):
+            if name == "()" { return name }
+            if arguments[name] != nil {
+                // An extension's A == B requirement leaves both as archetypes.
+                // Use one representative even when neither has a concrete type.
+                return try? equivalentTypes(of: formal).compactMap { alias -> String? in
+                    guard case .named(let other, []) = alias, arguments[other] != nil else {
+                        return nil
+                    }
+                    return other
+                }.min()
+            }
+            // An alias or associated-type projection has no nominal descriptor of its own.
+            guard name.contains("."),
+                (try? resolver.resolve(
+                    .init(
+                        name: "nominal type descriptor for " + name,
+                        language: .swift,
+                        kind: .data
+                    ),
+                    in: .automatic,
+                    loading: .loadedOnly
+                )) != nil
+            else { return nil }
+            return name
+        default: return nil
+        }
+    }
+
     func equivalentTypes(of type: SwiftFormalType) throws -> [SwiftFormalType] {
         var types = [type], index = 0
         while index < types.count {

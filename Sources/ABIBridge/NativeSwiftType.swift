@@ -913,7 +913,7 @@ public final class NativeSwiftType: Sendable, Hashable {
                     }
                     return plan
                 }
-                return (selection, unserved)
+                return (selection.matchingDeclaredTypes(), unserved)
             }
             // The members a type declares hide those its extensions declare.
             for extensionsOnly in [false, true]
@@ -954,8 +954,14 @@ public final class NativeSwiftType: Sendable, Hashable {
                             conformances: conformances
                         ) { witness in
                             do {
-                                return try prepare(witness, witness.entry, ignoringOwner: true)
-                                    != nil
+                                guard let witnessPlan = try prepare(witness, witness.entry, ignoringOwner: true)
+                                else { return false }
+                                if plan.declaredTypeMatch == .exact,
+                                    case .mismatch = witnessPlan.declaredTypeMatch
+                                {
+                                    return false
+                                }
+                                return true
                             } catch ABIResolutionError.signatureMismatch {
                                 return false
                             }
